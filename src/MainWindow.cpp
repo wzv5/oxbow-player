@@ -184,8 +184,16 @@ void MainWindow::connectController()
     });
     connect(m_controller, &MpvController::playlistPosChanged, this, [this](int pos) {
         m_playlistPos = pos;
-        if (pos >= 0)
+        if (pos >= 0) {
             m_lastPos = pos; // 持续记录最近播放项，停止/列表播完后以此为恢复基准
+            // 启动后首次检测到播放（如命令行参数打开文件）：切换到正在播放的 tab
+            if (!m_startupPlaybackCheckDone) {
+                m_startupPlaybackCheckDone = true;
+                const int pt = m_playlist->playingTabIndex();
+                if (pt >= 0 && m_playlist->currentIndex() != pt)
+                    m_playlist->setCurrentIndex(pt);
+            }
+        }
     });
     // 列表播完或停止后 mpv 进入空闲，复位播放按钮为“可播放”态
     connect(m_controller, &MpvController::idleActive, this, [this](bool active) {
@@ -433,21 +441,16 @@ void MainWindow::saveSettings()
         settings.setValue(QStringLiteral("windowHeight"), height());
     }
 
-    // 当前播放 tab（跳过默认 tab 0）和播放项
+    // 当前播放 tab 和播放项（含默认 tab 0）
     // 只在有正在播放的内容时更新会话数据；没有播放时保留旧值
     const int playingTab = m_playlist->playingTabIndex();
-    if (playingTab > 0) {
+    if (playingTab >= 0 && m_playlistPos >= 0) {
         settings.setValue(QStringLiteral("lastTab"), playingTab);
-        if (m_playlistPos >= 0) {
-            settings.setValue(QStringLiteral("lastPos"), m_playlistPos);
-            if (m_timePos > 0.0)
-                settings.setValue(QStringLiteral("lastTimePos"), m_timePos);
-            else
-                settings.remove(QStringLiteral("lastTimePos"));
-        } else {
-            settings.remove(QStringLiteral("lastPos"));
+        settings.setValue(QStringLiteral("lastPos"), m_playlistPos);
+        if (m_timePos > 0.0)
+            settings.setValue(QStringLiteral("lastTimePos"), m_timePos);
+        else
             settings.remove(QStringLiteral("lastTimePos"));
-        }
     }
 }
 
@@ -486,15 +489,15 @@ void MainWindow::restoreSettings()
     if (settings.value(QStringLiteral("playlistExpanded"), false).toBool())
         setPlaylistVisible(true);
 
-    // 上次播放 tab 和位置（仅非默认 tab；只选中高亮，不自动播放）
+    // 上次播放 tab 和位置（含默认 tab 0；只选中高亮，不自动播放）
     const int lastTab = settings.value(QStringLiteral("lastTab"), -1).toInt();
     const int lastPos = settings.value(QStringLiteral("lastPos"), -1).toInt();
-    if (lastTab > 0 && lastTab < m_playlist->count() && lastPos >= 0) {
+    if (lastTab >= 0 && lastTab < m_playlist->count() && lastPos >= 0) {
         m_playlist->selectItem(lastTab, lastPos);
-        // 标记为"点击播放时应恢复会话"：进度 >0 表示有待恢复的播放进度，0 表示只恢复选中项
-        if (settings.contains(QStringLiteral("lastTimePos")))
+        // 仅非默认 tab 支持会话播放进度恢复（默认 tab 内容由 mpv 驱动）
+        if (lastTab > 0 && settings.contains(QStringLiteral("lastTimePos")))
             m_restoreTimePos = settings.value(QStringLiteral("lastTimePos")).toDouble();
-        else
+        else if (lastTab > 0)
             m_restoreTimePos = 0.0;
     }
 }

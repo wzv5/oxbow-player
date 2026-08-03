@@ -73,5 +73,6 @@ private:
     int m_playlistPos = -1;   // mpv 当前播放项，-1 表示停止状态
     int m_lastPos = -1;       // 最近一个有效播放项，用于停止状态下恢复/上下首
     int m_playlistCount = 0;
+    bool m_startupPlaybackCheckDone = false;
     double m_restoreTimePos = -1.0; // >0：有上次会话待恢复，值为目标播放进度（秒）
 };
