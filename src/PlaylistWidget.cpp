@@ -170,6 +170,14 @@ void PlaylistWidget::selectItem(int tabIndex, int row)
     }
 }
 
+int PlaylistWidget::currentSelectedRow() const
+{
+    const QListWidget *list = listAt(currentIndex());
+    if (!list || list->selectedItems().isEmpty())
+        return -1;
+    return list->currentRow();
+}
+
 void PlaylistWidget::onItemDoubleClicked(QListWidgetItem *item)
 {
     QListWidget *list = item->listWidget();

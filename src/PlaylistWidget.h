@@ -29,6 +29,8 @@ public:
 
     // 切换到指定 tab 并选中第 row 行
     void selectItem(int tabIndex, int row);
+    // 当前 tab 中选中的行号，无选中项返回 -1
+    int currentSelectedRow() const;
 
     // 持久化：从配置文件恢复非默认播放列表 / 保存除默认外的所有列表
     void loadPlaylists();
