@@ -31,13 +31,14 @@ MainWindow::MainWindow(MpvController *controller, const QString &configFile, QWi
     m_splitter = new QSplitter(Qt::Horizontal, this);
     m_splitter->addWidget(createLeftArea());
 
-    m_playlist = new PlaylistWidget(m_splitter);
+    m_playlist = new PlaylistWidget(configFile, m_splitter);
     m_splitter->addWidget(m_playlist);
     m_splitter->setStretchFactor(0, 1);
     m_splitter->setStretchFactor(1, 0);
     m_splitter->setCollapsible(0, false);
     m_splitter->setCollapsible(1, true);
     m_playlist->setVisible(false); // 播放列表默认隐藏
+    m_playlist->loadPlaylists();
 
     setCentralWidget(m_splitter);
     createMenus();
