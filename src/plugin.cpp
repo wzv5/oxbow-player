@@ -1,0 +1,106 @@
+// mpv C 插件本体（mpvqtcore）。
+// 无论 Windows（两段式壳转发）还是 Linux / 静态链接 Qt 的单一 DLL，本模块都导出
+// 标准入口 mpv_open_cplugin：
+//   - Windows：mpv 只加载 scripts/<name>/main.dll（加载壳），壳 LoadLibrary 本模块
+//     后调用这里的 mpv_open_cplugin；mpv 绝不会直接加载本模块（它不以 main 命名、
+//     也不在顶层），所以此处导出标准名是安全的；
+//   - Linux / 静态 Qt 单一 DLL：mpv 直接加载本模块并调用 mpv_open_cplugin。
+// mpv 在为该客户端创建的独立线程中调用入口函数，因此可以在这里
+// 创建 QApplication 并运行 Qt 事件循环（Windows 上 Qt 不要求
+// GUI 必须位于进程主线程；阻塞本线程不会阻塞 mpv 核心）。
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <dlfcn.h> // dlsym / RTLD_DEFAULT
+#endif
+
+#include <QApplication>
+
+#include <mpv/client.h>
+
+#include "MainWindow.h"
+#include "MpvController.h"
+
+// 本模块通过 MPV_CPLUGIN_DYNAMIC_SYM 把 mpv_* 编译为指向 pfn_* 的指针，
+// 这些指针本应由 mpv 在“直接加载的模块”里填充。但本模块在 Windows 上是由壳
+// 动态加载的（mpv 不会填充这里的 pfn_*）；即便在 Linux / 静态链接场景下由 mpv
+// 直接加载，统一在入口处自行解析也最稳妥、使模块自带符号。
+// 仅解析代码中实际用到的 9 个符号即可；其余 pfn_* 保持 NULL 也无关紧要。
+// 平台差异：Windows 从 mpv.exe 取；POSIX 从全局符号表（RTLD_DEFAULT，即 mpv
+// 主程序导出的符号）取。
+static void *resolveMpvSymbol(const char *name)
+{
+#ifdef _WIN32
+    return reinterpret_cast<void *>(GetProcAddress(GetModuleHandleW(nullptr), name));
+#else
+    return dlsym(RTLD_DEFAULT, name);
+#endif
+}
+
+static void resolveMpvSymbols()
+{
+    static bool done = false;
+    if (done)
+        return;
+    done = true;
+
+    #define RESOLVE(name) \
+        pfn_##name = reinterpret_cast<decltype(pfn_##name)>(resolveMpvSymbol(#name))
+    RESOLVE(mpv_set_property_string);
+    RESOLVE(mpv_set_property);
+    RESOLVE(mpv_set_wakeup_callback);
+    RESOLVE(mpv_observe_property);
+    RESOLVE(mpv_command_string);
+    RESOLVE(mpv_command);
+    RESOLVE(mpv_get_property_string);
+    RESOLVE(mpv_free);
+    RESOLVE(mpv_wait_event);
+    #undef RESOLVE
+}
+
+extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle)
+{
+    resolveMpvSymbols();
+
+    // 防御：同一进程内入口只执行一次
+    static bool started = false;
+    if (started)
+        return 0;
+    started = true;
+
+    // argc/argv 的生命周期必须覆盖整个进程
+    static int argc = 1;
+    static char appName[] = "mpv-qt";
+    static char *argv[] = {appName, nullptr};
+
+    if (!qApp) {
+        // 有意不 delete：QApplication 必须与进程同生命周期
+        (void)new QApplication(argc, argv);
+        QApplication::setApplicationName(QStringLiteral("mpv-qt"));
+    }
+
+    auto *controller = new MpvController(handle);
+    auto *window = new MainWindow(controller);
+    controller->setParent(window);
+
+    // 作为 GUI 宿主，让 mpv 在播放列表结束后保持运行而不是直接退出
+    mpv_set_property_string(handle, "idle", "yes");
+    // keep-open 必须关闭：EOF 时由 mpv 自动前进到下一项，列表播完进入 idle；
+    // 循环行为交给 loop-file / loop-playlist 设置
+    mpv_set_property_string(handle, "keep-open", "no");
+    // pseudo-gui 模式默认 force-window=yes，空闲/停止时会绘制 mpv logo 提示图；
+    // 关掉后空闲时视频输出销毁，露出视频区 widget 的黑色背景
+    mpv_set_property_string(handle, "force-window", "no");
+
+    // 把视频渲染嵌入 Qt 窗口（与 libmpv 的 --wid 用法一致）
+    int64_t wid = int64_t(window->videoWidget()->winId());
+    mpv_set_property(handle, "wid", MPV_FORMAT_INT64, &wid);
+
+    // mpv 退出（如 MPV_EVENT_SHUTDOWN）时结束 Qt 事件循环
+    QObject::connect(controller, &MpvController::mpvShutdown, qApp, &QCoreApplication::quit);
+
+    window->show();
+    QApplication::exec();
+    return 0;
+}
