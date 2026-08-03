@@ -158,6 +158,18 @@ void PlaylistWidget::savePlaylists()
     settings.endGroup();
 }
 
+void PlaylistWidget::selectItem(int tabIndex, int row)
+{
+    if (tabIndex < 0 || tabIndex >= count())
+        return;
+    setCurrentIndex(tabIndex);
+    QListWidget *list = listAt(tabIndex);
+    if (list && row >= 0 && row < list->count()) {
+        list->setCurrentRow(row);
+        list->scrollToItem(list->currentItem());
+    }
+}
+
 void PlaylistWidget::onItemDoubleClicked(QListWidgetItem *item)
 {
     QListWidget *list = item->listWidget();

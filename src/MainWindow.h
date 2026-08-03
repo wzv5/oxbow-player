@@ -47,6 +47,9 @@ private:
     void playAt(int index);
     // 进入停止状态：停止播放（保留列表）、复位播放按钮图标
     void enterStoppedState();
+    // 持久化：关闭时保存 / 启动时恢复
+    void saveSettings();
+    void restoreSettings();
     // 循环模式："none" / "file" / "playlist"
     void applyLoopMode(const QString &mode);
     QString currentLoopMode() const;

@@ -44,12 +44,7 @@ MainWindow::MainWindow(MpvController *controller, const QString &configFile, QWi
     createMenus();
     connectController();
 
-    // 恢复上次保存的循环模式（默认不循环）
-    // 配置文件位于插件 DLL 所在目录，文件名为 mpv-qt.ini
-    const QSettings settings(m_configFile, QSettings::IniFormat);
-    applyLoopMode(settings.value(QStringLiteral("loopMode"), QStringLiteral("none")).toString());
-
-    resize(960, 600);
+    restoreSettings();
 }
 
 QWidget *MainWindow::createLeftArea()
@@ -377,9 +372,12 @@ void MainWindow::showSettingsDialog()
 
     if (dialog.exec() == QDialog::Accepted) {
         m_controller->setProperty(QStringLiteral("hwdec"), hwdecCombo->currentText());
+
+        QSettings settings(m_configFile, QSettings::IniFormat);
+        settings.setValue(QStringLiteral("hwdec"), hwdecCombo->currentText());
+
         const QString loopMode = loopCombo->currentData().toString();
         applyLoopMode(loopMode);
-        QSettings settings(m_configFile, QSettings::IniFormat);
         settings.setValue(QStringLiteral("loopMode"), loopMode);
     }
 }
@@ -389,6 +387,83 @@ void MainWindow::showAboutDialog()
     QMessageBox::about(this, tr("关于 mpv-qt"),
                        tr("mpv-qt：以 mpv C 插件形式加载的 Qt 播放器界面。\n"
                           "视频渲染由 mpv 完成，本插件仅提供图形界面。"));
+}
+
+void MainWindow::saveSettings()
+{
+    QSettings settings(m_configFile, QSettings::IniFormat);
+
+    // 音量
+    const double volume = m_controller->propertyString(QStringLiteral("volume")).toDouble();
+    settings.setValue(QStringLiteral("volume"), volume);
+
+    // 播放列表面板可见性
+    settings.setValue(QStringLiteral("playlistExpanded"), m_playlist->isVisible());
+
+    // 窗口：最大化时只保存状态，不保存具体尺寸
+    if (isMaximized()) {
+        settings.setValue(QStringLiteral("windowMaximized"), true);
+    } else {
+        settings.setValue(QStringLiteral("windowMaximized"), false);
+        settings.setValue(QStringLiteral("windowWidth"), width());
+        settings.setValue(QStringLiteral("windowHeight"), height());
+    }
+
+    // 当前播放 tab（跳过默认 tab 0）和播放项
+    const int playingTab = m_playlist->playingTabIndex();
+    if (playingTab > 0) {
+        settings.setValue(QStringLiteral("lastTab"), playingTab);
+        if (m_playlistPos >= 0)
+            settings.setValue(QStringLiteral("lastPos"), m_playlistPos);
+        else
+            settings.remove(QStringLiteral("lastPos"));
+    } else {
+        settings.remove(QStringLiteral("lastTab"));
+        settings.remove(QStringLiteral("lastPos"));
+    }
+}
+
+void MainWindow::restoreSettings()
+{
+    QSettings settings(m_configFile, QSettings::IniFormat);
+
+    // 循环模式
+    const QString loopMode = settings.value(QStringLiteral("loopMode"), QStringLiteral("none")).toString();
+    applyLoopMode(loopMode);
+
+    // 硬件解码
+    const QString hwdec = settings.value(QStringLiteral("hwdec")).toString();
+    if (!hwdec.isEmpty())
+        m_controller->setProperty(QStringLiteral("hwdec"), hwdec);
+
+    // 音量
+    if (settings.contains(QStringLiteral("volume"))) {
+        const double vol = qBound(0.0, settings.value(QStringLiteral("volume")).toDouble(), 130.0);
+        m_controller->setProperty(QStringLiteral("volume"), vol);
+        QSignalBlocker blocker(m_volumeSlider);
+        m_volumeSlider->setValue(int(vol + 0.5));
+    }
+
+    // 窗口尺寸 / 最大化
+    if (settings.value(QStringLiteral("windowMaximized"), false).toBool()) {
+        setWindowState(Qt::WindowMaximized);
+    } else if (settings.contains(QStringLiteral("windowWidth"))) {
+        resize(settings.value(QStringLiteral("windowWidth"), 960).toInt(),
+               settings.value(QStringLiteral("windowHeight"), 600).toInt());
+    } else {
+        resize(960, 600);
+    }
+
+    // 播放列表面板可见性
+    if (settings.value(QStringLiteral("playlistExpanded"), false).toBool())
+        setPlaylistVisible(true);
+
+    // 上次播放 tab 和位置（仅非默认 tab；只选中，不播放）
+    const int lastTab = settings.value(QStringLiteral("lastTab"), -1).toInt();
+    const int lastPos = settings.value(QStringLiteral("lastPos"), -1).toInt();
+    if (lastTab > 0 && lastTab < m_playlist->count() && lastPos >= 0) {
+        m_playlist->selectItem(lastTab, lastPos);
+    }
 }
 
 void MainWindow::updateTimeDisplay()
@@ -411,6 +486,7 @@ QString MainWindow::formatTime(double seconds)
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
+    saveSettings();
     // mpv 是宿主进程：关闭 GUI 时让 mpv 一并退出
     m_controller->command({QStringLiteral("quit")});
     QMainWindow::closeEvent(event);

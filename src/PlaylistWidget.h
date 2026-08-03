@@ -27,6 +27,9 @@ public:
     int playingTabIndex() const { return m_playingTab; }
     bool currentIsPlayingTab() const { return currentIndex() == m_playingTab; }
 
+    // 切换到指定 tab 并选中第 row 行
+    void selectItem(int tabIndex, int row);
+
     // 持久化：从配置文件恢复非默认播放列表 / 保存除默认外的所有列表
     void loadPlaylists();
     void savePlaylists();
