@@ -23,8 +23,8 @@
 #include <QStyle>
 #include <QVBoxLayout>
 
-MainWindow::MainWindow(MpvController *controller, QWidget *parent)
-    : QMainWindow(parent), m_controller(controller)
+MainWindow::MainWindow(MpvController *controller, const QString &configFile, QWidget *parent)
+    : QMainWindow(parent), m_controller(controller), m_configFile(configFile)
 {
     setWindowTitle(QStringLiteral("mpv-qt"));
 
@@ -44,7 +44,8 @@ MainWindow::MainWindow(MpvController *controller, QWidget *parent)
     connectController();
 
     // 恢复上次保存的循环模式（默认不循环）
-    const QSettings settings(QStringLiteral("mpv-qt"), QStringLiteral("mpv-qt"));
+    // 配置文件位于插件 DLL 所在目录，文件名为 mpv-qt.ini
+    const QSettings settings(m_configFile, QSettings::IniFormat);
     applyLoopMode(settings.value(QStringLiteral("loopMode"), QStringLiteral("none")).toString());
 
     resize(960, 600);
@@ -377,7 +378,7 @@ void MainWindow::showSettingsDialog()
         m_controller->setProperty(QStringLiteral("hwdec"), hwdecCombo->currentText());
         const QString loopMode = loopCombo->currentData().toString();
         applyLoopMode(loopMode);
-        QSettings settings(QStringLiteral("mpv-qt"), QStringLiteral("mpv-qt"));
+        QSettings settings(m_configFile, QSettings::IniFormat);
         settings.setValue(QStringLiteral("loopMode"), loopMode);
     }
 }

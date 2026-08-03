@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QMainWindow>
+#include <QString>
 
 class QAction;
 class QLabel;
@@ -14,7 +15,8 @@ class MainWindow : public QMainWindow
 {
     Q_OBJECT
 public:
-    explicit MainWindow(MpvController *controller, QWidget *parent = nullptr);
+    explicit MainWindow(MpvController *controller, const QString &configFile = QString(),
+                        QWidget *parent = nullptr);
 
     // 视频显示区域（mpv 通过 wid 嵌入的目标窗口）
     QWidget *videoWidget() const { return m_videoWidget; }
@@ -51,6 +53,7 @@ private:
     static QString formatTime(double seconds);
 
     MpvController *m_controller;
+    QString m_configFile; // 配置文件完整路径（插件 DLL 同目录下的 mpv-qt.ini）
     QSplitter *m_splitter = nullptr;
     QWidget *m_videoWidget = nullptr;
     QSlider *m_progressSlider = nullptr;

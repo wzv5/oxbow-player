@@ -16,6 +16,9 @@
 #endif
 
 #include <QApplication>
+#include <QDir>
+#include <QFileInfo>
+#include <QStandardPaths>
 
 #include <mpv/client.h>
 
@@ -59,6 +62,36 @@ static void resolveMpvSymbols()
     #undef RESOLVE
 }
 
+// 解析插件配置文件完整路径：直接放在插件 DLL 所在目录下，命名为 mpv-qt.ini。
+// 取本模块（mpvqtcore.dll）所在目录，在其下直接读写配置文件，目录本身已存在。
+// 无法获取模块路径时退回到 Qt 标准配置位置。
+static QString resolveConfigFilePath()
+{
+    QString modulePath;
+#ifdef _WIN32
+    HMODULE hModule = nullptr;
+    if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS
+                               | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           reinterpret_cast<LPCWSTR>(&resolveConfigFilePath), &hModule)) {
+        wchar_t buf[MAX_PATH] = {0};
+        const DWORD n = GetModuleFileNameW(hModule, buf, MAX_PATH);
+        modulePath = QString::fromWCharArray(buf, int(n));
+    }
+#else
+    Dl_info info{};
+    if (dladdr(reinterpret_cast<void *>(&resolveConfigFilePath), &info) && info.dli_fname)
+        modulePath = QString::fromUtf8(info.dli_fname);
+#endif
+
+    if (!modulePath.isEmpty() && QFileInfo::exists(modulePath))
+        return QFileInfo(modulePath).dir().filePath(QStringLiteral("mpv-qt.ini"));
+
+    // 兜底：写入 Qt 标准配置位置（AppConfigLocation）
+    const QString fallback = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+    QDir().mkpath(fallback);
+    return QDir(fallback).filePath(QStringLiteral("mpv-qt.ini"));
+}
+
 extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle)
 {
     resolveMpvSymbols();
@@ -81,7 +114,8 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle)
     }
 
     auto *controller = new MpvController(handle);
-    auto *window = new MainWindow(controller);
+    const QString configFile = resolveConfigFilePath();
+    auto *window = new MainWindow(controller, configFile);
     controller->setParent(window);
 
     // 作为 GUI 宿主，让 mpv 在播放列表结束后保持运行而不是直接退出
