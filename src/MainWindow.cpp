@@ -166,6 +166,13 @@ void MainWindow::connectController()
     connect(m_controller, &MpvController::timePosChanged, this, [this](double v) {
         m_timePos = v;
         updateTimeDisplay();
+        // per-tab 记忆：持续刷新播放中 tab 的进度（纯内存，落盘发生在保存时）。
+        // v>0 守卫：STOP 的 time-pos 失效事件（归零 0.0）先于 playlist-pos 失效
+        // 到达时不得把记忆覆写为 0，否则停止动作本身会销毁续播进度。
+        // 默认 tab 也记录（pt>=0），但仅进程内有效——持久化侧天然跳过索引 0
+        const int pt = m_playlist->playingTabIndex();
+        if (pt >= 0 && m_playlistPos >= 0 && v > 0.0)
+            m_playlist->recordPlayback(pt, m_playlistPos, v);
     });
     connect(m_controller, &MpvController::durationChanged, this, [this](double v) {
         m_duration = v;
@@ -194,6 +201,10 @@ void MainWindow::connectController()
         m_playlistPos = pos;
         if (pos >= 0) {
             m_lastPos = pos; // 持续记录最近播放项，停止/列表播完后以此为恢复基准
+            // per-tab 记忆：记录播放目标 tab 的最后播放项（默认 tab 仅进程内）
+            const int pt = m_playlist->playingTabIndex();
+            if (pt >= 0)
+                m_playlist->recordPlayback(pt, pos, m_timePos);
             // 启动后首次检测到播放（如命令行参数打开文件）：切换到正在播放的 tab
             if (!m_startupPlaybackCheckDone) {
                 m_startupPlaybackCheckDone = true;
@@ -226,8 +237,7 @@ void MainWindow::openFiles()
 
 void MainWindow::playAt(int index)
 {
-    m_restoreTimePos = -1.0; // 用户手动指定，清除会话恢复标记
-    m_pendingSeekRow = -1;   // 手动播放同样丢弃未执行的挂起 seek，防陈旧跳转
+    m_pendingSeekRow = -1;   // 手动播放丢弃未执行的挂起 seek，防陈旧跳转
     m_controller->setProperty(QStringLiteral("playlist-pos"), index);
     m_controller->setProperty(QStringLiteral("pause"), false);
     // 若 pause 原本就是 no，mpv 不会再推送属性变化，图标需手动更新
@@ -237,31 +247,30 @@ void MainWindow::playAt(int index)
 void MainWindow::togglePause()
 {
     if (m_playlistPos < 0) {
-        // 上次会话恢复：加载上次的非默认 tab 到 mpv，从选中项开始播放
-        if (m_restoreTimePos >= 0.0) {
-            const double seekTarget = m_restoreTimePos;
-            const int tab = m_playlist->currentIndex();
-            const int row = m_playlist->currentSelectedRow();
-            const QStringList files = m_playlist->filesOf(tab);
-            m_restoreTimePos = -1.0; // 清除，避免重复触发
-            if (!files.isEmpty() && row >= 0 && row < files.size()) {
-                // 恢复播放等价于“载入该 tab 并转移同步目标”：否则 mpv 列表回刷
-                // 会写进默认 tab，关闭时 lastTab 被存成 0，下次重启无法恢复
-                m_playlist->markPlayingTab(tab);
-                onPlayRequested(files, row);
-                // 有播放进度：挂起 seek，等目标条目的 duration 就绪后在 durationChanged 中执行一次
-                if (seekTarget > 0.0) {
-                    m_pendingSeekRow = row;
-                    m_pendingSeekTime = seekTarget;
-                }
-                return;
-            }
+        // 停止态点播放：目标恒为当前选中的 tab（A8）。
+        // 有播放记忆（含默认 tab 的进程内记忆）→ 从记忆项与进度续播；
+        // 无记忆 → 选中行优先，否则第一项；不兜底旧播放列表。
+        const int cur = m_playlist->currentIndex();
+        const QStringList files = m_playlist->filesOf(cur);
+        if (files.isEmpty())
+            return;
+        const double restoreTime = m_playlist->lastTimePosOf(cur);
+        const int memPos = m_playlist->lastPosOf(cur);
+        int row;
+        if (restoreTime >= 0.0 && memPos >= 0 && memPos < files.size()) {
+            row = memPos; // 续播记忆项
+        } else {
+            row = m_playlist->currentSelectedRow();
+            if (row < 0 || row >= files.size())
+                row = 0;
         }
-
-        // 停止状态：播放上次停止时的文件，否则播放列表第一个
-        if (m_playlistCount > 0) {
-            const int target = (m_lastPos >= 0 && m_lastPos < m_playlistCount) ? m_lastPos : 0;
-            playAt(target);
+        // 载入即转移同步目标：mpv 列表回刷写进当前 tab，关闭时 lastTabName 随之正确
+        m_playlist->markPlayingTab(cur);
+        onPlayRequested(files, row);
+        // 有播放进度：挂起 seek，等目标条目的 duration 就绪后在 durationChanged 中执行一次
+        if (restoreTime > 0.0) {
+            m_pendingSeekRow = row;
+            m_pendingSeekTime = restoreTime;
         }
         return;
     }
@@ -321,8 +330,7 @@ void MainWindow::setPlaylistVisible(bool visible)
 
 void MainWindow::onPlayRequested(const QStringList &files, int index)
 {
-    m_restoreTimePos = -1.0; // 用户双击播放，清除会话恢复标记
-    m_pendingSeekRow = -1;   // 同理丢弃未执行的挂起 seek
+    m_pendingSeekRow = -1;   // 丢弃未执行的挂起 seek
     if (files.isEmpty())
         return;
     // mpv 的 playlist-clear 会保留当前播放的条目，先 stop 才能真正清空
@@ -454,17 +462,15 @@ void MainWindow::saveSettings()
         settings.setValue(QStringLiteral("windowHeight"), height());
     }
 
-    // 当前播放 tab 和播放项（含默认 tab 0）
-    // 只在有正在播放的内容时更新会话数据；没有播放时保留旧值
+    // 会话恢复入口（Q1 方案 A）：记录播放中的非默认 tab 名；播放默认 tab 时不留痕迹
     const int playingTab = m_playlist->playingTabIndex();
-    if (playingTab >= 0 && m_playlistPos >= 0) {
-        settings.setValue(QStringLiteral("lastTab"), playingTab);
-        settings.setValue(QStringLiteral("lastPos"), m_playlistPos);
-        if (m_timePos > 0.0)
-            settings.setValue(QStringLiteral("lastTimePos"), m_timePos);
-        else
-            settings.remove(QStringLiteral("lastTimePos"));
-    }
+    if (playingTab > 0)
+        settings.setValue(QStringLiteral("lastTabName"), m_playlist->tabText(playingTab));
+    else
+        settings.remove(QStringLiteral("lastTabName"));
+
+    // per-tab 记忆随各播放列表一并落盘
+    m_playlist->savePlaylists();
 }
 
 void MainWindow::restoreSettings()
@@ -502,16 +508,13 @@ void MainWindow::restoreSettings()
     if (settings.value(QStringLiteral("playlistExpanded"), false).toBool())
         setPlaylistVisible(true);
 
-    // 上次播放 tab 和位置（含默认 tab 0；只选中高亮，不自动播放）
-    const int lastTab = settings.value(QStringLiteral("lastTab"), -1).toInt();
-    const int lastPos = settings.value(QStringLiteral("lastPos"), -1).toInt();
-    if (lastTab >= 0 && lastTab < m_playlist->count() && lastPos >= 0) {
-        m_playlist->selectItem(lastTab, lastPos);
-        // 仅非默认 tab 支持会话播放进度恢复（默认 tab 内容由 mpv 驱动）
-        if (lastTab > 0 && settings.contains(QStringLiteral("lastTimePos")))
-            m_restoreTimePos = settings.value(QStringLiteral("lastTimePos")).toDouble();
-        else if (lastTab > 0)
-            m_restoreTimePos = 0.0;
+    // 上次播放的非默认 tab：按名定位并切换，currentChanged 联动会自动选中
+    // 该 tab 记忆的最后播放项；找不到则停留默认 tab。旧全局键一次性弃用不迁移。
+    const QString lastTabName = settings.value(QStringLiteral("lastTabName")).toString();
+    if (!lastTabName.isEmpty()) {
+        const int idx = m_playlist->indexOfName(lastTabName);
+        if (idx > 0)
+            m_playlist->setCurrentIndex(idx);
     }
 }
 

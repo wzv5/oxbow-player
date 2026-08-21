@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QHash>
 #include <QTabWidget>
 #include <QStringList>
 #include <QVariantList>
@@ -27,12 +28,18 @@ public:
     int playingTabIndex() const { return m_playingTab; }
     bool currentIsPlayingTab() const { return currentIndex() == m_playingTab; }
 
-    // 切换到指定 tab 并选中第 row 行
-    void selectItem(int tabIndex, int row);
     // 当前 tab 中选中的行号，无选中项返回 -1
     int currentSelectedRow() const;
     // 转移“正在播放”同步目标到指定 tab（双击条目或会话恢复载入时调用）
     void markPlayingTab(int tabIndex) { m_playingTab = tabIndex; }
+
+    // 记录某 tab 的最后播放项与进度（仅非默认 tab 生效；纯内存，落盘发生在保存时）
+    void recordPlayback(int tabIndex, int pos, double seconds);
+    // 某 tab 记忆的最后播放项 / 进度，无记录返回 -1 / -1.0
+    int lastPosOf(int tabIndex) const;
+    double lastTimePosOf(int tabIndex) const;
+    // 按 tab 标题查找索引，找不到返回 -1
+    int indexOfName(const QString &name) const;
 
     // 持久化：从配置文件恢复非默认播放列表 / 保存除默认外的所有列表
     void loadPlaylists();
@@ -56,11 +63,21 @@ protected:
 
 private slots:
     void onItemDoubleClicked(QListWidgetItem *item);
+    void onTabChanged(int index);
 
 private:
+    // 单个 tab 的播放记忆（默认 tab 仅进程内有效，持久化时跳过索引 0）
+    struct TabMemory
+    {
+        int lastPos = -1;
+        double lastTimePos = -1.0;
+    };
+
     QListWidget *createList();
     QListWidget *listAt(int index) const;
 
     int m_playingTab = 0;
     QString m_configFile;
+    // 以 list 指针为键：不受 tab 增删导致的索引漂移影响
+    QHash<const QListWidget *, TabMemory> m_memory;
 };

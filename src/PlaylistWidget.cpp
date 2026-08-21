@@ -19,6 +19,7 @@ PlaylistWidget::PlaylistWidget(const QString &configFile, QWidget *parent)
     setDocumentMode(true);
     setMinimumWidth(220);
     addTab(createList(), tr("默认"));
+    connect(this, &QTabWidget::currentChanged, this, &PlaylistWidget::onTabChanged);
 }
 
 QListWidget *PlaylistWidget::createList()
@@ -109,9 +110,12 @@ void PlaylistWidget::loadPlaylists()
         }
 
         auto *list = createList();
+        const int lastPos = settings.value(QStringLiteral("lastPos"), -1).toInt();
+        const double lastTimePos = settings.value(QStringLiteral("lastTimePos"), -1.0).toDouble();
         const QStringList keys = settings.childKeys();
         for (const QString &key : keys) {
-            if (key == QLatin1String("name"))
+            if (key == QLatin1String("name")
+                || key == QLatin1String("lastPos") || key == QLatin1String("lastTimePos"))
                 continue;
             const QString file = settings.value(key).toString();
             if (!file.isEmpty()) {
@@ -122,6 +126,8 @@ void PlaylistWidget::loadPlaylists()
         }
         settings.endGroup();
         addTab(list, name);
+        if (lastPos >= 0)
+            m_memory[list] = { lastPos, lastTimePos };
     }
 }
 
@@ -139,14 +145,19 @@ void PlaylistWidget::savePlaylists()
 
     int savedIdx = 0;
     for (int i = 0; i < count(); ++i) {
-        // 不保存"默认"tab（索引 0）和"正在播放"tab（其内容由 mpv 驱动）
-        if (i == 0 || i == m_playingTab)
+        // 仅不保存"默认"tab（索引 0）；非默认 tab 即使是播放目标也持久化内容与记忆
+        if (i == 0)
             continue;
 
         const QStringList files = filesOf(i);
         const QString section = QStringLiteral("Playlist_%1").arg(savedIdx);
         settings.beginGroup(section);
         settings.setValue(QStringLiteral("name"), tabText(i));
+        const TabMemory mem = m_memory.value(listAt(i));
+        if (mem.lastPos >= 0) {
+            settings.setValue(QStringLiteral("lastPos"), mem.lastPos);
+            settings.setValue(QStringLiteral("lastTimePos"), mem.lastTimePos);
+        }
         for (int j = 0; j < files.size(); ++j)
             settings.setValue(QString::number(j), files[j]);
         settings.endGroup();
@@ -158,12 +169,47 @@ void PlaylistWidget::savePlaylists()
     settings.endGroup();
 }
 
-void PlaylistWidget::selectItem(int tabIndex, int row)
+void PlaylistWidget::recordPlayback(int tabIndex, int pos, double seconds)
 {
-    if (tabIndex < 0 || tabIndex >= count())
+    if (tabIndex < 0 || pos < 0) // 负索引无效；默认 tab 允许进程内记忆（不持久化）
         return;
-    setCurrentIndex(tabIndex);
     QListWidget *list = listAt(tabIndex);
+    if (!list)
+        return;
+    TabMemory &mem = m_memory[list];
+    mem.lastPos = pos;
+    mem.lastTimePos = seconds;
+}
+
+int PlaylistWidget::lastPosOf(int tabIndex) const
+{
+    const QListWidget *list = listAt(tabIndex);
+    return list ? m_memory.value(list).lastPos : -1;
+}
+
+double PlaylistWidget::lastTimePosOf(int tabIndex) const
+{
+    const QListWidget *list = listAt(tabIndex);
+    return list ? m_memory.value(list).lastTimePos : -1.0;
+}
+
+int PlaylistWidget::indexOfName(const QString &name) const
+{
+    for (int i = 0; i < count(); ++i) {
+        if (tabText(i) == name)
+            return i;
+    }
+    return -1;
+}
+
+void PlaylistWidget::onTabChanged(int index)
+{
+    // 切换到非播放 tab 时自动选中该 tab 记忆的最后播放项；
+    // 播放 tab 的选中项由 mpv 同步高亮驱动，跳过以避免互相覆盖
+    if (index < 0 || index == m_playingTab)
+        return;
+    QListWidget *list = listAt(index);
+    const int row = lastPosOf(index);
     if (list && row >= 0 && row < list->count()) {
         list->setCurrentRow(row);
         list->scrollToItem(list->currentItem());
@@ -292,6 +338,9 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event)
         }
     } else if (chosen == closeTabAction) {
         const int idx = currentIndex();
+        // 先清理被关闭 tab 的播放记忆，防悬垂指针键
+        if (QListWidget *closing = listAt(idx))
+            m_memory.remove(closing);
         if (m_playingTab == idx)
             m_playingTab = 0;
         else if (m_playingTab > idx)
