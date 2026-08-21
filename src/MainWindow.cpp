@@ -170,6 +170,14 @@ void MainWindow::connectController()
     connect(m_controller, &MpvController::durationChanged, this, [this](double v) {
         m_duration = v;
         updateTimeDisplay();
+        // 会话恢复的挂起 seek：仅当就绪的 duration 属于目标条目时执行一次，
+        // 避免被其他条目（如加载过程中的瞬态条目）的 duration 事件误导
+        if (m_pendingSeekRow >= 0 && v > 0.0 && m_playlistPos == m_pendingSeekRow) {
+            const double target = m_pendingSeekTime;
+            m_pendingSeekRow = -1;
+            m_pendingSeekTime = -1.0;
+            m_controller->command({QStringLiteral("seek"), QString::number(target), QStringLiteral("absolute")});
+        }
     });
     connect(m_controller, &MpvController::pauseChanged, this, [this](bool paused) {
         m_playButton->setIcon(style()->standardIcon(paused ? QStyle::SP_MediaPlay : QStyle::SP_MediaPause));
@@ -219,6 +227,7 @@ void MainWindow::openFiles()
 void MainWindow::playAt(int index)
 {
     m_restoreTimePos = -1.0; // 用户手动指定，清除会话恢复标记
+    m_pendingSeekRow = -1;   // 手动播放同样丢弃未执行的挂起 seek，防陈旧跳转
     m_controller->setProperty(QStringLiteral("playlist-pos"), index);
     m_controller->setProperty(QStringLiteral("pause"), false);
     // 若 pause 原本就是 no，mpv 不会再推送属性变化，图标需手动更新
@@ -236,15 +245,14 @@ void MainWindow::togglePause()
             const QStringList files = m_playlist->filesOf(tab);
             m_restoreTimePos = -1.0; // 清除，避免重复触发
             if (!files.isEmpty() && row >= 0 && row < files.size()) {
+                // 恢复播放等价于“载入该 tab 并转移同步目标”：否则 mpv 列表回刷
+                // 会写进默认 tab，关闭时 lastTab 被存成 0，下次重启无法恢复
+                m_playlist->markPlayingTab(tab);
                 onPlayRequested(files, row);
-                // 有播放进度：等文件加载完成后跳转
+                // 有播放进度：挂起 seek，等目标条目的 duration 就绪后在 durationChanged 中执行一次
                 if (seekTarget > 0.0) {
-                    connect(m_controller, &MpvController::durationChanged, this,
-                            [this, seekTarget](double d) {
-                                if (d > 0.0)
-                                    m_controller->command({QStringLiteral("seek"),
-                                                           QString::number(seekTarget), QStringLiteral("absolute")});
-                            }, Qt::SingleShotConnection);
+                    m_pendingSeekRow = row;
+                    m_pendingSeekTime = seekTarget;
                 }
                 return;
             }
@@ -314,16 +322,21 @@ void MainWindow::setPlaylistVisible(bool visible)
 void MainWindow::onPlayRequested(const QStringList &files, int index)
 {
     m_restoreTimePos = -1.0; // 用户双击播放，清除会话恢复标记
+    m_pendingSeekRow = -1;   // 同理丢弃未执行的挂起 seek
     if (files.isEmpty())
         return;
     // mpv 的 playlist-clear 会保留当前播放的条目，先 stop 才能真正清空
     m_controller->command({QStringLiteral("stop")});
     m_controller->command({QStringLiteral("playlist-clear")});
-    for (const QString &file : files)
-        m_controller->command({QStringLiteral("loadfile"), file, QStringLiteral("append-play")});
+    // 全部按原顺序 append（不自动播），最后以 playlist-pos 启动目标条目：
+    // 既避免 idle 下 append-play 瞬态播放 file[0]，也保持 mpv 列表顺序与界面一致
+    for (int i = 0; i < files.size(); ++i)
+        m_controller->command({QStringLiteral("loadfile"), files[i], QStringLiteral("append")});
     m_controller->setProperty(QStringLiteral("playlist-pos"), index);
     // pause 状态在文件切换后仍然保持，双击播放时显式恢复播放
     m_controller->setProperty(QStringLiteral("pause"), false);
+    // pause 原本就是 no 时 mpv 不会再推送属性变化，图标需手动更新（同 playAt）
+    m_playButton->setIcon(style()->standardIcon(QStyle::SP_MediaPause));
 }
 
 void MainWindow::onRemoveRequested(QList<int> rows)

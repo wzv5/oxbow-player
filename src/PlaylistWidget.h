@@ -31,6 +31,8 @@ public:
     void selectItem(int tabIndex, int row);
     // 当前 tab 中选中的行号，无选中项返回 -1
     int currentSelectedRow() const;
+    // 转移“正在播放”同步目标到指定 tab（双击条目或会话恢复载入时调用）
+    void markPlayingTab(int tabIndex) { m_playingTab = tabIndex; }
 
     // 持久化：从配置文件恢复非默认播放列表 / 保存除默认外的所有列表
     void loadPlaylists();
@@ -58,7 +60,6 @@ private slots:
 private:
     QListWidget *createList();
     QListWidget *listAt(int index) const;
-    void setPlayingTab(int index) { m_playingTab = index; }
 
     int m_playingTab = 0;
     QString m_configFile;

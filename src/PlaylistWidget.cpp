@@ -185,7 +185,7 @@ void PlaylistWidget::onItemDoubleClicked(QListWidgetItem *item)
     if (!list || tab < 0)
         return;
 
-    setPlayingTab(tab);
+    markPlayingTab(tab);
     emit playRequested(filesOf(tab), list->row(item));
 }
 

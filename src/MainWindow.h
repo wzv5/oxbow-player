@@ -75,4 +75,6 @@ private:
     int m_playlistCount = 0;
     bool m_startupPlaybackCheckDone = false;
     double m_restoreTimePos = -1.0; // >0：有上次会话待恢复，值为目标播放进度（秒）
+    int m_pendingSeekRow = -1;      // >=0：有挂起的会话恢复 seek，值为目标行；-1 无
+    double m_pendingSeekTime = -1.0; // 挂起 seek 的目标进度（秒），配合 m_pendingSeekRow 使用
 };
