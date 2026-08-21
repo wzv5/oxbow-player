@@ -45,6 +45,8 @@ private:
     void connectController();
     void updateTimeDisplay();
     void playAt(int index);
+    // 停止态的上一个/下一个步进（A9）：以当前选中列表为基准并开始播放
+    void stepStopped(int delta);
     // 进入停止状态：停止播放（保留列表）、复位播放按钮图标
     void enterStoppedState();
     // 持久化：关闭时保存 / 启动时恢复
@@ -71,8 +73,6 @@ private:
     double m_timePos = 0.0;
     bool m_seeking = false;
     int m_playlistPos = -1;   // mpv 当前播放项，-1 表示停止状态
-    int m_lastPos = -1;       // 最近一个有效播放项，用于停止状态下恢复/上下首
-    int m_playlistCount = 0;
     bool m_startupPlaybackCheckDone = false;
     int m_pendingSeekRow = -1;      // >=0：有挂起的会话恢复 seek，值为目标行；-1 无
     double m_pendingSeekTime = -1.0; // 挂起 seek 的目标进度（秒），配合 m_pendingSeekRow 使用

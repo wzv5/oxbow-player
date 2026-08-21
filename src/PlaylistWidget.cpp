@@ -27,6 +27,8 @@ QListWidget *PlaylistWidget::createList()
     auto *list = new QListWidget;
     // 子列表不接受拖放，事件会上溯到本 QTabWidget 统一处理
     list->setAcceptDrops(false);
+    // 播放列表不允许多选（显式声明，锁定约束）
+    list->setSelectionMode(QAbstractItemView::SingleSelection);
     connect(list, &QListWidget::itemDoubleClicked, this, &PlaylistWidget::onItemDoubleClicked);
     return list;
 }
@@ -52,7 +54,12 @@ void PlaylistWidget::setPlaylist(const QVariantList &items)
     if (!list)
         return;
 
+    // 记录重建前的选中行（单选）：停止后 mpv 列表无 current 项，
+    // 不恢复的话整体重建会把界面上的选中清空（仅显示问题）
+    const int prevRow = list->currentRow();
+
     list->clear();
+    QListWidgetItem *newCurrent = nullptr;
     for (const QVariant &v : items) {
         const QVariantMap map = v.toMap();
         const QString filename = map.value(QStringLiteral("filename")).toString();
@@ -67,9 +74,14 @@ void PlaylistWidget::setPlaylist(const QVariantList &items)
             QFont font = item->font();
             font.setBold(true);
             item->setFont(font);
-            list->setCurrentItem(item);
+            newCurrent = item;
         }
     }
+
+    if (newCurrent)
+        list->setCurrentItem(newCurrent);
+    else if (prevRow >= 0 && prevRow < list->count())
+        list->setCurrentRow(prevRow);
 }
 
 void PlaylistWidget::addFiles(const QStringList &files)

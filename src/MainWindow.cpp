@@ -194,13 +194,9 @@ void MainWindow::connectController()
         m_volumeSlider->setValue(int(v + 0.5));
     });
     connect(m_controller, &MpvController::playlistChanged, m_playlist, &PlaylistWidget::setPlaylist);
-    connect(m_controller, &MpvController::playlistChanged, this, [this](const QVariantList &items) {
-        m_playlistCount = items.size();
-    });
     connect(m_controller, &MpvController::playlistPosChanged, this, [this](int pos) {
         m_playlistPos = pos;
         if (pos >= 0) {
-            m_lastPos = pos; // 持续记录最近播放项，停止/列表播完后以此为恢复基准
             // per-tab 记忆：记录播放目标 tab 的最后播放项（默认 tab 仅进程内）
             const int pt = m_playlist->playingTabIndex();
             if (pt >= 0)
@@ -293,25 +289,45 @@ void MainWindow::stop()
 void MainWindow::playlistPrev()
 {
     if (m_playlistPos < 0) {
-        // 停止状态：以最近播放项为基准向前
-        const int base = m_lastPos >= 0 ? m_lastPos : 0;
-        if (base - 1 >= 0 && m_playlistCount > 0)
-            playAt(base - 1);
+        stepStopped(-1);
         return;
     }
     m_controller->command({QStringLiteral("playlist-prev")});
+    // 始终选中正在播放的列表（A9）
+    const int pt = m_playlist->playingTabIndex();
+    if (pt >= 0 && m_playlist->currentIndex() != pt)
+        m_playlist->setCurrentIndex(pt);
 }
 
 void MainWindow::playlistNext()
 {
     if (m_playlistPos < 0) {
-        // 停止状态：以最近播放项为基准向后
-        const int base = m_lastPos >= 0 ? m_lastPos : 0;
-        if (base + 1 < m_playlistCount)
-            playAt(base + 1);
+        stepStopped(1);
         return;
     }
     m_controller->command({QStringLiteral("playlist-next")});
+    // 始终选中正在播放的列表（A9）
+    const int pt = m_playlist->playingTabIndex();
+    if (pt >= 0 && m_playlist->currentIndex() != pt)
+        m_playlist->setCurrentIndex(pt);
+}
+
+// 停止态的上一个/下一个（A9）：以当前选中列表为基准步进并开始播放。
+// base：有记忆取记忆项，否则第 0 项；越界无动作（暂不做循环）。
+void MainWindow::stepStopped(int delta)
+{
+    const int cur = m_playlist->currentIndex();
+    const QStringList files = m_playlist->filesOf(cur);
+    if (files.isEmpty())
+        return;
+    int base = m_playlist->lastPosOf(cur);
+    if (base < 0 || base >= files.size())
+        base = 0;
+    const int target = base + delta;
+    if (target < 0 || target >= files.size())
+        return;
+    m_playlist->markPlayingTab(cur);
+    onPlayRequested(files, target);
 }
 
 void MainWindow::seekReleased()
