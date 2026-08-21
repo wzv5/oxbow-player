@@ -57,6 +57,9 @@ set(MPV_BIN_DIR "" CACHE PATH "mpv.exe 所在目录；设置后构建完毕自�
 if(MPV_BIN_DIR)
     set(MPVQT_SCRIPT_DIR "${MPV_BIN_DIR}/portable_config/scripts/mpvqt")
     find_program(WINDEPLOYQT_EXE windeployqt HINTS "${Qt6_DIR}/../../../bin")
+    if(NOT WINDEPLOYQT_EXE)
+        message(FATAL_ERROR "windeployqt 未找到：请确认 CMAKE_PREFIX_PATH 指向 Qt 安装目录（其 bin 下含 windeployqt）")
+    endif()
     add_custom_command(TARGET mpvqtcore POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory "${MPVQT_SCRIPT_DIR}"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:mpvqt_loader> "${MPVQT_SCRIPT_DIR}/main.dll"

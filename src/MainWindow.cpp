@@ -5,6 +5,7 @@
 
 #include <algorithm>
 
+#include <QApplication>
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QDialog>
@@ -197,6 +198,7 @@ void MainWindow::connectController()
     connect(m_controller, &MpvController::playlistPosChanged, this, [this](int pos) {
         m_playlistPos = pos;
         if (pos >= 0) {
+            m_playedThisSession = true; // A13：标记本进程发生过播放
             // per-tab 记忆：记录播放目标 tab 的最后播放项（默认 tab 仅进程内）
             const int pt = m_playlist->playingTabIndex();
             if (pt >= 0)
@@ -220,6 +222,8 @@ void MainWindow::connectController()
     connect(m_playlist, &PlaylistWidget::filesAdded, this, &MainWindow::onFilesAdded);
     connect(m_playlist, &PlaylistWidget::removeRequested, this, &MainWindow::onRemoveRequested);
     connect(m_playlist, &PlaylistWidget::clearRequested, this, &MainWindow::onClearRequested);
+    // mpv 侧退出：补保存会话后再结束事件循环（A6）
+    connect(m_controller, &MpvController::mpvShutdown, this, &MainWindow::onMpvShutdown);
 }
 
 void MainWindow::openFiles()
@@ -340,8 +344,14 @@ void MainWindow::seekReleased()
 void MainWindow::setPlaylistVisible(bool visible)
 {
     m_playlist->setVisible(visible);
-    QSignalBlocker blocker(m_playlistToggle);
-    m_playlistToggle->setChecked(visible);
+    // 三个控件的状态统一由本函数收口（A12）：启动恢复路径不经过
+    // 按钮→动作链，若不同步 QAction，两者分叉会导致首次点击空转
+    {
+        QSignalBlocker blocker(m_playlistToggle);
+        m_playlistToggle->setChecked(visible);
+    }
+    QSignalBlocker actionBlocker(m_playlistAction);
+    m_playlistAction->setChecked(visible);
 }
 
 void MainWindow::onPlayRequested(const QStringList &files, int index)
@@ -458,13 +468,27 @@ void MainWindow::showAboutDialog()
                           "视频渲染由 mpv 完成，本插件仅提供图形界面。"));
 }
 
+void MainWindow::onMpvShutdown()
+{
+    // mpv 侧发起退出（终端按 q、其他脚本发 quit）时 closeEvent 不会触发，
+    // 在此补保存会话；窗口关闭路径随后到来的重复保存写同值幂等无害
+    saveSettings();
+    QApplication::quit();
+}
+
 void MainWindow::saveSettings()
 {
+    // A11：每次进程只落盘一次。关窗路径会保存两次（closeEvent + SHUTDOWN 补存），
+    // 第二次发生在窗口隐藏后，isVisible() 等活体状态会被读错
+    if (m_settingsSaved)
+        return;
+    m_settingsSaved = true;
+
     QSettings settings(m_configFile, QSettings::IniFormat);
 
-    // 音量
-    const double volume = m_controller->propertyString(QStringLiteral("volume")).toDouble();
-    settings.setValue(QStringLiteral("volume"), volume);
+    // 音量：读 UI 缓存而非实时查询 mpv——SHUTDOWN 后查询可能失败返回空串，
+    // toDouble() 得 0 会把音量误存为 0
+    settings.setValue(QStringLiteral("volume"), m_volumeSlider->value());
 
     // 播放列表面板可见性
     settings.setValue(QStringLiteral("playlistExpanded"), m_playlist->isVisible());
@@ -478,12 +502,16 @@ void MainWindow::saveSettings()
         settings.setValue(QStringLiteral("windowHeight"), height());
     }
 
-    // 会话恢复入口（Q1 方案 A）：记录播放中的非默认 tab 名；播放默认 tab 时不留痕迹
-    const int playingTab = m_playlist->playingTabIndex();
-    if (playingTab > 0)
-        settings.setValue(QStringLiteral("lastTabName"), m_playlist->tabText(playingTab));
-    else
-        settings.remove(QStringLiteral("lastTabName"));
+    // 会话恢复入口（Q1 方案 A）：记录播放中的非默认 tab 名。
+    // 仅当本次进程发生过播放才更新/清除（A13）：未播放就关闭属于会话延续，
+    // 上次保存的 lastTabName 与各 tab 记忆仍然有效，不得清空
+    if (m_playedThisSession) {
+        const int playingTab = m_playlist->playingTabIndex();
+        if (playingTab > 0)
+            settings.setValue(QStringLiteral("lastTabName"), m_playlist->tabText(playingTab));
+        else
+            settings.remove(QStringLiteral("lastTabName"));
+    }
 
     // per-tab 记忆随各播放列表一并落盘
     m_playlist->savePlaylists();

@@ -20,6 +20,9 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QStandardPaths>
+#include <QTemporaryFile>
+
+#include <string>
 
 #include <mpv/client.h>
 
@@ -93,9 +96,13 @@ static QString resolveConfigFilePath()
     if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS
                                | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
                            reinterpret_cast<LPCWSTR>(&resolveConfigFilePath), &hModule)) {
-        wchar_t buf[MAX_PATH] = {0};
-        const DWORD n = GetModuleFileNameW(hModule, buf, MAX_PATH);
-        modulePath = QString::fromWCharArray(buf, int(n));
+        // 按需增长缓冲直至不被截断（B4 终版方案，不写死长度）
+        std::wstring buf(MAX_PATH, L'\0');
+        DWORD n = 0;
+        while ((n = GetModuleFileNameW(hModule, buf.data(),
+                                       static_cast<DWORD>(buf.size()))) == buf.size())
+            buf.resize(buf.size() * 2);
+        modulePath = QString::fromWCharArray(buf.data(), static_cast<int>(n));
     }
 #else
     Dl_info info{};
@@ -103,8 +110,14 @@ static QString resolveConfigFilePath()
         modulePath = QString::fromUtf8(info.dli_fname);
 #endif
 
-    if (!modulePath.isEmpty() && QFileInfo::exists(modulePath))
-        return QFileInfo(modulePath).dir().filePath(QStringLiteral("mpv-qt.ini"));
+    if (!modulePath.isEmpty() && QFileInfo::exists(modulePath)) {
+        // 目录只读（如安装于 Program Files）时 QSettings 会静默失败，
+        // 以写探针判定；不可写则走标准配置位置
+        const QString dir = QFileInfo(modulePath).absolutePath();
+        QTemporaryFile probe(dir + QStringLiteral("/mpvqt-XXXXXX.tmp"));
+        if (probe.open())
+            return QDir(dir).filePath(QStringLiteral("mpv-qt.ini"));
+    }
 
     // 兜底：写入 Qt 标准配置位置（AppConfigLocation）
     const QString fallback = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
@@ -152,8 +165,8 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle)
     int64_t wid = int64_t(window->videoWidget()->winId());
     mpv_set_property(handle, "wid", MPV_FORMAT_INT64, &wid);
 
-    // mpv 退出（如 MPV_EVENT_SHUTDOWN）时结束 Qt 事件循环
-    QObject::connect(controller, &MpvController::mpvShutdown, qApp, &QCoreApplication::quit);
+    // mpv 退出（如 MPV_EVENT_SHUTDOWN）时由 MainWindow::onMpvShutdown
+    // 补保存会话并结束 Qt 事件循环
 
     window->show();
     QApplication::exec();

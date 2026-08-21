@@ -7,9 +7,10 @@
 //
 // 壳的工作：
 //   1. 取得自身所在目录（即 scripts/mpvqt/）；
-//   2. 把该目录（以及其中的 Qt 插件子目录）加入 DLL / Qt 搜索路径；
-//   3. 用 LoadLibrary 加载真正带 Qt 的插件 mpvqtcore.dll（同目录），
-//      由其所在目录就能解析出共置的 Qt 运行库；
+//   2. 设置 Qt 插件搜索环境变量，指向共置的 Qt 插件子目录；
+//   3. 以 LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR 精确加载真正带 Qt 的插件
+//      mpvqtcore.dll（同目录），其依赖的 Qt 运行库从该目录解析；
+//      不改动进程级默认搜索行为，避免影响 mpv 自身的延迟 DLL 加载；
 //   4. 把 mpv 的入口调用转发给 mpvqtcore.dll 导出的 mpv_open_cplugin。
 //
 // 这样 Qt 运行库随插件一起放在 scripts/mpvqt/ 下即可，无需污染 mpv.exe 目录。
@@ -17,7 +18,7 @@
 #define _WIN32_WINNT 0x0A00
 #include <windows.h>
 
-#include <cwchar>
+#include <string>
 
 typedef int (*MpvOpenCpluginFunc)(void *handle);
 
@@ -35,16 +36,23 @@ static HMODULE ThisModule()
     return h;
 }
 
-// 取模块路径的目录部分（含末尾反斜杠）。
-static void DirOfModule(HMODULE h, wchar_t *dir, size_t dirLen)
+// 取模块完整路径：返回值等于缓冲大小时视为截断，倍增重试直至容纳（B4）。
+static std::wstring ModuleFilePath(HMODULE h)
 {
-    wchar_t path[MAX_PATH] = {0};
-    GetModuleFileNameW(h, path, MAX_PATH);
-    size_t len = wcsnlen(path, MAX_PATH);
-    while (len > 0 && path[len - 1] != L'\\' && path[len - 1] != L'/')
-        --len;
-    wcsncpy_s(dir, dirLen, path, len);
-    dir[len] = L'\0';
+    std::wstring buf(MAX_PATH, L'\0');
+    DWORD len = 0;
+    while ((len = GetModuleFileNameW(h, buf.data(), static_cast<DWORD>(buf.size()))) == buf.size())
+        buf.resize(buf.size() * 2);
+    buf.resize(len);
+    return buf;
+}
+
+// 取模块所在目录（含末尾反斜杠）。
+static std::wstring ModuleDir(HMODULE h)
+{
+    const std::wstring path = ModuleFilePath(h);
+    const size_t pos = path.find_last_of(L"\\/");
+    return pos == std::wstring::npos ? std::wstring() : path.substr(0, pos + 1);
 }
 
 static bool LoadCore()
@@ -53,40 +61,28 @@ static bool LoadCore()
         return g_core != nullptr;
     g_tried = true;
 
-    wchar_t pluginDir[MAX_PATH] = {0};
-    DirOfModule(ThisModule(), pluginDir, MAX_PATH);
-
-    // 仅执行一次：把插件目录纳入“默认 DLL 搜索路径”，
-    // 使 mpvqtcore.dll 的 Qt 运行库（与其共置）可被解析。
-    // 同时保留应用程序目录（mpv.exe 所在）与系统目录，不影响 mpv 自身加载。
-    static bool searchConfigured = false;
-    if (!searchConfigured) {
-        SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_USER_DIRS |
-                                 LOAD_LIBRARY_SEARCH_SYSTEM32 |
-                                 LOAD_LIBRARY_SEARCH_APPLICATION_DIR);
-        AddDllDirectory(pluginDir);
-        searchConfigured = true;
-    }
+    const std::wstring pluginDir = ModuleDir(ThisModule());
+    if (pluginDir.empty())
+        return false;
 
     // 让 Qt 在运行时能定位到共置的插件（平台插件/样式/图像格式等）。
     // windeployqt 默认把这些插件类型目录直接部署在插件目录下
     // （platforms/qwindows.dll、styles/、imageformats/ …），因此：
     //   - QT_PLUGIN_PATH 指向插件根目录（Qt 会去 <path>/platforms、<path>/styles 等下找）；
     //   - QT_QPA_PLATFORM_PLUGIN_PATH 精确指向 platforms 目录。
-    SetEnvironmentVariableW(L"QT_PLUGIN_PATH", pluginDir);
+    SetEnvironmentVariableW(L"QT_PLUGIN_PATH", pluginDir.c_str());
 
-    wchar_t platformPath[MAX_PATH] = {0};
-    wcscpy_s(platformPath, pluginDir);
-    wcscat_s(platformPath, L"platforms");
-    SetEnvironmentVariableW(L"QT_QPA_PLATFORM_PLUGIN_PATH", platformPath);
+    const std::wstring platformPath = pluginDir + L"platforms";
+    SetEnvironmentVariableW(L"QT_QPA_PLATFORM_PLUGIN_PATH", platformPath.c_str());
 
-    wchar_t corePath[MAX_PATH] = {0};
-    wcscpy_s(corePath, pluginDir);
-    wcscat_s(corePath, L"mpvqtcore.dll");
+    const std::wstring corePath = pluginDir + L"mpvqtcore.dll";
 
-    // 使用默认搜索路径（已包含插件用户目录）加载核心插件，
-    // 其 Qt 依赖借此从同目录解析。
-    g_core = LoadLibraryExW(corePath, nullptr, LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+    // DLL_LOAD_DIR：加载期间把 mpvqtcore.dll 自身目录临时置于依赖搜索序之首，
+    // 共置的 Qt 运行库借此解析；DEFAULT_DIRS 保留系统目录与应用程序目录。
+    // 相比改写进程级默认搜索（SetDefaultDllDirectories），此处作用域仅限本次
+    // 加载，不影响 mpv 之后按 PATH/CWD 的延迟 DLL 加载。
+    g_core = LoadLibraryExW(corePath.c_str(), nullptr,
+                            LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
     if (!g_core) {
         OutputDebugStringW(L"[mpvqt] 加载 mpvqtcore.dll 失败\n");
         return false;

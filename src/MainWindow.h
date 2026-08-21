@@ -38,6 +38,7 @@ private slots:
     void onFilesAdded(const QStringList &files);
     void onRemoveRequested(QList<int> rows);
     void onClearRequested();
+    void onMpvShutdown();
 
 private:
     void createMenus();
@@ -76,4 +77,10 @@ private:
     bool m_startupPlaybackCheckDone = false;
     int m_pendingSeekRow = -1;      // >=0：有挂起的会话恢复 seek，值为目标行；-1 无
     double m_pendingSeekTime = -1.0; // 挂起 seek 的目标进度（秒），配合 m_pendingSeekRow 使用
+    // 会话数据每次进程只落盘一次（A11）：二次保存在窗口隐藏后触发，
+    // isVisible() 等活体状态会被读错（playlistExpanded 曾被覆写为 false）
+    bool m_settingsSaved = false;
+    // 本次进程是否发生过播放（A13）：未播放就关闭属于会话延续，
+    // 不得清除上次保存的 lastTabName
+    bool m_playedThisSession = false;
 };
