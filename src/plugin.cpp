@@ -12,6 +12,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #else
+#include <cstdio>
 #include <dlfcn.h> // dlsym / RTLD_DEFAULT
 #endif
 
@@ -30,6 +31,8 @@
 // 动态加载的（mpv 不会填充这里的 pfn_*）；即便在 Linux / 静态链接场景下由 mpv
 // 直接加载，统一在入口处自行解析也最稳妥、使模块自带符号。
 // 仅解析代码中实际用到的 9 个符号即可；其余 pfn_* 保持 NULL 也无关紧要。
+// 所列符号任一缺失说明宿主不是导出完整 client API 的 mpv，入口处快速失败，
+// 比运行到一半空指针崩溃更可诊断。
 // 平台差异：Windows 从 mpv.exe 取；POSIX 从全局符号表（RTLD_DEFAULT，即 mpv
 // 主程序导出的符号）取。
 static void *resolveMpvSymbol(const char *name)
@@ -41,15 +44,20 @@ static void *resolveMpvSymbol(const char *name)
 #endif
 }
 
-static void resolveMpvSymbols()
+static bool resolveMpvSymbols()
 {
     static bool done = false;
     if (done)
-        return;
+        return true;
     done = true;
 
+    const char *missing = nullptr;
     #define RESOLVE(name) \
-        pfn_##name = reinterpret_cast<decltype(pfn_##name)>(resolveMpvSymbol(#name))
+        do { \
+            pfn_##name = reinterpret_cast<decltype(pfn_##name)>(resolveMpvSymbol(#name)); \
+            if (!pfn_##name && !missing) \
+                missing = #name; \
+        } while (0)
     RESOLVE(mpv_set_property_string);
     RESOLVE(mpv_set_property);
     RESOLVE(mpv_set_wakeup_callback);
@@ -60,6 +68,18 @@ static void resolveMpvSymbols()
     RESOLVE(mpv_free);
     RESOLVE(mpv_wait_event);
     #undef RESOLVE
+
+    if (missing) {
+#ifdef _WIN32
+        OutputDebugStringA("[mpvqt] 无法从宿主解析 mpv 符号: ");
+        OutputDebugStringA(missing);
+        OutputDebugStringA("\n");
+#else
+        fprintf(stderr, "[mpvqt] 无法从宿主解析 mpv 符号: %s\n", missing);
+#endif
+        return false;
+    }
+    return true;
 }
 
 // 解析插件配置文件完整路径：直接放在插件 DLL 所在目录下，命名为 mpv-qt.ini。
@@ -94,7 +114,8 @@ static QString resolveConfigFilePath()
 
 extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle)
 {
-    resolveMpvSymbols();
+    if (!resolveMpvSymbols())
+        return 1; // 符号缺失：让 mpv 记为脚本加载失败，而非运行期崩溃
 
     // 防御：同一进程内入口只执行一次
     static bool started = false;

@@ -121,13 +121,6 @@ QString MpvController::propertyString(const QString &name)
     return result;
 }
 
-int64_t MpvController::propertyInt64(const QString &name) const
-{
-    int64_t val = -1;
-    mpv_get_property(m_mpv, name.toUtf8().constData(), MPV_FORMAT_INT64, &val);
-    return val;
-}
-
 void MpvController::wakeupCallback(void *ctx)
 {
     // 该回调由 mpv 内部线程触发，禁止在其中调用 mpv 函数；

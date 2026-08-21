@@ -24,7 +24,6 @@ public:
     void setProperty(const QString &name, double value);
     void setProperty(const QString &name, bool value);
     QString propertyString(const QString &name);
-    int64_t propertyInt64(const QString &name) const;
 
 signals:
     void timePosChanged(double seconds);
