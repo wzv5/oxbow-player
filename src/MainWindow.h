@@ -24,6 +24,7 @@ public:
 
 protected:
     void closeEvent(QCloseEvent *event) override;
+    void showEvent(QShowEvent *event) override;
     void moveEvent(QMoveEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
 
@@ -91,4 +92,6 @@ private:
     // 本次进程是否发生过播放（A13）：未播放就关闭属于会话延续，
     // 不得清除上次保存的 lastTabName
     bool m_playedThisSession = false;
+    // B7：构造期对未显示窗口设置最大化会被平台层丢弃，记标志待首次显示应用
+    bool m_pendingMaximize = false;
 };

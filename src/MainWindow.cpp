@@ -615,7 +615,9 @@ void MainWindow::restoreSettings()
 
     // 窗口尺寸 / 最大化
     if (settings.value(QStringLiteral("windowMaximized"), false).toBool()) {
-        setWindowState(Qt::WindowMaximized);
+        // B7：不在构造期直接设最大化（未显示窗口的状态会被平台层丢弃），
+        // 记标志待首次 showEvent 应用
+        m_pendingMaximize = true;
     } else if (settings.contains(QStringLiteral("windowWidth"))) {
         resize(settings.value(QStringLiteral("windowWidth"), 960).toInt(),
                settings.value(QStringLiteral("windowHeight"), 600).toInt());
@@ -661,4 +663,14 @@ void MainWindow::closeEvent(QCloseEvent *event)
     // mpv 是宿主进程：关闭 GUI 时让 mpv 一并退出
     m_controller->command({QStringLiteral("quit")});
     QMainWindow::closeEvent(event);
+}
+
+void MainWindow::showEvent(QShowEvent *event)
+{
+    QMainWindow::showEvent(event);
+    // B7：首次显示时应用上次会话的最大化状态（构造期设置不可靠）
+    if (m_pendingMaximize) {
+        m_pendingMaximize = false;
+        setWindowState(Qt::WindowMaximized);
+    }
 }
