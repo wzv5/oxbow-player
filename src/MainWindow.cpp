@@ -103,6 +103,10 @@ QWidget *MainWindow::createLeftArea()
     nextButton->setToolTip(tr("下一个文件"));
     m_playlistToggle->setToolTip(tr("显示/隐藏播放列表"));
 
+    // 控制行按钮不接受焦点（C2）：Space 归全局快捷键，避免焦点按钮被 Space 二次触发
+    for (QPushButton *b : {m_playButton, stopButton, prevButton, nextButton, settingsButton, m_playlistToggle})
+        b->setFocusPolicy(Qt::NoFocus);
+
     controlLayout->addWidget(m_playButton);
     controlLayout->addWidget(stopButton);
     controlLayout->addWidget(prevButton);
@@ -178,6 +182,11 @@ void MainWindow::connectController()
     connect(m_controller, &MpvController::durationChanged, this, [this](double v) {
         m_duration = v;
         updateTimeDisplay();
+        if (v <= 0.0) {
+            // 停止/卸载后时长失效，进度条归零（C1）；时间显示由 updateTimeDisplay 处理
+            QSignalBlocker blocker(m_progressSlider);
+            m_progressSlider->setValue(0);
+        }
         // 会话恢复的挂起 seek：仅当就绪的 duration 属于目标条目时执行一次，
         // 避免被其他条目（如加载过程中的瞬态条目）的 duration 事件误导
         if (m_pendingSeekRow >= 0 && v > 0.0 && m_playlistPos == m_pendingSeekRow) {
@@ -212,10 +221,13 @@ void MainWindow::connectController()
             }
         }
     });
-    // 列表播完或停止后 mpv 进入空闲，复位播放按钮为“可播放”态
+    // 列表播完或停止后 mpv 进入空闲，复位播放按钮与进度条（C1）
     connect(m_controller, &MpvController::idleActive, this, [this](bool active) {
-        if (active)
+        if (active) {
             m_playButton->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
+            QSignalBlocker blocker(m_progressSlider);
+            m_progressSlider->setValue(0);
+        }
     });
 
     connect(m_playlist, &PlaylistWidget::playRequested, this, &MainWindow::onPlayRequested);

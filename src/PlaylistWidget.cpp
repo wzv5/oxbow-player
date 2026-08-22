@@ -10,6 +10,7 @@
 #include <QListWidget>
 #include <QMenu>
 #include <QMimeData>
+#include <QMessageBox>
 #include <QSettings>
 
 PlaylistWidget::PlaylistWidget(const QString &configFile, QWidget *parent)
@@ -90,16 +91,18 @@ void PlaylistWidget::addFiles(const QStringList &files)
     if (!list || files.isEmpty())
         return;
 
-    for (const QString &file : files) {
-        auto *item = new QListWidgetItem(QFileInfo(file).fileName(), list);
-        item->setData(Qt::UserRole, file);
-        item->setToolTip(file);
+    // 正在播放 tab 的内容以 mpv 回刷为准，本地不重复插入（C4：消除双刷新闪烁）
+    if (!currentIsPlayingTab()) {
+        for (const QString &file : files) {
+            auto *item = new QListWidgetItem(QFileInfo(file).fileName(), list);
+            item->setData(Qt::UserRole, file);
+            item->setToolTip(file);
+        }
+        // 非默认本地 tab 添加后持久化
+        if (currentIndex() != 0)
+            savePlaylists();
     }
     emit filesAdded(files);
-
-    // 非默认、非正在播放的 tab 是本地列表，添加后持久化
-    if (currentIndex() != 0 && !currentIsPlayingTab())
-        savePlaylists();
 }
 
 void PlaylistWidget::loadPlaylists()
@@ -116,7 +119,9 @@ void PlaylistWidget::loadPlaylists()
         const QString section = QStringLiteral("Playlist_%1").arg(i);
         settings.beginGroup(section);
         const QString name = settings.value(QStringLiteral("name")).toString();
-        if (name.isEmpty() || name == tr("默认")) {
+        // 仅跳过无名节（C3）：默认 tab 从不落盘（索引 0 即默认），文本比较
+        // 在 i18n 下脆弱、且会误伤被改名为“默认”的正常列表
+        if (name.isEmpty()) {
             settings.endGroup();
             continue;
         }
@@ -344,6 +349,23 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event)
         const QString name = QInputDialog::getText(this, tr("重命名播放列表"), tr("名称："),
                                                    QLineEdit::Normal, tabText(tab), &ok);
         if (ok && !name.isEmpty()) {
+            // 重命名守卫（C3）：与默认 tab 同名或与其他 tab 重名，
+            // 都会破坏基于 indexOfName 的会话恢复，予以拒绝
+            if (name == tabText(0)) {
+                QMessageBox::warning(this, tr("重命名播放列表"), tr("不能使用默认列表的名称。"));
+                return;
+            }
+            bool duplicated = false;
+            for (int i = count() - 1; i >= 0; --i) {
+                if (i != tab && tabText(i) == name) {
+                    duplicated = true;
+                    break;
+                }
+            }
+            if (duplicated) {
+                QMessageBox::warning(this, tr("重命名播放列表"), tr("该名称已被其他列表使用。"));
+                return;
+            }
             setTabText(tab, name);
             if (tab != 0 && tab != m_playingTab)
                 savePlaylists();
