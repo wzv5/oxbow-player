@@ -63,6 +63,16 @@ NavigatorCanvas::NavigatorCanvas(MpvController *controller, QWidget *renderArea,
             emit activeChanged(isActive());
         update();
     });
+    // 按需创建（N3）：width/height 只在变化时推送，本实例错过了播放开始时的
+    // 首推，从控制器缓存播种初始尺寸，否则播放中打开恒显示"无视频"
+    const QSize seed = controller->videoSize();
+    m_videoW = seed.width();
+    m_videoH = seed.height();
+}
+
+int NavigatorCanvas::zoomPercent() const
+{
+    return int(qBound(25.0, 100.0 * std::pow(2.0, m_zoom), 800.0) + 0.5);
 }
 
 QRectF NavigatorCanvas::frameRect() const
@@ -328,9 +338,22 @@ NavigatorPanel::NavigatorPanel(MpvController *controller, QWidget *renderArea, Q
         m_zoomSlider->setEnabled(active);
         m_zoomSpin->setEnabled(active);
     });
-    // 初始属性推送要等事件循环后到达，先灰置
-    m_zoomSlider->setEnabled(false);
-    m_zoomSpin->setEnabled(false);
+    // 按需创建（N3）：构造时即可能已有视频（从控制器缓存播种），
+    // 初始可用性与缩放显示按实际状态设定，不再假设"先灰置等推送"
+    const bool active = m_canvas->hasVideo();
+    m_zoomSlider->setEnabled(active);
+    m_zoomSpin->setEnabled(active);
+    if (active) {
+        const int percent = m_canvas->zoomPercent();
+        {
+            QSignalBlocker b(m_zoomSlider); // 防回环触发 requestZoom
+            m_zoomSlider->setValue(int((std::log2(percent / 100.0) + 2.0) * 1000 + 0.5));
+        }
+        {
+            QSignalBlocker b(m_zoomSpin);
+            m_zoomSpin->setValue(percent);
+        }
+    }
 
     connect(m_zoomSlider, &QSlider::valueChanged, this, [this](int value) {
         m_canvas->requestZoom(value / 1000.0 - 2.0);

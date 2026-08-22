@@ -11,18 +11,22 @@
 #include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QEvent>
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMenuBar>
+#include <QMouseEvent>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QSettings>
+#include <QShortcut>
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QSplitter>
 #include <QStyle>
+#include <QTimer>
 #include <QVBoxLayout>
 
 MainWindow::MainWindow(MpvController *controller, const QString &configFile, QWidget *parent)
@@ -32,6 +36,24 @@ MainWindow::MainWindow(MpvController *controller, const QString &configFile, QWi
 
     m_splitter = new QSplitter(Qt::Horizontal, this);
     m_splitter->addWidget(createLeftArea());
+
+    // 视频显示区域（N3）：主窗直接子控件，脱离布局管理，几何由
+    // syncVideoGeometry 手动同步。父链构造期确定后全程不动——setParent 会
+    // 销毁重建原生 HWND 使 mpv wid 失效（技术事实 4）。原生窗口天然覆盖
+    // 菜单栏等 alien 控件，全屏覆盖方案依赖此 z 序（技术事实 3）
+    m_videoWidget = new QWidget(this);
+    m_videoWidget->setAttribute(Qt::WA_NativeWindow);
+    m_videoWidget->setAttribute(Qt::WA_DontCreateNativeAncestors);
+    m_videoWidget->setAutoFillBackground(true);
+    QPalette videoPal = m_videoWidget->palette();
+    videoPal.setColor(QPalette::Window, Qt::black);
+    m_videoWidget->setPalette(videoPal);
+    m_videoWidget->installEventFilter(this); // 单击/双击分流
+
+    // 单击/双击区分定时器（N3）：间隔取系统双击间隔
+    m_clickTimer = new QTimer(this);
+    m_clickTimer->setSingleShot(true);
+    connect(m_clickTimer, &QTimer::timeout, this, &MainWindow::onVideoClickTimeout);
 
     m_playlist = new PlaylistWidget(configFile, m_splitter);
     m_splitter->addWidget(m_playlist);
@@ -46,14 +68,8 @@ MainWindow::MainWindow(MpvController *controller, const QString &configFile, QWi
     createMenus();
     connectController();
 
-    // 导航器浮窗（N1）：零持久化，冷启动默认隐藏；
-    // 传入视频渲染区域，视口映射需要其真实尺寸（黑边感知）
-    m_navigator = new NavigatorPanel(controller, videoWidget(), this);
-    m_navigator->hide();
-    connect(m_navigator, &NavigatorPanel::panelClosed, this, [this] {
-        QSignalBlocker blocker(m_navigatorAction); // 复位已在面板 closeEvent 中完成
-        m_navigatorAction->setChecked(false);
-    });
+    // 导航器浮窗（N3 改按需创建）：冷启动不构造对象，首次打开经
+    // ensureNavigator 创建；视口映射需要视频渲染区域的真实尺寸（黑边感知）
 
     restoreSettings();
 }
@@ -65,16 +81,17 @@ QWidget *MainWindow::createLeftArea()
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(4);
 
-    // 第一行：视频显示区域
-    m_videoWidget = new QWidget;
-    m_videoWidget->setAttribute(Qt::WA_NativeWindow);
-    m_videoWidget->setAttribute(Qt::WA_DontCreateNativeAncestors);
-    m_videoWidget->setMinimumSize(480, 270);
-    m_videoWidget->setAutoFillBackground(true);
-    QPalette pal = m_videoWidget->palette();
+    // 第一行：视频区占位符（N3）——真实视频区已改为主窗直接子控件，
+    // 此处仅提供布局槽位与几何锚点；黑色背景保证视觉不变，
+    // 最小尺寸约束必须挂在受布局管理的占位符上（对手动的视频区无效）
+    m_videoPlaceholder = new QWidget;
+    m_videoPlaceholder->setMinimumSize(480, 270);
+    m_videoPlaceholder->setAutoFillBackground(true);
+    QPalette pal = m_videoPlaceholder->palette();
     pal.setColor(QPalette::Window, Qt::black);
-    m_videoWidget->setPalette(pal);
-    layout->addWidget(m_videoWidget, 1);
+    m_videoPlaceholder->setPalette(pal);
+    m_videoPlaceholder->installEventFilter(this); // Resize/Move → syncVideoGeometry
+    layout->addWidget(m_videoPlaceholder, 1);
 
     // 第二行：进度条 + 音量条（行固定高度，音量条固定宽度）
     auto *seekRow = new QWidget;
@@ -176,6 +193,21 @@ void MainWindow::createMenus()
     m_navigatorAction->setCheckable(true);
     m_navigatorAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+N")));
     connect(m_navigatorAction, &QAction::toggled, this, &MainWindow::setNavigatorVisible);
+
+    // 全屏（N3）：F11/视图菜单/Esc/双击四路共用 toggleFullscreen 收口
+    m_fullscreenAction = viewMenu->addAction(tr("全屏(&F)"));
+    m_fullscreenAction->setCheckable(true);
+    m_fullscreenAction->setShortcut(QKeySequence(QStringLiteral("F11")));
+    connect(m_fullscreenAction, &QAction::toggled, this, [this](bool on) {
+        if (on != m_fullscreen)
+            toggleFullscreen();
+    });
+    // Esc 仅在全屏态退出：非全屏无动作；弹出菜单打开时 Esc 由 popup 自行消费
+    auto *escShortcut = new QShortcut(QKeySequence(Qt::Key_Escape), this);
+    connect(escShortcut, &QShortcut::activated, this, [this] {
+        if (m_fullscreen)
+            toggleFullscreen();
+    });
 
     QMenu *helpMenu = menuBar()->addMenu(tr("帮助(&H)"));
     helpMenu->addAction(tr("关于(&A)"), this, &MainWindow::showAboutDialog);
@@ -385,18 +417,45 @@ void MainWindow::setPlaylistVisible(bool visible)
     m_playlistAction->setChecked(visible);
 }
 
-// 导航器面板显隐（N1）：零持久化——每次显示都定位到主窗口右下角；
-// 隐藏（无论经菜单还是系统关闭钮）都会复位画面到填充窗口
+// 导航器面板显隐（N1 显隐语义 + N3 按需创建生命周期）：零持久化——
+// 每次打开都新建实例并定位到主窗口右下角；关闭（菜单/系统关闭钮）
+// 统一经 destroyNavigator 复位画面并销毁
 void MainWindow::setNavigatorVisible(bool visible)
 {
-    if (!visible) {
-        m_navigator->resetAndHide();
+    if (visible) {
+        ensureNavigator();
         return;
+    }
+    destroyNavigator();
+}
+
+// 首次需要时构造导航器浮窗并接好信号，再走标准显示流程（N1）
+void MainWindow::ensureNavigator()
+{
+    if (!m_navigator) {
+        m_navigator = new NavigatorPanel(m_controller, videoWidget(), this);
+        connect(m_navigator, &NavigatorPanel::panelClosed, this, &MainWindow::destroyNavigator);
     }
     m_navigator->adjustSize();
     m_navigator->show(); // 先显示再定位：定位函数带 isVisible 守卫，隐藏态会被跳过
     repositionNavigator();
     m_navigator->raise();
+}
+
+// 统一关闭收口（N3 口径 b，幂等）：复位画面 → 取消菜单勾选 → 销毁置 null。
+// 系统关闭钮路径 closeEvent 内已做过一次 requestReset，此处 resetAndHide
+// 再触发一次属写零属性幂等空转。QSignalBlocker 防止取消勾选递归回本函数
+void MainWindow::destroyNavigator()
+{
+    if (!m_navigator)
+        return;
+    m_navigator->resetAndHide();
+    {
+        QSignalBlocker blocker(m_navigatorAction);
+        m_navigatorAction->setChecked(false);
+    }
+    m_navigator->deleteLater();
+    m_navigator = nullptr;
 }
 
 // 浮窗不随属主联动，主窗口移动/缩放时手动跟随并刷新映射。
@@ -427,6 +486,143 @@ void MainWindow::resizeEvent(QResizeEvent *event)
 {
     QMainWindow::resizeEvent(event);
     repositionNavigator();
+    // N3：showFullScreen/showNormal 改变的是主窗尺寸，主窗 resize 是
+    // 全屏/还原后视频区几何同步的可靠最终触发点（幂等）
+    syncVideoGeometry();
+}
+
+// 视频区几何手动同步（N3）：按窗口模式分支计算目标几何。
+// 全屏铺满整个客户区；普通态对齐占位符——占位符 geometry 相对其父容器，
+// 须 mapTo 主窗坐标系
+void MainWindow::syncVideoGeometry()
+{
+    if (!m_videoWidget || !m_videoPlaceholder)
+        return;
+    if (m_fullscreen) {
+        m_videoWidget->setGeometry(rect());
+        return;
+    }
+    const QPoint origin = m_videoPlaceholder->mapTo(this, QPoint(0, 0));
+    m_videoWidget->setGeometry(QRect(origin, m_videoPlaceholder->size()));
+}
+
+// 覆盖式全屏切换（N3）：不隐藏控件、不重父化、wid 不重设、零黑闪
+void MainWindow::toggleFullscreen()
+{
+    if (!m_fullscreen) {
+        // 全屏态落盘守卫：快照进全屏前几何（saveSettings 落盘 + 退出恢复最大化共用）
+        m_preFsMaximized = isMaximized();
+        if (m_preFsMaximized) {
+            const QRect normal = normalGeometry();
+            m_preFsW = qMax(normal.width(), 0);
+            m_preFsH = qMax(normal.height(), 0);
+        } else {
+            m_preFsW = width();
+            m_preFsH = height();
+        }
+        // 导航器 zoom/pan 先存后写零：复位=保持比例填充全屏（第三节）
+        m_savedZoom = m_controller->propertyDouble(QStringLiteral("video-zoom"), 0.0);
+        m_savedPanX = m_controller->propertyDouble(QStringLiteral("video-pan-x"), 0.0);
+        m_savedPanY = m_controller->propertyDouble(QStringLiteral("video-pan-y"), 0.0);
+        m_controller->setProperty(QStringLiteral("video-zoom"), 0.0);
+        m_controller->setProperty(QStringLiteral("video-pan-x"), 0.0);
+        m_controller->setProperty(QStringLiteral("video-pan-y"), 0.0);
+        // 菜单栏为 alien 控件，实测会绘制在原生视频区之上形成顶部遮挡条
+        // （"native 天然覆盖 alien"的假设对菜单栏不成立），全屏期间整体隐藏
+        menuBar()->hide();
+        if (m_navigator)
+            m_navigator->hide();
+        m_navigatorAction->setEnabled(false);
+        m_fullscreen = true;
+        showFullScreen();
+        syncVideoGeometry(); // 不等事件链即时生效；随后的 resizeEvent 幂等兜底
+    } else {
+        m_fullscreen = false;
+        menuBar()->show(); // 恢复菜单栏（布局重排会经占位符事件链触发几何同步）
+        showNormal();
+        // 按快照恢复最大化（已显示窗口，无 B7 构造期丢弃问题）
+        if (m_preFsMaximized)
+            setWindowState(Qt::WindowMaximized);
+        syncVideoGeometry();
+        m_controller->setProperty(QStringLiteral("video-zoom"), m_savedZoom);
+        m_controller->setProperty(QStringLiteral("video-pan-x"), m_savedPanX);
+        m_controller->setProperty(QStringLiteral("video-pan-y"), m_savedPanY);
+        if (m_navigator) { // 非 null ⟹ 必为被本方案隐藏的全屏前可见面板
+            m_navigator->show();
+            repositionNavigator();
+        }
+        m_navigatorAction->setEnabled(true);
+    }
+    {
+        QSignalBlocker blocker(m_fullscreenAction); // 防循环触发 toggleFullscreen
+        m_fullscreenAction->setChecked(m_fullscreen);
+    }
+}
+
+// 实时读 mpv 的 pause（缓存可能滞后一个事件周期）；读取失败按已暂停处理，
+// 走延迟路径更安全
+bool MainWindow::isPaused()
+{
+    return m_controller->propertyFlag(QStringLiteral("pause"), true);
+}
+
+// 单击定时器超时：确非双击，执行延迟的单击动作
+// （仅暂停态恢复播放/停止态开播路径有实际效果）
+void MainWindow::onVideoClickTimeout()
+{
+    if (m_clickActionPending) {
+        m_clickActionPending = false;
+        togglePause();
+    }
+}
+
+// 占位符几何跟随 + 视频区单击/双击分流（N3）。
+// 右键与 Release 不处理：右键无任何行为变化
+bool MainWindow::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == m_videoPlaceholder) {
+        if (event->type() == QEvent::Resize || event->type() == QEvent::Move)
+            syncVideoGeometry();
+    } else if (watched == m_videoWidget) {
+        switch (event->type()) {
+        case QEvent::MouseButtonPress:
+        case QEvent::MouseButtonDblClick: {
+            auto *me = static_cast<QMouseEvent *>(event);
+            if (me->button() != Qt::LeftButton)
+                break; // 右键无任何行为变化
+            if (event->type() == QEvent::MouseButtonDblClick) {
+                m_clickTimer->stop();
+                m_clickActionPending = false;
+                if (m_pendingPauseRestore) {
+                    m_pendingPauseRestore = false;
+                    m_controller->setProperty(QStringLiteral("pause"), false); // 恢复播放
+                }
+                toggleFullscreen();
+                break;
+            }
+            // "定时器未活跃"守卫：双击间隔内带位移的第二 press 不重启流程
+            if (m_clickTimer->isActive())
+                break;
+            // 入口无条件复位两标志：状态只在单轮 press→(双击|超时)
+            // 生命周期内存活，杜绝上轮残留泄漏进本轮
+            m_pendingPauseRestore = false;
+            m_clickActionPending = false;
+            if (m_playlistPos >= 0 && !isPaused()) {
+                // 播放中：立即暂停（单击终态），双击时再恢复
+                togglePause();
+                m_pendingPauseRestore = true;
+            } else {
+                // 暂停/停止态：延迟到超时执行，避免误开播后抵消的音频闪烁
+                m_clickActionPending = true;
+            }
+            m_clickTimer->start(QApplication::doubleClickInterval());
+            break;
+        }
+        default:
+            break;
+        }
+    }
+    return QMainWindow::eventFilter(watched, event);
 }
 
 void MainWindow::onPlayRequested(const QStringList &files, int index)
@@ -569,18 +765,28 @@ void MainWindow::saveSettings()
     settings.setValue(QStringLiteral("playlistExpanded"), m_playlist->isVisible());
 
     // 窗口：最大化时额外记录普通态尺寸（B8），否则取消最大化
-    // 只能回到构造期默认几何而非上次会话的尺寸
-    if (isMaximized()) {
-        settings.setValue(QStringLiteral("windowMaximized"), true);
+    // 只能回到构造期默认几何而非上次会话的尺寸。
+    // N3 全屏态落盘守卫：全屏中实时宽高是屏幕尺寸，不得存为普通态几何，
+    // 改用进全屏前快照写入（toggleFullscreen 进入分支已缓存）
+    const bool maximized = m_fullscreen ? m_preFsMaximized : isMaximized();
+    int winW = 0, winH = 0;
+    if (m_fullscreen) {
+        winW = m_preFsW;
+        winH = m_preFsH;
+    } else if (maximized) {
         const QRect normal = normalGeometry();
         if (normal.isValid()) {
-            settings.setValue(QStringLiteral("windowWidth"), normal.width());
-            settings.setValue(QStringLiteral("windowHeight"), normal.height());
+            winW = normal.width();
+            winH = normal.height();
         }
     } else {
-        settings.setValue(QStringLiteral("windowMaximized"), false);
-        settings.setValue(QStringLiteral("windowWidth"), width());
-        settings.setValue(QStringLiteral("windowHeight"), height());
+        winW = width();
+        winH = height();
+    }
+    settings.setValue(QStringLiteral("windowMaximized"), maximized);
+    if (winW > 0 && winH > 0) {
+        settings.setValue(QStringLiteral("windowWidth"), winW);
+        settings.setValue(QStringLiteral("windowHeight"), winH);
     }
 
     // 会话恢复入口（Q1 方案 A）：记录播放中的非默认 tab 名。

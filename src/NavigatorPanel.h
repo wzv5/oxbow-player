@@ -23,6 +23,10 @@ public:
 
     void refresh() { update(); } // 渲染区域尺寸变化时由 MainWindow 驱动重绘
 
+    // 按需创建播种后的初始状态查询（N3）：面板据此初始化控件可用性与显示值
+    bool hasVideo() const { return isActive(); }
+    int zoomPercent() const;
+
     // 以下入口供面板控件调用；空闲态（无视频）下为空操作
     void requestZoom(double zoom);
     void requestReset();

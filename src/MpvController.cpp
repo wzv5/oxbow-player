@@ -132,6 +132,22 @@ QString MpvController::propertyString(const QString &name)
     return result;
 }
 
+double MpvController::propertyDouble(const QString &name, double fallback)
+{
+    double v = fallback;
+    if (mpv_get_property(m_mpv, name.toUtf8().constData(), MPV_FORMAT_DOUBLE, &v) < 0)
+        return fallback; // 失败时不写入 v
+    return v;
+}
+
+bool MpvController::propertyFlag(const QString &name, bool fallback)
+{
+    int v = fallback ? 1 : 0;
+    if (mpv_get_property(m_mpv, name.toUtf8().constData(), MPV_FORMAT_FLAG, &v) < 0)
+        return fallback;
+    return v != 0;
+}
+
 void MpvController::wakeupCallback(void *ctx)
 {
     // 该回调由 mpv 内部线程触发，禁止在其中调用 mpv 函数；

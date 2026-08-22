@@ -33,7 +33,7 @@
 // 这些指针本应由 mpv 在“直接加载的模块”里填充。但本模块在 Windows 上是由壳
 // 动态加载的（mpv 不会填充这里的 pfn_*）；即便在 Linux / 静态链接场景下由 mpv
 // 直接加载，统一在入口处自行解析也最稳妥、使模块自带符号。
-// 仅解析代码中实际用到的 9 个符号即可；其余 pfn_* 保持 NULL 也无关紧要。
+// 仅解析代码中实际用到的 10 个符号即可；其余 pfn_* 保持 NULL 也无关紧要。
 // 所列符号任一缺失说明宿主不是导出完整 client API 的 mpv，入口处快速失败，
 // 比运行到一半空指针崩溃更可诊断。
 // 平台差异：Windows 从 mpv.exe 取；POSIX 从全局符号表（RTLD_DEFAULT，即 mpv
@@ -68,6 +68,7 @@ static bool resolveMpvSymbols()
     RESOLVE(mpv_command_string);
     RESOLVE(mpv_command);
     RESOLVE(mpv_get_property_string);
+    RESOLVE(mpv_get_property);
     RESOLVE(mpv_free);
     RESOLVE(mpv_wait_event);
     #undef RESOLVE

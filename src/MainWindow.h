@@ -6,6 +6,7 @@
 class QAction;
 class QLabel;
 class QPushButton;
+class QTimer;
 class QSlider;
 class QSplitter;
 class MpvController;
@@ -27,6 +28,8 @@ protected:
     void showEvent(QShowEvent *event) override;
     void moveEvent(QMoveEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
+    // N3：占位符几何跟随 + 视频区单击/双击分流
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private slots:
     void openFiles();
@@ -57,6 +60,14 @@ private:
     void stepStopped(int delta);
     // 进入停止状态：停止播放（保留列表）、复位播放按钮图标
     void enterStoppedState();
+    // N3：覆盖式全屏、视频区几何同步与单击/双击分流
+    void toggleFullscreen();
+    void syncVideoGeometry();
+    bool isPaused();
+    void onVideoClickTimeout();
+    // N3：导航器按需创建生命周期收口（关闭即销毁，null=未打开）
+    void ensureNavigator();
+    void destroyNavigator();
     // 持久化：关闭时保存 / 启动时恢复
     void saveSettings();
     void restoreSettings();
@@ -68,7 +79,11 @@ private:
     MpvController *m_controller;
     QString m_configFile; // 配置文件完整路径（插件 DLL 同目录下的 mpv-qt.ini）
     QSplitter *m_splitter = nullptr;
+    // 视频显示区域（mpv wid 嵌入目标）：主窗直接子控件（N3），
+    // 脱离布局管理由 syncVideoGeometry 手动同步，父链构造期定死后全程不动
     QWidget *m_videoWidget = nullptr;
+    // N3：布局槽位占位符，普通态视频区几何的锚点；最小尺寸约束在此
+    QWidget *m_videoPlaceholder = nullptr;
     QSlider *m_progressSlider = nullptr;
     QSlider *m_volumeSlider = nullptr;
     QPushButton *m_playButton = nullptr;
@@ -77,7 +92,8 @@ private:
     QAction *m_playlistAction = nullptr;
     PlaylistWidget *m_playlist = nullptr;
     QAction *m_navigatorAction = nullptr; // 视图菜单"导航器"勾选项（N1）
-    NavigatorPanel *m_navigator = nullptr;
+    NavigatorPanel *m_navigator = nullptr; // 导航器浮窗（N3 按需创建）：null=未打开
+    QAction *m_fullscreenAction = nullptr; // 视图菜单"全屏"勾选项（N3）
 
     double m_duration = 0.0;
     double m_timePos = 0.0;
@@ -94,4 +110,15 @@ private:
     bool m_playedThisSession = false;
     // B7：构造期对未显示窗口设置最大化会被平台层丢弃，记标志待首次显示应用
     bool m_pendingMaximize = false;
+    // ---- N3：单击/双击分流与覆盖式全屏 ----
+    QTimer *m_clickTimer = nullptr;     // 单次定时器，间隔=双击间隔
+    bool m_pendingPauseRestore = false; // 播放中 press 已暂停，双击需恢复播放
+    bool m_clickActionPending = false;  // 暂停/停止态 press 待超时执行
+    bool m_fullscreen = false;          // 覆盖式全屏态标志（syncVideoGeometry 分支依据）
+    double m_savedZoom = 0.0;           // 进全屏前 zoom/pan 快照（先存后写零）
+    double m_savedPanX = 0.0;
+    double m_savedPanY = 0.0;
+    bool m_preFsMaximized = false;      // 进全屏前主窗几何快照：落盘守卫+退出恢复共用
+    int m_preFsW = 0;
+    int m_preFsH = 0;
 };

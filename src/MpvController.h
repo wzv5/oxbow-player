@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QObject>
+#include <QSize>
 #include <QStringList>
 #include <QVariantList>
 
@@ -24,6 +25,9 @@ public:
     void setProperty(const QString &name, double value);
     void setProperty(const QString &name, bool value);
     QString propertyString(const QString &name);
+    // 实时读属性（N3）：失败返 fallback；pause 等标志属性必须走 FLAG 格式
+    double propertyDouble(const QString &name, double fallback);
+    bool propertyFlag(const QString &name, bool fallback);
 
 signals:
     void timePosChanged(double seconds);
@@ -41,6 +45,11 @@ signals:
     void videoPanYChanged(double panY);
     void videoSizeChanged(int width, int height); // 0,0 表示无视频
     void mpvShutdown();
+
+public:
+    // 当前视频尺寸缓存（N3）：width/height 属性只在变化时推送，
+    // 按需创建的导航器画布错过首推，构造时经此播种初始值
+    QSize videoSize() const { return QSize(m_videoW, m_videoH); }
 
 protected:
     void customEvent(QEvent *event) override;
