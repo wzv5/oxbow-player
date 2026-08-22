@@ -309,6 +309,8 @@ void MainWindow::playlistPrev()
         return;
     }
     m_controller->command({QStringLiteral("playlist-prev")});
+    // 步进隐含开始播放（A9/A14）：暂停态下新条目继承 pause=yes，显式恢复播放
+    m_controller->setProperty(QStringLiteral("pause"), false);
     // 始终选中正在播放的列表（A9）
     const int pt = m_playlist->playingTabIndex();
     if (pt >= 0 && m_playlist->currentIndex() != pt)
@@ -322,6 +324,8 @@ void MainWindow::playlistNext()
         return;
     }
     m_controller->command({QStringLiteral("playlist-next")});
+    // 同上（A9/A14）
+    m_controller->setProperty(QStringLiteral("pause"), false);
     // 始终选中正在播放的列表（A9）
     const int pt = m_playlist->playingTabIndex();
     if (pt >= 0 && m_playlist->currentIndex() != pt)
