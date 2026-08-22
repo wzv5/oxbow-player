@@ -568,9 +568,15 @@ void MainWindow::saveSettings()
     // 播放列表面板可见性
     settings.setValue(QStringLiteral("playlistExpanded"), m_playlist->isVisible());
 
-    // 窗口：最大化时只保存状态，不保存具体尺寸
+    // 窗口：最大化时额外记录普通态尺寸（B8），否则取消最大化
+    // 只能回到构造期默认几何而非上次会话的尺寸
     if (isMaximized()) {
         settings.setValue(QStringLiteral("windowMaximized"), true);
+        const QRect normal = normalGeometry();
+        if (normal.isValid()) {
+            settings.setValue(QStringLiteral("windowWidth"), normal.width());
+            settings.setValue(QStringLiteral("windowHeight"), normal.height());
+        }
     } else {
         settings.setValue(QStringLiteral("windowMaximized"), false);
         settings.setValue(QStringLiteral("windowWidth"), width());
@@ -616,8 +622,13 @@ void MainWindow::restoreSettings()
     // 窗口尺寸 / 最大化
     if (settings.value(QStringLiteral("windowMaximized"), false).toBool()) {
         // B7：不在构造期直接设最大化（未显示窗口的状态会被平台层丢弃），
-        // 记标志待首次 showEvent 应用
+        // 记标志待首次 showEvent 应用。
+        // B8：先按 ini 尺寸铺好普通态几何，取消最大化时才能恢复到
+        // 上次会话的尺寸（否则是构造期默认值）
         m_pendingMaximize = true;
+        if (settings.contains(QStringLiteral("windowWidth")))
+            resize(settings.value(QStringLiteral("windowWidth")).toInt(),
+                   settings.value(QStringLiteral("windowHeight")).toInt());
     } else if (settings.contains(QStringLiteral("windowWidth"))) {
         resize(settings.value(QStringLiteral("windowWidth"), 960).toInt(),
                settings.value(QStringLiteral("windowHeight"), 600).toInt());
