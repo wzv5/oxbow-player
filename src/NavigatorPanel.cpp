@@ -180,6 +180,20 @@ void NavigatorCanvas::requestReset()
     sendPan(0.0, 0.0);
 }
 
+void NavigatorCanvas::requestNativeSize()
+{
+    if (!isActive() || !m_render)
+        return;
+    // 目标：显示尺寸 = 源分辨率。fit 保形，两轴所需 zoom 相同，取宽轴求解
+    const QSize ws = m_render->size();
+    const QSizeF fit = fitSize(ws, double(m_videoW) / m_videoH);
+    if (fit.width() <= 0)
+        return;
+    // 源远大于窗时所需负 zoom 可能越 25% 下限，取下限（尽量接近）
+    sendZoom(qBound(kZoomMin, std::log2(m_videoW / fit.width()), kZoomMax));
+    sendPan(0.0, 0.0); // 居中；视口矩形经属性推送自动联动
+}
+
 void NavigatorCanvas::panToVideoPoint(double u, double v)
 {
     if (!isActive() || !m_render)
@@ -283,11 +297,18 @@ NavigatorPanel::NavigatorPanel(MpvController *controller, QWidget *renderArea, Q
     m_zoomSpin = new QSpinBox(row);
     m_zoomSpin->setRange(25, 800);
     m_zoomSpin->setSuffix(QStringLiteral("%"));
-    auto *resetBtn = new QPushButton(tr("复位"), row);
-    for (auto *w : std::initializer_list<QWidget *>{m_zoomSlider, m_zoomSpin, resetBtn})
+    auto *nativeBtn = new QPushButton(QStringLiteral("1:1"), row);
+    nativeBtn->setToolTip(tr("原始尺寸：按源分辨率 1:1 显示并居中，超出窗口部分被裁剪"));
+    nativeBtn->setFixedWidth(36);
+    // ↺（U+21BA）：复位到填充窗口，与 1:1 原始尺寸语义区分
+    auto *resetBtn = new QPushButton(QStringLiteral("\u21BA"), row);
+    resetBtn->setToolTip(tr("复位视图：恢复填充窗口（mpv 默认缩放）"));
+    resetBtn->setFixedWidth(28);
+    for (auto *w : std::initializer_list<QWidget *>{m_zoomSlider, m_zoomSpin, nativeBtn, resetBtn})
         w->setFocusPolicy(Qt::NoFocus); // C2 同款约束：Space 归全局快捷键
     rowLayout->addWidget(m_zoomSlider, 1);
     rowLayout->addWidget(m_zoomSpin);
+    rowLayout->addWidget(nativeBtn);
     rowLayout->addWidget(resetBtn);
     layout->addWidget(row);
 
@@ -318,6 +339,7 @@ NavigatorPanel::NavigatorPanel(MpvController *controller, QWidget *renderArea, Q
         m_canvas->requestZoom(std::log2(percent / 100.0));
     });
     connect(resetBtn, &QPushButton::clicked, m_canvas, &NavigatorCanvas::requestReset);
+    connect(nativeBtn, &QPushButton::clicked, m_canvas, &NavigatorCanvas::requestNativeSize);
 }
 
 void NavigatorPanel::resetAndHide()

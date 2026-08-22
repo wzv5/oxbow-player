@@ -26,6 +26,7 @@ public:
     // 以下入口供面板控件调用；空闲态（无视频）下为空操作
     void requestZoom(double zoom);
     void requestReset();
+    void requestNativeSize(); // 按源分辨率 1:1 显示并居中
 
 signals:
     // 缩放变化（含外部/属性推送来源），percent 为 25~800 的整数百分比
