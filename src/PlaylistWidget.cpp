@@ -129,12 +129,11 @@ void PlaylistWidget::loadPlaylists()
         auto *list = createList();
         const int lastPos = settings.value(QStringLiteral("lastPos"), -1).toInt();
         const double lastTimePos = settings.value(QStringLiteral("lastTimePos"), -1.0).toDouble();
-        const QStringList keys = settings.childKeys();
-        for (const QString &key : keys) {
-            if (key == QLatin1String("name")
-                || key == QLatin1String("lastPos") || key == QLatin1String("lastTimePos"))
-                continue;
-            const QString file = settings.value(key).toString();
+        // B6：按显式计数字段逐条读取。childKeys() 顺序未定义，键多时呈字典序
+        // （"0","1","10","100","11"...），百项级列表会乱序呈现，不可用
+        const int n = settings.value(QStringLiteral("itemCount"), 0).toInt();
+        for (int j = 0; j < n; ++j) {
+            const QString file = settings.value(QString::number(j)).toString();
             if (!file.isEmpty()) {
                 auto *item = new QListWidgetItem(QFileInfo(file).fileName(), list);
                 item->setData(Qt::UserRole, file);
@@ -170,6 +169,7 @@ void PlaylistWidget::savePlaylists()
         const QString section = QStringLiteral("Playlist_%1").arg(savedIdx);
         settings.beginGroup(section);
         settings.setValue(QStringLiteral("name"), tabText(i));
+        settings.setValue(QStringLiteral("itemCount"), files.size()); // B6：显式计数，读取按序号遍历
         const TabMemory mem = m_memory.value(listAt(i));
         if (mem.lastPos >= 0) {
             settings.setValue(QStringLiteral("lastPos"), mem.lastPos);
