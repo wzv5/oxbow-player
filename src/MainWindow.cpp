@@ -1,6 +1,7 @@
 #include "MainWindow.h"
 
 #include "MpvController.h"
+#include "NavigatorPanel.h"
 #include "PlaylistWidget.h"
 
 #include <algorithm>
@@ -44,6 +45,15 @@ MainWindow::MainWindow(MpvController *controller, const QString &configFile, QWi
     setCentralWidget(m_splitter);
     createMenus();
     connectController();
+
+    // 导航器浮窗（N1）：零持久化，冷启动默认隐藏；
+    // 传入视频渲染区域，视口映射需要其真实尺寸（黑边感知）
+    m_navigator = new NavigatorPanel(controller, videoWidget(), this);
+    m_navigator->hide();
+    connect(m_navigator, &NavigatorPanel::panelClosed, this, [this] {
+        QSignalBlocker blocker(m_navigatorAction); // 复位已在面板 closeEvent 中完成
+        m_navigatorAction->setChecked(false);
+    });
 
     restoreSettings();
 }
@@ -161,6 +171,11 @@ void MainWindow::createMenus()
     m_playlistAction->setCheckable(true);
     m_playlistAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+L")));
     connect(m_playlistAction, &QAction::toggled, this, &MainWindow::setPlaylistVisible);
+
+    m_navigatorAction = viewMenu->addAction(tr("导航器(&N)"));
+    m_navigatorAction->setCheckable(true);
+    m_navigatorAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+N")));
+    connect(m_navigatorAction, &QAction::toggled, this, &MainWindow::setNavigatorVisible);
 
     QMenu *helpMenu = menuBar()->addMenu(tr("帮助(&H)"));
     helpMenu->addAction(tr("关于(&A)"), this, &MainWindow::showAboutDialog);
@@ -368,6 +383,50 @@ void MainWindow::setPlaylistVisible(bool visible)
     }
     QSignalBlocker actionBlocker(m_playlistAction);
     m_playlistAction->setChecked(visible);
+}
+
+// 导航器面板显隐（N1）：零持久化——每次显示都定位到主窗口右下角；
+// 隐藏（无论经菜单还是系统关闭钮）都会复位画面到填充窗口
+void MainWindow::setNavigatorVisible(bool visible)
+{
+    if (!visible) {
+        m_navigator->resetAndHide();
+        return;
+    }
+    m_navigator->adjustSize();
+    m_navigator->show(); // 先显示再定位：定位函数带 isVisible 守卫，隐藏态会被跳过
+    repositionNavigator();
+    m_navigator->raise();
+}
+
+// 浮窗不随属主联动，主窗口移动/缩放时手动跟随并刷新映射。
+// 用 frameGeometry（含标题栏外框）锚定：move() 定位的是外框左上角，
+// 按客户区尺寸计算会让外框越过主窗口底边约一个标题栏高度
+void MainWindow::repositionNavigator()
+{
+    if (!m_navigator || !m_navigator->isVisible())
+        return;
+    const QPoint corner = mapToGlobal(QPoint(width(), height()));
+    const QRect frame = m_navigator->frameGeometry();
+    QPoint pos(corner.x() - frame.width() - 12,
+               corner.y() - frame.height() - 12);
+    const QRect avail = m_navigator->screen()->availableGeometry();
+    pos.setX(qBound(avail.left(), pos.x(), avail.right() - frame.width()));
+    pos.setY(qBound(avail.top(), pos.y(), avail.bottom() - frame.height()));
+    m_navigator->move(pos);
+    m_navigator->refresh(); // 渲染区域尺寸可能已变，视口矩形需重算
+}
+
+void MainWindow::moveEvent(QMoveEvent *event)
+{
+    QMainWindow::moveEvent(event);
+    repositionNavigator();
+}
+
+void MainWindow::resizeEvent(QResizeEvent *event)
+{
+    QMainWindow::resizeEvent(event);
+    repositionNavigator();
 }
 
 void MainWindow::onPlayRequested(const QStringList &files, int index)

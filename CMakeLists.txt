@@ -28,6 +28,8 @@ add_library(mpvqtcore MODULE
     src/MainWindow.h
     src/MpvController.cpp
     src/MpvController.h
+    src/NavigatorPanel.cpp
+    src/NavigatorPanel.h
     src/PlaylistWidget.cpp
     src/PlaylistWidget.h
 )

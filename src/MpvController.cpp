@@ -15,6 +15,12 @@ enum ObservedProperty {
     PropPlaylistPos,
     PropPlaylist,
     PropIdleActive,
+    // 导航器面板（N1）
+    PropVideoZoom,
+    PropVideoPanX,
+    PropVideoPanY,
+    PropWidth,
+    PropHeight,
 };
 
 QVariantList parsePlaylist(const mpv_node *node)
@@ -62,6 +68,11 @@ MpvController::MpvController(mpv_handle *mpv, QObject *parent)
     mpv_observe_property(m_mpv, PropPlaylistPos, "playlist-pos", MPV_FORMAT_INT64);
     mpv_observe_property(m_mpv, PropPlaylist, "playlist", MPV_FORMAT_NODE);
     mpv_observe_property(m_mpv, PropIdleActive, "idle-active", MPV_FORMAT_FLAG);
+    mpv_observe_property(m_mpv, PropVideoZoom, "video-zoom", MPV_FORMAT_DOUBLE);
+    mpv_observe_property(m_mpv, PropVideoPanX, "video-pan-x", MPV_FORMAT_DOUBLE);
+    mpv_observe_property(m_mpv, PropVideoPanY, "video-pan-y", MPV_FORMAT_DOUBLE);
+    mpv_observe_property(m_mpv, PropWidth, "width", MPV_FORMAT_INT64);
+    mpv_observe_property(m_mpv, PropHeight, "height", MPV_FORMAT_INT64);
 }
 
 MpvController::~MpvController()
@@ -200,6 +211,36 @@ void MpvController::handlePropertyChange(const mpv_event *event)
         if (prop->format == MPV_FORMAT_FLAG && prop->data)
             emit idleActive(*static_cast<int *>(prop->data) != 0);
         break;
+    case PropVideoZoom:
+        if (prop->format == MPV_FORMAT_DOUBLE && prop->data)
+            emit videoZoomChanged(*static_cast<double *>(prop->data));
+        else if (prop->format == MPV_FORMAT_NONE)
+            emit videoZoomChanged(0.0);
+        break;
+    case PropVideoPanX:
+        if (prop->format == MPV_FORMAT_DOUBLE && prop->data)
+            emit videoPanXChanged(*static_cast<double *>(prop->data));
+        else if (prop->format == MPV_FORMAT_NONE)
+            emit videoPanXChanged(0.0);
+        break;
+    case PropVideoPanY:
+        if (prop->format == MPV_FORMAT_DOUBLE && prop->data)
+            emit videoPanYChanged(*static_cast<double *>(prop->data));
+        else if (prop->format == MPV_FORMAT_NONE)
+            emit videoPanYChanged(0.0);
+        break;
+    case PropWidth:
+    case PropHeight: {
+        // 尺寸两属性独立推送，合并缓存后成对上报；任一侧失效按 0 处理
+        const int value = (prop->format == MPV_FORMAT_INT64 && prop->data)
+                              ? int(*static_cast<int64_t *>(prop->data)) : 0;
+        if (int(event->reply_userdata) == PropWidth)
+            m_videoW = value;
+        else
+            m_videoH = value;
+        emit videoSizeChanged(m_videoW, m_videoH);
+        break;
+    }
     default:
         break;
     }

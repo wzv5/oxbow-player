@@ -35,6 +35,11 @@ signals:
     void playlistPosChanged(int pos);
     // mpv 进入/离开空闲状态（列表播完或停止后无当前文件）
     void idleActive(bool active);
+    // 导航器面板（N1）：video-zoom / video-pan-x / video-pan-y / 视频尺寸
+    void videoZoomChanged(double zoom);
+    void videoPanXChanged(double panX);
+    void videoPanYChanged(double panY);
+    void videoSizeChanged(int width, int height); // 0,0 表示无视频
     void mpvShutdown();
 
 protected:
@@ -46,4 +51,5 @@ private:
     void handlePropertyChange(const mpv_event *event);
 
     mpv_handle *m_mpv; // 由 mpv 拥有，插件不销毁
+    int m_videoW = 0, m_videoH = 0; // width/height 两属性合并缓存（N1）
 };

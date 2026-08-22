@@ -9,6 +9,7 @@ class QPushButton;
 class QSlider;
 class QSplitter;
 class MpvController;
+class NavigatorPanel;
 class PlaylistWidget;
 
 class MainWindow : public QMainWindow
@@ -23,6 +24,8 @@ public:
 
 protected:
     void closeEvent(QCloseEvent *event) override;
+    void moveEvent(QMoveEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
 
 private slots:
     void openFiles();
@@ -32,6 +35,7 @@ private slots:
     void playlistNext();
     void seekReleased();
     void setPlaylistVisible(bool visible);
+    void setNavigatorVisible(bool visible);
     void showSettingsDialog();
     void showAboutDialog();
     void onPlayRequested(const QStringList &files, int index);
@@ -44,6 +48,8 @@ private:
     void createMenus();
     QWidget *createLeftArea();
     void connectController();
+    // 导航器浮窗定位到主窗口右下角（N1）
+    void repositionNavigator();
     void updateTimeDisplay();
     void playAt(int index);
     // 停止态的上一个/下一个步进（A9）：以当前选中列表为基准并开始播放
@@ -69,6 +75,8 @@ private:
     QPushButton *m_playlistToggle = nullptr;
     QAction *m_playlistAction = nullptr;
     PlaylistWidget *m_playlist = nullptr;
+    QAction *m_navigatorAction = nullptr; // 视图菜单"导航器"勾选项（N1）
+    NavigatorPanel *m_navigator = nullptr;
 
     double m_duration = 0.0;
     double m_timePos = 0.0;
