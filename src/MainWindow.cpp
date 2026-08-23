@@ -7,6 +7,11 @@
 
 #include <algorithm>
 
+#ifdef Q_OS_WIN
+#include <dwmapi.h>
+#include <qt_windows.h>
+#endif
+
 #include <QApplication>
 #include <QCloseEvent>
 #include <QComboBox>
@@ -600,6 +605,16 @@ void MainWindow::toggleFullscreen()
         // 隐式隐藏，子原生 HWND 经 SetParent 平移保身份，wid 不失效（原型实测）
         m_preFsFlags = windowFlags();
         setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
+#ifdef Q_OS_WIN
+        // A19：无框 NoState 窗口不被认定为全屏，Win11 DWM 会按普通浮窗施加
+        // 圆角裁切（四角透明缺口+边缘透明环）。强制方角；属性须作用于重建后
+        // 的新 HWND 故紧随 flags 切换。退出无需处理——再次重建回归系统默认，
+        // 且最大化态本就自动方角
+        const DWORD cornerPref = DWMWCP_DONOTROUND;
+        DwmSetWindowAttribute(reinterpret_cast<HWND>(winId()),
+                              DWMWA_WINDOW_CORNER_PREFERENCE,
+                              &cornerPref, sizeof(cornerPref));
+#endif
         setWindowState(Qt::WindowNoState);
         setGeometry(screen()->geometry()); // 窗口所在屏，覆盖任务栏区
         show();

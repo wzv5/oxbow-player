@@ -48,6 +48,10 @@ if(MSVC)
 endif()
 
 target_link_libraries(mpvqtcore PRIVATE Qt6::Widgets)
+# A19：全屏期 DWM 圆角裁切抑制（仅 Windows；dwmapi 为 Vista 起系统组件）
+if(WIN32)
+    target_link_libraries(mpvqtcore PRIVATE dwmapi)
+endif()
 set_target_properties(mpvqtcore PROPERTIES PREFIX "" OUTPUT_NAME "mpvqtcore")
 
 # ---------------------------------------------------------------------------
