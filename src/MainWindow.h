@@ -126,7 +126,9 @@ private:
     double m_savedZoom = 0.0;           // 进全屏前 zoom/pan 快照（先存后写零）
     double m_savedPanX = 0.0;
     double m_savedPanY = 0.0;
-    bool m_preFsMaximized = false;      // 进全屏前主窗几何快照：落盘守卫+退出恢复共用
-    int m_preFsW = 0;
-    int m_preFsH = 0;
+    bool m_preFsMaximized = false;      // 进全屏前是否最大化（退出分流依据）
+    // A18 无框全屏：进全屏前完整几何快照（含位置，普通态恢复用）+ 窗口样式快照；
+    // 落盘守卫与退出恢复共用
+    QRect m_preFsRect;
+    Qt::WindowFlags m_preFsFlags;
 };

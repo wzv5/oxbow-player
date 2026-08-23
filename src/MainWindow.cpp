@@ -577,16 +577,10 @@ void MainWindow::syncVideoGeometry()
 void MainWindow::toggleFullscreen()
 {
     if (!m_fullscreen) {
-        // 全屏态落盘守卫：快照进全屏前几何（saveSettings 落盘 + 退出恢复最大化共用）
+        // 全屏态落盘守卫：快照进全屏前几何（saveSettings 落盘 + 退出恢复共用）。
+        // A18：快照扩为整矩形（含位置），无框方案的普通态退出恢复需要
         m_preFsMaximized = isMaximized();
-        if (m_preFsMaximized) {
-            const QRect normal = normalGeometry();
-            m_preFsW = qMax(normal.width(), 0);
-            m_preFsH = qMax(normal.height(), 0);
-        } else {
-            m_preFsW = width();
-            m_preFsH = height();
-        }
+        m_preFsRect = m_preFsMaximized ? normalGeometry() : geometry();
         // 导航器 zoom/pan 先存后写零：复位=保持比例填充全屏（第三节）
         m_savedZoom = m_controller->propertyDouble(QStringLiteral("video-zoom"), 0.0);
         m_savedPanX = m_controller->propertyDouble(QStringLiteral("video-pan-x"), 0.0);
@@ -601,15 +595,27 @@ void MainWindow::toggleFullscreen()
             m_navigator->hide();
         m_navigatorAction->setEnabled(false);
         m_fullscreen = true;
-        showFullScreen();
-        syncVideoGeometry(); // 不等事件链即时生效；随后的 resizeEvent 幂等兜底
+        // A18 无框手动几何全屏：绕开 WindowFullScreen 状态机（其进出必经
+        // 普通几何中间帧并回放最大化动画）。flags 切换触发平台窗口重建并
+        // 隐式隐藏，子原生 HWND 经 SetParent 平移保身份，wid 不失效（原型实测）
+        m_preFsFlags = windowFlags();
+        setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
+        setWindowState(Qt::WindowNoState);
+        setGeometry(screen()->geometry()); // 窗口所在屏，覆盖任务栏区
+        show();
+        syncVideoGeometry(); // 铺满后视频区对位；随后的 resizeEvent 幂等兜底
     } else {
         m_fullscreen = false;
-        menuBar()->show(); // 恢复菜单栏（布局重排会经占位符事件链触发几何同步）
-        showNormal();
-        // 按快照恢复最大化（已显示窗口，无 B7 构造期丢弃问题）
+        // A18：恢复有框样式触发重建（自动隐藏），新窗口几何继承自全屏矩形。
+        // 趁隐藏期植入快照几何——它随即成为最大化"还原位置"，取消最大化
+        // 时精确回到进全屏前的尺寸；再按快照分流显示
+        setWindowFlags(m_preFsFlags);
+        setGeometry(m_preFsRect);
         if (m_preFsMaximized)
-            setWindowState(Qt::WindowMaximized);
+            showMaximized();
+        else
+            show();
+        menuBar()->show(); // 恢复菜单栏（布局重排会经占位符事件链触发几何同步）
         syncVideoGeometry();
         m_controller->setProperty(QStringLiteral("video-zoom"), m_savedZoom);
         m_controller->setProperty(QStringLiteral("video-pan-x"), m_savedPanX);
@@ -840,8 +846,8 @@ void MainWindow::saveSettings()
     const bool maximized = m_fullscreen ? m_preFsMaximized : isMaximized();
     int winW = 0, winH = 0;
     if (m_fullscreen) {
-        winW = m_preFsW;
-        winH = m_preFsH;
+        winW = m_preFsRect.width();
+        winH = m_preFsRect.height();
     } else if (maximized) {
         const QRect normal = normalGeometry();
         if (normal.isValid()) {
