@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 
+#include "ActionManager.h"
 #include "MpvController.h"
 #include "NavigatorPanel.h"
 #include "PlaylistWidget.h"
@@ -34,13 +35,15 @@ MainWindow::MainWindow(MpvController *controller, const QString &configFile, QWi
 {
     setWindowTitle(QStringLiteral("mpv-qt"));
 
+    m_actions = new ActionManager(this); // A15：先于任何容器构建
+
     m_splitter = new QSplitter(Qt::Horizontal, this);
     m_splitter->addWidget(createLeftArea());
 
     // 视频显示区域（N3）：主窗直接子控件，脱离布局管理，几何由
     // syncVideoGeometry 手动同步。父链构造期确定后全程不动——setParent 会
-    // 销毁重建原生 HWND 使 mpv wid 失效（技术事实 4）。原生窗口天然覆盖
-    // 菜单栏等 alien 控件，全屏覆盖方案依赖此 z 序（技术事实 3）
+    // 销毁重建原生 HWND 使 mpv wid 失效（技术事实 4）。注意：原生子窗口与
+    // alien 控件矩形重叠时合成次序未定义（技术事实 3 勘误），故全屏期隐藏菜单栏
     m_videoWidget = new QWidget(this);
     m_videoWidget->setAttribute(Qt::WA_NativeWindow);
     m_videoWidget->setAttribute(Qt::WA_DontCreateNativeAncestors);
@@ -145,11 +148,12 @@ QWidget *MainWindow::createLeftArea()
     controlLayout->addWidget(m_playlistToggle);
     layout->addWidget(controlRow);
 
-    connect(m_playButton, &QPushButton::clicked, this, &MainWindow::togglePause);
-    connect(stopButton, &QPushButton::clicked, this, &MainWindow::stop);
-    connect(prevButton, &QPushButton::clicked, this, &MainWindow::playlistPrev);
-    connect(nextButton, &QPushButton::clicked, this, &MainWindow::playlistNext);
-    connect(settingsButton, &QPushButton::clicked, this, &MainWindow::showSettingsDialog);
+    // A15：全局按钮统一经 bindButton 引用主实例（事件来源 trigger + 启停跟随）
+    bindButton(m_playButton, m_actions->action(ActionManager::Id::PlayPause));
+    bindButton(stopButton, m_actions->action(ActionManager::Id::Stop));
+    bindButton(prevButton, m_actions->action(ActionManager::Id::PrevFile));
+    bindButton(nextButton, m_actions->action(ActionManager::Id::NextFile));
+    bindButton(settingsButton, m_actions->action(ActionManager::Id::Settings));
     connect(m_playlistToggle, &QPushButton::toggled, this, [this](bool on) {
         if (m_playlistAction)
             m_playlistAction->setChecked(on); // 经 QAction 统一到 setPlaylistVisible
@@ -166,51 +170,67 @@ QWidget *MainWindow::createLeftArea()
     return left;
 }
 
+// A15：无状态按钮统一接线。注意 trigger() 是编程式激活、绕过 enabled 检查
+//（只有菜单点击/快捷键分发尊重禁用态），故必须同步 enabledChanged 让按钮
+// 随 action 置灰，用户路径才能真正被拦住
+void MainWindow::bindButton(QAbstractButton *btn, QAction *action)
+{
+    connect(btn, &QAbstractButton::clicked, action, &QAction::trigger);
+    connect(action, &QAction::enabledChanged, btn, &QWidget::setEnabled);
+    btn->setEnabled(action->isEnabled());
+}
+
 void MainWindow::createMenus()
 {
+    using AM = ActionManager;
+    auto act = [this](AM::Id id) { return m_actions->action(id); };
+
     QMenu *fileMenu = menuBar()->addMenu(tr("文件(&F)"));
-    QAction *openAction = fileMenu->addAction(tr("打开文件(&O)…"), this, &MainWindow::openFiles);
-    openAction->setShortcut(QKeySequence::Open);
+    fileMenu->addAction(act(AM::Id::Open));
+    connect(act(AM::Id::Open), &QAction::triggered, this, &MainWindow::openFiles);
+    fileMenu->addAction(act(AM::Id::Settings));
+    connect(act(AM::Id::Settings), &QAction::triggered, this, &MainWindow::showSettingsDialog);
     fileMenu->addSeparator();
-    QAction *quitAction = fileMenu->addAction(tr("退出(&Q)"), this, &QWidget::close);
-    quitAction->setShortcut(QKeySequence::Quit);
+    fileMenu->addAction(act(AM::Id::Quit));
+    connect(act(AM::Id::Quit), &QAction::triggered, this, &QWidget::close);
 
     QMenu *playMenu = menuBar()->addMenu(tr("播放(&P)"));
-    QAction *pauseAction = playMenu->addAction(tr("播放/暂停(&P)"), this, &MainWindow::togglePause);
-    pauseAction->setShortcut(Qt::Key_Space);
-    playMenu->addAction(tr("停止(&S)"), this, &MainWindow::stop);
+    playMenu->addAction(act(AM::Id::PlayPause));
+    connect(act(AM::Id::PlayPause), &QAction::triggered, this, &MainWindow::togglePause);
+    playMenu->addAction(act(AM::Id::Stop));
+    connect(act(AM::Id::Stop), &QAction::triggered, this, &MainWindow::stop);
     playMenu->addSeparator();
-    playMenu->addAction(tr("上一个文件(&R)"), this, &MainWindow::playlistPrev);
-    playMenu->addAction(tr("下一个文件(&N)"), this, &MainWindow::playlistNext);
+    playMenu->addAction(act(AM::Id::PrevFile));
+    connect(act(AM::Id::PrevFile), &QAction::triggered, this, &MainWindow::playlistPrev);
+    playMenu->addAction(act(AM::Id::NextFile));
+    connect(act(AM::Id::NextFile), &QAction::triggered, this, &MainWindow::playlistNext);
 
     QMenu *viewMenu = menuBar()->addMenu(tr("视图(&V)"));
-    m_playlistAction = viewMenu->addAction(tr("播放列表(&L)"));
-    m_playlistAction->setCheckable(true);
-    m_playlistAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+L")));
+    m_playlistAction = act(AM::Id::Playlist);
+    viewMenu->addAction(m_playlistAction);
     connect(m_playlistAction, &QAction::toggled, this, &MainWindow::setPlaylistVisible);
 
-    m_navigatorAction = viewMenu->addAction(tr("导航器(&N)"));
-    m_navigatorAction->setCheckable(true);
-    m_navigatorAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+N")));
+    m_navigatorAction = act(AM::Id::Navigator);
+    viewMenu->addAction(m_navigatorAction);
     connect(m_navigatorAction, &QAction::toggled, this, &MainWindow::setNavigatorVisible);
 
     // 全屏（N3）：F11/视图菜单/Esc/双击四路共用 toggleFullscreen 收口
-    m_fullscreenAction = viewMenu->addAction(tr("全屏(&F)"));
-    m_fullscreenAction->setCheckable(true);
-    m_fullscreenAction->setShortcut(QKeySequence(QStringLiteral("F11")));
+    m_fullscreenAction = act(AM::Id::Fullscreen);
+    viewMenu->addAction(m_fullscreenAction);
     connect(m_fullscreenAction, &QAction::toggled, this, [this](bool on) {
         if (on != m_fullscreen)
             toggleFullscreen();
     });
-    // Esc 仅在全屏态退出：非全屏无动作；弹出菜单打开时 Esc 由 popup 自行消费
-    auto *escShortcut = new QShortcut(QKeySequence(Qt::Key_Escape), this);
-    connect(escShortcut, &QShortcut::activated, this, [this] {
+    // Esc 隐绑定经管理器取用，守卫逻辑留主窗口：仅全屏态退出，
+    // 弹出菜单打开时 Esc 由 popup 自行消费
+    connect(m_actions->shortcut(AM::Id::Escape), &QShortcut::activated, this, [this] {
         if (m_fullscreen)
             toggleFullscreen();
     });
 
     QMenu *helpMenu = menuBar()->addMenu(tr("帮助(&H)"));
-    helpMenu->addAction(tr("关于(&A)"), this, &MainWindow::showAboutDialog);
+    helpMenu->addAction(act(AM::Id::About));
+    connect(act(AM::Id::About), &QAction::triggered, this, &MainWindow::showAboutDialog);
 }
 
 void MainWindow::connectController()

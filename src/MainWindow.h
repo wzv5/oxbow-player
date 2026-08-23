@@ -4,6 +4,7 @@
 #include <QString>
 
 class QAction;
+class QAbstractButton;
 class QLabel;
 class QPushButton;
 class QTimer;
@@ -12,6 +13,7 @@ class QSplitter;
 class MpvController;
 class NavigatorPanel;
 class PlaylistWidget;
+class ActionManager;
 
 class MainWindow : public QMainWindow
 {
@@ -51,6 +53,8 @@ private slots:
 private:
     void createMenus();
     QWidget *createLeftArea();
+    // A15：无状态按钮统一接线——事件来源走 action trigger，启停跟随 action enabled
+    void bindButton(QAbstractButton *btn, QAction *action);
     void connectController();
     // 导航器浮窗定位到主窗口右下角（N1）
     void repositionNavigator();
@@ -78,6 +82,7 @@ private:
 
     MpvController *m_controller;
     QString m_configFile; // 配置文件完整路径（插件 DLL 同目录下的 mpv-qt.ini）
+    ActionManager *m_actions = nullptr; // A15：全部 UI 动作出生与登记处，先于容器构建
     QSplitter *m_splitter = nullptr;
     // 视频显示区域（mpv wid 嵌入目标）：主窗直接子控件（N3），
     // 脱离布局管理由 syncVideoGeometry 手动同步，父链构造期定死后全程不动
