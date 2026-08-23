@@ -60,8 +60,11 @@ private:
     void repositionNavigator();
     void updateTimeDisplay();
     void playAt(int index);
-    // 停止态的上一个/下一个步进（A9）：以当前选中列表为基准并开始播放
-    void stepStopped(int delta);
+    // 停止态的上一个/下一个步进（A9/A16）：以当前选中列表为基准并开始播放；
+    // 列表循环开启时首尾互绕，否则越界无动作
+    void stepStopped(bool next);
+    // A16：上一/下一动作三路联动启停（矩阵见 specs/A16.md）
+    void updateNavigationActions();
     // 进入停止状态：停止播放（保留列表）、复位播放按钮图标
     void enterStoppedState();
     // N3：覆盖式全屏、视频区几何同步与单击/双击分流

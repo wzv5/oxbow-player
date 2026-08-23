@@ -271,8 +271,13 @@ void MainWindow::connectController()
         m_volumeSlider->setValue(int(v + 0.5));
     });
     connect(m_controller, &MpvController::playlistChanged, m_playlist, &PlaylistWidget::setPlaylist);
+    // 播放态列表长度变化影响步进启停（A16）
+    connect(m_controller, &MpvController::playlistChanged, this, [this](const QVariantList &) {
+        updateNavigationActions();
+    });
     connect(m_controller, &MpvController::playlistPosChanged, this, [this](int pos) {
         m_playlistPos = pos;
+        updateNavigationActions(); // 播放/停止态切换与位置变化（A16）
         if (pos >= 0) {
             m_playedThisSession = true; // A13：标记本进程发生过播放
             // per-tab 记忆：记录播放目标 tab 的最后播放项（默认 tab 仅进程内）
@@ -301,6 +306,10 @@ void MainWindow::connectController()
     connect(m_playlist, &PlaylistWidget::filesAdded, this, &MainWindow::onFilesAdded);
     connect(m_playlist, &PlaylistWidget::removeRequested, this, &MainWindow::onRemoveRequested);
     connect(m_playlist, &PlaylistWidget::clearRequested, this, &MainWindow::onClearRequested);
+    // 停止态步进以选中 tab 为基准，切换 tab 需刷新启停（A16）
+    connect(m_playlist, &QTabWidget::currentChanged, this, [this](int) {
+        updateNavigationActions();
+    });
     // mpv 侧退出：补保存会话后再结束事件循环（A6）
     connect(m_controller, &MpvController::mpvShutdown, this, &MainWindow::onMpvShutdown);
 }
@@ -372,7 +381,7 @@ void MainWindow::stop()
 void MainWindow::playlistPrev()
 {
     if (m_playlistPos < 0) {
-        stepStopped(-1);
+        stepStopped(false);
         return;
     }
     m_controller->command({QStringLiteral("playlist-prev")});
@@ -387,7 +396,7 @@ void MainWindow::playlistPrev()
 void MainWindow::playlistNext()
 {
     if (m_playlistPos < 0) {
-        stepStopped(1);
+        stepStopped(true);
         return;
     }
     m_controller->command({QStringLiteral("playlist-next")});
@@ -399,9 +408,9 @@ void MainWindow::playlistNext()
         m_playlist->setCurrentIndex(pt);
 }
 
-// 停止态的上一个/下一个（A9）：以当前选中列表为基准步进并开始播放。
-// base：有记忆取记忆项，否则第 0 项；越界无动作（暂不做循环）。
-void MainWindow::stepStopped(int delta)
+// 停止态的上一个/下一个（A9/A16）：以当前选中列表为基准步进并开始播放。
+// 起点：有记忆取记忆项，否则第 0 项；列表循环开启时首尾互绕，非循环越界无动作
+void MainWindow::stepStopped(bool next)
 {
     const int cur = m_playlist->currentIndex();
     const QStringList files = m_playlist->filesOf(cur);
@@ -410,11 +419,49 @@ void MainWindow::stepStopped(int delta)
     int base = m_playlist->lastPosOf(cur);
     if (base < 0 || base >= files.size())
         base = 0;
-    const int target = base + delta;
-    if (target < 0 || target >= files.size())
+    int target = base + (next ? 1 : -1);
+    if (currentLoopMode() == QLatin1String("playlist")) {
+        if (target < 0)
+            target = files.size() - 1; // 首项上一个 → 绕尾项
+        else if (target >= files.size())
+            target = 0;                // 尾项下一个 → 绕首项
+    } else if (target < 0 || target >= files.size()) {
         return;
+    }
     m_playlist->markPlayingTab(cur);
     onPlayRequested(files, target);
+}
+
+// A16：上一/下一动作三路联动启停（矩阵见 specs/A16.md）。
+// 仅操作这两个动作，不得触碰其他动作的禁用逻辑（如全屏期导航器守卫）
+void MainWindow::updateNavigationActions()
+{
+    const bool loop = currentLoopMode() == QLatin1String("playlist");
+    QAction *prevAction = m_actions->action(ActionManager::Id::PrevFile);
+    QAction *nextAction = m_actions->action(ActionManager::Id::NextFile);
+
+    if (m_playlistPos >= 0) {
+        // 播放/暂停态：以 mpv 实际列表为准（长度取正在播放 tab 的镜像）
+        const int pt = m_playlist->playingTabIndex();
+        const int count = pt >= 0 ? m_playlist->filesOf(pt).size() : m_playlistPos + 1;
+        prevAction->setEnabled(loop || m_playlistPos > 0);
+        nextAction->setEnabled(loop || m_playlistPos < count - 1);
+        return;
+    }
+
+    // 停止态：以当前选中 tab 为准；空列表无视 LOOP 双禁用
+    const int cur = m_playlist->currentIndex();
+    const QStringList files = m_playlist->filesOf(cur);
+    if (files.isEmpty()) {
+        prevAction->setEnabled(false);
+        nextAction->setEnabled(false);
+        return;
+    }
+    int base = m_playlist->lastPosOf(cur);
+    if (base < 0 || base >= files.size())
+        base = 0; // 与 stepStopped 起点归一规则一致
+    prevAction->setEnabled(loop || base > 0);
+    nextAction->setEnabled(loop || base < files.size() - 1);
 }
 
 void MainWindow::seekReleased()
@@ -681,6 +728,7 @@ void MainWindow::onClearRequested()
 
 void MainWindow::onFilesAdded(const QStringList &files)
 {
+    updateNavigationActions(); // 本地 tab 新增内容影响停止态步进（A16）；播放态由 playlistChanged 兜底
     // 只有添加到“正在播放”tab 的文件才同步进 mpv 播放列表；
     // 其他 tab 为本地列表，双击播放时整体载入。
     if (!m_playlist->currentIsPlayingTab())
@@ -701,6 +749,7 @@ void MainWindow::applyLoopMode(const QString &mode)
         m_controller->setProperty(QStringLiteral("loop-file"), QStringLiteral("no"));
         m_controller->setProperty(QStringLiteral("loop-playlist"), QStringLiteral("no"));
     }
+    updateNavigationActions(); // 循环模式切换立即刷新启停（A16）
 }
 
 QString MainWindow::currentLoopMode() const
@@ -874,6 +923,8 @@ void MainWindow::restoreSettings()
         if (idx > 0)
             m_playlist->setCurrentIndex(idx);
     }
+
+    updateNavigationActions(); // A16：启动恢复完成后的初始启停状态
 }
 
 void MainWindow::updateTimeDisplay()
