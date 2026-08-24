@@ -13,6 +13,8 @@ public:
         Open, Settings, Quit,
         PlayPause, Stop, PrevFile, NextFile,
         VolumeUp, VolumeDown,
+        SeekForward, SeekBackward, // 隐绑定：无菜单实体，仅键盘触发（N6）
+        SpeedUp, SpeedDown, SpeedReset,
         Playlist, Navigator, Fullscreen,
         About,
         Escape // 隐绑定：无菜单实体，仅键盘触发

@@ -38,6 +38,9 @@ private slots:
     void setNavigatorVisible(bool visible);
     void showSettingsDialog();
     void showAboutDialog();
+    // N6：速度控制（读改写 speed 属性，钳制 0.25~8）
+    void changeSpeed(double delta);
+    void resetSpeed();
     // 统一播放入口：整表载入 → 跳转 index → seekTo>0 时经挂起机制恢复进度
     void onPlayRequested(const QStringList &files, int index, double seekTo);
     void onFilesAdded(const QStringList &files);
@@ -69,6 +72,8 @@ private:
     void onVideoClickTimeout();
     // N5：统一音量调节入口——钳制到 [0, 上限] 后下发 mpv，UI 经观察回流刷新
     void changeVolume(int delta);
+    // N6：相对 seek（秒）；停止态（无播放位置）无动作
+    void seekRelative(int deltaSeconds);
     // N3：导航器按需创建生命周期收口（关闭即销毁，null=未打开）
     void ensureNavigator();
     void destroyNavigator();

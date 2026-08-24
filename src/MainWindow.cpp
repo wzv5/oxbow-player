@@ -197,6 +197,16 @@ void MainWindow::createMenus()
     playMenu->addAction(act(AM::Id::VolumeDown));
     connect(act(AM::Id::VolumeDown), &QAction::triggered, this,
             [this] { changeVolume(-m_volumeKeyStep); });
+    // N6：速度控制组
+    playMenu->addSeparator();
+    playMenu->addAction(act(AM::Id::SpeedUp));
+    connect(act(AM::Id::SpeedUp), &QAction::triggered, this,
+            [this] { changeSpeed(+0.25); });
+    playMenu->addAction(act(AM::Id::SpeedDown));
+    connect(act(AM::Id::SpeedDown), &QAction::triggered, this,
+            [this] { changeSpeed(-0.25); });
+    playMenu->addAction(act(AM::Id::SpeedReset));
+    connect(act(AM::Id::SpeedReset), &QAction::triggered, this, &MainWindow::resetSpeed);
 
     QMenu *viewMenu = menuBar()->addMenu(tr("视图(&V)"));
     m_playlistAction = act(AM::Id::Playlist);
@@ -220,6 +230,11 @@ void MainWindow::createMenus()
         if (m_fullscreen)
             toggleFullscreen();
     });
+    // N6：±5 秒隐绑定 seek，守卫逻辑留主窗口（停止态无播放位置可寻址）
+    connect(m_actions->shortcut(AM::Id::SeekForward), &QShortcut::activated, this,
+            [this] { seekRelative(+5); });
+    connect(m_actions->shortcut(AM::Id::SeekBackward), &QShortcut::activated, this,
+            [this] { seekRelative(-5); });
 
     QMenu *helpMenu = menuBar()->addMenu(tr("帮助(&H)"));
     helpMenu->addAction(act(AM::Id::About));
@@ -756,6 +771,29 @@ void MainWindow::changeVolume(int delta)
 {
     const int target = qBound(0, m_volumeSlider->value() + delta, m_volumeMax);
     m_controller->setProperty(QStringLiteral("volume"), double(target));
+}
+
+// N6：相对 seek。停止态（m_playlistPos<0）无播放位置可寻址，直接忽略；
+// 不指定 flags 走 mpv 默认相对关键帧寻址，响应优先于逐帧精度
+void MainWindow::seekRelative(int deltaSeconds)
+{
+    if (m_playlistPos < 0)
+        return;
+    m_controller->command({QStringLiteral("seek"), QString::number(deltaSeconds)});
+}
+
+// N6：速度步进——实时读 speed 属性做读改写（不设观察缓存），
+// 钳制到 [0.25, 8]；±0.25 为二进制精确小数，域内累加无舍入误差
+void MainWindow::changeSpeed(double delta)
+{
+    const double cur = m_controller->propertyDouble(QStringLiteral("speed"), 1.0);
+    const double target = qBound(0.25, cur + delta, 8.0);
+    m_controller->setProperty(QStringLiteral("speed"), target);
+}
+
+void MainWindow::resetSpeed()
+{
+    m_controller->setProperty(QStringLiteral("speed"), 1.0);
 }
 
 // N5：空白区域点击清焦兜底——未被交互控件消费的鼠标按下事件一路冒泡至此，
