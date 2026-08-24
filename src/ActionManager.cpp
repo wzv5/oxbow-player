@@ -12,6 +12,9 @@ ActionManager::ActionManager(QWidget *host) : m_host(host)
     declareAction(Id::Stop,      tr("停止(&S)"));
     declareAction(Id::PrevFile,  tr("上一个文件(&R)"));
     declareAction(Id::NextFile,  tr("下一个文件(&N)"));
+    // N5：全局音量步进（播放列表经 ShortcutOverride 认领导航键豁免）
+    declareAction(Id::VolumeUp,   tr("音量增大(&U)"), Qt::Key_Up);
+    declareAction(Id::VolumeDown, tr("音量减小(&D)"), Qt::Key_Down);
     declareAction(Id::Playlist,  tr("播放列表(&L)"),  QStringLiteral("Ctrl+L"), true);
     declareAction(Id::Navigator, tr("导航器(&N)"),    QStringLiteral("Ctrl+Shift+N"), true);
     declareAction(Id::Fullscreen,tr("全屏(&F)"),      QStringLiteral("F11"), true);

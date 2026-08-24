@@ -82,6 +82,8 @@ QListWidget *PlaylistWidget::createList()
     auto *list = new QListWidget;
     // 子列表不接受拖放，事件会上溯到本 QTabWidget 统一处理
     list->setAcceptDrops(false);
+    // N5：列表集中创建点统一安装过滤器（ShortcutOverride 认领导航键）
+    list->installEventFilter(this);
     // 播放列表不允许多选（显式声明，锁定约束）
     list->setSelectionMode(QAbstractItemView::SingleSelection);
     // N4：委托绘制（时长经路径查全局元数据仓）
@@ -102,6 +104,32 @@ QListWidget *PlaylistWidget::createList()
 QListWidget *PlaylistWidget::listAt(int index) const
 {
     return qobject_cast<QListWidget *>(widget(index));
+}
+
+// N5：列表持焦时认领全部导航键，抑制全局音量动作（↑/↓）；
+// 认领集合含 ←→/PgUp/PgDn/Home/End，为后续列表键盘功能预留。
+// accept 后按键作为普通键盘事件送达列表；过滤器须返回 false 放行事件本身
+bool PlaylistWidget::eventFilter(QObject *watched, QEvent *event)
+{
+    if (event->type() == QEvent::ShortcutOverride
+        && qobject_cast<QListWidget *>(watched)) {
+        auto *ke = static_cast<QKeyEvent *>(event);
+        switch (ke->key()) {
+        case Qt::Key_Up:
+        case Qt::Key_Down:
+        case Qt::Key_Left:
+        case Qt::Key_Right:
+        case Qt::Key_PageUp:
+        case Qt::Key_PageDown:
+        case Qt::Key_Home:
+        case Qt::Key_End:
+            event->accept();
+            break;
+        default:
+            break;
+        }
+    }
+    return QTabWidget::eventFilter(watched, event);
 }
 
 PlaylistItem &PlaylistWidget::materializeByRaw(const QString &rawPath)

@@ -24,6 +24,8 @@ protected:
     void resizeEvent(QResizeEvent *event) override;
     // N3：占位符几何跟随 + 视频区单击/双击分流
     bool eventFilter(QObject *watched, QEvent *event) override;
+    // N5：空白区域点击清焦（未被交互控件消费的按下事件冒泡至此）
+    void mousePressEvent(QMouseEvent *event) override;
 
 private slots:
     void openFiles();
@@ -65,6 +67,8 @@ private:
     void syncVideoGeometry();
     bool isPaused();
     void onVideoClickTimeout();
+    // N5：统一音量调节入口——钳制到 [0, 上限] 后下发 mpv，UI 经观察回流刷新
+    void changeVolume(int delta);
     // N3：导航器按需创建生命周期收口（关闭即销毁，null=未打开）
     void ensureNavigator();
     void destroyNavigator();
@@ -87,6 +91,10 @@ private:
     QWidget *m_videoPlaceholder = nullptr;
     QSlider *m_progressSlider = nullptr;
     QSlider *m_volumeSlider = nullptr;
+    // N5：音量调节配置（INI 键 volumeMax / volumeWheelStep / volumeKeyStep）
+    int m_volumeMax = 100;      // 音量上限，设置对话框自由填写域 0~400
+    int m_volumeWheelStep = 1;  // 滚轮每格步长
+    int m_volumeKeyStep = 5;    // 方向键每格步长
     QPushButton *m_playButton = nullptr;
     QLabel *m_timeLabel = nullptr;
     QPushButton *m_playlistToggle = nullptr;

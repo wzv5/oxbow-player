@@ -63,6 +63,12 @@ public:
     void applyMediaMetadata(const QString &path, const QVariantMap &tags);
     void applyStreamInfo(const QString &path, const QVariantMap &info);
 
+protected:
+    // N5：ShortcutOverride 认领导航键——焦点在列表上时 ↑↓←→/PgUp/PgDn/Home/End
+    // 走列表原生导航，全局音量动作（↑/↓）本次不触发。
+    // 该事件定向投递焦点控件、不沿父链冒泡，故过滤器必须装在每个列表自身
+    bool eventFilter(QObject *watched, QEvent *event) override;
+
 signals:
     // 请求整表载入并播放 files 中第 index 个；seekTo > 0 时就绪后恢复到该进度
     // （N4 四步式的进度恢复与此同一通道；发出前已将 tab 标记为正在播放列表）

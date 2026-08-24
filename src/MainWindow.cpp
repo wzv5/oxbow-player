@@ -87,9 +87,11 @@ QWidget *MainWindow::createLeftArea()
     m_progressSlider = new QSlider(Qt::Horizontal);
     m_progressSlider->setRange(0, 1000);
     m_volumeSlider = new QSlider(Qt::Horizontal);
-    m_volumeSlider->setRange(0, 130);
+    // N5：上限可配置，构造期用成员默认值 100（restoreSettings 读 ini 后再调）
+    m_volumeSlider->setRange(0, m_volumeMax);
     m_volumeSlider->setValue(100);
     m_volumeSlider->setFixedWidth(100);
+    m_volumeSlider->installEventFilter(this); // N5：滚轮调节走统一入口
     seekLayout->addWidget(m_progressSlider, 1);
     seekLayout->addSpacing(8);
     seekLayout->addWidget(new QLabel(tr("音量")));
@@ -187,6 +189,14 @@ void MainWindow::createMenus()
     connect(act(AM::Id::PrevFile), &QAction::triggered, this, &MainWindow::playlistPrev);
     playMenu->addAction(act(AM::Id::NextFile));
     connect(act(AM::Id::NextFile), &QAction::triggered, this, &MainWindow::playlistNext);
+    // N5：音量步进（动作快捷键 ↑/↓ 全局生效，此处为菜单可见入口）
+    playMenu->addSeparator();
+    playMenu->addAction(act(AM::Id::VolumeUp));
+    connect(act(AM::Id::VolumeUp), &QAction::triggered, this,
+            [this] { changeVolume(m_volumeKeyStep); });
+    playMenu->addAction(act(AM::Id::VolumeDown));
+    connect(act(AM::Id::VolumeDown), &QAction::triggered, this,
+            [this] { changeVolume(-m_volumeKeyStep); });
 
     QMenu *viewMenu = menuBar()->addMenu(tr("视图(&V)"));
     m_playlistAction = act(AM::Id::Playlist);
@@ -685,11 +695,20 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
             syncVideoGeometry();
     } else if (watched == m_videoWidget) {
         switch (event->type()) {
+        case QEvent::Wheel:
+            // N5：播放区滚轮调音量（上滚增大）
+            changeVolume(static_cast<QWheelEvent *>(event)->angleDelta().y() > 0
+                             ? m_volumeWheelStep
+                             : -m_volumeWheelStep);
+            return true;
         case QEvent::MouseButtonPress:
         case QEvent::MouseButtonDblClick: {
             auto *me = static_cast<QMouseEvent *>(event);
             if (me->button() != Qt::LeftButton)
                 break; // 右键无任何行为变化
+            // N5：点击画面即离开列表焦点，方向键回到全局音量模式
+            if (auto *fw = QApplication::focusWidget())
+                fw->clearFocus();
             if (event->type() == QEvent::MouseButtonDblClick) {
                 m_clickTimer->stop();
                 m_clickActionPending = false;
@@ -721,8 +740,34 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         default:
             break;
         }
+    } else if (watched == m_volumeSlider && event->type() == QEvent::Wheel) {
+        // N5：接管滑条原生滚轮步进，与播放区同向同步长
+        changeVolume(static_cast<QWheelEvent *>(event)->angleDelta().y() > 0
+                         ? m_volumeWheelStep
+                         : -m_volumeWheelStep);
+        return true;
     }
     return QMainWindow::eventFilter(watched, event);
+}
+
+// N5：统一音量调节入口。以滑条缓存为基准钳制后下发 mpv；
+// UI 不在此处回写，由 volumeChanged 观察回流刷新（防环已有 QSignalBlocker）
+void MainWindow::changeVolume(int delta)
+{
+    const int target = qBound(0, m_volumeSlider->value() + delta, m_volumeMax);
+    m_controller->setProperty(QStringLiteral("volume"), double(target));
+}
+
+// N5：空白区域点击清焦兜底——未被交互控件消费的鼠标按下事件一路冒泡至此，
+// 清除焦点使方向键回到全局音量模式；列表/滑条/按钮等自行消费按下事件，
+// 不会到达此处，语义自动正确
+void MainWindow::mousePressEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::LeftButton) {
+        if (auto *fw = QApplication::focusWidget())
+            fw->clearFocus();
+    }
+    QMainWindow::mousePressEvent(event);
 }
 
 void MainWindow::onPlayRequested(const QStringList &files, int index, double seekTo)
@@ -826,6 +871,26 @@ void MainWindow::showSettingsDialog()
         loopCombo->setCurrentIndex(loopIdx);
     layout->addRow(tr("循环播放"), loopCombo);
 
+    // N5：音量调节三项——上限自由填写（域 0~400），滚轮/方向键步长档位单选
+    auto *maxSpin = new QSpinBox(&dialog);
+    maxSpin->setRange(0, 400);
+    maxSpin->setValue(m_volumeMax);
+    layout->addRow(tr("音量上限"), maxSpin);
+
+    auto makeStepCombo = [&dialog](int current) {
+        auto *combo = new QComboBox(&dialog);
+        for (int step : {1, 2, 5, 10})
+            combo->addItem(QString::number(step), step);
+        const int idx = combo->findData(current);
+        if (idx >= 0)
+            combo->setCurrentIndex(idx);
+        return combo;
+    };
+    auto *wheelStepCombo = makeStepCombo(m_volumeWheelStep);
+    layout->addRow(tr("滚轮步长"), wheelStepCombo);
+    auto *keyStepCombo = makeStepCombo(m_volumeKeyStep);
+    layout->addRow(tr("方向键步长"), keyStepCombo);
+
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
     layout->addRow(buttons);
     connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
@@ -840,6 +905,18 @@ void MainWindow::showSettingsDialog()
         const QString loopMode = loopCombo->currentData().toString();
         applyLoopMode(loopMode);
         settings.setValue(QStringLiteral("loopMode"), loopMode);
+
+        // 音量上限：setRange 自动把超限旧值钳回并经既有直通连接推送 mpv
+        const int newMax = maxSpin->value();
+        if (newMax != m_volumeMax) {
+            m_volumeMax = newMax;
+            m_volumeSlider->setRange(0, m_volumeMax);
+        }
+        m_volumeWheelStep = wheelStepCombo->currentData().toInt();
+        m_volumeKeyStep = keyStepCombo->currentData().toInt();
+        settings.setValue(QStringLiteral("volumeMax"), m_volumeMax);
+        settings.setValue(QStringLiteral("volumeWheelStep"), m_volumeWheelStep);
+        settings.setValue(QStringLiteral("volumeKeyStep"), m_volumeKeyStep);
     }
 }
 
@@ -928,9 +1005,15 @@ void MainWindow::restoreSettings()
     if (!hwdec.isEmpty())
         m_controller->setProperty(QStringLiteral("hwdec"), hwdec);
 
-    // 音量
+    // 音量（N5：先恢复上限并调整滑条量程，再恢复音量值——顺序敏感，
+    // 否则旧音量可能被默认量程 100 截断）
+    m_volumeMax = qBound(0, settings.value(QStringLiteral("volumeMax"), m_volumeMax).toInt(), 400);
+    m_volumeSlider->setRange(0, m_volumeMax);
+    m_volumeWheelStep = settings.value(QStringLiteral("volumeWheelStep"), m_volumeWheelStep).toInt();
+    m_volumeKeyStep = settings.value(QStringLiteral("volumeKeyStep"), m_volumeKeyStep).toInt();
     if (settings.contains(QStringLiteral("volume"))) {
-        const double vol = qBound(0.0, settings.value(QStringLiteral("volume")).toDouble(), 130.0);
+        const double vol =
+            qBound(0.0, settings.value(QStringLiteral("volume")).toDouble(), double(m_volumeMax));
         m_controller->setProperty(QStringLiteral("volume"), vol);
         QSignalBlocker blocker(m_volumeSlider);
         m_volumeSlider->setValue(int(vol + 0.5));

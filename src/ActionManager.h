@@ -12,6 +12,7 @@ public:
     enum class Id {
         Open, Settings, Quit,
         PlayPause, Stop, PrevFile, NextFile,
+        VolumeUp, VolumeDown,
         Playlist, Navigator, Fullscreen,
         About,
         Escape // 隐绑定：无菜单实体，仅键盘触发
