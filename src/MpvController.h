@@ -4,6 +4,7 @@
 #include <QSize>
 #include <QStringList>
 #include <QVariantList>
+#include <QVariantMap>
 
 #include <mpv/client.h>
 
@@ -44,6 +45,12 @@ signals:
     void videoPanXChanged(double panX);
     void videoPanYChanged(double panY);
     void videoSizeChanged(int width, int height); // 0,0 表示无视频
+    // 媒体元数据字典（N4）：键大小写因文件而异，接收方需做不敏感匹配
+    void mediaMetadataChanged(const QVariantMap &metadata);
+    // 当前活动流参数快照（N4）：任一被观察的流/容器属性变化即整体上报。
+    // 键：fileFormat/videoCodec/videoW/videoH/fps/audioCodec/channels/sampleRate；
+    // 值缺失的键表示当前不可用
+    void streamInfoChanged(const QVariantMap &info);
     void mpvShutdown();
 
 public:
@@ -61,4 +68,5 @@ private:
 
     mpv_handle *m_mpv; // 由 mpv 拥有，插件不销毁
     int m_videoW = 0, m_videoH = 0; // width/height 两属性合并缓存（N1）
+    QVariantMap m_streamInfo;       // 流参数合并缓存（N4），变化即整体重发
 };

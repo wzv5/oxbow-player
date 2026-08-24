@@ -44,7 +44,8 @@ private slots:
     void setNavigatorVisible(bool visible);
     void showSettingsDialog();
     void showAboutDialog();
-    void onPlayRequested(const QStringList &files, int index);
+    // 统一播放入口：整表载入 → 跳转 index → seekTo>0 时经挂起机制恢复进度
+    void onPlayRequested(const QStringList &files, int index, double seekTo);
     void onFilesAdded(const QStringList &files);
     void onRemoveRequested(QList<int> rows);
     void onClearRequested();

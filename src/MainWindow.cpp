@@ -64,6 +64,7 @@ MainWindow::MainWindow(MpvController *controller, const QString &configFile, QWi
     connect(m_clickTimer, &QTimer::timeout, this, &MainWindow::onVideoClickTimeout);
 
     m_playlist = new PlaylistWidget(configFile, m_splitter);
+    m_playlist->attachController(m_controller); // N4：四步式停止前读取 time-pos
     m_splitter->addWidget(m_playlist);
     m_splitter->setStretchFactor(0, 1);
     m_splitter->setStretchFactor(1, 0);
@@ -311,6 +312,44 @@ void MainWindow::connectController()
     connect(m_playlist, &PlaylistWidget::filesAdded, this, &MainWindow::onFilesAdded);
     connect(m_playlist, &PlaylistWidget::removeRequested, this, &MainWindow::onRemoveRequested);
     connect(m_playlist, &PlaylistWidget::clearRequested, this, &MainWindow::onClearRequested);
+    // N4：四步式第一步——排序/清理播放中 tab 前下发停止
+    connect(m_playlist, &PlaylistWidget::stopRequested, this, [this]() {
+        m_controller->command({QStringLiteral("stop")});
+    });
+    // N4：元数据回填路由——按"当前正播路径"定位全局仓条目（推送数据覆写）。
+    // 路径经 normalizePath 规范化，与条目存储键同形，防止写入幻影条目
+    connect(m_controller, &MpvController::durationChanged, m_playlist,
+            [this](double sec) {
+                if (sec > 0)
+                    m_playlist->applyDuration(
+                        PlaylistWidget::normalizePath(
+                            m_controller->propertyString(QStringLiteral("path"))),
+                        sec);
+            });
+    connect(m_controller, &MpvController::mediaMetadataChanged, m_playlist,
+            [this](const QVariantMap &tags) {
+                m_playlist->applyMediaMetadata(
+                    PlaylistWidget::normalizePath(
+                        m_controller->propertyString(QStringLiteral("path"))),
+                    tags);
+            });
+    connect(m_controller, &MpvController::streamInfoChanged, m_playlist,
+            [this](const QVariantMap &info) {
+                m_playlist->applyStreamInfo(
+                    PlaylistWidget::normalizePath(
+                        m_controller->propertyString(QStringLiteral("path"))),
+                    info);
+            });
+    connect(m_controller, &MpvController::mediaMetadataChanged, m_playlist,
+            [this](const QVariantMap &tags) {
+                m_playlist->applyMediaMetadata(
+                    m_controller->propertyString(QStringLiteral("path")), tags);
+            });
+    connect(m_controller, &MpvController::streamInfoChanged, m_playlist,
+            [this](const QVariantMap &info) {
+                m_playlist->applyStreamInfo(
+                    m_controller->propertyString(QStringLiteral("path")), info);
+            });
     // 停止态步进以选中 tab 为基准，切换 tab 需刷新启停（A16）
     connect(m_playlist, &QTabWidget::currentChanged, this, [this](int) {
         updateNavigationActions();
@@ -357,14 +396,10 @@ void MainWindow::togglePause()
             if (row < 0 || row >= files.size())
                 row = 0;
         }
-        // 载入即转移同步目标：mpv 列表回刷写进当前 tab，关闭时 lastTabName 随之正确
+        // 载入即转移同步目标：mpv 列表回刷写进当前 tab，关闭时 lastTabName 随之正确；
+        // 续播进度经统一入口的挂起 seek 机制恢复
         m_playlist->markPlayingTab(cur);
-        onPlayRequested(files, row);
-        // 有播放进度：挂起 seek，等目标条目的 duration 就绪后在 durationChanged 中执行一次
-        if (restoreTime > 0.0) {
-            m_pendingSeekRow = row;
-            m_pendingSeekTime = restoreTime;
-        }
+        onPlayRequested(files, row, restoreTime > 0.0 ? restoreTime : -1.0);
         return;
     }
     m_controller->command({QStringLiteral("cycle"), QStringLiteral("pause")});
@@ -434,7 +469,7 @@ void MainWindow::stepStopped(bool next)
         return;
     }
     m_playlist->markPlayingTab(cur);
-    onPlayRequested(files, target);
+    onPlayRequested(files, target, -1.0);
 }
 
 // A16：上一/下一动作三路联动启停（矩阵见 specs/A16.md）。
@@ -713,9 +748,11 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
     return QMainWindow::eventFilter(watched, event);
 }
 
-void MainWindow::onPlayRequested(const QStringList &files, int index)
+void MainWindow::onPlayRequested(const QStringList &files, int index, double seekTo)
 {
+    // 统一播放入口（N4 合并）：整表载入 → 跳转 index → 挂起恢复进度。
     m_pendingSeekRow = -1;   // 丢弃未执行的挂起 seek
+    m_pendingSeekTime = -1.0;
     if (files.isEmpty())
         return;
     // mpv 的 playlist-clear 会保留当前播放的条目，先 stop 才能真正清空
@@ -725,6 +762,13 @@ void MainWindow::onPlayRequested(const QStringList &files, int index)
     // 既避免 idle 下 append-play 瞬态播放 file[0]，也保持 mpv 列表顺序与界面一致
     for (int i = 0; i < files.size(); ++i)
         m_controller->command({QStringLiteral("loadfile"), files[i], QStringLiteral("append")});
+    if (seekTo > 0.0) {
+        // 进度恢复走挂起 seek（与会话恢复同款）：playlist-pos 触发的加载是
+        // 异步的，立即 seek 会因文件未就绪而失败；先挂起再启动杜绝竞态，
+        // 待目标条目 duration 推送到达且行号匹配时执行一次
+        m_pendingSeekRow = index;
+        m_pendingSeekTime = seekTo;
+    }
     m_controller->setProperty(QStringLiteral("playlist-pos"), index);
     // pause 状态在文件切换后仍然保持，双击播放时显式恢复播放
     m_controller->setProperty(QStringLiteral("pause"), false);

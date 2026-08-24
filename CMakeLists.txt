@@ -32,8 +32,13 @@ add_library(mpvqtcore MODULE
     src/MpvController.h
     src/NavigatorPanel.cpp
     src/NavigatorPanel.h
+    src/PlaylistDelegate.cpp
+    src/PlaylistDelegate.h
+    src/PlaylistItem.h
     src/PlaylistWidget.cpp
     src/PlaylistWidget.h
+    src/Util.cpp
+    src/Util.h
 )
 
 # mpv/client.h 已内置在仓库根目录的 mpv/ 下
