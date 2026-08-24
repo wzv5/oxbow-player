@@ -1,15 +1,7 @@
 #pragma once
 
-#include <QMainWindow>
-#include <QString>
+#include "pch.h"
 
-class QAction;
-class QAbstractButton;
-class QLabel;
-class QPushButton;
-class QTimer;
-class QSlider;
-class QSplitter;
 class MpvController;
 class NavigatorPanel;
 class PlaylistWidget;

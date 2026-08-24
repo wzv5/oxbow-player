@@ -1,13 +1,6 @@
 #pragma once
 
-#include <QHash>
-#include <QKeySequence>
-#include <QObject>
-#include <QString>
-
-class QAction;
-class QShortcut;
-class QWidget;
+#include "pch.h"
 
 // A15：全部 UI 动作的出生与登记处——集中声明使键位清单一眼可见；
 // 带键动作创建即双挂载主窗口（快捷键不随菜单栏隐藏失活）；零信号连接，

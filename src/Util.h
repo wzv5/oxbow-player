@@ -1,9 +1,6 @@
 #pragma once
 
-#include <QString>
-#include <QList>
-
-class QWidget;
+#include "pch.h"
 
 namespace Util {
 

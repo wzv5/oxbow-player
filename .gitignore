@@ -1,5 +1,19 @@
+# 构建目录：VS 主构建与 Ninja 编译数据库（仅导出 compile_commands.json）
 build/
-out/
-.vs/
-*.user
+build-ninja/
+
+# IDE / 编辑器
 .vscode/
+.idea/
+.vs/
+
+# CMake / MSVC / Qt 生成物兜底（正常均落在上述构建目录内）
+CMakeUserPresets.json
+*.user
+moc_*.cpp
+qrc_*.cpp
+ui_*.h
+
+# Windows 系统杂项
+Thumbs.db
+Desktop.ini

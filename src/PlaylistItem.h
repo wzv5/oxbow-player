@@ -1,11 +1,6 @@
 #pragma once
 
-#include <QDateTime>
-#include <QIcon>
-#include <QSize>
-#include <QString>
-
-#include <optional>
+#include "pch.h"
 
 // 播放列表条目的元数据对象（N4）：只承载文件固有属性与会话期求得的媒体信息。
 // path 字段仅作 UI 显示（原生分隔符形态）；内部匹配键是全局元数据仓的规范化路径。

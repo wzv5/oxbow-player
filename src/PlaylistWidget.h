@@ -1,16 +1,9 @@
 #pragma once
 
-#include <QHash>
-#include <QTabWidget>
-#include <QStringList>
-#include <QVariantList>
-#include <QString>
+#include "pch.h"
 
 #include "PlaylistItem.h"
 
-class QListWidget;
-class QListWidgetItem;
-class QFileIconProvider;
 class MpvController;
 
 // 右侧播放列表：每个 tab 对应一个播放列表，tab 标题为列表名。

@@ -1,8 +1,6 @@
 #pragma once
 
-#include <QStyledItemDelegate>
-
-#include <QHash>
+#include "pch.h"
 
 struct PlaylistItem;
 

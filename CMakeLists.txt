@@ -57,6 +57,9 @@ target_link_libraries(mpvqtcore PRIVATE Qt6::Widgets)
 if(WIN32)
     target_link_libraries(mpvqtcore PRIVATE dwmapi)
 endif()
+
+# 预编译头：Qt 与标准库集中进 src/pch.h，加快编译
+target_precompile_headers(mpvqtcore PRIVATE src/pch.h)
 set_target_properties(mpvqtcore PROPERTIES PREFIX "" OUTPUT_NAME "mpvqtcore")
 
 # ---------------------------------------------------------------------------

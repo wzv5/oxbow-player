@@ -1,12 +1,6 @@
+#include "pch.h"
+
 #include "Util.h"
-
-#include <QDesktopServices>
-#include <QDir>
-#include <QFileInfo>
-#include <QUrl>
-#include <QWidget>
-
-#include <limits>
 
 #ifdef Q_OS_WIN
 #include <shlobj.h>

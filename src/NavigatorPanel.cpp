@@ -1,20 +1,8 @@
+#include "pch.h"
+
 #include "NavigatorPanel.h"
 
 #include "MpvController.h"
-
-#include <algorithm>
-#include <cmath>
-
-#include <QCloseEvent>
-#include <QHBoxLayout>
-#include <QMouseEvent>
-#include <QPainter>
-#include <QPushButton>
-#include <QSignalBlocker>
-#include <QSlider>
-#include <QSpinBox>
-#include <QVBoxLayout>
-#include <QtGlobal>
 
 namespace {
 // 配色：画布底用窗口默认背景（跟随主题）；画面框内部固定深色模拟视频黑幕。

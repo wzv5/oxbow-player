@@ -1,7 +1,6 @@
-#include "MpvController.h"
+#include "pch.h"
 
-#include <QCoreApplication>
-#include <QEvent>
+#include "MpvController.h"
 
 namespace {
 

@@ -1,10 +1,8 @@
+#include "pch.h"
+
 #include "PlaylistDelegate.h"
 
 #include "PlaylistItem.h"
-
-#include <QFontMetrics>
-#include <QHash>
-#include <QPainter>
 
 namespace {
 constexpr int kIconSize = 16;

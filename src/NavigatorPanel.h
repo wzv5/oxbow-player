@@ -1,14 +1,7 @@
 #pragma once
 
-#include <QWidget>
+#include "pch.h"
 
-class QCloseEvent;
-class QMouseEvent;
-class QPaintEvent;
-class QResizeEvent;
-class QWheelEvent;
-class QSlider;
-class QSpinBox;
 class MpvController;
 
 // 画布：绘制全画面边界与视口矩形，处理点击跳转/拖拽平移/滚轮缩放。

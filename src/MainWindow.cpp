@@ -1,3 +1,5 @@
+#include "pch.h"
+
 #include "MainWindow.h"
 
 #include "ActionManager.h"
@@ -5,35 +7,10 @@
 #include "NavigatorPanel.h"
 #include "PlaylistWidget.h"
 
-#include <algorithm>
-
 #ifdef Q_OS_WIN
 #include <dwmapi.h>
 #include <qt_windows.h>
 #endif
-
-#include <QApplication>
-#include <QCloseEvent>
-#include <QComboBox>
-#include <QDialog>
-#include <QDialogButtonBox>
-#include <QEvent>
-#include <QFileDialog>
-#include <QFormLayout>
-#include <QHBoxLayout>
-#include <QLabel>
-#include <QMenuBar>
-#include <QMouseEvent>
-#include <QMessageBox>
-#include <QPushButton>
-#include <QSettings>
-#include <QShortcut>
-#include <QSignalBlocker>
-#include <QSlider>
-#include <QSplitter>
-#include <QStyle>
-#include <QTimer>
-#include <QVBoxLayout>
 
 MainWindow::MainWindow(MpvController *controller, const QString &configFile, QWidget *parent)
     : QMainWindow(parent), m_controller(controller), m_configFile(configFile)

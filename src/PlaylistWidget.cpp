@@ -1,36 +1,10 @@
+#include "pch.h"
+
 #include "PlaylistWidget.h"
 
 #include "MpvController.h"
 #include "PlaylistDelegate.h"
 #include "Util.h"
-
-#include <QApplication>
-#include <QActionGroup>
-#include <QClipboard>
-#include <QContextMenuEvent>
-#include <QDateTime>
-#include <QDebug>
-#include <QDialog>
-#include <QDir>
-#include <QDragEnterEvent>
-#include <QDragMoveEvent>
-#include <QDropEvent>
-#include <QFileDialog>
-#include <QFileIconProvider>
-#include <QFileInfo>
-#include <QInputDialog>
-#include <QListWidget>
-#include <QMenu>
-#include <QMimeData>
-#include <QMessageBox>
-#include <QSettings>
-#include <QTimer>
-#include <QTextOption>
-#include <QTextEdit>
-#include <QVBoxLayout>
-
-#include <algorithm>
-#include <optional>
 
 namespace {
 

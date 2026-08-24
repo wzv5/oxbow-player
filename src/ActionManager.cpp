@@ -1,8 +1,6 @@
-#include "ActionManager.h"
+#include "pch.h"
 
-#include <QAction>
-#include <QShortcut>
-#include <QWidget>
+#include "ActionManager.h"
 
 ActionManager::ActionManager(QWidget *host) : m_host(host)
 {

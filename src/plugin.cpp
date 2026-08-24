@@ -9,20 +9,13 @@
 // 创建 QApplication 并运行 Qt 事件循环（Windows 上 Qt 不要求
 // GUI 必须位于进程主线程；阻塞本线程不会阻塞 mpv 核心）。
 
+#include "pch.h"
+
 #ifdef _WIN32
 #include <windows.h>
 #else
-#include <cstdio>
 #include <dlfcn.h> // dlsym / RTLD_DEFAULT
 #endif
-
-#include <QApplication>
-#include <QDir>
-#include <QFileInfo>
-#include <QStandardPaths>
-#include <QTemporaryFile>
-
-#include <string>
 
 #include <mpv/client.h>
 

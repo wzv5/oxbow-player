@@ -1,10 +1,6 @@
 #pragma once
 
-#include <QObject>
-#include <QSize>
-#include <QStringList>
-#include <QVariantList>
-#include <QVariantMap>
+#include "pch.h"
 
 #include <mpv/client.h>
 
