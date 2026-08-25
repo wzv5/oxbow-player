@@ -212,6 +212,12 @@ void MpvController::drainEvents()
         case MPV_EVENT_SHUTDOWN:
             emit mpvShutdown();
             break;
+        case MPV_EVENT_END_FILE: {
+            // B9：读卸载原因供续播记忆清除判定（EOF=自然播完）
+            auto *ef = static_cast<mpv_event_end_file *>(event->data);
+            emit endFile(ef && ef->reason == MPV_END_FILE_REASON_EOF);
+            break;
+        }
         default:
             break;
         }

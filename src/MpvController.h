@@ -36,6 +36,9 @@ signals:
     void playlistPosChanged(int pos);
     // mpv 进入/离开空闲状态（列表播完或停止后无当前文件）
     void idleActive(bool active);
+    // B9：文件卸载事件。naturalEof=true 表示自然播完（EOF）；
+    // false 为 stop/quit/redirect/error 等其他卸载原因
+    void endFile(bool naturalEof);
     // 导航器面板（N1）：video-zoom / video-pan-x / video-pan-y / 视频尺寸
     void videoZoomChanged(double zoom);
     void videoPanXChanged(double panX);

@@ -431,6 +431,16 @@ void PlaylistWidget::recordPlayback(int tabIndex, int pos, double seconds)
     mem.lastTimePos = seconds;
 }
 
+void PlaylistWidget::clearResumeProgress(int tabIndex)
+{
+    QListWidget *list = listAt(tabIndex);
+    if (!list)
+        return;
+    auto it = m_memory.find(list);
+    if (it != m_memory.end())
+        it.value().lastTimePos = -1.0;
+}
+
 int PlaylistWidget::lastPosOf(int tabIndex) const
 {
     const QListWidget *list = listAt(tabIndex);

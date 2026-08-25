@@ -48,6 +48,8 @@ public:
 
     // 记录某 tab 的最后播放项与进度（仅非默认 tab 生效；纯内存，落盘发生在保存时）
     void recordPlayback(int tabIndex, int pos, double seconds);
+    // B9：清除某 tab 的续播进度记忆（保留最后播放项）；整表自然播完后调用
+    void clearResumeProgress(int tabIndex);
     // 某 tab 记忆的最后播放项 / 进度，无记录返回 -1 / -1.0
     int lastPosOf(int tabIndex) const;
     double lastTimePosOf(int tabIndex) const;

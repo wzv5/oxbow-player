@@ -296,14 +296,17 @@ void MainWindow::connectController()
         updateNavigationActions();
     });
     connect(m_controller, &MpvController::playlistPosChanged, this, [this](int pos) {
+        const bool switchedItem = pos != m_playlistPos; // B9：实际换条目（值不变 mpv 不推送）
         m_playlistPos = pos;
         updateNavigationActions(); // 播放/停止态切换与位置变化（A16）
         if (pos >= 0) {
             m_playedThisSession = true; // A13：标记本进程发生过播放
-            // per-tab 记忆：记录播放目标 tab 的最后播放项（默认 tab 仅进程内）
+            // per-tab 记忆：记录播放目标 tab 的最后播放项（默认 tab 仅进程内）。
+            // B9 Part2：换条目瞬间 m_timePos 尚是上一条的残留值（≈其片尾），
+            // 以 0 起记新槽位待新条目 time-pos 回填，防接续窗口内停止污染记忆
             const int pt = m_playlist->playingTabIndex();
             if (pt >= 0)
-                m_playlist->recordPlayback(pt, pos, m_timePos);
+                m_playlist->recordPlayback(pt, pos, switchedItem ? 0.0 : m_timePos);
             // 启动后首次检测到播放（如命令行参数打开文件）：切换到正在播放的 tab
             if (!m_startupPlaybackCheckDone) {
                 m_startupPlaybackCheckDone = true;
@@ -331,6 +334,14 @@ void MainWindow::connectController()
                 QTimer::singleShot(0, this, &MainWindow::flushOsd);
             }
         }
+    });
+    // B9 Part1：整表自然播完（EOF）即清进度留记忆项，播放按钮即可从头播；
+    // 手动停止/四步式等 reason≠eof 不触发。判定点即本事件，零事件顺序依赖；
+    // 中间条目接续时清除结果旋即被 playlistPosChanged 的换条目起记覆盖，无副作用。
+    // m_playlistPos>=0 守卫排除启动期与已停止态
+    connect(m_controller, &MpvController::endFile, this, [this](bool eof) {
+        if (eof && m_playlistPos >= 0)
+            m_playlist->clearResumeProgress(m_playlist->playingTabIndex());
     });
     // 列表播完或停止后 mpv 进入空闲，复位播放按钮与进度条（C1）
     connect(m_controller, &MpvController::idleActive, this, [this](bool active) {
