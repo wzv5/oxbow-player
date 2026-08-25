@@ -42,6 +42,7 @@
 #include <QMessageBox>
 #include <QObject>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPushButton>
 #include <QSettings>
 #include <QShortcut>

@@ -114,4 +114,27 @@ bool openFileLocation(const QString &path, QWidget *parent)
     return !dir.isEmpty() && QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
 }
 
+QString formatTime(double seconds)
+{
+    const int total = int(seconds + 0.5);
+    const int h = total / 3600;
+    const int m = (total % 3600) / 60;
+    const int s = total % 60;
+    if (h > 0)
+        return QStringLiteral("%1:%2:%3").arg(h).arg(m, 2, 10, QLatin1Char('0')).arg(s, 2, 10, QLatin1Char('0'));
+    return QStringLiteral("%1:%2").arg(m, 2, 10, QLatin1Char('0')).arg(s, 2, 10, QLatin1Char('0'));
+}
+
+QString formatTimeHMS(double seconds)
+{
+    const int total = int(seconds + 0.5);
+    const int h = total / 3600;
+    const int m = (total % 3600) / 60;
+    const int s = total % 60;
+    return QStringLiteral("%1:%2:%3")
+        .arg(h, 2, 10, QLatin1Char('0'))
+        .arg(m, 2, 10, QLatin1Char('0'))
+        .arg(s, 2, 10, QLatin1Char('0'));
+}
+
 } // namespace Util

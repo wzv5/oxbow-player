@@ -6,6 +6,7 @@
 #include "MpvController.h"
 #include "NavigatorPanel.h"
 #include "PlaylistWidget.h"
+#include "Util.h"
 
 #ifdef Q_OS_WIN
 #include <dwmapi.h>
@@ -273,10 +274,21 @@ void MainWindow::connectController()
     });
     connect(m_controller, &MpvController::pauseChanged, this, [this](bool paused) {
         m_playButton->setIcon(style()->standardIcon(paused ? QStyle::SP_MediaPlay : QStyle::SP_MediaPause));
+        // N7 #1：播放↔暂停 OSD（仅播放态互切，起停由 #2/#3 去重覆盖）
+        if (m_playlistPos >= 0) {
+            m_pendingPlayPause = paused ? tr("暂停") : tr("播放");
+            if (!m_osdCoalescePending) {
+                m_osdCoalescePending = true;
+                QTimer::singleShot(0, this, &MainWindow::flushOsd);
+            }
+        }
     });
     connect(m_controller, &MpvController::volumeChanged, this, [this](double v) {
         QSignalBlocker blocker(m_volumeSlider);
         m_volumeSlider->setValue(int(v + 0.5));
+        // N7 #4：音量 OSD，启动恢复期屏蔽
+        if (m_osdReady)
+            showOsd(tr("音量: %1").arg(int(v + 0.5)));
     });
     connect(m_controller, &MpvController::playlistChanged, m_playlist, &PlaylistWidget::setPlaylist);
     // 播放态列表长度变化影响步进启停（A16）
@@ -299,6 +311,25 @@ void MainWindow::connectController()
                 if (pt >= 0 && m_playlist->currentIndex() != pt)
                     m_playlist->setCurrentIndex(pt);
             }
+            // N7 #2：起播/切文件 OSD（真实文件名含后缀，不含路径，不用 media-title）
+            QString filename = m_controller->propertyString(QStringLiteral("filename"));
+            if (filename.isEmpty()) {
+                const int curPt = m_playlist->playingTabIndex();
+                if (curPt >= 0) {
+                    const QStringList files = m_playlist->filesOf(curPt);
+                    if (pos >= 0 && pos < files.size())
+                        filename = QFileInfo(files[pos]).fileName();
+                }
+            }
+            const int curPt2 = m_playlist->playingTabIndex();
+            const int total = curPt2 >= 0 ? m_playlist->filesOf(curPt2).size() : pos + 1;
+            if (filename.isEmpty())
+                filename = tr("未知文件");
+            m_pendingNowPlaying = tr("[%1/%2] %3").arg(pos + 1).arg(total).arg(filename);
+            if (!m_osdCoalescePending) {
+                m_osdCoalescePending = true;
+                QTimer::singleShot(0, this, &MainWindow::flushOsd);
+            }
         }
     });
     // 列表播完或停止后 mpv 进入空闲，复位播放按钮与进度条（C1）
@@ -307,6 +338,14 @@ void MainWindow::connectController()
             m_playButton->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
             QSignalBlocker blocker(m_progressSlider);
             m_progressSlider->setValue(0);
+            // N7 #3：停止 OSD（单源去重，playlistPos -1 不触发，以 m_playlistPos>=0 为守卫）
+            if (m_playlistPos >= 0) {
+                m_pendingStop = tr("停止");
+                if (!m_osdCoalescePending) {
+                    m_osdCoalescePending = true;
+                    QTimer::singleShot(0, this, &MainWindow::flushOsd);
+                }
+            }
         }
     });
 
@@ -511,6 +550,16 @@ void MainWindow::seekReleased()
     m_seeking = false;
     const double percent = m_progressSlider->value() / 10.0;
     m_controller->command({QStringLiteral("seek"), QString::number(percent), QStringLiteral("absolute-percent")});
+    // N7 #7：进度跳转 OSD（固定 hh:mm:ss）
+    if (m_duration > 0.0) {
+        const double target = m_duration * percent / 100.0;
+        const int pct = int(percent + 0.5);
+        showOsd(tr("进度跳转: %1(%2%)").arg(Util::formatTimeHMS(target)).arg(pct));
+    } else {
+        // 时长未知时仍给出百分比
+        const int pct = int(percent + 0.5);
+        showOsd(tr("进度跳转: %1%").arg(pct));
+    }
 }
 
 void MainWindow::setPlaylistVisible(bool visible)
@@ -585,16 +634,127 @@ void MainWindow::repositionNavigator()
     m_navigator->refresh(); // 渲染区域尺寸可能已变，视口矩形需重算
 }
 
+// ---- N7：VideoOverlay 统一 OSD（A3 顶级 Tool 浮窗）----
+namespace {
+class OsdLabel : public QLabel
+{
+public:
+    using QLabel::QLabel;
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        p.setRenderHints(QPainter::Antialiasing | QPainter::TextAntialiasing);
+        const QString text = this->text();
+        if (text.isEmpty())
+            return;
+        QFont f = font();
+        f.setPointSize(20);
+        f.setBold(true);
+        p.setFont(f);
+        QFontMetrics fm(f);
+        const int padX = 10;
+        const int padY = 6;
+        QPainterPath path;
+        path.addText(padX, padY + fm.ascent(), f, text);
+        QPen pen(Qt::black, 5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+        p.strokePath(path, pen);
+        p.fillPath(path, QBrush(Qt::white));
+    }
+    QSize sizeHint() const override
+    {
+        QFont f = font();
+        f.setPointSize(20);
+        f.setBold(true);
+        QFontMetrics fm(f);
+        const QString t = text();
+        const int w = fm.horizontalAdvance(t) + 20;
+        const int h = fm.height() + 12;
+        return QSize(w, h);
+    }
+};
+} // namespace
+
+void MainWindow::ensureVideoOverlay()
+{
+    if (m_videoOverlay)
+        return;
+    m_videoOverlay = new QWidget(this, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowDoesNotAcceptFocus
+                                      | Qt::WindowTransparentForInput);
+    m_videoOverlay->setAttribute(Qt::WA_TranslucentBackground);
+    m_videoOverlay->setAttribute(Qt::WA_ShowWithoutActivating);
+    m_videoOverlay->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    // 容器透明，内部控件自绘
+    auto *layout = new QVBoxLayout(m_videoOverlay);
+    layout->setContentsMargins(12, 12, 12, 12);
+    layout->setSpacing(0);
+    m_osdLabel = new OsdLabel(m_videoOverlay);
+    m_osdLabel->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    // N7：无背景，仅描边白字（20pt），不使用 style sheet
+    m_osdLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    m_osdLabel->hide();
+    layout->addWidget(m_osdLabel, 0, Qt::AlignTop | Qt::AlignLeft);
+    layout->addStretch(1);
+    m_osdTimer = new QTimer(this);
+    m_osdTimer->setSingleShot(true);
+    connect(m_osdTimer, &QTimer::timeout, this, [this] {
+        if (m_osdLabel)
+            m_osdLabel->hide();
+        if (m_videoOverlay && !m_osdLabel->isVisible())
+            m_videoOverlay->hide();
+    });
+}
+
+void MainWindow::repositionVideoOverlay()
+{
+    if (!m_videoOverlay || !m_videoWidget)
+        return;
+    const QPoint globalPos = m_videoWidget->mapToGlobal(QPoint(0, 0));
+    m_videoOverlay->setGeometry(QRect(globalPos, m_videoWidget->size()));
+}
+
+void MainWindow::showOsd(const QString &text)
+{
+    ensureVideoOverlay();
+    m_osdLabel->setText(text);
+    m_osdLabel->adjustSize();
+    repositionVideoOverlay();
+    m_videoOverlay->show();
+    m_osdLabel->show();
+    m_videoOverlay->raise();
+    m_osdTimer->start(2000);
+}
+
+void MainWindow::flushOsd()
+{
+    m_osdCoalescePending = false;
+    // 优先级：#2 起播/切文件 > #3 停止 > #1 播放/暂停
+    QString text;
+    if (!m_pendingNowPlaying.isEmpty())
+        text = m_pendingNowPlaying;
+    else if (!m_pendingStop.isEmpty())
+        text = m_pendingStop;
+    else if (!m_pendingPlayPause.isEmpty())
+        text = m_pendingPlayPause;
+    m_pendingNowPlaying.clear();
+    m_pendingStop.clear();
+    m_pendingPlayPause.clear();
+    if (!text.isEmpty())
+        showOsd(text);
+}
+
 void MainWindow::moveEvent(QMoveEvent *event)
 {
     QMainWindow::moveEvent(event);
     repositionNavigator();
+    repositionVideoOverlay();
 }
 
 void MainWindow::resizeEvent(QResizeEvent *event)
 {
     QMainWindow::resizeEvent(event);
     repositionNavigator();
+    repositionVideoOverlay();
     // N3：showFullScreen/showNormal 改变的是主窗尺寸，主窗 resize 是
     // 全屏/还原后视频区几何同步的可靠最终触发点（幂等）
     syncVideoGeometry();
@@ -609,10 +769,11 @@ void MainWindow::syncVideoGeometry()
         return;
     if (m_fullscreen) {
         m_videoWidget->setGeometry(rect());
-        return;
+    } else {
+        const QPoint origin = m_videoPlaceholder->mapTo(this, QPoint(0, 0));
+        m_videoWidget->setGeometry(QRect(origin, m_videoPlaceholder->size()));
     }
-    const QPoint origin = m_videoPlaceholder->mapTo(this, QPoint(0, 0));
-    m_videoWidget->setGeometry(QRect(origin, m_videoPlaceholder->size()));
+    repositionVideoOverlay();
 }
 
 // 覆盖式全屏切换（N3）：不隐藏控件、不重父化、wid 不重设、零黑闪
@@ -780,6 +941,18 @@ void MainWindow::seekRelative(int deltaSeconds)
     if (m_playlistPos < 0)
         return;
     m_controller->command({QStringLiteral("seek"), QString::number(deltaSeconds)});
+    // N7 #6：进度跳转 OSD（固定 hh:mm:ss）
+    if (m_duration > 0.0) {
+        const double target = qBound(0.0, m_timePos + deltaSeconds, m_duration);
+        const int pct = int(target / m_duration * 100.0 + 0.5);
+        const QString sign = deltaSeconds >= 0 ? QStringLiteral("+%1秒").arg(deltaSeconds)
+                                               : QStringLiteral("%1秒").arg(deltaSeconds);
+        showOsd(tr("进度跳转: %1 / %2(%3%)").arg(sign, Util::formatTimeHMS(target)).arg(pct));
+    } else {
+        const QString sign = deltaSeconds >= 0 ? QStringLiteral("+%1秒").arg(deltaSeconds)
+                                               : QStringLiteral("%1秒").arg(deltaSeconds);
+        showOsd(tr("进度跳转: %1").arg(sign));
+    }
 }
 
 // N6：速度步进——实时读 speed 属性做读改写（不设观察缓存），
@@ -789,11 +962,20 @@ void MainWindow::changeSpeed(double delta)
     const double cur = m_controller->propertyDouble(QStringLiteral("speed"), 1.0);
     const double target = qBound(0.25, cur + delta, 8.0);
     m_controller->setProperty(QStringLiteral("speed"), target);
+    // N7 #5：四舍五入至两位小数后去尾零
+    double rounded = std::round(target * 100.0) / 100.0;
+    QString num = QString::number(rounded, 'f', 2);
+    while (num.contains(QLatin1Char('.')) && num.endsWith(QLatin1Char('0')))
+        num.chop(1);
+    if (num.endsWith(QLatin1Char('.')))
+        num.chop(1);
+    showOsd(tr("播放速度: %1倍").arg(num));
 }
 
 void MainWindow::resetSpeed()
 {
     m_controller->setProperty(QStringLiteral("speed"), 1.0);
+    showOsd(tr("播放速度: 1倍"));
 }
 
 // N5：空白区域点击清焦兜底——未被交互控件消费的鼠标按下事件一路冒泡至此，
@@ -1088,24 +1270,21 @@ void MainWindow::restoreSettings()
     }
 
     updateNavigationActions(); // A16：启动恢复完成后的初始启停状态
+    // N7：启动恢复的 volume setProperty 会异步回推 volumeChanged，
+    // 需延迟至事件队列稳定后再允许 OSD，避免启动瞬间误弹“音量: xx”
+    QTimer::singleShot(600, this, [this] { m_osdReady = true; });
 }
 
 void MainWindow::updateTimeDisplay()
 {
-    m_timeLabel->setText(QStringLiteral("%1 / %2").arg(formatTime(m_timePos), formatTime(m_duration)));
+    m_timeLabel->setText(QStringLiteral("%1 / %2").arg(Util::formatTime(m_timePos), Util::formatTime(m_duration)));
     if (!m_seeking && m_duration > 0.0)
         m_progressSlider->setValue(int(m_timePos / m_duration * 1000.0));
 }
 
 QString MainWindow::formatTime(double seconds)
 {
-    const int total = int(seconds + 0.5);
-    const int h = total / 3600;
-    const int m = (total % 3600) / 60;
-    const int s = total % 60;
-    if (h > 0)
-        return QStringLiteral("%1:%2:%3").arg(h).arg(m, 2, 10, QLatin1Char('0')).arg(s, 2, 10, QLatin1Char('0'));
-    return QStringLiteral("%1:%2").arg(m, 2, 10, QLatin1Char('0')).arg(s, 2, 10, QLatin1Char('0'));
+    return Util::formatTime(seconds);
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)

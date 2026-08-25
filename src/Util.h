@@ -29,4 +29,10 @@ int naturalCompare(const QList<NameSegment> &a, const QList<NameSegment> &b);
 // 其他平台或失败时降级为打开所在目录。返回是否成功定位选中
 bool openFileLocation(const QString &path, QWidget *parent);
 
+// 时间格式化：自适应 mm:ss / hh:mm:ss（进度标签用）
+QString formatTime(double seconds);
+
+// OSD 专用：固定 hh:mm:ss（小时补零，00:01:05）
+QString formatTimeHMS(double seconds);
+
 } // namespace Util

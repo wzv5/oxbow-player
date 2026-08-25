@@ -124,6 +124,21 @@ private:
     bool m_playedThisSession = false;
     // B7：构造期对未显示窗口设置最大化会被平台层丢弃，记标志待首次显示应用
     bool m_pendingMaximize = false;
+    // ---- N7：VideoOverlay 视频叠加层（A3 顶级 Tool 浮窗，仅 OSD/字幕/弹幕，不含控制栏）----
+    QWidget *m_videoOverlay = nullptr; // 顶级浮窗容器（VideoOverlay），几何始终跟随 m_videoWidget
+    QLabel *m_osdLabel = nullptr;      // OSD 文本（左上角 12px 内边距）
+    QTimer *m_osdTimer = nullptr;      // OSD 2s 自动隐藏
+    bool m_osdReady = false;           // 启动恢复期屏蔽 volume OSD
+    // 帧合并去重：同事件循环内多信号折叠为一次显示（#2 > #3 > #1）
+    bool m_osdCoalescePending = false;
+    QString m_pendingNowPlaying;
+    QString m_pendingStop;
+    QString m_pendingPlayPause;
+    void showOsd(const QString &text);
+    void repositionVideoOverlay();
+    void flushOsd();
+    void ensureVideoOverlay();
+
     // ---- N3：单击/双击分流与覆盖式全屏 ----
     QTimer *m_clickTimer = nullptr;     // 单次定时器，间隔=双击间隔
     bool m_pendingPauseRestore = false; // 播放中 press 已暂停，双击需恢复播放
