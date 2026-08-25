@@ -21,6 +21,7 @@
 
 #include "MainWindow.h"
 #include "MpvController.h"
+#include "Constants.h"
 
 // 本模块通过 MPV_CPLUGIN_DYNAMIC_SYM 把 mpv_* 编译为指向 pfn_* 的指针，
 // 这些指针本应由 mpv 在“直接加载的模块”里填充。但本模块在 Windows 上是由壳
@@ -110,13 +111,13 @@ static QString resolveConfigFilePath()
         const QString dir = QFileInfo(modulePath).absolutePath();
         QTemporaryFile probe(dir + QStringLiteral("/mpvqt-XXXXXX.tmp"));
         if (probe.open())
-            return QDir(dir).filePath(QStringLiteral("mpv-qt.ini"));
+            return QDir(dir).filePath(App::iniFileName());
     }
 
     // 兜底：写入 Qt 标准配置位置（AppConfigLocation）
     const QString fallback = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
     QDir().mkpath(fallback);
-    return QDir(fallback).filePath(QStringLiteral("mpv-qt.ini"));
+    return QDir(fallback).filePath(App::iniFileName());
 }
 
 extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle)
@@ -132,13 +133,12 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle)
 
     // argc/argv 的生命周期必须覆盖整个进程
     static int argc = 1;
-    static char appName[] = "mpv-qt";
-    static char *argv[] = {appName, nullptr};
+    static char *argv[] = {App::nameAscii, nullptr};
 
     if (!qApp) {
         // 有意不 delete：QApplication 必须与进程同生命周期
         (void)new QApplication(argc, argv);
-        QApplication::setApplicationName(QStringLiteral("mpv-qt"));
+        QApplication::setApplicationName(App::name());
     }
 
     auto *controller = new MpvController(handle);

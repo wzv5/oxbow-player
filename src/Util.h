@@ -35,4 +35,8 @@ QString formatTime(double seconds);
 // OSD 专用：固定 hh:mm:ss（小时补零，00:01:05）
 QString formatTimeHMS(double seconds);
 
+// 进度标记统一格式 hh:mm:ss(pct%)（N8）：pct 四舍五入取整。
+// duration<=0 时退化为仅时间。三处共用：进度条 tooltip / N7 #6 尾段 / N7 #7 主体
+QString formatTimePercent(double seconds, double duration);
+
 } // namespace Util

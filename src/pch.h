@@ -28,6 +28,7 @@
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QHash>
+#include <QHelpEvent>
 #include <QIcon>
 #include <QInputDialog>
 #include <QKeySequence>
@@ -56,11 +57,13 @@
 #include <QStandardPaths>
 #include <QStyledItemDelegate>
 #include <QStyle>
+#include <QStyleOptionSlider>
 #include <QTabWidget>
 #include <QTemporaryFile>
 #include <QTextEdit>
 #include <QTextOption>
 #include <QTimer>
+#include <QToolTip>
 #include <QVariantList>
 #include <QVariantMap>
 #include <QVBoxLayout>

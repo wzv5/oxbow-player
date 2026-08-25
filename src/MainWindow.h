@@ -139,6 +139,10 @@ private:
     void flushOsd();
     void ensureVideoOverlay();
 
+    // ---- N8：主窗口显示优化 ----
+    QString playingFilename();                          // 正播真实文件名（含后缀，标题与 OSD 同源）
+    double progressPercentAt(const QPoint &pos) const;  // 进度条鼠标 x → 百分比（0~100），无效返回 -1
+
     // ---- N3：单击/双击分流与覆盖式全屏 ----
     QTimer *m_clickTimer = nullptr;     // 单次定时器，间隔=双击间隔
     bool m_pendingPauseRestore = false; // 播放中 press 已暂停，双击需恢复播放

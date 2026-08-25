@@ -137,4 +137,12 @@ QString formatTimeHMS(double seconds)
         .arg(s, 2, 10, QLatin1Char('0'));
 }
 
+QString formatTimePercent(double seconds, double duration)
+{
+    if (duration <= 0.0)
+        return formatTimeHMS(seconds);
+    const int pct = int(seconds / duration * 100.0 + 0.5);
+    return QStringLiteral("%1(%2%)").arg(formatTimeHMS(seconds)).arg(pct);
+}
+
 } // namespace Util

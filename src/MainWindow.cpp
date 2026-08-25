@@ -3,6 +3,7 @@
 #include "MainWindow.h"
 
 #include "ActionManager.h"
+#include "Constants.h"
 #include "MpvController.h"
 #include "NavigatorPanel.h"
 #include "PlaylistWidget.h"
@@ -16,7 +17,7 @@
 MainWindow::MainWindow(MpvController *controller, const QString &configFile, QWidget *parent)
     : QMainWindow(parent), m_controller(controller), m_configFile(configFile)
 {
-    setWindowTitle(QStringLiteral("mpv-qt"));
+    setWindowTitle(App::name());
 
     m_actions = new ActionManager(this); // A15：先于任何容器构建
 
@@ -87,6 +88,12 @@ QWidget *MainWindow::createLeftArea()
     seekLayout->setContentsMargins(8, 0, 8, 0);
     m_progressSlider = new QSlider(Qt::Horizontal);
     m_progressSlider->setRange(0, 1000);
+    // N8 Part3：未按下也接收 move，驱动 tooltip 跟随
+    m_progressSlider->setMouseTracking(true);
+    m_progressSlider->installEventFilter(this);
+    // N8 Part5：停止态禁用且归零（起播经 playlistPosChanged 启用）
+    m_progressSlider->setEnabled(false);
+    m_progressSlider->setValue(0);
     m_volumeSlider = new QSlider(Qt::Horizontal);
     // N5：上限可配置，构造期用成员默认值 100（restoreSettings 读 ini 后再调）
     m_volumeSlider->setRange(0, m_volumeMax);
@@ -286,9 +293,9 @@ void MainWindow::connectController()
     connect(m_controller, &MpvController::volumeChanged, this, [this](double v) {
         QSignalBlocker blocker(m_volumeSlider);
         m_volumeSlider->setValue(int(v + 0.5));
-        // N7 #4：音量 OSD，启动恢复期屏蔽
+        // N7 #4 + N8 Part6：音量 OSD（百分比样式），启动恢复期屏蔽
         if (m_osdReady)
-            showOsd(tr("音量: %1").arg(int(v + 0.5)));
+            showOsd(tr("音量: %1%").arg(int(v + 0.5)));
     });
     connect(m_controller, &MpvController::playlistChanged, m_playlist, &PlaylistWidget::setPlaylist);
     // 播放态列表长度变化影响步进启停（A16）
@@ -299,6 +306,12 @@ void MainWindow::connectController()
         const bool switchedItem = pos != m_playlistPos; // B9：实际换条目（值不变 mpv 不推送）
         m_playlistPos = pos;
         updateNavigationActions(); // 播放/停止态切换与位置变化（A16）
+        // N8 Part5：停止态禁用进度条并归位 0；播放态恢复可用
+        m_progressSlider->setEnabled(pos >= 0);
+        if (pos < 0) {
+            QSignalBlocker progressBlocker(m_progressSlider);
+            m_progressSlider->setValue(0);
+        }
         if (pos >= 0) {
             m_playedThisSession = true; // A13：标记本进程发生过播放
             // per-tab 记忆：记录播放目标 tab 的最后播放项（默认 tab 仅进程内）。
@@ -314,19 +327,14 @@ void MainWindow::connectController()
                 if (pt >= 0 && m_playlist->currentIndex() != pt)
                     m_playlist->setCurrentIndex(pt);
             }
-            // N7 #2：起播/切文件 OSD（真实文件名含后缀，不含路径，不用 media-title）
-            QString filename = m_controller->propertyString(QStringLiteral("filename"));
-            if (filename.isEmpty()) {
-                const int curPt = m_playlist->playingTabIndex();
-                if (curPt >= 0) {
-                    const QStringList files = m_playlist->filesOf(curPt);
-                    if (pos >= 0 && pos < files.size())
-                        filename = QFileInfo(files[pos]).fileName();
-                }
-            }
+            // N7 #2 + N8 Part1：起播/切文件 OSD 与窗口标题同源（helper 收敛，
+            // 真实文件名含后缀，不用 media-title）
+            QString filename = playingFilename();
             const int curPt2 = m_playlist->playingTabIndex();
             const int total = curPt2 >= 0 ? m_playlist->filesOf(curPt2).size() : pos + 1;
-            if (filename.isEmpty())
+            if (!filename.isEmpty())
+                setWindowTitle(filename); // N8 Part1：标题跟随真实文件名
+            else
                 filename = tr("未知文件");
             m_pendingNowPlaying = tr("[%1/%2] %3").arg(pos + 1).arg(total).arg(filename);
             if (!m_osdCoalescePending) {
@@ -349,6 +357,10 @@ void MainWindow::connectController()
             m_playButton->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
             QSignalBlocker blocker(m_progressSlider);
             m_progressSlider->setValue(0);
+            // N8 Part5：停止态禁用进度条（与 C1 归零同点）
+            m_progressSlider->setEnabled(false);
+            // N8 Part1：无正在播放内容，标题恢复基名
+            setWindowTitle(App::name());
             // N7 #3：停止 OSD（单源去重，playlistPos -1 不触发，以 m_playlistPos>=0 为守卫）
             if (m_playlistPos >= 0) {
                 m_pendingStop = tr("停止");
@@ -561,16 +573,10 @@ void MainWindow::seekReleased()
     m_seeking = false;
     const double percent = m_progressSlider->value() / 10.0;
     m_controller->command({QStringLiteral("seek"), QString::number(percent), QStringLiteral("absolute-percent")});
-    // N7 #7：进度跳转 OSD（固定 hh:mm:ss）
-    if (m_duration > 0.0) {
-        const double target = m_duration * percent / 100.0;
-        const int pct = int(percent + 0.5);
-        showOsd(tr("进度跳转: %1(%2%)").arg(Util::formatTimeHMS(target)).arg(pct));
-    } else {
-        // 时长未知时仍给出百分比
-        const int pct = int(percent + 0.5);
-        showOsd(tr("进度跳转: %1%").arg(pct));
-    }
+    // N7 #7：进度跳转 OSD（固定 hh:mm:ss）。N8 Part5：duration<=0 分支已删——
+    // 停止态滑条禁用后不可达，残余场景（直播流）下 absolute-percent 本就无效
+    if (m_duration > 0.0)
+        showOsd(tr("进度跳转: %1").arg(Util::formatTimePercent(m_duration * percent / 100.0, m_duration)));
 }
 
 void MainWindow::setPlaylistVisible(bool visible)
@@ -927,12 +933,62 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         default:
             break;
         }
-    } else if (watched == m_volumeSlider && event->type() == QEvent::Wheel) {
-        // N5：接管滑条原生滚轮步进，与播放区同向同步长
-        changeVolume(static_cast<QWheelEvent *>(event)->angleDelta().y() > 0
-                         ? m_volumeWheelStep
-                         : -m_volumeWheelStep);
-        return true;
+    } else if (watched == m_progressSlider) {
+        // N8 Part3：tooltip 跟随鼠标实时显示所指进度；拖动期持续刷新防自动隐藏。
+        // 停止态控件已禁用收不到鼠标事件，天然不显示
+        switch (event->type()) {
+        case QEvent::ToolTip:
+        case QEvent::MouseMove: {
+            // ToolTip 载荷为 QHelpEvent、MouseMove 为 QMouseEvent，先归一坐标
+            QPoint pos, global;
+            if (event->type() == QEvent::ToolTip) {
+                const auto *he = static_cast<QHelpEvent *>(event);
+                pos = he->pos();
+                global = he->globalPos();
+            } else {
+                const auto *me = static_cast<QMouseEvent *>(event);
+                pos = me->position().toPoint();
+                global = me->globalPosition().toPoint();
+            }
+            if (m_playlistPos < 0 || m_duration <= 0.0)
+                break;
+            const double percent = progressPercentAt(pos);
+            if (percent < 0.0)
+                break;
+            QToolTip::showText(global,
+                               Util::formatTimePercent(m_duration * percent / 100.0, m_duration),
+                               m_progressSlider);
+            break;
+        }
+        case QEvent::Leave:
+            // 拖动中移出不隐藏（保持常显），仅悬停离开时收起
+            if (!m_seeking)
+                QToolTip::hideText();
+            break;
+        default:
+            break;
+        }
+    } else if (watched == m_volumeSlider) {
+        switch (event->type()) {
+        case QEvent::Wheel:
+            // N5：接管滑条原生滚轮步进，与播放区同向同步长
+            changeVolume(static_cast<QWheelEvent *>(event)->angleDelta().y() > 0
+                             ? m_volumeWheelStep
+                             : -m_volumeWheelStep);
+            return true;
+        case QEvent::MouseMove:
+            // N8 Part4：拖动期间显示当前音量（isSliderDown 区分拖动与悬停）
+            if (m_volumeSlider->isSliderDown())
+                QToolTip::showText(static_cast<QMouseEvent *>(event)->globalPosition().toPoint(),
+                                   QStringLiteral("%1%").arg(m_volumeSlider->value()), m_volumeSlider);
+            break;
+        case QEvent::MouseButtonRelease:
+        case QEvent::Leave:
+            QToolTip::hideText();
+            break;
+        default:
+            break;
+        }
     }
     return QMainWindow::eventFilter(watched, event);
 }
@@ -945,6 +1001,45 @@ void MainWindow::changeVolume(int delta)
     m_controller->setProperty(QStringLiteral("volume"), double(target));
 }
 
+// N8 Part1：正在播放的真实文件名（含后缀不含路径）：优先 filename 属性，
+// 空则回退正在播放 tab 对应条目的基名；不用 media-title（N7 #2 口径）。
+// 窗口标题与 OSD #2 同源收敛
+QString MainWindow::playingFilename()
+{
+    QString name = m_controller->propertyString(QStringLiteral("filename"));
+    if (!name.isEmpty())
+        return name;
+    const int pt = m_playlist->playingTabIndex();
+    if (pt >= 0 && m_playlistPos >= 0) {
+        const QStringList files = m_playlist->filesOf(pt);
+        if (m_playlistPos < files.size())
+            return QFileInfo(files[m_playlistPos]).fileName();
+    }
+    return QString();
+}
+
+// N8 Part3：进度条鼠标 x → 百分比（0~100）。经样式反查 groove/handle 几何，
+// 扣除滑块半宽后线性映射，与拖动定位算法同口径
+double MainWindow::progressPercentAt(const QPoint &pos) const
+{
+    QStyleOptionSlider opt;
+    opt.initFrom(m_progressSlider);
+    opt.subControls = QStyle::SC_SliderGroove | QStyle::SC_SliderHandle;
+    opt.orientation = m_progressSlider->orientation();
+    opt.minimum = m_progressSlider->minimum();
+    opt.maximum = m_progressSlider->maximum();
+    opt.sliderPosition = m_progressSlider->sliderPosition();
+    opt.sliderValue = m_progressSlider->value();
+    const QRect groove = style()->subControlRect(QStyle::CC_Slider, &opt, QStyle::SC_SliderGroove, m_progressSlider);
+    const QRect handle = style()->subControlRect(QStyle::CC_Slider, &opt, QStyle::SC_SliderHandle, m_progressSlider);
+    const int span = groove.width() - handle.width();
+    if (span <= 0)
+        return -1.0;
+    const int dx = pos.x() - handle.width() / 2 - groove.left();
+    const int value = QStyle::sliderValueFromPosition(opt.minimum, opt.maximum, qBound(0, dx, span), span);
+    return value / 10.0;
+}
+
 // N6：相对 seek。停止态（m_playlistPos<0）无播放位置可寻址，直接忽略；
 // 不指定 flags 走 mpv 默认相对关键帧寻址，响应优先于逐帧精度
 void MainWindow::seekRelative(int deltaSeconds)
@@ -955,10 +1050,9 @@ void MainWindow::seekRelative(int deltaSeconds)
     // N7 #6：进度跳转 OSD（固定 hh:mm:ss）
     if (m_duration > 0.0) {
         const double target = qBound(0.0, m_timePos + deltaSeconds, m_duration);
-        const int pct = int(target / m_duration * 100.0 + 0.5);
         const QString sign = deltaSeconds >= 0 ? QStringLiteral("+%1秒").arg(deltaSeconds)
                                                : QStringLiteral("%1秒").arg(deltaSeconds);
-        showOsd(tr("进度跳转: %1 / %2(%3%)").arg(sign, Util::formatTimeHMS(target)).arg(pct));
+        showOsd(tr("进度跳转: %1 / %2").arg(sign, Util::formatTimePercent(target, m_duration)));
     } else {
         const QString sign = deltaSeconds >= 0 ? QStringLiteral("+%1秒").arg(deltaSeconds)
                                                : QStringLiteral("%1秒").arg(deltaSeconds);
@@ -1153,9 +1247,9 @@ void MainWindow::showSettingsDialog()
 
 void MainWindow::showAboutDialog()
 {
-    QMessageBox::about(this, tr("关于 mpv-qt"),
-                       tr("mpv-qt：以 mpv C 插件形式加载的 Qt 播放器界面。\n"
-                          "视频渲染由 mpv 完成，本插件仅提供图形界面。"));
+    QMessageBox::about(this, tr("关于 %1").arg(App::name()),
+                       tr("%1：以 mpv C 插件形式加载的 Qt 播放器界面。\n"
+                          "视频渲染由 mpv 完成，本插件仅提供图形界面。").arg(App::name()));
 }
 
 void MainWindow::onMpvShutdown()

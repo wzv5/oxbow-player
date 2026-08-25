@@ -24,6 +24,7 @@ endif()
 # ---------------------------------------------------------------------------
 add_library(mpvqtcore MODULE
     src/plugin.cpp
+    src/Constants.h
     src/ActionManager.cpp
     src/ActionManager.h
     src/MainWindow.cpp
