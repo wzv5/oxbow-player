@@ -504,6 +504,20 @@ int PlaylistWidget::currentSelectedRow() const
     return list->currentRow();
 }
 
+// B10：同步目标转移。同 tab 早退（播放中双击本 tab 条目时防标记闪烁）；
+// 异 tab 转移先清空原 tab 全部行的播放标记——setPlaylist 仅回刷新播放 tab，
+// 旧 tab 标记若不在此清理将永久残留
+void PlaylistWidget::markPlayingTab(int tabIndex)
+{
+    if (tabIndex == m_playingTab)
+        return;
+    if (QListWidget *old = listAt(m_playingTab)) {
+        for (int i = 0; i < old->count(); ++i)
+            old->item(i)->setData(PlayingRole, false);
+    }
+    m_playingTab = tabIndex;
+}
+
 void PlaylistWidget::onItemDoubleClicked(QListWidgetItem *item)
 {
     QListWidget *list = item->listWidget();

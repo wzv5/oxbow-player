@@ -43,8 +43,9 @@ public:
 
     // 当前 tab 中选中的行号，无选中项返回 -1
     int currentSelectedRow() const;
-    // 转移“正在播放”同步目标到指定 tab（双击条目或会话恢复载入时调用）
-    void markPlayingTab(int tabIndex) { m_playingTab = tabIndex; }
+    // 转移“正在播放”同步目标到指定 tab（双击条目或会话恢复载入时调用）。
+    // B10：异 tab 转移时清空原 tab 的播放标记，防残留；同 tab 早退防闪烁
+    void markPlayingTab(int tabIndex);
 
     // 记录某 tab 的最后播放项与进度（仅非默认 tab 生效；纯内存，落盘发生在保存时）
     void recordPlayback(int tabIndex, int pos, double seconds);
