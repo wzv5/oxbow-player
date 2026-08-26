@@ -3,6 +3,7 @@
 #include "pch.h"
 
 #include "PlaylistItem.h"
+#include "PlaylistProvider.h"
 
 class MpvController;
 
@@ -23,7 +24,6 @@ public:
     static constexpr int PlayingRole = Qt::UserRole + 1; // 正在播放标记（bool）
 
     explicit PlaylistWidget(const QString &configFile = QString(), QWidget *parent = nullptr);
-    ~PlaylistWidget() override;
 
     // 注入控制器（弱引用）：四步式停止前读取 time-pos 用于进度恢复
     void attachController(MpvController *mpv) { m_mpv = mpv; }
@@ -47,15 +47,29 @@ public:
     // B10：异 tab 转移时清空原 tab 的播放标记，防残留；同 tab 早退防闪烁
     void markPlayingTab(int tabIndex);
 
-    // 记录某 tab 的最后播放项与进度（仅非默认 tab 生效；纯内存，落盘发生在保存时）
+    // 记录某 tab 的最后播放项与进度（仅非默认 tab 生效；纯内存，落盘发生在保存时）。
+    // N9：记忆条目的路径随写入点自动采集（路径+序号双存，恢复时序号校验优先）
     void recordPlayback(int tabIndex, int pos, double seconds);
     // B9：清除某 tab 的续播进度记忆（保留最后播放项）；整表自然播完后调用
     void clearResumeProgress(int tabIndex);
-    // 某 tab 记忆的最后播放项 / 进度，无记录返回 -1 / -1.0
-    int lastPosOf(int tabIndex) const;
+    // N9：续播行统一解析——序号处路径与记忆一致则用之；否则按路径取首命中；无命中 -1
+    int resolveResumeRow(int tabIndex) const;
+    // 某 tab 记忆的播放进度，无记录返回 -1.0
     double lastTimePosOf(int tabIndex) const;
     // 按 tab 标题查找索引，找不到返回 -1
     int indexOfName(const QString &name) const;
+
+    // ——N9 提供者——
+    // 动态提供者 tab 判定（内容来自枚举；静态为手工条目）
+    bool isDynamicTab(int tabIndex) const;
+    // 表头菜单"新建播放列表"：弹列表设置对话框后建 tab（动态则枚举填充）
+    void createNewList();
+    // 表头菜单"列表设置…"：存量列表改名/换提供者。非法参数报错留在对话框；
+    // 合法后静默清空重建；仅改名则直接生效不清空。播放中 tab 换提供者时
+    // 停止并选中首项不播（同步目标悬空防回刷竞态）
+    void openListSettings(int tabIndex);
+    // 删除指定 tab（表头菜单，作用于右键命中的 tab）
+    void removeTabAt(int tabIndex);
 
     // 持久化：从配置文件恢复非默认播放列表 / 保存除默认外的所有列表
     void loadPlaylists();
@@ -96,8 +110,9 @@ private slots:
     void onTabChanged(int index);
 
 private:
-    // 排序规则（N4）
+    // 排序规则枚举（N4/N9）：None=添加顺序。取值随提供者持久化（int 不透明存储）
     enum class SortKey {
+        None,
         FileName,
         FileNameNumeric,
         Extension,
@@ -108,15 +123,24 @@ private:
         ReleaseDate,
     };
 
-    // 单个 tab 的播放记忆（默认 tab 仅进程内有效，持久化时跳过索引 0）
+    // 单个 tab 的播放记忆（默认 tab 仅进程内有效，持久化时跳过索引 0）。
+    // N9：lastPath 为记忆条目规范化路径，恢复时序号校验失败按其寻位
     struct TabMemory
     {
         int lastPos = -1;
         double lastTimePos = -1.0;
+        QString lastPath;
     };
 
     QListWidget *createList();
     QListWidget *listAt(int index) const;
+
+    // ——N9 内部辅助——
+    PlaylistProvider *providerAt(int tabIndex) const;
+    // 动态 tab：清空现有条目 → enumerate → 按该 tab 排序规则重排 → 物化填充
+    void fillFromProvider(QListWidget *list);
+    // 条目重排核心（无四步式副作用）：排序/加载填充共用
+    void sortListItems(QListWidget *list, SortKey key, bool ascending);
 
     // 全局元数据仓：缺失键补建并计算文件系统字段（图标/大小/创建/修改时间）
     PlaylistItem &materialize(const QString &path);
@@ -153,14 +177,16 @@ private:
     int playingRowOf(const QListWidget *list) const;
 
     QHash<QString, PlaylistItem> m_meta;   // 全局元数据仓：路径 → 条目
-    QFileIconProvider *m_iconProvider = nullptr;
+    QFileIconProvider m_iconProvider;      // 值语义：具体类无多态需求
     QListWidget *m_menuTargetList = nullptr; // 右键命中的列表与行（空白处为 nullptr）
     int m_menuTargetRow = -1;
-    bool m_sortAscending = true;             // 方向子菜单选择结果；每次打开复位正序
 
     int m_playingTab = 0;
     QString m_configFile;
     MpvController *m_mpv = nullptr; // 弱引用，attachController 注入（N4 进度恢复用）
     // 以 list 指针为键：不受 tab 增删导致的索引漂移影响
     QHash<const QListWidget *, TabMemory> m_memory;
+    // N9：每 tab 提供者（list 创建即配静态默认，加载/设置时替换）。
+    // unique_ptr 自动回收；unordered_map 容纳不可拷贝值类型
+    std::unordered_map<const QListWidget *, std::unique_ptr<PlaylistProvider>> m_providerOf;
 };

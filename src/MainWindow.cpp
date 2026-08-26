@@ -424,9 +424,13 @@ void MainWindow::connectController()
 
 void MainWindow::openFiles()
 {
+    // N9：过滤器模式由全局媒体扩展名清单生成（与 DirProvider 默认值同源）
+    QStringList patterns;
+    for (const QString &ext : App::defaultMediaExtensions())
+        patterns << QStringLiteral("*.") + ext;
     const QStringList files = QFileDialog::getOpenFileNames(
         this, tr("打开文件"), QString(),
-        tr("媒体文件 (*.mp4 *.mkv *.avi *.mov *.wmv *.flv *.webm *.ts *.mp3 *.flac *.aac *.ogg *.wav *.m4a);;所有文件 (*)"));
+        tr("媒体文件 (%1);;所有文件 (*)").arg(patterns.join(QLatin1Char(' '))));
     if (!files.isEmpty())
         m_playlist->addFiles(files); // filesAdded 信号中再决定是否需要 append 到 mpv
 }
@@ -446,16 +450,14 @@ void MainWindow::togglePause()
         // 停止态点播放：目标恒为当前选中的 tab（A8）。
         // 有播放记忆（含默认 tab 的进程内记忆）→ 从记忆项与进度续播；
         // 无记忆 → 选中行优先，否则第一项；不兜底旧播放列表。
+        // N9：路径+序号双存解析（序号校验失败按路径寻位）
         const int cur = m_playlist->currentIndex();
         const QStringList files = m_playlist->filesOf(cur);
         if (files.isEmpty())
             return;
         const double restoreTime = m_playlist->lastTimePosOf(cur);
-        const int memPos = m_playlist->lastPosOf(cur);
-        int row;
-        if (restoreTime >= 0.0 && memPos >= 0 && memPos < files.size()) {
-            row = memPos; // 续播记忆项
-        } else {
+        int row = m_playlist->resolveResumeRow(cur);
+        if (row < 0) {
             row = m_playlist->currentSelectedRow();
             if (row < 0 || row >= files.size())
                 row = 0;
@@ -520,7 +522,7 @@ void MainWindow::stepStopped(bool next)
     const QStringList files = m_playlist->filesOf(cur);
     if (files.isEmpty())
         return;
-    int base = m_playlist->lastPosOf(cur);
+    int base = m_playlist->resolveResumeRow(cur);
     if (base < 0 || base >= files.size())
         base = 0;
     int target = base + (next ? 1 : -1);
@@ -561,7 +563,7 @@ void MainWindow::updateNavigationActions()
         nextAction->setEnabled(false);
         return;
     }
-    int base = m_playlist->lastPosOf(cur);
+    int base = m_playlist->resolveResumeRow(cur);
     if (base < 0 || base >= files.size())
         base = 0; // 与 stepStopped 起点归一规则一致
     prevAction->setEnabled(loop || base > 0);

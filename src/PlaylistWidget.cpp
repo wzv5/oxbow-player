@@ -2,8 +2,11 @@
 
 #include "PlaylistWidget.h"
 
+#include "Constants.h"
+#include "ListSettingsDialog.h"
 #include "MpvController.h"
 #include "PlaylistDelegate.h"
+#include "StaticProvider.h"
 #include "Util.h"
 
 namespace {
@@ -62,14 +65,8 @@ PlaylistWidget::PlaylistWidget(const QString &configFile, QWidget *parent)
     setAcceptDrops(true);
     setDocumentMode(true);
     setMinimumWidth(220);
-    m_iconProvider = new QFileIconProvider;
     addTab(createList(), tr("默认"));
     connect(this, &QTabWidget::currentChanged, this, &PlaylistWidget::onTabChanged);
-}
-
-PlaylistWidget::~PlaylistWidget()
-{
-    delete m_iconProvider;
 }
 
 QString PlaylistWidget::normalizePath(const QString &path)
@@ -98,6 +95,8 @@ QListWidget *PlaylistWidget::createList()
         connect(model, &QAbstractItemModel::modelReset, list, touch);
     }
     connect(list, &QListWidget::itemDoubleClicked, this, &PlaylistWidget::onItemDoubleClicked);
+    // N9：每个 tab 出生即配静态提供者（默认 tab 同样，仅持久化侧跳过）
+    m_providerOf.emplace(list, std::make_unique<StaticProvider>());
     return list;
 }
 
@@ -152,7 +151,7 @@ PlaylistItem &PlaylistWidget::materialize(const QString &path)
     item.fileSize = qMax<qint64>(0, fi.size());
     item.created = fi.birthTime();
     item.modified = fi.lastModified();
-    item.icon = fi.exists() ? m_iconProvider->icon(fi) : m_iconProvider->icon(QFileIconProvider::File);
+    item.icon = fi.exists() ? m_iconProvider.icon(fi) : m_iconProvider.icon(QFileIconProvider::File);
 
     return m_meta.insert(path, item).value();
 }
@@ -236,6 +235,13 @@ void PlaylistWidget::addFiles(const QStringList &files)
     QListWidget *list = listAt(currentIndex());
     if (!list || files.isEmpty())
         return;
+
+    // N9：动态 tab 内容来自枚举，忽略手工添加（拖放与菜单同守卫）。
+    // 静态 tab 增删即回无序态：复位排序规则（保留方向）
+    if (isDynamicTab(currentIndex()))
+        return;
+    if (auto *p = providerAt(currentIndex()))
+        p->setSortRule(int(SortKey::None), p->sortAscending());
 
     // 正在播放 tab 的内容以 mpv 回刷为准，本地不重复插入（C4：消除双刷新闪烁）
     if (!currentIsPlayingTab()) {
@@ -363,20 +369,21 @@ void PlaylistWidget::loadPlaylists()
         }
 
         auto *list = createList();
-        const int lastPos = settings.value(QStringLiteral("lastPos"), -1).toInt();
-        const double lastTimePos = settings.value(QStringLiteral("lastTimePos"), -1.0).toDouble();
-        // B6：按显式计数字段逐条读取。childKeys() 顺序未定义，键多时呈字典序
-        // （"0","1","10","100","11"...），百项级列表会乱序呈现，不可用
-        const int n = settings.value(QStringLiteral("itemCount"), 0).toInt();
-        for (int j = 0; j < n; ++j) {
-            const QString file = settings.value(QString::number(j)).toString();
-            if (!file.isEmpty())
-                makeItem(list,file);
-        }
+        TabMemory mem;
+        mem.lastPos = settings.value(QStringLiteral("lastPos"), -1).toInt();
+        mem.lastTimePos = settings.value(QStringLiteral("lastTimePos"), -1.0).toDouble();
+        mem.lastPath = settings.value(QStringLiteral("lastPath")).toString();
+
+        // N9：提供者反序列化完全自治（静态回填条目、目录读参数与排序键），
+        // 内容统一经 enumerate 取得
+        std::unique_ptr<PlaylistProvider> provider = PlaylistProvider::load(settings);
         settings.endGroup();
         addTab(list, name);
-        if (lastPos >= 0)
-            m_memory[list] = { lastPos, lastTimePos };
+        // insert_or_assign：createList 已预置静态默认，此处必须覆盖
+        m_providerOf.insert_or_assign(list, std::move(provider));
+        if (mem.lastPos >= 0 || !mem.lastPath.isEmpty())
+            m_memory[list] = mem;
+        fillFromProvider(list); // 静态取所持条目、目录枚举绑定源
     }
 }
 
@@ -398,18 +405,25 @@ void PlaylistWidget::savePlaylists()
         if (i == 0)
             continue;
 
-        const QStringList files = filesOf(i);
+        QListWidget *list = listAt(i);
+        auto *provider = providerAt(i);
+        // N9：静态列表内容先回写提供者（内容跟提供者走），序列化统一走 saveSettings。
+        // 按类型分支下探，不依赖 RTTI
+        if (provider->type() == PlaylistProvider::Type::Static)
+            static_cast<StaticProvider *>(provider)->setItems(filesOf(i));
         const QString section = QStringLiteral("Playlist_%1").arg(savedIdx);
         settings.beginGroup(section);
         settings.setValue(QStringLiteral("name"), tabText(i));
-        settings.setValue(QStringLiteral("itemCount"), files.size()); // B6：显式计数，读取按序号遍历
-        const TabMemory mem = m_memory.value(listAt(i));
-        if (mem.lastPos >= 0) {
+        if (provider)
+            provider->saveSettings(settings); // 静态：类型+条目；目录：类型+参数
+        const TabMemory mem = m_memory.value(list);
+        // N9：记忆三字段（路径+序号+进度）静态/动态均持久化
+        if (mem.lastPos >= 0 || !mem.lastPath.isEmpty()) {
             settings.setValue(QStringLiteral("lastPos"), mem.lastPos);
             settings.setValue(QStringLiteral("lastTimePos"), mem.lastTimePos);
+            settings.setValue(QStringLiteral("lastPath"), mem.lastPath);
         }
-        for (int j = 0; j < files.size(); ++j)
-            settings.setValue(QString::number(j), files[j]);
+        // N9：排序规则已随提供者序列化（saveSettings 内部），此处无额外处理
         settings.endGroup();
         ++savedIdx;
     }
@@ -429,6 +443,8 @@ void PlaylistWidget::recordPlayback(int tabIndex, int pos, double seconds)
     TabMemory &mem = m_memory[list];
     mem.lastPos = pos;
     mem.lastTimePos = seconds;
+    // N9：路径随写入点采集（路径+序号双存）
+    mem.lastPath = (pos < list->count()) ? list->item(pos)->data(PathRole).toString() : QString();
 }
 
 void PlaylistWidget::clearResumeProgress(int tabIndex)
@@ -441,10 +457,26 @@ void PlaylistWidget::clearResumeProgress(int tabIndex)
         it.value().lastTimePos = -1.0;
 }
 
-int PlaylistWidget::lastPosOf(int tabIndex) const
+int PlaylistWidget::resolveResumeRow(int tabIndex) const
 {
     const QListWidget *list = listAt(tabIndex);
-    return list ? m_memory.value(list).lastPos : -1;
+    if (!list)
+        return -1;
+    const TabMemory mem = m_memory.value(list);
+    if (mem.lastPos < 0 && mem.lastPath.isEmpty())
+        return -1;
+    // ① 序号处路径校验：一致则信任序号（含重复项场景的精确恢复）
+    if (mem.lastPos >= 0 && mem.lastPos < list->count()
+        && list->item(mem.lastPos)->data(PathRole).toString() == mem.lastPath)
+        return mem.lastPos;
+    // ② 序号失效：按路径取第一个命中
+    if (!mem.lastPath.isEmpty()) {
+        for (int r = 0; r < list->count(); ++r) {
+            if (list->item(r)->data(PathRole).toString() == mem.lastPath)
+                return r;
+        }
+    }
+    return -1;
 }
 
 double PlaylistWidget::lastTimePosOf(int tabIndex) const
@@ -478,9 +510,9 @@ void PlaylistWidget::onTabChanged(int index)
         });
         return;
     }
-    // 切换到非播放 tab 时自动选中该 tab 记忆的最后播放项
+    // 切换到非播放 tab 时自动选中该 tab 记忆的最后播放项（N9：路径+序号解析）
     QListWidget *list = listAt(index);
-    const int row = lastPosOf(index);
+    const int row = resolveResumeRow(index);
     if (list && row >= 0 && row < list->count()) {
         materializeList(list); // 惰性物化：首次访问该 tab 时补齐元数据
         list->setCurrentRow(row);
@@ -488,7 +520,7 @@ void PlaylistWidget::onTabChanged(int index)
         // 立即滚动会打在零尺寸视口上无效，推迟到事件循环下一拍
         QTimer::singleShot(0, this, [this, index]() {
             if (QListWidget *l = listAt(index)) {
-                const int r = lastPosOf(index);
+                const int r = resolveResumeRow(index);
                 if (r >= 0 && r < l->count() && l->currentRow() == r)
                     l->scrollToItem(l->currentItem(), QListWidget::PositionAtCenter);
             }
@@ -554,35 +586,45 @@ void PlaylistWidget::dropEvent(QDropEvent *event)
     }
 }
 
-// ——排序（N4 第五节）——
+// ——N9 提供者——
 
-void PlaylistWidget::sortCurrent(SortKey key, bool ascending)
+PlaylistProvider *PlaylistWidget::providerAt(int tabIndex) const
 {
-    QListWidget *list = listAt(currentIndex());
-    const int tab = currentIndex();
-    if (!list || list->count() < 2 || tab < 0)
+    const auto it = m_providerOf.find(listAt(tabIndex));
+    return it == m_providerOf.end() ? nullptr : it->second.get();
+}
+
+bool PlaylistWidget::isDynamicTab(int tabIndex) const
+{
+    auto *p = providerAt(tabIndex);
+    return p && p->type() == PlaylistProvider::Type::Dir;
+}
+
+// 视图内容统一从提供者取得：静态取所持条目，目录扫描绑定源。
+// 填充后按该 tab 排序规则重排（None=保持枚举序）
+void PlaylistWidget::fillFromProvider(QListWidget *list)
+{
+    if (!list)
+        return;
+    const auto it = m_providerOf.find(list);
+    if (it == m_providerOf.end())
+        return;
+    list->clear();
+    const QStringList entries = it->second->enumerate();
+    for (const QString &path : entries)
+        makeItem(list, path);
+    const auto key = SortKey(it->second->sortKey());
+    if (key != SortKey::None)
+        sortListItems(list, key, it->second->sortAscending());
+}
+
+// 条目重排核心：行指针摘除 → 稳定排序 → 回填。无停止/恢复副作用，
+// 四步式流程（sortCurrent）与加载填充共用
+void PlaylistWidget::sortListItems(QListWidget *list, SortKey key, bool ascending)
+{
+    if (!list || key == SortKey::None || list->count() < 2)
         return;
 
-    const bool playingTab = (tab == m_playingTab);
-    const bool hadMemory = m_memory.contains(list) && m_memory.value(list).lastPos >= 0;
-    const QString captured = captureMemoryPath(list);
-
-    // 四步式第 1 步：记录正播路径 P 与当前播放进度（停止前读取）
-    QString resumePath;
-    double resumeSec = -1.0;
-    if (playingTab) {
-        const int pr = playingRowOf(list);
-        if (pr >= 0) {
-            resumePath = list->item(pr)->data(PathRole).toString();
-            resumeSec = m_mpv ? m_mpv->propertyDouble(QStringLiteral("time-pos"), -1.0) : -1.0;
-        }
-    }
-    // 第 2 步：停止
-    if (playingTab && !resumePath.isEmpty())
-        emit stopRequested();
-
-    // 第 3 步：重排本 tab（行指针取出 → 稳定排序 → 按新序回填）。
-    // 数字化规则采用装饰-排序：排序前对每项预分段，比较仅在段序列间进行
     const int n = list->count();
     QVector<QString> paths;
     paths.reserve(n);
@@ -603,6 +645,8 @@ void PlaylistWidget::sortCurrent(SortKey key, bool ascending)
         const PlaylistItem &b = materialize(pb);
         auto flip = [ascending](int c) { return ascending ? c < 0 : c > 0; };
         switch (key) {
+        case SortKey::None:
+            return false;
         case SortKey::FileName:
             return flip(QString::compare(QFileInfo(pa).fileName(), QFileInfo(pb).fileName(),
                                          Qt::CaseInsensitive));
@@ -649,6 +693,40 @@ void PlaylistWidget::sortCurrent(SortKey key, bool ascending)
         taken.append(list->takeItem(0)); // 逐个摘除，转移所有权
     for (int idx : order)
         list->addItem(taken.at(idx));
+}
+
+// ——排序（N4 第五节）——
+
+void PlaylistWidget::sortCurrent(SortKey key, bool ascending)
+{
+    QListWidget *list = listAt(currentIndex());
+    const int tab = currentIndex();
+    if (!list || tab < 0 || key == SortKey::None)
+        return;
+
+    // N9：排序规则落位于提供者（随其持久化）
+    if (auto *p = providerAt(tab))
+        p->setSortRule(int(key), ascending);
+    const bool playingTab = (tab == m_playingTab);
+    const bool hadMemory = m_memory.contains(list) && m_memory.value(list).lastPos >= 0;
+    const QString captured = captureMemoryPath(list);
+
+    // 四步式第 1 步：记录正播路径 P 与当前播放进度（停止前读取）
+    QString resumePath;
+    double resumeSec = -1.0;
+    if (playingTab) {
+        const int pr = playingRowOf(list);
+        if (pr >= 0) {
+            resumePath = list->item(pr)->data(PathRole).toString();
+            resumeSec = m_mpv ? m_mpv->propertyDouble(QStringLiteral("time-pos"), -1.0) : -1.0;
+        }
+    }
+    // 第 2 步：停止
+    if (playingTab && !resumePath.isEmpty())
+        emit stopRequested();
+
+    // 第 3 步：重排本 tab（核心抽取至 sortListItems，加载填充共用）
+    sortListItems(list, key, ascending);
 
     // 第 4 步：推送并恢复（重复项取首现位置；停止前有进度则从原进度续播）
     if (playingTab && !resumePath.isEmpty()) {
@@ -743,8 +821,39 @@ void PlaylistWidget::removeDuplicateItems()
 void PlaylistWidget::refreshCurrentTab()
 {
     QListWidget *list = listAt(currentIndex());
-    if (!list || list->count() == 0)
+    if (!list)
         return;
+    // N9：动态 tab 刷新＝重新枚举（播放中 tab 走四步式保进度恢复）
+    if (isDynamicTab(currentIndex())) {
+        const bool playingTab = (currentIndex() == m_playingTab);
+        const bool hadMemory = m_memory.contains(list) && m_memory.value(list).lastPos >= 0;
+        const QString captured = captureMemoryPath(list);
+        QString resumePath;
+        double resumeSec = -1.0;
+        if (playingTab) {
+            const int pr = playingRowOf(list);
+            if (pr >= 0) {
+                resumePath = list->item(pr)->data(PathRole).toString();
+                resumeSec = m_mpv ? m_mpv->propertyDouble(QStringLiteral("time-pos"), -1.0) : -1.0;
+            }
+        }
+        if (playingTab && !resumePath.isEmpty())
+            emit stopRequested();
+
+        fillFromProvider(list);
+
+        if (playingTab && !resumePath.isEmpty()) {
+            const QStringList files = filesOf(currentIndex());
+            const int idx = files.indexOf(resumePath);
+            if (idx >= 0)
+                emit playRequested(files, idx, resumeSec);
+        } else if (currentIndex() != 0) {
+            savePlaylists();
+        }
+        restoreMemoryPath(list, captured, hadMemory);
+        return;
+    }
+
     m_meta.clear();          // 清空全局仓
     materializeList(list);   // 当前 tab 立即重新物化（图标/大小/时间自取）
     repaintAllLists();       // 其他 tab 待访问时惰性补齐
@@ -877,15 +986,55 @@ void PlaylistWidget::showPropertiesDialog(const QString &path)
 
 void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event)
 {
+    // N9：按右键落点分区——tab 表头与列表主体各自独立菜单。
+    // 区域判定用几何（覆盖表头空白区与两侧滚动箭头）：箭头控件是 QTabBar 的
+    // 子按钮，按控件类型判定会误入主体菜单分支
+    QWidget *underMouse = childAt(event->pos());
+    if (tabBar()->geometry().contains(event->pos())) {
+        // 动作作用于右键实际命中的 tab；hitTab=-1（空白区/滚动箭头）＝无作用对象，
+        // 此时菜单仅"新建播放列表"可用
+        const QPoint barPos = tabBar()->mapFrom(this, event->pos());
+        int hitTab = tabBar()->tabAt(barPos);
+        // 滚动箭头是表头的子按钮且叠压边缘表头：命中按钮即视为空白区，
+        // 否则 tabAt 的纯几何查询会返回其下方被遮盖的表头
+        if (hitTab >= 0) {
+            for (QObject *c : tabBar()->children()) {
+                if (auto *b = qobject_cast<QToolButton *>(c);
+                    b && b->isVisible() && b->geometry().contains(barPos)) {
+                    hitTab = -1;
+                    break;
+                }
+            }
+        }
+        QMenu menu(this);
+        QAction *newTabAction = menu.addAction(tr("新建播放列表"));
+        QAction *closeTabAction = menu.addAction(tr("删除当前列表"));
+        QAction *settingsAction = menu.addAction(tr("列表设置…"));
+        closeTabAction->setEnabled(hitTab > 0);
+        settingsAction->setEnabled(hitTab > 0); // 默认 tab 与空白区均无删除/设置
+
+        QAction *chosen = menu.exec(event->globalPos());
+        if (!chosen)
+            return;
+        if (chosen == newTabAction)
+            createNewList();
+        else if (chosen == closeTabAction)
+            removeTabAt(hitTab);
+        else if (chosen == settingsAction)
+            openListSettings(hitTab);
+        return;
+    }
+
+    // ——列表主体菜单（原全量菜单剔除新建/删除/重命名三项）——
     QListWidget *list = listAt(currentIndex());
     const int tab = currentIndex();
     const bool isPlayingTab = (tab == m_playingTab);
+    const bool dynamic = isDynamicTab(tab);
 
     // 右键落点命中检测：条目级操作以命中的行为作用对象。
     // 注意 childAt 命中的是 QListWidget 的 viewport（孙级），需回溯一级
     m_menuTargetList = nullptr;
     m_menuTargetRow = -1;
-    QWidget *underMouse = childAt(event->pos());
     QListWidget *hitList = underMouse ? qobject_cast<QListWidget *>(underMouse) : nullptr;
     if (!hitList && underMouse)
         hitList = qobject_cast<QListWidget *>(underMouse->parentWidget());
@@ -903,9 +1052,6 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event)
     QMenu menu(this);
 
     QAction *addAction = menu.addAction(tr("添加文件…"));
-    QAction *newTabAction = menu.addAction(tr("新建播放列表"));
-    QAction *renameAction = menu.addAction(tr("重命名当前列表"));
-    QAction *closeTabAction = menu.addAction(tr("删除当前列表"));
     menu.addSeparator();
 
     QMenu *sortMenu = menu.addMenu(tr("排序"));
@@ -919,8 +1065,18 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event)
     sortActions[6] = sortMenu->addAction(tr("文件大小"));
     sortActions[7] = sortMenu->addAction(tr("发行时间"));
     sortMenu->addSeparator();
-    // 方向平铺为勾选项：切换仅更新勾选状态、不触发排序；
-    // 点击任一规则立即按当前方向执行一次排序
+    // N9：规则为单选勾选组（与持久化配套），方向互斥勾选且切向即时重排
+    for (QAction *a : sortActions)
+        a->setCheckable(true);
+    QActionGroup *ruleGroup = new QActionGroup(sortMenu);
+    auto *curProvider = providerAt(tab);
+    const auto curKey = curProvider ? curProvider->sortKey() : int(SortKey::None);
+    const bool curAsc = curProvider ? curProvider->sortAscending() : true;
+    for (QAction *a : sortActions)
+        ruleGroup->addAction(a);
+    if (curKey != int(SortKey::None))
+        sortActions[int(curKey) - 1]->setChecked(true);
+
     QAction *ascAction = sortMenu->addAction(tr("正序"));
     QAction *descAction = sortMenu->addAction(tr("反序"));
     for (QAction *a : {ascAction, descAction})
@@ -928,10 +1084,8 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event)
     QActionGroup *dirGroup = new QActionGroup(sortMenu);
     dirGroup->addAction(ascAction);
     dirGroup->addAction(descAction);
-    ascAction->setChecked(m_sortAscending);
-    descAction->setChecked(!m_sortAscending);
-    connect(ascAction, &QAction::triggered, this, [this]() { m_sortAscending = true; });
-    connect(descAction, &QAction::triggered, this, [this]() { m_sortAscending = false; });
+    ascAction->setChecked(curAsc);
+    descAction->setChecked(!curAsc);
 
     QMenu *removeMenu = menu.addMenu(tr("移除"));
     QAction *removeSelAction = removeMenu->addAction(tr("移除选中项"));
@@ -950,12 +1104,14 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event)
     QAction *propsAction = menu.addAction(tr("属性"));
 
     // ——启用条件——
-    // 移除无效/重复项恒可点击（维护者裁决，不做弹窗期预扫描）：
-    // 点击后执行扫描，无可清理内容时静默结束
     const bool hasList = list != nullptr;
     const int itemCount = hasList ? list->count() : 0;
-    sortMenu->setEnabled(itemCount >= 2);
-    refreshAction->setEnabled(itemCount > 0);
+    addAction->setEnabled(!dynamic); // 动态 tab 内容来自枚举，禁手工添加
+    auto *menuProvider = providerAt(tab); // 排序能力遵从提供者（单项目录亦可持久化规则）
+    sortMenu->setEnabled(hasList && menuProvider && menuProvider->supportsSort());
+    refreshAction->setEnabled(dynamic || itemCount > 0); // 动态刷新不受空内容限制
+    // N9：动态 tab 移除子菜单整组禁用（失效清理走刷新）
+    removeMenu->setEnabled(hasList && !dynamic);
     removeSelAction->setEnabled(hasList && !list->selectedItems().isEmpty());
     clearAction->setEnabled(itemCount > 0);
 
@@ -964,77 +1120,20 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event)
                                    && QFileInfo::exists(targetPath));
     copyPathAction->setEnabled(hasTarget);
     propsAction->setEnabled(hasTarget);
-    renameAction->setEnabled(tab != 0);
-    closeTabAction->setEnabled(tab != 0);
-    Q_UNUSED(isPlayingTab);
 
     QAction *chosen = menu.exec(event->globalPos());
     if (!chosen)
         return;
 
     if (chosen == addAction) {
+        QStringList patterns;
+        for (const QString &ext : App::defaultMediaExtensions())
+            patterns << QStringLiteral("*.") + ext;
         const QStringList files = QFileDialog::getOpenFileNames(
             this, tr("添加文件"), QString(),
-            tr("媒体文件 (*.mp4 *.mkv *.avi *.mov *.wmv *.flv *.webm *.ts *.mp3 *.flac *.aac *.ogg *.wav *.m4a);;所有文件 (*)"));
+            tr("媒体文件 (%1);;所有文件 (*)").arg(patterns.join(QLatin1Char(' '))));
         if (!files.isEmpty())
             addFiles(files);
-    } else if (chosen == newTabAction) {
-        int maxN = 0;
-        for (int i = 0; i < count(); ++i) {
-            const QString &name = tabText(i);
-            if (name.startsWith(tr("播放列表 "))) {
-                bool ok = false;
-                int n = name.mid(QString(tr("播放列表 ")).length()).toInt(&ok);
-                if (ok && n > maxN)
-                    maxN = n;
-            }
-        }
-        addTab(createList(), tr("播放列表 %1").arg(maxN + 1));
-        setCurrentIndex(count() - 1);
-        savePlaylists();
-    } else if (chosen == renameAction) {
-        bool ok = false;
-        const QString name = QInputDialog::getText(this, tr("重命名播放列表"), tr("名称："),
-                                                   QLineEdit::Normal, tabText(tab), &ok);
-        if (ok && !name.isEmpty()) {
-            if (name == tabText(0)) {
-                QMessageBox::warning(this, tr("重命名播放列表"), tr("不能使用默认列表的名称。"));
-                return;
-            }
-            bool duplicated = false;
-            for (int i = count() - 1; i >= 0; --i) {
-                if (i != tab && tabText(i) == name) {
-                    duplicated = true;
-                    break;
-                }
-            }
-            if (duplicated) {
-                QMessageBox::warning(this, tr("重命名播放列表"), tr("该名称已被其他列表使用。"));
-                return;
-            }
-            setTabText(tab, name);
-            if (tab != 0 && tab != m_playingTab)
-                savePlaylists();
-        }
-    } else if (chosen == closeTabAction) {
-        const int idx = currentIndex();
-        // 关闭正在播放的列表：先立即停播并清空 mpv 侧列表，防止界面与 mpv 脱钩。
-        // 同步目标置 -1（悬空）：此后到达的空列表回刷会被 setPlaylist 的
-        // listAt(-1) 守卫挡掉，不会误清其他 tab（尤其默认 tab）的内容；
-        // 下一次双击任意条目时经 markPlayingTab 重新建立同步
-        if (idx == m_playingTab) {
-            emit stopRequested();
-            emit clearRequested();
-            m_playingTab = -1;
-        }
-        if (QListWidget *closing = listAt(idx))
-            m_memory.remove(closing);
-        if (m_playingTab == idx)
-            m_playingTab = 0;
-        else if (m_playingTab > idx)
-            --m_playingTab;
-        removeTab(idx);
-        savePlaylists();
     } else if (chosen == refreshAction) {
         refreshCurrentTab();
     } else if (chosen == openLocationAction) {
@@ -1043,20 +1142,17 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event)
         copyPathToClipboard(targetNative.isEmpty() ? targetPath : targetNative);
     } else if (chosen == propsAction) {
         showPropertiesDialog(targetPath);
-    } else if (chosen == removeSelAction && list) {
+    } else if (chosen == removeSelAction && list && !dynamic) {
+        QList<int> rows;
+        for (QListWidgetItem *sel : list->selectedItems())
+            rows.append(list->row(sel));
         if (isPlayingTab) {
-            QList<int> rows;
-            for (QListWidgetItem *sel : list->selectedItems())
-                rows.append(list->row(sel));
             // 播放 tab 的移除仍走既有同步通道（逐行 playlist-remove）
             emit removeRequested(rows);
         } else {
-            QList<int> rows;
-            for (QListWidgetItem *sel : list->selectedItems())
-                rows.append(list->row(sel));
             executeRemoval(rows);
         }
-    } else if (chosen == clearAction && list) {
+    } else if (chosen == clearAction && list && !dynamic) {
         if (isPlayingTab) {
             emit clearRequested();
         } else {
@@ -1065,17 +1161,132 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event)
                 all.append(i);
             executeRemoval(all);
         }
-    } else if (chosen == removeInvalidAction) {
+    } else if (chosen == removeInvalidAction && !dynamic) {
         removeInvalidItems();
-    } else if (chosen == removeDupAction) {
+    } else if (chosen == removeDupAction && !dynamic) {
         removeDuplicateItems();
+    } else if (chosen == ascAction || chosen == descAction) {
+        // 切向即时重排：有生效规则立即按新方向执行；无规则仅记录方向
+        const bool ascending = (chosen == ascAction);
+        if (auto *p = providerAt(tab)) {
+            p->setSortRule(p->sortKey(), ascending);
+            if (p->sortKey() != int(SortKey::None))
+                sortCurrent(SortKey(p->sortKey()), ascending);
+        }
     } else {
-        // 排序规则命中：按当前方向立即执行一次
+        // 排序规则命中：按当前方向执行一次并迁移勾选（sortCurrent 落位状态）
         for (int k = 0; k < 8; ++k) {
             if (chosen == sortActions[k]) {
-                sortCurrent(static_cast<SortKey>(k), m_sortAscending);
+                sortCurrent(static_cast<SortKey>(k + 1), curAsc);
                 break;
             }
         }
     }
+}
+
+// N9：删除指定 tab（表头菜单，作用于右键命中的 tab）。关闭正在播放的列表：
+// 先停播并清空 mpv 侧，同步目标置 -1 悬空，防空列表回刷误清其他 tab；
+// 下次双击经 markPlayingTab 重建
+void PlaylistWidget::removeTabAt(int tabIndex)
+{
+    const int idx = tabIndex;
+    if (idx <= 0 || idx >= count())
+        return;
+    if (idx == m_playingTab) {
+        emit stopRequested();
+        emit clearRequested();
+        m_playingTab = -1;
+    }
+    if (QListWidget *closing = listAt(idx)) {
+        m_providerOf.erase(closing); // unique_ptr 自动回收提供者（含排序规则）
+        m_memory.remove(closing);
+    }
+    if (m_playingTab > idx)
+        --m_playingTab;
+    removeTab(idx);
+    savePlaylists();
+}
+
+// N9：新建播放列表——弹列表设置对话框，确定后建 tab；动态提供者立即枚举填充
+void PlaylistWidget::createNewList()
+{
+    int maxN = 0;
+    for (int i = 0; i < count(); ++i) {
+        const QString &name = tabText(i);
+        if (name.startsWith(tr("播放列表 "))) {
+            bool ok = false;
+            int n = name.mid(QString(tr("播放列表 ")).length()).toInt(&ok);
+            if (ok && n > maxN)
+                maxN = n;
+        }
+    }
+
+    QStringList occupied;
+    for (int i = 0; i < count(); ++i)
+        occupied << tabText(i);
+    ListSettingsDialog dlg(this, tr("播放列表 %1").arg(maxN + 1), nullptr, occupied);
+    if (dlg.exec() != QDialog::Accepted)
+        return;
+    const QString name = dlg.listName();
+
+    auto *list = createList();
+    // 新建必产出提供者（静态为空表、目录即枚举结果）；排序默认按类型施加
+    m_providerOf.insert_or_assign(list, std::move(dlg.takeProvider().value()));
+    auto *p = m_providerOf[list].get();
+    p->setSortRule(isDynamicTab(count() - 1) ? int(SortKey::Modified) : int(SortKey::None),
+                   true);
+    fillFromProvider(list);
+    addTab(list, name);
+    setCurrentIndex(count() - 1);
+    savePlaylists();
+}
+
+// N9：存量列表设置——改名/换提供者。非法参数由对话框校验报错留在窗口；
+// 合法后：仅改名直接生效；提供者有变则静默清空重建，作用对象为播放中 tab 时
+// 停止并选中首项不播（悬空同步目标防回刷竞态）
+void PlaylistWidget::openListSettings(int tabIndex)
+{
+    if (tabIndex <= 0)
+        return;
+    QListWidget *list = listAt(tabIndex);
+    if (!list)
+        return;
+
+    QStringList occupied;
+    for (int i = 0; i < count(); ++i) {
+        if (i != tabIndex)
+            occupied << tabText(i);
+    }
+    ListSettingsDialog dlg(this, tabText(tabIndex), providerAt(tabIndex), occupied);
+    if (dlg.exec() != QDialog::Accepted)
+        return;
+    const QString name = dlg.listName();
+    auto result = dlg.takeProvider();
+
+    setTabText(tabIndex, name);
+    if (!result.has_value()) {
+        // 仅改名（对话框判定提供者未变）：内容与提供者不动
+        savePlaylists();
+        return;
+    }
+
+    const bool wasPlaying = (tabIndex == m_playingTab);
+    if (wasPlaying) {
+        emit stopRequested(); // 纯 stop 清空 mpv 侧列表（AGENTS 陷阱条目）
+        m_playingTab = -1;    // 悬空：挡掉随后的空列表回刷误清新填充内容
+    }
+
+    m_providerOf[list] = std::move(*result);
+
+    // 原记忆随源失效一并清除；排序规则重置为新提供者类型默认
+    m_memory.remove(list);
+    if (auto *np = providerAt(tabIndex))
+        np->setSortRule(isDynamicTab(tabIndex) ? int(SortKey::Modified) : int(SortKey::None),
+                        true);
+
+    list->clear();
+    fillFromProvider(list); // 静态取所持条目（切换后为空），目录枚举绑定源
+    if (list->count() > 0)
+        list->setCurrentRow(0); // 选中第一项，不开始播放
+    savePlaylists();
 }

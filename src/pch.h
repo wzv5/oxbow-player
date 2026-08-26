@@ -6,6 +6,8 @@
 #include <QAction>
 #include <QActionGroup>
 #include <QApplication>
+#include <QButtonGroup>
+#include <QCheckBox>
 #include <QClipboard>
 #include <QCloseEvent>
 #include <QComboBox>
@@ -17,6 +19,7 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
+#include <QDirIterator>
 #include <QDragEnterEvent>
 #include <QDragMoveEvent>
 #include <QDropEvent>
@@ -45,6 +48,8 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QPushButton>
+#include <QRadioButton>
+#include <QRegularExpression>
 #include <QSettings>
 #include <QShortcut>
 #include <QSignalBlocker>
@@ -58,12 +63,14 @@
 #include <QStyledItemDelegate>
 #include <QStyle>
 #include <QStyleOptionSlider>
+#include <QTabBar>
 #include <QTabWidget>
 #include <QTemporaryFile>
 #include <QTextEdit>
 #include <QTextOption>
 #include <QTimer>
 #include <QToolTip>
+#include <QToolButton>
 #include <QVariantList>
 #include <QVariantMap>
 #include <QVBoxLayout>
@@ -76,3 +83,4 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <unordered_map>

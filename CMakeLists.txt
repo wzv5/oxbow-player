@@ -36,6 +36,14 @@ add_library(mpvqtcore MODULE
     src/PlaylistDelegate.cpp
     src/PlaylistDelegate.h
     src/PlaylistItem.h
+    src/PlaylistProvider.cpp
+    src/PlaylistProvider.h
+    src/ListSettingsDialog.cpp
+    src/ListSettingsDialog.h
+    src/StaticProvider.cpp
+    src/StaticProvider.h
+    src/DirProvider.cpp
+    src/DirProvider.h
     src/PlaylistWidget.cpp
     src/PlaylistWidget.h
     src/Util.cpp

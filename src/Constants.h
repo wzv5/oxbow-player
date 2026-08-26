@@ -15,4 +15,15 @@ inline QString name() { return QString::fromLatin1(nameAscii); }
 // 配置文件名：由名称派生（mpv-qt.ini）
 inline QString iniFileName() { return name() + QStringLiteral(".ini"); }
 
+// 媒体扩展名默认清单（无点、小写）：文件对话框过滤器与 DirProvider 枚举的共用默认值。
+// 动态列表的扩展名是每 tab 可编辑参数，此处仅为初始预填来源（N9）
+inline QStringList defaultMediaExtensions()
+{
+    return {QStringLiteral("mp4"), QStringLiteral("mkv"),  QStringLiteral("avi"),
+            QStringLiteral("mov"), QStringLiteral("wmv"),  QStringLiteral("flv"),
+            QStringLiteral("webm"), QStringLiteral("ts"),  QStringLiteral("mp3"),
+            QStringLiteral("flac"), QStringLiteral("aac"), QStringLiteral("ogg"),
+            QStringLiteral("wav"), QStringLiteral("m4a")};
+}
+
 } // namespace App
