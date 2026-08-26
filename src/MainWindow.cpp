@@ -59,6 +59,9 @@ MainWindow::MainWindow(MpvController *controller, const QString &configFile, QWi
     // 导航器浮窗（N3 改按需创建）：冷启动不构造对象，首次打开经
     // ensureNavigator 创建；视口映射需要视频渲染区域的真实尺寸（黑边感知）
 
+    // N10：启动固定默认尺寸；窗口几何/最大化状态不再持久化
+    resize(960, 600);
+
     restoreSettings();
 }
 
@@ -409,6 +412,10 @@ void MainWindow::connectController()
                 m_playlist->applyMediaMetadata(
                     m_controller->propertyString(QStringLiteral("path")), tags);
             });
+    // N10：起播拿到分辨率即适配窗口。走实时播放态专用通道 videoSizeChanged
+    // （与导航器同源）；元数据仓服务展示域档案查询，不用于此（specs/N10.md 裁决）
+    connect(m_controller, &MpvController::videoSizeChanged, this,
+            &MainWindow::adaptWindowSizeToVideo);
     connect(m_controller, &MpvController::streamInfoChanged, m_playlist,
             [this](const QVariantMap &info) {
                 m_playlist->applyStreamInfo(
@@ -797,6 +804,38 @@ void MainWindow::syncVideoGeometry()
         m_videoWidget->setGeometry(QRect(origin, m_videoPlaceholder->size()));
     }
     repositionVideoOverlay();
+}
+
+// N10：普通态窗口自适应当前视频——视频域尽可能物理像素 1:1（逻辑尺寸 =
+// 像素 ÷ devicePixelRatio，高 DPI 下不被系统缩放拉伸），任一边超出所在屏
+// 工作区即整窗等比缩到恰好放入；resize 后外框越出工作区时按最小移动原则
+// 两轴独立钳回（恰好不越界）。全屏/最大化/无视频流不动作；
+// 停止不复位、全屏退出维持全屏前普通尺寸（本函数仅在分辨率推送时触发）
+void MainWindow::adaptWindowSizeToVideo(int videoW, int videoH)
+{
+    if (videoW <= 0 || videoH <= 0 || m_fullscreen || isMaximized())
+        return;
+    const QRect work = screen()->availableGeometry();
+    const qreal dpr = devicePixelRatioF();
+    QSize want(qRound(videoW / dpr), qRound(videoH / dpr));
+    // 双重余量：外框装饰 + 客户区内非视频域（菜单栏/进度行/控制行固定高度）。
+    // 若只扣外框，缩放分支会把视频域放到"工作区−外框"上限，
+    // 加上非视频域后整窗仍会撑破工作区（验收实测缺陷）
+    const QSize frameChrome = frameGeometry().size() - geometry().size();
+    const QSize clientReserve = geometry().size() - m_videoWidget->size();
+    const QSize availVideo = work.size() - frameChrome - clientReserve;
+    if (availVideo.width() > 0 && availVideo.height() > 0
+        && (want.width() > availVideo.width() || want.height() > availVideo.height()))
+        want.scale(availVideo, Qt::KeepAspectRatio);
+    // 视频域增量换算整窗尺寸：菜单栏/控制行/播放列表面板显隐状态天然包含
+    resize(size() + want - m_videoWidget->size());
+    // 最小移动收回：仅当外框越出工作区时钳回，不动原本合法的位置
+    const QRect fr = frameGeometry();
+    QPoint tl = fr.topLeft();
+    tl.setX(qBound(work.left(), tl.x(), work.right() - fr.width() + 1));
+    tl.setY(qBound(work.top(), tl.y(), work.bottom() - fr.height() + 1));
+    if (tl != fr.topLeft())
+        move(tl);
 }
 
 // 覆盖式全屏切换（N3）：不隐藏控件、不重父化、wid 不重设、零黑闪
@@ -1281,30 +1320,7 @@ void MainWindow::saveSettings()
     // 播放列表面板可见性
     settings.setValue(QStringLiteral("playlistExpanded"), m_playlist->isVisible());
 
-    // 窗口：最大化时额外记录普通态尺寸（B8），否则取消最大化
-    // 只能回到构造期默认几何而非上次会话的尺寸。
-    // N3 全屏态落盘守卫：全屏中实时宽高是屏幕尺寸，不得存为普通态几何，
-    // 改用进全屏前快照写入（toggleFullscreen 进入分支已缓存）
-    const bool maximized = m_fullscreen ? m_preFsMaximized : isMaximized();
-    int winW = 0, winH = 0;
-    if (m_fullscreen) {
-        winW = m_preFsRect.width();
-        winH = m_preFsRect.height();
-    } else if (maximized) {
-        const QRect normal = normalGeometry();
-        if (normal.isValid()) {
-            winW = normal.width();
-            winH = normal.height();
-        }
-    } else {
-        winW = width();
-        winH = height();
-    }
-    settings.setValue(QStringLiteral("windowMaximized"), maximized);
-    if (winW > 0 && winH > 0) {
-        settings.setValue(QStringLiteral("windowWidth"), winW);
-        settings.setValue(QStringLiteral("windowHeight"), winH);
-    }
+    // N10：窗口几何/最大化不再落盘（启动恒为固定默认尺寸 960×600）
 
     // 会话恢复入口（Q1 方案 A）：记录播放中的非默认 tab 名。
     // 仅当本次进程发生过播放才更新/清除（A13）：未播放就关闭属于会话延续，
@@ -1348,22 +1364,8 @@ void MainWindow::restoreSettings()
         m_volumeSlider->setValue(int(vol + 0.5));
     }
 
-    // 窗口尺寸 / 最大化
-    if (settings.value(QStringLiteral("windowMaximized"), false).toBool()) {
-        // B7：不在构造期直接设最大化（未显示窗口的状态会被平台层丢弃），
-        // 记标志待首次 showEvent 应用。
-        // B8：先按 ini 尺寸铺好普通态几何，取消最大化时才能恢复到
-        // 上次会话的尺寸（否则是构造期默认值）
-        m_pendingMaximize = true;
-        if (settings.contains(QStringLiteral("windowWidth")))
-            resize(settings.value(QStringLiteral("windowWidth")).toInt(),
-                   settings.value(QStringLiteral("windowHeight")).toInt());
-    } else if (settings.contains(QStringLiteral("windowWidth"))) {
-        resize(settings.value(QStringLiteral("windowWidth"), 960).toInt(),
-               settings.value(QStringLiteral("windowHeight"), 600).toInt());
-    } else {
-        resize(960, 600);
-    }
+    // N10：窗口几何/最大化不再恢复，INI 遗留键
+    // （windowMaximized/windowWidth/windowHeight）读侧删除后自然忽略
 
     // 播放列表面板可见性
     if (settings.value(QStringLiteral("playlistExpanded"), false).toBool())
@@ -1402,14 +1404,4 @@ void MainWindow::closeEvent(QCloseEvent *event)
     // mpv 是宿主进程：关闭 GUI 时让 mpv 一并退出
     m_controller->command({QStringLiteral("quit")});
     QMainWindow::closeEvent(event);
-}
-
-void MainWindow::showEvent(QShowEvent *event)
-{
-    QMainWindow::showEvent(event);
-    // B7：首次显示时应用上次会话的最大化状态（构造期设置不可靠）
-    if (m_pendingMaximize) {
-        m_pendingMaximize = false;
-        setWindowState(Qt::WindowMaximized);
-    }
 }

@@ -19,7 +19,6 @@ public:
 
 protected:
     void closeEvent(QCloseEvent *event) override;
-    void showEvent(QShowEvent *event) override;
     void moveEvent(QMoveEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
     // N3：占位符几何跟随 + 视频区单击/双击分流
@@ -68,6 +67,9 @@ private:
     // N3：覆盖式全屏、视频区几何同步与单击/双击分流
     void toggleFullscreen();
     void syncVideoGeometry();
+    // N10：普通态窗口尺寸自适应视频（videoSizeChanged 直连触发，
+    // 物理像素 1:1、工作区钳制、最小移动收回）
+    void adaptWindowSizeToVideo(int videoW, int videoH);
     bool isPaused();
     void onVideoClickTimeout();
     // N5：统一音量调节入口——钳制到 [0, 上限] 后下发 mpv，UI 经观察回流刷新
@@ -122,8 +124,6 @@ private:
     // 本次进程是否发生过播放（A13）：未播放就关闭属于会话延续，
     // 不得清除上次保存的 lastTabName
     bool m_playedThisSession = false;
-    // B7：构造期对未显示窗口设置最大化会被平台层丢弃，记标志待首次显示应用
-    bool m_pendingMaximize = false;
     // ---- N7：VideoOverlay 视频叠加层（A3 顶级 Tool 浮窗，仅 OSD/字幕/弹幕，不含控制栏）----
     QWidget *m_videoOverlay = nullptr; // 顶级浮窗容器（VideoOverlay），几何始终跟随 m_videoWidget
     QLabel *m_osdLabel = nullptr;      // OSD 文本（左上角 12px 内边距）
