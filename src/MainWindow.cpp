@@ -1003,21 +1003,19 @@ void MainWindow::changeVolume(int delta)
     m_controller->setProperty(QStringLiteral("volume"), double(target));
 }
 
-// N8 Part1：正在播放的真实文件名（含后缀不含路径）：优先 filename 属性，
-// 空则回退正在播放 tab 对应条目的基名；不用 media-title（N7 #2 口径）。
-// 窗口标题与 OSD #2 同源收敛
+// B11：正在播放的真实文件名（含后缀不含路径），标题与 OSD #2 同源。
+// 列表镜像优先——playlist-pos 推送早于新文件装载完成，此刻读 filename 属性
+// 会拿到上一个文件的残留值（概率性错名根因）；本地镜像顺序与 mpv 恒一致，
+// 按 pos 取名为确定性来源。属性仅作镜像缺失时的兜底（如起播早期回刷未达）
 QString MainWindow::playingFilename()
 {
-    QString name = m_controller->propertyString(QStringLiteral("filename"));
-    if (!name.isEmpty())
-        return name;
     const int pt = m_playlist->playingTabIndex();
     if (pt >= 0 && m_playlistPos >= 0) {
         const QStringList files = m_playlist->filesOf(pt);
         if (m_playlistPos < files.size())
             return QFileInfo(files[m_playlistPos]).fileName();
     }
-    return QString();
+    return m_controller->propertyString(QStringLiteral("filename"));
 }
 
 // N8 Part3：进度条鼠标 x → 百分比（0~100）。经样式反查 groove/handle 几何，
