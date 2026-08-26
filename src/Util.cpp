@@ -145,4 +145,33 @@ QString formatTimePercent(double seconds, double duration)
     return QStringLiteral("%1(%2%)").arg(formatTimeHMS(seconds)).arg(pct);
 }
 
+QString trimTrailingZeros(const QString &fixed)
+{
+    QString s = fixed;
+    if (s.contains(QLatin1Char('.'))) {
+        while (s.endsWith(QLatin1Char('0')))
+            s.chop(1);
+        if (s.endsWith(QLatin1Char('.')))
+            s.chop(1);
+    }
+    return s;
+}
+
+QString formatKHz(int samplerate)
+{
+    const double kHz = samplerate / 1000.0;
+    return trimTrailingZeros(QString::number(kHz, 'f', 1)) + QStringLiteral("kHz");
+}
+
+QString formatFps(double fps)
+{
+    return trimTrailingZeros(QString::number(fps, 'f', 2)) + QStringLiteral("fps");
+}
+
+QString formatKbps(qint64 bps)
+{
+    const qint64 kbps = (bps + 500) / 1000; // 四舍五入取整
+    return QString::number(kbps) + QStringLiteral("kbps");
+}
+
 } // namespace Util

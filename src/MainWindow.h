@@ -2,7 +2,8 @@
 
 #include "pch.h"
 
-class MpvController;
+#include "MpvController.h"
+
 class NavigatorPanel;
 class PlaylistWidget;
 class ActionManager;
@@ -89,6 +90,14 @@ private:
     void applyLoopMode(const QString &mode);
     QString currentLoopMode() const;
     static QString formatTime(double seconds);
+    // N13：轨道文案与切换
+    QString formatTrackText(const MpvController::TrackInfo &t) const;
+    qint64 trackBitrate(const MpvController::TrackInfo &t) const;
+    void rebuildTrackMenus();
+    void updateStreamButton();
+    void showStreamMenu();
+    void switchToTrack(const MpvController::TrackInfo &t);
+    void disableSubtitles();
 
     MpvController *m_controller;
     QString m_configFile; // 配置文件完整路径（插件 DLL 同目录下的 mpv-qt.ini）
@@ -161,4 +170,11 @@ private:
     // 落盘守卫与退出恢复共用
     QRect m_preFsRect;
     Qt::WindowFlags m_preFsFlags;
+
+    // ---- N13：轨道选择 ----
+    QList<MpvController::TrackInfo> m_tracks;
+    QMenu *m_videoStreamMenu = nullptr;
+    QMenu *m_audioStreamMenu = nullptr;
+    QMenu *m_subStreamMenu = nullptr;
+    QPushButton *m_streamButton = nullptr; // ♪ 流选择按钮
 };

@@ -39,4 +39,14 @@ QString formatTimeHMS(double seconds);
 // duration<=0 时退化为仅时间。三处共用：进度条 tooltip / N7 #6 尾段 / N7 #7 主体
 QString formatTimePercent(double seconds, double duration);
 
+// N13：轨道文案数值格式化（去末尾 0 回退）
+// 48000 -> "48kHz"、44100 -> "44.1kHz"（1 位小数）
+QString formatKHz(int samplerate);
+// 23.976 -> "23.98fps"、24.0 -> "24fps"（2 位小数）
+QString formatFps(double fps);
+// 224000 bps -> "224kbps"（取整）
+QString formatKbps(qint64 bps);
+// 通用：定点小数去末尾 0（"24.00" -> "24"、"44.10" -> "44.1"）
+QString trimTrailingZeros(const QString &fixed);
+
 } // namespace Util

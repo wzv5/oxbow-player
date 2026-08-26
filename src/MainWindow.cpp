@@ -119,6 +119,10 @@ QWidget *MainWindow::createLeftArea()
     auto *prevButton = new QPushButton(style()->standardIcon(QStyle::SP_MediaSkipBackward), QString());
     auto *nextButton = new QPushButton(style()->standardIcon(QStyle::SP_MediaSkipForward), QString());
     m_timeLabel = new QLabel(QStringLiteral("00:00 / 00:00"));
+    m_streamButton = new QPushButton(QStringLiteral("♪"));
+    m_streamButton->setToolTip(tr("切换流"));
+    m_streamButton->setFixedWidth(32);
+    m_streamButton->hide();
     auto *settingsButton = new QPushButton(tr("设置"));
     m_playlistToggle = new QPushButton(tr("播放列表"));
     m_playlistToggle->setCheckable(true);
@@ -130,7 +134,8 @@ QWidget *MainWindow::createLeftArea()
     m_playlistToggle->setToolTip(tr("显示/隐藏播放列表"));
 
     // 控制行按钮不接受焦点（C2）：Space 归全局快捷键，避免焦点按钮被 Space 二次触发
-    for (QPushButton *b : {m_playButton, stopButton, prevButton, nextButton, settingsButton, m_playlistToggle})
+    for (QPushButton *b :
+         {m_playButton, stopButton, prevButton, nextButton, m_streamButton, settingsButton, m_playlistToggle})
         b->setFocusPolicy(Qt::NoFocus);
 
     controlLayout->addWidget(m_playButton);
@@ -140,6 +145,7 @@ QWidget *MainWindow::createLeftArea()
     controlLayout->addSpacing(8);
     controlLayout->addWidget(m_timeLabel);
     controlLayout->addStretch(1);
+    controlLayout->addWidget(m_streamButton);
     controlLayout->addWidget(settingsButton);
     controlLayout->addWidget(m_playlistToggle);
     layout->addWidget(controlRow);
@@ -156,6 +162,7 @@ QWidget *MainWindow::createLeftArea()
         else
             setPlaylistVisible(on);
     });
+    connect(m_streamButton, &QPushButton::clicked, this, &MainWindow::showStreamMenu);
 
     connect(m_progressSlider, &QSlider::sliderPressed, this, [this] { m_seeking = true; });
     connect(m_progressSlider, &QSlider::sliderReleased, this, &MainWindow::seekReleased);
@@ -218,6 +225,17 @@ void MainWindow::createMenus()
             [this] { changeSpeed(-0.25); });
     playMenu->addAction(act(AM::Id::SpeedReset));
     connect(act(AM::Id::SpeedReset), &QAction::triggered, this, &MainWindow::resetSpeed);
+    // N13：视频/音频/字幕流三子菜单（视频在前），无流时整菜单禁用
+    playMenu->addSeparator();
+    m_videoStreamMenu = playMenu->addMenu(tr("视频流"));
+    m_audioStreamMenu = playMenu->addMenu(tr("音频流"));
+    m_subStreamMenu = playMenu->addMenu(tr("字幕流"));
+    m_videoStreamMenu->setEnabled(false);
+    m_audioStreamMenu->setEnabled(false);
+    m_subStreamMenu->setEnabled(false);
+    connect(m_videoStreamMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildTrackMenus);
+    connect(m_audioStreamMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildTrackMenus);
+    connect(m_subStreamMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildTrackMenus);
 
     QMenu *viewMenu = menuBar()->addMenu(tr("视图(&V)"));
     m_playlistAction = act(AM::Id::Playlist);
@@ -415,6 +433,29 @@ void MainWindow::connectController()
                 if (path.isEmpty())
                     return;
                 m_playlist->applyStreamInfo(path, info);
+            });
+    // N13：轨道列表驱动菜单与按钮状态
+    connect(m_controller, &MpvController::tracksChanged, this,
+            [this](const QList<MpvController::TrackInfo> &tracks) {
+                m_tracks = tracks;
+                updateStreamButton();
+                // 子菜单内容在 aboutToShow 时重建，此处仅更新 enabled 态
+                // 有流的菜单保持可用（展开后即席填充）；无流则禁用
+                int v = 0, a = 0, s = 0;
+                for (const auto &t : tracks) {
+                    if (t.type == QLatin1String("video"))
+                        ++v;
+                    else if (t.type == QLatin1String("audio"))
+                        ++a;
+                    else if (t.type == QLatin1String("sub"))
+                        ++s;
+                }
+                if (m_videoStreamMenu)
+                    m_videoStreamMenu->setEnabled(v > 0);
+                if (m_audioStreamMenu)
+                    m_audioStreamMenu->setEnabled(a > 0);
+                if (m_subStreamMenu)
+                    m_subStreamMenu->setEnabled(s > 0);
             });
     // N10：起播拿到分辨率即适配窗口。走实时播放态专用通道 videoSizeChanged
     // （与导航器同源）；元数据仓服务展示域档案查询，不用于此（specs/N10.md 裁决）
@@ -1421,6 +1462,233 @@ void MainWindow::updateTimeDisplay()
 QString MainWindow::formatTime(double seconds)
 {
     return Util::formatTime(seconds);
+}
+
+// ---- N13：轨道文案与切换 ----
+
+qint64 MainWindow::trackBitrate(const MpvController::TrackInfo &t) const
+{
+    if (t.demuxBitrate > 0)
+        return t.demuxBitrate;
+    if (t.metadataBPS > 0)
+        return t.metadataBPS;
+    return 0;
+}
+
+QString MainWindow::formatTrackText(const MpvController::TrackInfo &t) const
+{
+    // 本地外挂流固定格式：[local] 文件名 [语言] (格式)
+    if (t.external) {
+        QString fn = QFileInfo(t.externalFilename).fileName();
+        if (fn.isEmpty())
+            fn = t.externalFilename;
+        QString lang = t.lang.isEmpty() ? QStringLiteral("und") : t.lang;
+        QString inner = t.codec;
+        QString result = QStringLiteral("[local] %1 [%2]").arg(fn, lang);
+        if (!inner.isEmpty())
+            result += QStringLiteral(" (%1)").arg(inner);
+        else
+            result += QStringLiteral(" (%1)").arg(QStringLiteral("unknown"));
+        if (t.isDefault)
+            result += QStringLiteral(" [default]");
+        return result;
+    }
+
+    QString namePart = t.title;
+    QString lang = t.lang.isEmpty() ? QStringLiteral("und") : t.lang;
+    QStringList inner;
+    if (!t.codec.isEmpty())
+        inner << t.codec;
+    if (t.type == QLatin1String("video")) {
+        if (t.demuxW > 0 && t.demuxH > 0)
+            inner << QStringLiteral("%1x%2").arg(t.demuxW).arg(t.demuxH);
+        if (t.demuxFps > 0.0)
+            inner << Util::formatFps(t.demuxFps);
+        qint64 br = trackBitrate(t);
+        if (br > 0)
+            inner << Util::formatKbps(br);
+    } else if (t.type == QLatin1String("audio")) {
+        if (t.demuxSamplerate > 0)
+            inner << Util::formatKHz(t.demuxSamplerate);
+        if (t.demuxChannelCount > 0)
+            inner << QStringLiteral("%1ch").arg(t.demuxChannelCount);
+        qint64 br = trackBitrate(t);
+        if (br > 0)
+            inner << Util::formatKbps(br);
+    }
+    // sub 仅 codec，已加入
+
+    QString result;
+    if (!namePart.isEmpty())
+        result = namePart + QStringLiteral(" ");
+    result += QStringLiteral("[%1]").arg(lang);
+    if (!inner.isEmpty())
+        result += QStringLiteral(" (%1)").arg(inner.join(QStringLiteral(", ")));
+    if (t.isDefault)
+        result += QStringLiteral(" [default]");
+    return result;
+}
+
+void MainWindow::rebuildTrackMenus()
+{
+    auto rebuild = [this](QMenu *menu, const QString &type) {
+        if (!menu)
+            return;
+        menu->clear();
+        QList<MpvController::TrackInfo> filtered;
+        for (const auto &t : m_tracks)
+            if (t.type == type)
+                filtered.append(t);
+        std::sort(filtered.begin(), filtered.end(),
+                  [](const MpvController::TrackInfo &a, const MpvController::TrackInfo &b) { return a.id < b.id; });
+
+        if (type == QLatin1String("sub")) {
+            // 字幕首项"无"
+            bool noSub = true;
+            for (const auto &t : filtered)
+                if (t.selected)
+                    noSub = false;
+            QAction *none = menu->addAction(tr("无"));
+            none->setCheckable(true);
+            none->setChecked(noSub);
+            connect(none, &QAction::triggered, this, &MainWindow::disableSubtitles);
+            for (const auto &t : filtered) {
+                QAction *a = menu->addAction(formatTrackText(t));
+                a->setCheckable(true);
+                a->setChecked(t.selected);
+                MpvController::TrackInfo copy = t;
+                connect(a, &QAction::triggered, this, [this, copy] { switchToTrack(copy); });
+            }
+        } else {
+            for (const auto &t : filtered) {
+                QAction *a = menu->addAction(formatTrackText(t));
+                a->setCheckable(true);
+                a->setChecked(t.selected);
+                MpvController::TrackInfo copy = t;
+                connect(a, &QAction::triggered, this, [this, copy] { switchToTrack(copy); });
+            }
+        }
+    };
+    rebuild(m_videoStreamMenu, QStringLiteral("video"));
+    rebuild(m_audioStreamMenu, QStringLiteral("audio"));
+    rebuild(m_subStreamMenu, QStringLiteral("sub"));
+}
+
+void MainWindow::updateStreamButton()
+{
+    int v = 0, a = 0, s = 0;
+    for (const auto &t : m_tracks) {
+        if (t.type == QLatin1String("video"))
+            ++v;
+        else if (t.type == QLatin1String("audio"))
+            ++a;
+        else if (t.type == QLatin1String("sub"))
+            ++s;
+    }
+    const bool visible = (v > 1) || (a > 1) || (s > 0);
+    if (m_streamButton) {
+        m_streamButton->setVisible(visible);
+        m_streamButton->setEnabled(visible);
+    }
+}
+
+void MainWindow::showStreamMenu()
+{
+    QMenu menu(this);
+    QList<MpvController::TrackInfo> videos, audios, subs;
+    for (const auto &t : m_tracks) {
+        if (t.type == QLatin1String("video"))
+            videos.append(t);
+        else if (t.type == QLatin1String("audio"))
+            audios.append(t);
+        else if (t.type == QLatin1String("sub"))
+            subs.append(t);
+    }
+    std::sort(videos.begin(), videos.end(),
+              [](const MpvController::TrackInfo &a, const MpvController::TrackInfo &b) { return a.id < b.id; });
+    std::sort(audios.begin(), audios.end(),
+              [](const MpvController::TrackInfo &a, const MpvController::TrackInfo &b) { return a.id < b.id; });
+    std::sort(subs.begin(), subs.end(),
+              [](const MpvController::TrackInfo &a, const MpvController::TrackInfo &b) { return a.id < b.id; });
+
+    bool hasPrev = false;
+    if (videos.size() > 1) {
+        QAction *header = menu.addAction(tr("视频流"));
+        header->setEnabled(false);
+        for (const auto &t : videos) {
+            QAction *a = menu.addAction(formatTrackText(t));
+            a->setCheckable(true);
+            a->setChecked(t.selected);
+            MpvController::TrackInfo copy = t;
+            connect(a, &QAction::triggered, this, [this, copy] { switchToTrack(copy); });
+        }
+        hasPrev = true;
+    }
+    if (audios.size() > 1) {
+        if (hasPrev)
+            menu.addSeparator();
+        QAction *header = menu.addAction(tr("音频流"));
+        header->setEnabled(false);
+        for (const auto &t : audios) {
+            QAction *a = menu.addAction(formatTrackText(t));
+            a->setCheckable(true);
+            a->setChecked(t.selected);
+            MpvController::TrackInfo copy = t;
+            connect(a, &QAction::triggered, this, [this, copy] { switchToTrack(copy); });
+        }
+        hasPrev = true;
+    }
+    if (!subs.isEmpty()) {
+        if (hasPrev)
+            menu.addSeparator();
+        QAction *header = menu.addAction(tr("字幕流"));
+        header->setEnabled(false);
+        bool noSub = true;
+        for (const auto &t : subs)
+            if (t.selected)
+                noSub = false;
+        QAction *none = menu.addAction(tr("无"));
+        none->setCheckable(true);
+        none->setChecked(noSub);
+        connect(none, &QAction::triggered, this, &MainWindow::disableSubtitles);
+        for (const auto &t : subs) {
+            QAction *a = menu.addAction(formatTrackText(t));
+            a->setCheckable(true);
+            a->setChecked(t.selected);
+            MpvController::TrackInfo copy = t;
+            connect(a, &QAction::triggered, this, [this, copy] { switchToTrack(copy); });
+        }
+    }
+    if (menu.isEmpty())
+        return;
+    const QPoint pos = m_streamButton ? m_streamButton->mapToGlobal(QPoint(0, m_streamButton->height())) : QCursor::pos();
+    menu.exec(pos);
+}
+
+void MainWindow::switchToTrack(const MpvController::TrackInfo &t)
+{
+    QString prop;
+    QString prefix;
+    if (t.type == QLatin1String("video")) {
+        prop = QStringLiteral("vid");
+        prefix = tr("视频流: ");
+    } else if (t.type == QLatin1String("audio")) {
+        prop = QStringLiteral("aid");
+        prefix = tr("音频流: ");
+    } else if (t.type == QLatin1String("sub")) {
+        prop = QStringLiteral("sid");
+        prefix = tr("字幕流: ");
+    } else {
+        return;
+    }
+    m_controller->setProperty(prop, int(t.id));
+    showOsd(prefix + formatTrackText(t));
+}
+
+void MainWindow::disableSubtitles()
+{
+    m_controller->setProperty(QStringLiteral("sid"), QStringLiteral("no"));
+    showOsd(tr("字幕流: 无"));
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)

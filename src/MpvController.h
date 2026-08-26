@@ -26,6 +26,27 @@ public:
     double propertyDouble(const QString &name, double fallback);
     bool propertyFlag(const QString &name, bool fallback);
 
+    // N13：轨道信息（track-list 解析产物）
+    struct TrackInfo
+    {
+        qint64 id = 0;
+        QString type;               // video / audio / sub
+        QString title;
+        QString lang;
+        QString codec;
+        bool external = false;
+        QString externalFilename;
+        bool isDefault = false;
+        bool selected = false;
+        int demuxW = 0;
+        int demuxH = 0;
+        double demuxFps = 0.0;
+        int demuxSamplerate = 0;
+        int demuxChannelCount = 0;
+        qint64 demuxBitrate = 0;    // bps，0 表无值
+        qint64 metadataBPS = 0;     // bps，0 表无值
+    };
+
 signals:
     void timePosChanged(double seconds);
     void durationChanged(double seconds);
@@ -50,6 +71,8 @@ signals:
     // 键：fileFormat/videoCodec/videoW/videoH/fps/audioCodec/channels/sampleRate/audioBitrate；
     // audioBitrate 恒携带，≤0 表无值（N12）；其余值缺失的键表示当前不可用
     void streamInfoChanged(const QVariantMap &info);
+    // N13：轨道列表（track-list 全量推送）
+    void tracksChanged(const QList<TrackInfo> &tracks);
     void mpvShutdown();
 
 public:

@@ -31,6 +31,7 @@ enum ObservedProperty {
     PropChannelCount,    // audio-params/channel-count
     PropSampleRate,      // audio-params/samplerate
     PropAudioBitrate,    // current-tracks/audio/demux-bitrate（N12 静态分轨码率）
+    PropTrackList,       // track-list（N13）
 };
 
 QVariantList parsePlaylist(const mpv_node *node)
@@ -77,6 +78,70 @@ QVariantMap parseNodeMap(const mpv_node *node)
     return result;
 }
 
+// N13：track-list 解析
+QList<MpvController::TrackInfo> parseTrackList(const mpv_node *node)
+{
+    QList<MpvController::TrackInfo> result;
+    if (!node || node->format != MPV_FORMAT_NODE_ARRAY)
+        return result;
+    mpv_node_list *list = node->u.list;
+    for (int i = 0; i < list->num; ++i) {
+        mpv_node *entry = &list->values[i];
+        if (entry->format != MPV_FORMAT_NODE_MAP)
+            continue;
+        MpvController::TrackInfo info;
+        mpv_node_list *map = entry->u.list;
+        for (int j = 0; j < map->num; ++j) {
+            const QString key = QString::fromUtf8(map->keys[j]);
+            const mpv_node *v = &map->values[j];
+            if (key == QLatin1String("id") && v->format == MPV_FORMAT_INT64)
+                info.id = v->u.int64;
+            else if (key == QLatin1String("type") && v->format == MPV_FORMAT_STRING)
+                info.type = QString::fromUtf8(v->u.string);
+            else if (key == QLatin1String("title") && v->format == MPV_FORMAT_STRING)
+                info.title = QString::fromUtf8(v->u.string);
+            else if (key == QLatin1String("lang") && v->format == MPV_FORMAT_STRING)
+                info.lang = QString::fromUtf8(v->u.string);
+            else if (key == QLatin1String("codec") && v->format == MPV_FORMAT_STRING)
+                info.codec = QString::fromUtf8(v->u.string);
+            else if (key == QLatin1String("external") && v->format == MPV_FORMAT_FLAG)
+                info.external = v->u.flag != 0;
+            else if (key == QLatin1String("external-filename") && v->format == MPV_FORMAT_STRING)
+                info.externalFilename = QString::fromUtf8(v->u.string);
+            else if (key == QLatin1String("default") && v->format == MPV_FORMAT_FLAG)
+                info.isDefault = v->u.flag != 0;
+            else if (key == QLatin1String("selected") && v->format == MPV_FORMAT_FLAG)
+                info.selected = v->u.flag != 0;
+            else if (key == QLatin1String("demux-w") && v->format == MPV_FORMAT_INT64)
+                info.demuxW = int(v->u.int64);
+            else if (key == QLatin1String("demux-h") && v->format == MPV_FORMAT_INT64)
+                info.demuxH = int(v->u.int64);
+            else if (key == QLatin1String("demux-fps") && v->format == MPV_FORMAT_DOUBLE)
+                info.demuxFps = v->u.double_;
+            else if (key == QLatin1String("demux-samplerate") && v->format == MPV_FORMAT_INT64)
+                info.demuxSamplerate = int(v->u.int64);
+            else if (key == QLatin1String("demux-channel-count") && v->format == MPV_FORMAT_INT64)
+                info.demuxChannelCount = int(v->u.int64);
+            else if (key == QLatin1String("demux-bitrate") && v->format == MPV_FORMAT_INT64)
+                info.demuxBitrate = v->u.int64;
+            else if (key == QLatin1String("metadata") && v->format == MPV_FORMAT_NODE_MAP) {
+                mpv_node_list *mmap = v->u.list;
+                for (int k = 0; k < mmap->num; ++k) {
+                    if (QLatin1String(mmap->keys[k]) == QLatin1String("BPS")
+                        && mmap->values[k].format == MPV_FORMAT_STRING) {
+                        bool ok = false;
+                        qint64 bps = QString::fromUtf8(mmap->values[k].u.string).toLongLong(&ok);
+                        if (ok)
+                            info.metadataBPS = bps;
+                    }
+                }
+            }
+        }
+        result.append(info);
+    }
+    return result;
+}
+
 } // namespace
 
 MpvController::MpvController(mpv_handle *mpv, QObject *parent)
@@ -109,6 +174,7 @@ MpvController::MpvController(mpv_handle *mpv, QObject *parent)
     mpv_observe_property(m_mpv, PropChannelCount, "audio-params/channel-count", MPV_FORMAT_INT64);
     mpv_observe_property(m_mpv, PropSampleRate, "audio-params/samplerate", MPV_FORMAT_INT64);
     mpv_observe_property(m_mpv, PropAudioBitrate, "current-tracks/audio/demux-bitrate", MPV_FORMAT_INT64);
+    mpv_observe_property(m_mpv, PropTrackList, "track-list", MPV_FORMAT_NODE);
 }
 
 MpvController::~MpvController()
@@ -349,6 +415,12 @@ void MpvController::handlePropertyChange(const mpv_event *event)
         else
             m_streamInfo[QStringLiteral("audioBitrate")] = 0;
         emit streamInfoChanged(m_streamInfo);
+        break;
+    case PropTrackList:
+        if (prop->format == MPV_FORMAT_NODE && prop->data)
+            emit tracksChanged(parseTrackList(static_cast<mpv_node *>(prop->data)));
+        else if (prop->format == MPV_FORMAT_NONE)
+            emit tracksChanged(QList<TrackInfo>());
         break;
     default:
         break;
