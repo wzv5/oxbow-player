@@ -393,34 +393,29 @@ void MainWindow::connectController()
                             m_controller->propertyString(QStringLiteral("path"))),
                         sec);
             });
+    // N4：元数据/流参数回填路由——按"当前正播路径"定位全局仓条目（推送覆写）。
+    // B13：文件卸载后 path 属性不可用返回空，此时推送无处归属，直接丢弃；
+    // 放行会经 materialize 以 "" 键产生垃圾仓条目。旧条目档案就此冻结在
+    // 最后播放态（属性对话框仅在打开瞬间填充，停止态仍展示上次已知值）。
+    // 路径归一化由下游 materializeByRaw 统一处理，此处不再预归一化
     connect(m_controller, &MpvController::mediaMetadataChanged, m_playlist,
             [this](const QVariantMap &tags) {
-                m_playlist->applyMediaMetadata(
-                    PlaylistWidget::normalizePath(
-                        m_controller->propertyString(QStringLiteral("path"))),
-                    tags);
+                const QString path = m_controller->propertyString(QStringLiteral("path"));
+                if (path.isEmpty())
+                    return;
+                m_playlist->applyMediaMetadata(path, tags);
             });
     connect(m_controller, &MpvController::streamInfoChanged, m_playlist,
             [this](const QVariantMap &info) {
-                m_playlist->applyStreamInfo(
-                    PlaylistWidget::normalizePath(
-                        m_controller->propertyString(QStringLiteral("path"))),
-                    info);
-            });
-    connect(m_controller, &MpvController::mediaMetadataChanged, m_playlist,
-            [this](const QVariantMap &tags) {
-                m_playlist->applyMediaMetadata(
-                    m_controller->propertyString(QStringLiteral("path")), tags);
+                const QString path = m_controller->propertyString(QStringLiteral("path"));
+                if (path.isEmpty())
+                    return;
+                m_playlist->applyStreamInfo(path, info);
             });
     // N10：起播拿到分辨率即适配窗口。走实时播放态专用通道 videoSizeChanged
     // （与导航器同源）；元数据仓服务展示域档案查询，不用于此（specs/N10.md 裁决）
     connect(m_controller, &MpvController::videoSizeChanged, this,
             &MainWindow::adaptWindowSizeToVideo);
-    connect(m_controller, &MpvController::streamInfoChanged, m_playlist,
-            [this](const QVariantMap &info) {
-                m_playlist->applyStreamInfo(
-                    m_controller->propertyString(QStringLiteral("path")), info);
-            });
     // 停止态步进以选中 tab 为基准，切换 tab 需刷新启停（A16）
     connect(m_playlist, &QTabWidget::currentChanged, this, [this](int) {
         updateNavigationActions();
