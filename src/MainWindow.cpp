@@ -707,6 +707,10 @@ void MainWindow::ensureVideoOverlay()
     auto *layout = new QVBoxLayout(m_videoOverlay);
     layout->setContentsMargins(12, 12, 12, 12);
     layout->setSpacing(0);
+    // B12：SetNoConstraint——浮窗几何恒由 setGeometry(视频区矩形) 决定，
+    // 不被内容 sizeHint 撑大；超宽文本（长文件名）由父窗口边界自然硬切，
+    // 杜绝默认约束模式把内容最小尺寸施加为顶级窗口尺寸而压过播放列表
+    layout->setSizeConstraint(QLayout::SetNoConstraint);
     m_osdLabel = new OsdLabel(m_videoOverlay);
     m_osdLabel->setAttribute(Qt::WA_TransparentForMouseEvents, true);
     // N7：无背景，仅描边白字（20pt），不使用 style sheet
