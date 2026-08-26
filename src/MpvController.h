@@ -47,8 +47,8 @@ signals:
     // 媒体元数据字典（N4）：键大小写因文件而异，接收方需做不敏感匹配
     void mediaMetadataChanged(const QVariantMap &metadata);
     // 当前活动流参数快照（N4）：任一被观察的流/容器属性变化即整体上报。
-    // 键：fileFormat/videoCodec/videoW/videoH/fps/audioCodec/channels/sampleRate；
-    // 值缺失的键表示当前不可用
+    // 键：fileFormat/videoCodec/videoW/videoH/fps/audioCodec/channels/sampleRate/audioBitrate；
+    // audioBitrate 恒携带，≤0 表无值（N12）；其余值缺失的键表示当前不可用
     void streamInfoChanged(const QVariantMap &info);
     void mpvShutdown();
 

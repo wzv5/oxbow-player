@@ -30,6 +30,7 @@ enum ObservedProperty {
     PropAudioCodecName,  // audio-codec-name
     PropChannelCount,    // audio-params/channel-count
     PropSampleRate,      // audio-params/samplerate
+    PropAudioBitrate,    // current-tracks/audio/demux-bitrate（N12 静态分轨码率）
 };
 
 QVariantList parsePlaylist(const mpv_node *node)
@@ -107,6 +108,7 @@ MpvController::MpvController(mpv_handle *mpv, QObject *parent)
     mpv_observe_property(m_mpv, PropAudioCodecName, "audio-codec-name", MPV_FORMAT_STRING);
     mpv_observe_property(m_mpv, PropChannelCount, "audio-params/channel-count", MPV_FORMAT_INT64);
     mpv_observe_property(m_mpv, PropSampleRate, "audio-params/samplerate", MPV_FORMAT_INT64);
+    mpv_observe_property(m_mpv, PropAudioBitrate, "current-tracks/audio/demux-bitrate", MPV_FORMAT_INT64);
 }
 
 MpvController::~MpvController()
@@ -337,6 +339,17 @@ void MpvController::handlePropertyChange(const mpv_event *event)
         emit streamInfoChanged(m_streamInfo);
         break;
     }
+    // N12：静态分轨码率（容器声明，文件加载即定）。与上方兄弟流参数不同：
+    // 本键恒携带于快照——属性不可用（NONE）或推送值 ≤0 一律记 0 表无值，
+    // 由下游显式复位，防同一文件内换轨后残留旧轨码率
+    case PropAudioBitrate:
+        if (prop->format == MPV_FORMAT_INT64 && prop->data)
+            m_streamInfo[QStringLiteral("audioBitrate")] =
+                qlonglong(*static_cast<int64_t *>(prop->data));
+        else
+            m_streamInfo[QStringLiteral("audioBitrate")] = 0;
+        emit streamInfoChanged(m_streamInfo);
+        break;
     default:
         break;
     }

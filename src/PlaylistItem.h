@@ -31,4 +31,5 @@ struct PlaylistItem
     std::optional<QString> audioCodec;      // 音频编码格式
     std::optional<int> audioChannels;       // 通道数
     std::optional<int> audioSampleRate;     // 采样率，Hz
+    std::optional<int> audioBitrate;        // 码率，bps（容器声明的静态分轨值；推送 0/缺失即无值）
 };

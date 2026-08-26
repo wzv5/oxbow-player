@@ -308,9 +308,20 @@ void PlaylistWidget::applyMediaMetadata(const QString &rawPath, const QVariantMa
 
 void PlaylistWidget::applyStreamInfo(const QString &rawPath, const QVariantMap &info)
 {
-    if (info.isEmpty())
-        return;
     PlaylistItem &item = materializeByRaw(rawPath);
+
+    // 快照语义（N12 修正）：streamInfoChanged 上报的恒为"当前已知键全集"
+    // （控制器合并缓存整体重发），故先复位全部流参数字段再以本次快照覆盖——
+    // 键缺失即 mpv 侧已不可用（如切换到无音频流文件），杜绝旧文件残留。
+    // 此前的增量补丁式处理只覆写存在的键，正是音频三参数残留的根因
+    item.fileFormat.reset();
+    item.videoCodec.reset();
+    item.videoResolution.reset();
+    item.videoFps.reset();
+    item.audioCodec.reset();
+    item.audioChannels.reset();
+    item.audioSampleRate.reset();
+    item.audioBitrate.reset();
 
     // 文件格式：file-format 为 libavformat 解封装器短名
     if (info.contains(QStringLiteral("fileFormat")))
@@ -331,6 +342,12 @@ void PlaylistWidget::applyStreamInfo(const QString &rawPath, const QVariantMap &
         item.audioChannels = info.value(QStringLiteral("channels")).toInt();
     if (info.contains(QStringLiteral("sampleRate")))
         item.audioSampleRate = info.value(QStringLiteral("sampleRate")).toInt();
+    // N12：音频码率——键恒携带：>0 为容器声明码率(bps)，0 表无值/不可用，
+    // 显式复位防同一文件内换轨后残留旧轨码率
+    if (info.contains(QStringLiteral("audioBitrate"))) {
+        const int bps = info.value(QStringLiteral("audioBitrate")).toInt();
+        item.audioBitrate = bps > 0 ? std::optional<int>(bps) : std::nullopt;
+    }
     repaintAllLists();
 }
 
@@ -971,6 +988,8 @@ void PlaylistWidget::showPropertiesDialog(const QString &path)
         audio.append({tr("通道数"), QString::number(*item.audioChannels)});
     if (item.audioSampleRate && *item.audioSampleRate > 0)
         audio.append({tr("采样率"), QStringLiteral("%1 kHz").arg(*item.audioSampleRate / 1000.0, 0, 'f', 1)});
+    if (item.audioBitrate && *item.audioBitrate > 0)
+        audio.append({tr("码率"), QStringLiteral("%1 kbps").arg(qRound(*item.audioBitrate / 1000.0))});
 
     // 标签组
     QList<Row> tags;
