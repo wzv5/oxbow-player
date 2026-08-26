@@ -160,7 +160,7 @@ QWidget *MainWindow::createLeftArea()
     connect(m_progressSlider, &QSlider::sliderPressed, this, [this] { m_seeking = true; });
     connect(m_progressSlider, &QSlider::sliderReleased, this, &MainWindow::seekReleased);
     connect(m_volumeSlider, &QSlider::valueChanged, this, [this](int value) {
-        m_controller->setProperty(QStringLiteral("volume"), double(value));
+        applyVolume(value); // B14：用户手势统一入口（拖动/点击；回流回写被 QSignalBlocker 拦截不入此）
     });
 
     return left;
@@ -286,6 +286,12 @@ void MainWindow::connectController()
         m_playButton->setIcon(style()->standardIcon(paused ? QStyle::SP_MediaPlay : QStyle::SP_MediaPause));
         // N7 #1：播放↔暂停 OSD（仅播放态互切，起停由 #2/#3 去重覆盖）
         if (m_playlistPos >= 0) {
+            // B14：视频区单击引发的回声在此一次性吞咽——暂停 OSD 由单击
+            // 超时补显，双击场景（含恢复回声）全程静默；标志随按压周期复位
+            if (m_suppressPlayPauseOsd) {
+                m_suppressPlayPauseOsd = false;
+                return;
+            }
             m_pendingPlayPause = paused ? tr("暂停") : tr("播放");
             if (!m_osdCoalescePending) {
                 m_osdCoalescePending = true;
@@ -296,9 +302,7 @@ void MainWindow::connectController()
     connect(m_controller, &MpvController::volumeChanged, this, [this](double v) {
         QSignalBlocker blocker(m_volumeSlider);
         m_volumeSlider->setValue(int(v + 0.5));
-        // N7 #4 + N8 Part6：音量 OSD（百分比样式），启动恢复期屏蔽
-        if (m_osdReady)
-            showOsd(tr("音量: %1%").arg(int(v + 0.5)));
+        // B14：推送仅同步滑条，OSD 已移至用户动作统一入口 applyVolume 直显
     });
     connect(m_controller, &MpvController::playlistChanged, m_playlist, &PlaylistWidget::setPlaylist);
     // 播放态列表长度变化影响步进启停（A16）
@@ -916,12 +920,19 @@ bool MainWindow::isPaused()
     return m_controller->propertyFlag(QStringLiteral("pause"), true);
 }
 
-// 单击定时器超时：确非双击，执行延迟的单击动作
-// （仅暂停态恢复播放/停止态开播路径有实际效果）
+// 单击定时器超时：确非双击，按按压来源分流收尾。
+// 播放态点击（B14）：暂停已即时生效，此处补显被吞咽的暂停 OSD；
+// 暂停/停止态点击：执行延迟的恢复/开播动作
 void MainWindow::onVideoClickTimeout()
 {
-    if (m_clickActionPending) {
-        m_clickActionPending = false;
+    if (!m_clickActionPending)
+        return;
+    m_clickActionPending = false;
+    if (m_pendingPauseRestore) {
+        // 实时状态校验：防窗口期内空格键反向操作后错显"暂停"
+        if (isPaused())
+            showOsd(tr("暂停"));
+    } else {
         togglePause();
     }
 }
@@ -962,14 +973,19 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
             // "定时器未活跃"守卫：双击间隔内带位移的第二 press 不重启流程
             if (m_clickTimer->isActive())
                 break;
-            // 入口无条件复位两标志：状态只在单轮 press→(双击|超时)
+            // 入口无条件复位各标志：状态只在单轮 press→(双击|超时)
             // 生命周期内存活，杜绝上轮残留泄漏进本轮
             m_pendingPauseRestore = false;
             m_clickActionPending = false;
+            m_suppressPlayPauseOsd = false;
             if (m_playlistPos >= 0 && !isPaused()) {
-                // 播放中：立即暂停（单击终态），双击时再恢复
+                // 播放中：立即暂停（单击终态不变），OSD 延迟到超时补显；
+                // 双击则由恢复回声吞咽实现全程静默（B14）。
+                // 置 pending 使超时门闸放行（按来源分流补显/动作）
                 togglePause();
                 m_pendingPauseRestore = true;
+                m_clickActionPending = true;
+                m_suppressPlayPauseOsd = true;
             } else {
                 // 暂停/停止态：延迟到超时执行，避免误开播后抵消的音频闪烁
                 m_clickActionPending = true;
@@ -1040,12 +1056,22 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
     return QMainWindow::eventFilter(watched, event);
 }
 
-// N5：统一音量调节入口。以滑条缓存为基准钳制后下发 mpv；
+// B14：用户音量动作统一收口——钳制、下发 mpv 并直显音量 OSD。
+// 三条路径汇入：changeVolume（滚轮/快捷键）、滑条 valueChanged（拖动/点击）。
+// 启动恢复刻意绕行：restoreSettings 以 QSignalBlocker 直写滑条并直接
+// setProperty，不经此函数——启动路径从此无任何 OSD 调用点
+void MainWindow::applyVolume(int value)
+{
+    const int v = qBound(0, value, m_volumeMax);
+    m_controller->setProperty(QStringLiteral("volume"), double(v));
+    showOsd(tr("音量: %1%").arg(v));
+}
+
+// N5：统一音量调节入口。以滑条缓存为基准步进后交 applyVolume；
 // UI 不在此处回写，由 volumeChanged 观察回流刷新（防环已有 QSignalBlocker）
 void MainWindow::changeVolume(int delta)
 {
-    const int target = qBound(0, m_volumeSlider->value() + delta, m_volumeMax);
-    m_controller->setProperty(QStringLiteral("volume"), double(target));
+    applyVolume(m_volumeSlider->value() + delta);
 }
 
 // B11：正在播放的真实文件名（含后缀不含路径），标题与 OSD #2 同源。
@@ -1383,9 +1409,6 @@ void MainWindow::restoreSettings()
     }
 
     updateNavigationActions(); // A16：启动恢复完成后的初始启停状态
-    // N7：启动恢复的 volume setProperty 会异步回推 volumeChanged，
-    // 需延迟至事件队列稳定后再允许 OSD，避免启动瞬间误弹“音量: xx”
-    QTimer::singleShot(600, this, [this] { m_osdReady = true; });
 }
 
 void MainWindow::updateTimeDisplay()

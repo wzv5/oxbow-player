@@ -74,6 +74,9 @@ private:
     void onVideoClickTimeout();
     // N5：统一音量调节入口——钳制到 [0, 上限] 后下发 mpv，UI 经观察回流刷新
     void changeVolume(int delta);
+    // B14：用户音量动作统一收口——钳制、下发并直显音量 OSD；
+    // 启动恢复路径刻意绕行（restoreSettings 直写，无 OSD）
+    void applyVolume(int value);
     // N6：相对 seek（秒）；停止态（无播放位置）无动作
     void seekRelative(int deltaSeconds);
     // N3：导航器按需创建生命周期收口（关闭即销毁，null=未打开）
@@ -128,7 +131,6 @@ private:
     QWidget *m_videoOverlay = nullptr; // 顶级浮窗容器（VideoOverlay），几何始终跟随 m_videoWidget
     QLabel *m_osdLabel = nullptr;      // OSD 文本（左上角 12px 内边距）
     QTimer *m_osdTimer = nullptr;      // OSD 2s 自动隐藏
-    bool m_osdReady = false;           // 启动恢复期屏蔽 volume OSD
     // 帧合并去重：同事件循环内多信号折叠为一次显示（#2 > #3 > #1）
     bool m_osdCoalescePending = false;
     QString m_pendingNowPlaying;
@@ -147,6 +149,9 @@ private:
     QTimer *m_clickTimer = nullptr;     // 单次定时器，间隔=双击间隔
     bool m_pendingPauseRestore = false; // 播放中 press 已暂停，双击需恢复播放
     bool m_clickActionPending = false;  // 暂停/停止态 press 待超时执行
+    // B14：一次性吞咽标志——视频区单击引发的暂停/恢复属性回声不入 OSD 队列；
+    // 暂停 OSD 由单击超时补显，双击场景全程静默
+    bool m_suppressPlayPauseOsd = false;
     bool m_fullscreen = false;          // 覆盖式全屏态标志（syncVideoGeometry 分支依据）
     double m_savedZoom = 0.0;           // 进全屏前 zoom/pan 快照（先存后写零）
     double m_savedPanX = 0.0;
