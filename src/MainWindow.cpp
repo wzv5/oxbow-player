@@ -438,8 +438,15 @@ void MainWindow::openFiles()
     const QStringList files = QFileDialog::getOpenFileNames(
         this, tr("打开文件"), QString(),
         tr("媒体文件 (%1);;所有文件 (*)").arg(patterns.join(QLatin1Char(' '))));
-    if (!files.isEmpty())
-        m_playlist->addFiles(files); // filesAdded 信号中再决定是否需要 append 到 mpv
+    if (files.isEmpty())
+        return;
+    // N11：主菜单打开文件固定落点默认播放列表——清旧内容与续播记忆后重灌，
+    // 随即整表开播（他 tab 播放中被抢占切换）；多选按对话框原始返回顺序从首项播起。
+    // 有意不走 addFiles：绕开落点漂移与播放中 append 语义，拖放/右键添加不受影响
+    m_playlist->setDefaultTabFiles(files);
+    m_playlist->markPlayingTab(0);
+    m_playlist->setCurrentIndex(0); // Q2 裁决：抢占切换时激活态同步跳到默认 tab
+    onPlayRequested(files, 0, -1.0);
 }
 
 void MainWindow::playAt(int index)

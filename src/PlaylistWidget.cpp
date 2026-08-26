@@ -254,6 +254,21 @@ void PlaylistWidget::addFiles(const QStringList &files)
     emit filesAdded(files);
 }
 
+// N11：主菜单"打开文件"固定落点——整体替换默认 tab 内容并作废其续播记忆
+// （清空列表隐含记忆失效，Q3 裁决）。默认 tab 永不持久化（N9/N4 既定），
+// 也不发 filesAdded：立即播放由 MainWindow 经统一入口 onPlayRequested 驱动，
+// 避免误入播放中 append 分支
+void PlaylistWidget::setDefaultTabFiles(const QStringList &files)
+{
+    QListWidget *list = listAt(0);
+    if (!list || files.isEmpty())
+        return;
+    m_memory.remove(list);
+    list->clear();
+    for (const QString &file : files)
+        makeItem(list, file);
+}
+
 // ——元数据回填（N4）：按路径覆写仓中字段并触发相关行重绘——
 
 void PlaylistWidget::repaintAllLists()

@@ -37,6 +37,10 @@ public:
     // 向当前 tab 添加文件（触发 filesAdded 信号）
     void addFiles(const QStringList &files);
 
+    // N11：主菜单"打开文件"专用——整体替换默认 tab 内容并作废其续播记忆；
+    // 默认 tab 永不持久化，也不触发 filesAdded（播放由 MainWindow 统一入口显式驱动）
+    void setDefaultTabFiles(const QStringList &files);
+
     QStringList filesOf(int tabIndex) const;
     int playingTabIndex() const { return m_playingTab; }
     bool currentIsPlayingTab() const { return currentIndex() == m_playingTab; }
