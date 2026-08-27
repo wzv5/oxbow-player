@@ -306,48 +306,28 @@ void PlaylistWidget::applyMediaMetadata(const QString &rawPath, const QVariantMa
     repaintAllLists();
 }
 
-void PlaylistWidget::applyStreamInfo(const QString &rawPath, const QVariantMap &info)
+void PlaylistWidget::applyFileFormat(const QString &rawPath, const QString &format)
 {
+    if (rawPath.isEmpty())
+        return;
     PlaylistItem &item = materializeByRaw(rawPath);
+    if (format.isEmpty())
+        item.fileFormat.reset();
+    else
+        item.fileFormat = format;
+    repaintAllLists();
+}
 
-    // 快照语义（N12 修正）：streamInfoChanged 上报的恒为"当前已知键全集"
-    // （控制器合并缓存整体重发），故先复位全部流参数字段再以本次快照覆盖——
-    // 键缺失即 mpv 侧已不可用（如切换到无音频流文件），杜绝旧文件残留。
-    // 此前的增量补丁式处理只覆写存在的键，正是音频三参数残留的根因
-    item.fileFormat.reset();
-    item.videoCodec.reset();
-    item.videoResolution.reset();
-    item.videoFps.reset();
-    item.audioCodec.reset();
-    item.audioChannels.reset();
-    item.audioSampleRate.reset();
-    item.audioBitrate.reset();
-
-    // 文件格式：file-format 为 libavformat 解封装器短名
-    if (info.contains(QStringLiteral("fileFormat")))
-        item.fileFormat = info.value(QStringLiteral("fileFormat")).toString();
-
-    if (info.contains(QStringLiteral("videoCodec")))
-        item.videoCodec = info.value(QStringLiteral("videoCodec")).toString();
-    if (info.contains(QStringLiteral("videoW")) && info.contains(QStringLiteral("videoH"))) {
-        item.videoResolution = QSize(info.value(QStringLiteral("videoW")).toInt(),
-                                     info.value(QStringLiteral("videoH")).toInt());
-    }
-    if (info.contains(QStringLiteral("fps")))
-        item.videoFps = info.value(QStringLiteral("fps")).toDouble();
-
-    if (info.contains(QStringLiteral("audioCodec")))
-        item.audioCodec = info.value(QStringLiteral("audioCodec")).toString();
-    if (info.contains(QStringLiteral("channels")))
-        item.audioChannels = info.value(QStringLiteral("channels")).toInt();
-    if (info.contains(QStringLiteral("sampleRate")))
-        item.audioSampleRate = info.value(QStringLiteral("sampleRate")).toInt();
-    // N12：音频码率——键恒携带：>0 为容器声明码率(bps)，0 表无值/不可用，
-    // 显式复位防同一文件内换轨后残留旧轨码率
-    if (info.contains(QStringLiteral("audioBitrate"))) {
-        const int bps = info.value(QStringLiteral("audioBitrate")).toInt();
-        item.audioBitrate = bps > 0 ? std::optional<int>(bps) : std::nullopt;
-    }
+void PlaylistWidget::applyTracks(const QString &rawPath, const QList<MpvController::TrackInfo> &tracks)
+{
+    if (rawPath.isEmpty())
+        return;
+    PlaylistItem &item = materializeByRaw(rawPath);
+    // N14 快照语义：全量覆盖，按 id 升序存；空即清空
+    QList<MpvController::TrackInfo> sorted = tracks;
+    std::sort(sorted.begin(), sorted.end(),
+              [](const MpvController::TrackInfo &a, const MpvController::TrackInfo &b) { return a.id < b.id; });
+    item.tracks = sorted;
     repaintAllLists();
 }
 
@@ -953,7 +933,7 @@ void PlaylistWidget::showPropertiesDialog(const QString &path)
             appendRow(r);
     };
 
-    // 常规组
+    // 常规组（文件级）
     QList<Row> general;
     general.append({tr("文件路径"), item.path.isEmpty() ? path : item.path});
     if (item.fileFormat)
@@ -970,28 +950,111 @@ void PlaylistWidget::showPropertiesDialog(const QString &path)
                                           .arg((qint64(*item.duration) % 3600) / 60, 2, 10, QLatin1Char('0'))
                                           .arg(qint64(*item.duration) % 60, 2, 10, QLatin1Char('0'))});
 
-    // 视频组：仅当前实际播放的轨
-    QList<Row> video;
-    if (item.videoCodec)
-        video.append({tr("视频编码"), *item.videoCodec});
-    if (item.videoResolution && item.videoResolution->isValid())
-        video.append({tr("分辨率"), QStringLiteral("%1 x %2").arg(item.videoResolution->width())
-                                                    .arg(item.videoResolution->height())});
-    if (item.videoFps && *item.videoFps > 0)
-        video.append({tr("帧率"), QString::number(*item.videoFps, 'f', 2)});
+    // N14 辅助：码率回退 + 格式化（空格版）
+    auto trackBitrate = [](const MpvController::TrackInfo &t) -> qint64 {
+        if (t.demuxBitrate > 0)
+            return t.demuxBitrate;
+        return t.metadataBPS;
+    };
+    auto formatKHzSpaced = [](int sr) -> QString {
+        QString s = QString::number(sr / 1000.0, 'f', 1);
+        if (s.contains(QLatin1Char('.'))) {
+            while (s.endsWith(QLatin1Char('0')))
+                s.chop(1);
+            if (s.endsWith(QLatin1Char('.')))
+                s.chop(1);
+        }
+        return s + QStringLiteral(" kHz");
+    };
+    auto formatFpsSpaced = [](double fps) -> QString {
+        QString s = QString::number(fps, 'f', 2);
+        if (s.contains(QLatin1Char('.'))) {
+            while (s.endsWith(QLatin1Char('0')))
+                s.chop(1);
+            if (s.endsWith(QLatin1Char('.')))
+                s.chop(1);
+        }
+        return s + QStringLiteral(" fps");
+    };
+    auto formatKbpsSpaced = [](qint64 bps) -> QString {
+        return QString::number((bps + 500) / 1000) + QStringLiteral(" kbps");
+    };
+    auto buildVideoRows = [&](const MpvController::TrackInfo &t) -> QList<Row> {
+        QList<Row> rows;
+        if (t.external) {
+            QString p = t.externalFilename.isEmpty() ? QStringLiteral("[local]") : QStringLiteral("[local] %1").arg(t.externalFilename);
+            rows.append({tr("标题"), p});
+        } else if (!t.title.isEmpty()) {
+            rows.append({tr("标题"), t.title});
+        }
+        if (!t.lang.isEmpty())
+            rows.append({tr("语言"), t.lang});
+        if (!t.codec.isEmpty())
+            rows.append({tr("编码"), t.codec});
+        if (t.demuxW > 0 && t.demuxH > 0)
+            rows.append({tr("分辨率"), QStringLiteral("%1 x %2").arg(t.demuxW).arg(t.demuxH)});
+        if (t.demuxFps > 0)
+            rows.append({tr("帧率"), formatFpsSpaced(t.demuxFps)});
+        qint64 br = trackBitrate(t);
+        if (br > 0)
+            rows.append({tr("码率"), formatKbpsSpaced(br)});
+        return rows;
+    };
+    auto buildAudioRows = [&](const MpvController::TrackInfo &t) -> QList<Row> {
+        QList<Row> rows;
+        if (t.external) {
+            QString p = t.externalFilename.isEmpty() ? QStringLiteral("[local]") : QStringLiteral("[local] %1").arg(t.externalFilename);
+            rows.append({tr("标题"), p});
+        } else if (!t.title.isEmpty()) {
+            rows.append({tr("标题"), t.title});
+        }
+        if (!t.lang.isEmpty())
+            rows.append({tr("语言"), t.lang});
+        if (!t.codec.isEmpty())
+            rows.append({tr("编码"), t.codec});
+        if (t.demuxChannelCount > 0)
+            rows.append({tr("通道数"), QString::number(t.demuxChannelCount)});
+        if (t.demuxSamplerate > 0)
+            rows.append({tr("采样率"), formatKHzSpaced(t.demuxSamplerate)});
+        qint64 br = trackBitrate(t);
+        if (br > 0)
+            rows.append({tr("码率"), formatKbpsSpaced(br)});
+        return rows;
+    };
+    auto buildSubRows = [&](const MpvController::TrackInfo &t) -> QList<Row> {
+        QList<Row> rows;
+        if (t.external) {
+            QString p = t.externalFilename.isEmpty() ? QStringLiteral("[local]") : QStringLiteral("[local] %1").arg(t.externalFilename);
+            rows.append({tr("标题"), p});
+        } else if (!t.title.isEmpty()) {
+            rows.append({tr("标题"), t.title});
+        }
+        if (!t.lang.isEmpty())
+            rows.append({tr("语言"), t.lang});
+        if (!t.codec.isEmpty())
+            rows.append({tr("编码"), t.codec});
+        return rows;
+    };
 
-    // 音频组：同上
-    QList<Row> audio;
-    if (item.audioCodec)
-        audio.append({tr("音频编码"), *item.audioCodec});
-    if (item.audioChannels)
-        audio.append({tr("通道数"), QString::number(*item.audioChannels)});
-    if (item.audioSampleRate && *item.audioSampleRate > 0)
-        audio.append({tr("采样率"), QStringLiteral("%1 kHz").arg(*item.audioSampleRate / 1000.0, 0, 'f', 1)});
-    if (item.audioBitrate && *item.audioBitrate > 0)
-        audio.append({tr("码率"), QStringLiteral("%1 kbps").arg(qRound(*item.audioBitrate / 1000.0))});
+    // 当前流（selected）
+    const MpvController::TrackInfo *curVideo = nullptr;
+    const MpvController::TrackInfo *curAudio = nullptr;
+    const MpvController::TrackInfo *curSub = nullptr;
+    for (const auto &t : item.tracks) {
+        if (t.selected) {
+            if (!curVideo && t.type == QLatin1String("video"))
+                curVideo = &t;
+            else if (!curAudio && t.type == QLatin1String("audio"))
+                curAudio = &t;
+            else if (!curSub && t.type == QLatin1String("sub"))
+                curSub = &t;
+        }
+    }
+    QList<Row> videoCur = curVideo ? buildVideoRows(*curVideo) : QList<Row>();
+    QList<Row> audioCur = curAudio ? buildAudioRows(*curAudio) : QList<Row>();
+    QList<Row> subCur = curSub ? buildSubRows(*curSub) : QList<Row>();
 
-    // 标签组
+    // 标签组（文件级）
     QList<Row> tags;
     if (item.title)
         tags.append({tr("标题"), *item.title});
@@ -1002,10 +1065,35 @@ void PlaylistWidget::showPropertiesDialog(const QString &path)
     if (item.releaseDate)
         tags.append({tr("发行时间"), timeText(*item.releaseDate)});
 
+    // 其他流（非选中，按 id 升序已在 applyTracks 排序）
+    QList<QList<Row>> otherVideos;
+    QList<QList<Row>> otherAudios;
+    QList<QList<Row>> otherSubs;
+    for (const auto &t : item.tracks) {
+        if (t.selected)
+            continue;
+        if (t.type == QLatin1String("video"))
+            otherVideos.append(buildVideoRows(t));
+        else if (t.type == QLatin1String("audio"))
+            otherAudios.append(buildAudioRows(t));
+        else if (t.type == QLatin1String("sub"))
+            otherSubs.append(buildSubRows(t));
+    }
+
     appendGroup(tr("常规"), general);
-    appendGroup(tr("视频"), video);
-    appendGroup(tr("音频"), audio);
+    if (!videoCur.isEmpty())
+        appendGroup(tr("视频"), videoCur);
+    if (!audioCur.isEmpty())
+        appendGroup(tr("音频"), audioCur);
+    if (!subCur.isEmpty())
+        appendGroup(tr("字幕"), subCur);
     appendGroup(tr("标签"), tags);
+    for (int i = 0; i < otherVideos.size(); ++i)
+        appendGroup(tr("其他视频 %1").arg(i + 1), otherVideos[i]);
+    for (int i = 0; i < otherAudios.size(); ++i)
+        appendGroup(tr("其他音频 %1").arg(i + 1), otherAudios[i]);
+    for (int i = 0; i < otherSubs.size(); ++i)
+        appendGroup(tr("其他字幕 %1").arg(i + 1), otherSubs[i]);
 
     // 光标归位到文档开头，避免打开时选区残留
     view->setTextCursor(QTextCursor(view->document()));
@@ -1013,7 +1101,13 @@ void PlaylistWidget::showPropertiesDialog(const QString &path)
     auto *layout = new QVBoxLayout(&dialog);
     layout->setContentsMargins(12, 12, 12, 12);
     layout->addWidget(view);
-    const int lineCount = general.size() + video.size() + audio.size() + tags.size() + 8;
+    int lineCount = general.size() + videoCur.size() + audioCur.size() + subCur.size() + tags.size() + 8;
+    for (const auto &g : otherVideos)
+        lineCount += g.size() + 2;
+    for (const auto &g : otherAudios)
+        lineCount += g.size() + 2;
+    for (const auto &g : otherSubs)
+        lineCount += g.size() + 2;
     dialog.resize(520, qMin(lineCount * 22 + 40, 600));
     dialog.exec();
 }

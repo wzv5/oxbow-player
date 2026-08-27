@@ -82,7 +82,8 @@ public:
     // ——元数据回填（MainWindow 按"当前正播路径"路由至此）——
     void applyDuration(const QString &path, double seconds);
     void applyMediaMetadata(const QString &path, const QVariantMap &tags);
-    void applyStreamInfo(const QString &path, const QVariantMap &info);
+    void applyFileFormat(const QString &path, const QString &format);
+    void applyTracks(const QString &path, const QList<MpvController::TrackInfo> &tracks);
 
 protected:
     // N5：ShortcutOverride 认领导航键——焦点在列表上时 ↑↓←→/PgUp/PgDn/Home/End

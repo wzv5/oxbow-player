@@ -433,20 +433,20 @@ void MainWindow::connectController()
                     return;
                 m_playlist->applyMediaMetadata(path, tags);
             });
-    connect(m_controller, &MpvController::streamInfoChanged, m_playlist,
-            [this](const QVariantMap &info) {
+    // N14：文件格式（文件属性单设）
+    connect(m_controller, &MpvController::fileFormatChanged, m_playlist,
+            [this](const QString &format) {
                 const QString path = m_controller->propertyString(QStringLiteral("path"));
                 if (path.isEmpty())
                     return;
-                m_playlist->applyStreamInfo(path, info);
+                m_playlist->applyFileFormat(path, format);
             });
-    // N13：轨道列表驱动菜单与按钮状态
+    // N13/N14：轨道列表驱动菜单与按钮状态 + 仓回填（全量流）
     connect(m_controller, &MpvController::tracksChanged, this,
             [this](const QList<MpvController::TrackInfo> &tracks) {
                 m_tracks = tracks;
                 updateStreamButton();
-                // 子菜单内容在 aboutToShow 时重建，此处仅更新 enabled 态
-                // 有流的菜单保持可用（展开后即席填充）；无流则禁用
+                // 子菜单 enabled
                 int v = 0, a = 0, s = 0;
                 for (const auto &t : tracks) {
                     if (t.type == QLatin1String("video"))
@@ -462,6 +462,11 @@ void MainWindow::connectController()
                     m_audioStreamMenu->setEnabled(a > 0);
                 if (m_subStreamMenu)
                     m_subStreamMenu->setEnabled(s > 0);
+                // N14：按当前 path 回填仓（B13 空守卫）
+                const QString path = m_controller->propertyString(QStringLiteral("path"));
+                if (path.isEmpty())
+                    return;
+                m_playlist->applyTracks(path, tracks);
             });
     // N10：起播拿到分辨率即适配窗口。走实时播放态专用通道 videoSizeChanged
     // （与导航器同源）；元数据仓服务展示域档案查询，不用于此（specs/N10.md 裁决）

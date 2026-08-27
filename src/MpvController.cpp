@@ -20,18 +20,10 @@ enum ObservedProperty {
     PropVideoPanY,
     PropWidth,
     PropHeight,
-    // 媒体元数据与流参数（N4）
+    // 媒体元数据（N4，文件级）+ 文件格式（N14 文件属性单设）
     PropMetadata,
-    PropFileFormat,      // file-format
-    PropVideoFormat,     // video-format
-    PropParamW,          // video-params/w
-    PropParamH,          // video-params/h
-    PropContainerFps,    // container-fps
-    PropAudioCodecName,  // audio-codec-name
-    PropChannelCount,    // audio-params/channel-count
-    PropSampleRate,      // audio-params/samplerate
-    PropAudioBitrate,    // current-tracks/audio/demux-bitrate（N12 静态分轨码率）
-    PropTrackList,       // track-list（N13）
+    PropFileFormat,      // file-format（N14 文件属性）
+    PropTrackList,       // track-list（N13，N14 后为唯一流源）
 };
 
 QVariantList parsePlaylist(const mpv_node *node)
@@ -162,18 +154,10 @@ MpvController::MpvController(mpv_handle *mpv, QObject *parent)
     mpv_observe_property(m_mpv, PropVideoPanY, "video-pan-y", MPV_FORMAT_DOUBLE);
     mpv_observe_property(m_mpv, PropWidth, "width", MPV_FORMAT_INT64);
     mpv_observe_property(m_mpv, PropHeight, "height", MPV_FORMAT_INT64);
-    // N4：媒体元数据与流参数。观察即推送首值；流参数均为离散属性，
-    // 仅在加载与换轨时变化，事件量可忽略
+    // N4：媒体元数据（文件级标签）
     mpv_observe_property(m_mpv, PropMetadata, "metadata", MPV_FORMAT_NODE);
+    // N14：文件格式（文件属性单设）
     mpv_observe_property(m_mpv, PropFileFormat, "file-format", MPV_FORMAT_STRING);
-    mpv_observe_property(m_mpv, PropVideoFormat, "video-format", MPV_FORMAT_STRING);
-    mpv_observe_property(m_mpv, PropParamW, "video-params/w", MPV_FORMAT_INT64);
-    mpv_observe_property(m_mpv, PropParamH, "video-params/h", MPV_FORMAT_INT64);
-    mpv_observe_property(m_mpv, PropContainerFps, "container-fps", MPV_FORMAT_DOUBLE);
-    mpv_observe_property(m_mpv, PropAudioCodecName, "audio-codec-name", MPV_FORMAT_STRING);
-    mpv_observe_property(m_mpv, PropChannelCount, "audio-params/channel-count", MPV_FORMAT_INT64);
-    mpv_observe_property(m_mpv, PropSampleRate, "audio-params/samplerate", MPV_FORMAT_INT64);
-    mpv_observe_property(m_mpv, PropAudioBitrate, "current-tracks/audio/demux-bitrate", MPV_FORMAT_INT64);
     mpv_observe_property(m_mpv, PropTrackList, "track-list", MPV_FORMAT_NODE);
 }
 
@@ -371,50 +355,11 @@ void MpvController::handlePropertyChange(const mpv_event *event)
         else if (prop->format == MPV_FORMAT_NONE)
             emit mediaMetadataChanged(QVariantMap());
         break;
-    // 流参数：任一属性变化即更新合并缓存并整体重发快照；
-    // 属性不可用（NONE，文件卸载或该流不存在）时移除对应键
     case PropFileFormat:
-    case PropVideoFormat:
-    case PropAudioCodecName:
-    case PropParamW:
-    case PropParamH:
-    case PropContainerFps:
-    case PropChannelCount:
-    case PropSampleRate: {
-        QString key;
-        switch (int(event->reply_userdata)) {
-        case PropFileFormat:      key = QStringLiteral("fileFormat"); break;
-        case PropVideoFormat:     key = QStringLiteral("videoCodec"); break;
-        case PropAudioCodecName:  key = QStringLiteral("audioCodec"); break;
-        case PropParamW:          key = QStringLiteral("videoW"); break;
-        case PropParamH:          key = QStringLiteral("videoH"); break;
-        case PropContainerFps:    key = QStringLiteral("fps"); break;
-        case PropChannelCount:    key = QStringLiteral("channels"); break;
-        case PropSampleRate:      key = QStringLiteral("sampleRate"); break;
-        }
-        if (prop->format == MPV_FORMAT_NONE)
-            m_streamInfo.remove(key);
-        else if (prop->format == MPV_FORMAT_STRING && prop->data)
-            // client.h：STRING 格式的事件数据是 char**（镜像 get_property 出参），
-            // 必须解一层引用；直接把指针值当字符串读会得到地址字节的"乱码"
-            m_streamInfo[key] = QString::fromUtf8(*static_cast<char **>(prop->data));
-        else if (prop->format == MPV_FORMAT_INT64 && prop->data)
-            m_streamInfo[key] = qlonglong(*static_cast<int64_t *>(prop->data));
-        else if (prop->format == MPV_FORMAT_DOUBLE && prop->data)
-            m_streamInfo[key] = *static_cast<double *>(prop->data);
-        emit streamInfoChanged(m_streamInfo);
-        break;
-    }
-    // N12：静态分轨码率（容器声明，文件加载即定）。与上方兄弟流参数不同：
-    // 本键恒携带于快照——属性不可用（NONE）或推送值 ≤0 一律记 0 表无值，
-    // 由下游显式复位，防同一文件内换轨后残留旧轨码率
-    case PropAudioBitrate:
-        if (prop->format == MPV_FORMAT_INT64 && prop->data)
-            m_streamInfo[QStringLiteral("audioBitrate")] =
-                qlonglong(*static_cast<int64_t *>(prop->data));
-        else
-            m_streamInfo[QStringLiteral("audioBitrate")] = 0;
-        emit streamInfoChanged(m_streamInfo);
+        if (prop->format == MPV_FORMAT_STRING && prop->data)
+            emit fileFormatChanged(QString::fromUtf8(*static_cast<char **>(prop->data)));
+        else if (prop->format == MPV_FORMAT_NONE)
+            emit fileFormatChanged(QString());
         break;
     case PropTrackList:
         if (prop->format == MPV_FORMAT_NODE && prop->data)
