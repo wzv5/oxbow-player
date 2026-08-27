@@ -1508,19 +1508,37 @@ QString MainWindow::formatTrackText(const MpvController::TrackInfo &t) const
     if (t.type == QLatin1String("video")) {
         if (t.demuxW > 0 && t.demuxH > 0)
             inner << QStringLiteral("%1x%2").arg(t.demuxW).arg(t.demuxH);
-        if (t.demuxFps > 0.0)
-            inner << Util::formatFps(t.demuxFps);
+        if (t.demuxFps > 0.0) {
+            QString s = QString::number(t.demuxFps, 'f', 2);
+            if (s.contains(QLatin1Char('.'))) {
+                while (s.endsWith(QLatin1Char('0')))
+                    s.chop(1);
+                if (s.endsWith(QLatin1Char('.')))
+                    s.chop(1);
+            }
+            s += QStringLiteral("fps");
+            inner << s;
+        }
         qint64 br = trackBitrate(t);
         if (br > 0)
-            inner << Util::formatKbps(br);
+            inner << QString::number((br + 500) / 1000) + QStringLiteral("kbps");
     } else if (t.type == QLatin1String("audio")) {
-        if (t.demuxSamplerate > 0)
-            inner << Util::formatKHz(t.demuxSamplerate);
+        if (t.demuxSamplerate > 0) {
+            QString s = QString::number(t.demuxSamplerate / 1000.0, 'f', 1);
+            if (s.contains(QLatin1Char('.'))) {
+                while (s.endsWith(QLatin1Char('0')))
+                    s.chop(1);
+                if (s.endsWith(QLatin1Char('.')))
+                    s.chop(1);
+            }
+            s += QStringLiteral("kHz");
+            inner << s;
+        }
         if (t.demuxChannelCount > 0)
             inner << QStringLiteral("%1ch").arg(t.demuxChannelCount);
         qint64 br = trackBitrate(t);
         if (br > 0)
-            inner << Util::formatKbps(br);
+            inner << QString::number((br + 500) / 1000) + QStringLiteral("kbps");
     }
     // sub 仅 codec，已加入
 

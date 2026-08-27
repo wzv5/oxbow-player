@@ -157,21 +157,4 @@ QString trimTrailingZeros(const QString &fixed)
     return s;
 }
 
-QString formatKHz(int samplerate)
-{
-    const double kHz = samplerate / 1000.0;
-    return trimTrailingZeros(QString::number(kHz, 'f', 1)) + QStringLiteral("kHz");
-}
-
-QString formatFps(double fps)
-{
-    return trimTrailingZeros(QString::number(fps, 'f', 2)) + QStringLiteral("fps");
-}
-
-QString formatKbps(qint64 bps)
-{
-    const qint64 kbps = (bps + 500) / 1000; // 四舍五入取整
-    return QString::number(kbps) + QStringLiteral("kbps");
-}
-
 } // namespace Util
