@@ -109,29 +109,35 @@ QWidget *MainWindow::createLeftArea()
     seekLayout->addWidget(m_volumeSlider);
     layout->addWidget(seekRow);
 
-    // 第三行：控制按钮行（固定高度）
+    // 第三行：控制按钮行（自适应高度，按钮 36×36 由布局撑开，边框与按钮间距相等）
     auto *controlRow = new QWidget;
-    controlRow->setFixedHeight(36);
     auto *controlLayout = new QHBoxLayout(controlRow);
-    controlLayout->setContentsMargins(8, 0, 8, 4);
+    controlLayout->setContentsMargins(8, 0, 8, 8);
+    controlLayout->setSpacing(8);
     m_playButton = new QPushButton(style()->standardIcon(QStyle::SP_MediaPlay), QString());
+    m_playButton->setToolTip(tr("播放/暂停"));
+    m_playButton->setFixedSize(36, 36);
     auto *stopButton = new QPushButton(style()->standardIcon(QStyle::SP_MediaStop), QString());
+    stopButton->setToolTip(tr("停止"));
+    stopButton->setFixedSize(36, 36);
     auto *prevButton = new QPushButton(style()->standardIcon(QStyle::SP_MediaSkipBackward), QString());
+    prevButton->setToolTip(tr("上一个文件"));
+    prevButton->setFixedSize(36, 36);
     auto *nextButton = new QPushButton(style()->standardIcon(QStyle::SP_MediaSkipForward), QString());
+    nextButton->setToolTip(tr("下一个文件"));
+    nextButton->setFixedSize(36, 36);
     m_timeLabel = new QLabel(QStringLiteral("00:00 / 00:00"));
     m_streamButton = new QPushButton(QStringLiteral("♪"));
     m_streamButton->setToolTip(tr("切换流"));
-    m_streamButton->setFixedWidth(32);
+    m_streamButton->setFixedSize(36, 36);
     m_streamButton->hide();
-    auto *settingsButton = new QPushButton(tr("设置"));
-    m_playlistToggle = new QPushButton(tr("播放列表"));
-    m_playlistToggle->setCheckable(true);
-
-    m_playButton->setToolTip(tr("播放/暂停"));
-    stopButton->setToolTip(tr("停止"));
-    prevButton->setToolTip(tr("上一个文件"));
-    nextButton->setToolTip(tr("下一个文件"));
+    auto *settingsButton = new QPushButton(QStringLiteral("⚙"));
+    settingsButton->setToolTip(tr("设置"));
+    settingsButton->setFixedSize(36, 36);
+    m_playlistToggle = new QPushButton(QStringLiteral("☰"));
     m_playlistToggle->setToolTip(tr("显示/隐藏播放列表"));
+    m_playlistToggle->setFixedSize(36, 36);
+    m_playlistToggle->setCheckable(true);
 
     // 控制行按钮不接受焦点（C2）：Space 归全局快捷键，避免焦点按钮被 Space 二次触发
     for (QPushButton *b :
