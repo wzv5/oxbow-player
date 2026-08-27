@@ -3,6 +3,9 @@
 #include "MainWindow.h"
 
 #include "ActionManager.h"
+#include "BookmarkEditorDialog.h"
+#include "BookmarkManager.h"
+#include "ChapterSlider.h"
 #include "Constants.h"
 #include "MpvController.h"
 #include "NavigatorPanel.h"
@@ -13,6 +16,120 @@
 #include <dwmapi.h>
 #include <qt_windows.h>
 #endif
+
+// N15：章节+书签数据与合并规则的唯一持有者（MainWindow.cpp 文件内实现，
+// 头文件仅前向声明）。职责：接收原始章节 → 内部严格 == 去重 + time 升序；
+// 对外提供三视图——去重章节（菜单段/标记基数）、原始章节（全量）、
+// 原始书签（书签按冻结口径永不查重，BookmarkManager 即原始源，此处为
+// 统一读入口）。三处消费者（滑条标记 / tooltip 命中 / 章节菜单勾选）共用
+// 同一合并规则。缓存键仅剩脏标志：章节/书签/文件切换均为低频信号，全部
+// 经 setChapters/invalidate 置脏，path 只在脏时惰性同步查询一次——命中路径零 IPC
+class MarkAggregator
+{
+public:
+    struct Mark
+    {
+        double time = 0.0;
+        QString title;
+        bool isBookmark = false;
+    };
+
+    explicit MarkAggregator(MpvController *controller, BookmarkManager *bookmarks)
+        : m_controller(controller), m_bookmarks(bookmarks) {}
+
+    // 章节数据：接收原始（不去重），内部严格 == 去重（保留首项）+ time 升序。
+    // 传空即清空（文件切换/停止）。去重规则与合并规则同处收口
+    void setChapters(const QList<MpvController::ChapterInfo> &raw)
+    {
+        m_rawChapters = raw;
+        m_chapters.clear();
+        for (const auto &c : raw) {
+            bool dup = false;
+            for (const auto &d : m_chapters)
+                if (d.time == c.time) { dup = true; break; }
+            if (!dup)
+                m_chapters.append(c);
+        }
+        std::stable_sort(m_chapters.begin(), m_chapters.end(),
+                         [](const MpvController::ChapterInfo &a, const MpvController::ChapterInfo &b) {
+                             return a.time < b.time;
+                         });
+        m_dirty = true;
+    }
+
+    // 去重排序后的章节（菜单章节段 / 合并标记基数）
+    const QList<MpvController::ChapterInfo> &chapters() const { return m_chapters; }
+    // 原始章节（原样不去重；需要全量时用）
+    const QList<MpvController::ChapterInfo> &rawChapters() const { return m_rawChapters; }
+    // 原始书签（书签永不查重；path 归一化后查表，空路径返回空）
+    QList<BookmarkManager::Bookmark> bookmarks(const QString &path) const
+    {
+        if (path.isEmpty() || !m_bookmarks)
+            return {};
+        return m_bookmarks->bookmarks(PlaylistWidget::normalizePath(path));
+    }
+    // 书签/装载完成等任意内容变更后调用
+    void invalidate() { m_dirty = true; }
+
+    // 合并清单：当前文件的章节 ∪ 书签，time 升序；同 time（严格 ==）书签覆盖章节。
+    // 返回内部缓存 const 引用（零拷贝）；引用仅在下次 marks()/invalidate 前有效，
+    // 调用方须即时消费，不得跨变更持有
+    const QList<Mark> &marks() const
+    {
+        if (!m_dirty)
+            return m_cache;
+        const QString path = PlaylistWidget::normalizePath(m_controller->propertyString(QStringLiteral("path")));
+        QList<Mark> out;
+        for (const auto &c : m_chapters)
+            out.append({c.time, c.title, false});
+        if (!path.isEmpty() && m_bookmarks) {
+            const auto bms = m_bookmarks->bookmarks(path);
+            for (const auto &b : bms)
+                out.append({b.time, b.title, true});
+        }
+        std::stable_sort(out.begin(), out.end(),
+                         [](const Mark &a, const Mark &b) { return a.time < b.time; });
+        QList<Mark> merged;
+        for (const auto &m : out) {
+            bool found = false;
+            for (int i = 0; i < merged.size(); ++i) {
+                if (merged[i].time == m.time) {
+                    found = true;
+                    if (m.isBookmark && !merged[i].isBookmark)
+                        merged[i] = m;
+                    break;
+                }
+            }
+            if (!found)
+                merged.append(m);
+        }
+        m_cache = merged;
+        m_dirty = false;
+        return m_cache;
+    }
+
+    // 命中：marks 中 time ≤ timePos 的最大项；无命中返回空
+    std::optional<Mark> hit(double timePos) const
+    {
+        const auto &list = marks();
+        std::optional<Mark> result;
+        for (const auto &m : list) {
+            if (m.time <= timePos)
+                result = m;
+            else
+                break;
+        }
+        return result;
+    }
+
+private:
+    MpvController *m_controller;  // 非拥有
+    BookmarkManager *m_bookmarks; // 非拥有
+    QList<MpvController::ChapterInfo> m_rawChapters; // 原始章节（setChapters 入参原样）
+    QList<MpvController::ChapterInfo> m_chapters;    // 严格 == 去重 + time 升序
+    mutable QList<Mark> m_cache;
+    mutable bool m_dirty = true;
+};
 
 MainWindow::MainWindow(MpvController *controller, const QString &configFile, QWidget *parent)
     : QMainWindow(parent), m_controller(controller), m_configFile(configFile)
@@ -52,6 +169,11 @@ MainWindow::MainWindow(MpvController *controller, const QString &configFile, QWi
     m_playlist->setVisible(false); // 播放列表默认隐藏
     m_playlist->loadPlaylists();
 
+    m_bookmarkMgr = new BookmarkManager(configFile, this);
+    m_bookmarkMgr->load();
+
+    m_marks = new MarkAggregator(m_controller, m_bookmarkMgr); // N15：标记聚合器
+
     setCentralWidget(m_splitter);
     createMenus();
     connectController();
@@ -63,6 +185,8 @@ MainWindow::MainWindow(MpvController *controller, const QString &configFile, QWi
     resize(960, 600);
 
     restoreSettings();
+    updateChapterMenuState();
+    updateChapterSlider();
 }
 
 QWidget *MainWindow::createLeftArea()
@@ -89,7 +213,8 @@ QWidget *MainWindow::createLeftArea()
     seekRow->setFixedHeight(28);
     auto *seekLayout = new QHBoxLayout(seekRow);
     seekLayout->setContentsMargins(8, 0, 8, 0);
-    m_progressSlider = new QSlider(Qt::Horizontal);
+    m_progressSlider = new ChapterSlider();
+    m_progressSlider->setOrientation(Qt::Horizontal);
     m_progressSlider->setRange(0, 1000);
     // N8 Part3：未按下也接收 move，驱动 tooltip 跟随
     m_progressSlider->setMouseTracking(true);
@@ -242,6 +367,13 @@ void MainWindow::createMenus()
     connect(m_videoStreamMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildTrackMenus);
     connect(m_audioStreamMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildTrackMenus);
     connect(m_subStreamMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildTrackMenus);
+
+    m_chapterMenu = menuBar()->addMenu(tr("章节(&C)"));
+    m_chapterGroup = new QActionGroup(this);
+    m_chapterGroup->setExclusive(true);
+    connect(m_chapterMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildChapterMenu);
+    connect(act(AM::Id::AddBookmark), &QAction::triggered, this, &MainWindow::onAddBookmark);
+    connect(act(AM::Id::BookmarkEditor), &QAction::triggered, this, &MainWindow::ensureBookmarkEditor);
 
     QMenu *viewMenu = menuBar()->addMenu(tr("视图(&V)"));
     m_playlistAction = act(AM::Id::Playlist);
@@ -468,6 +600,56 @@ void MainWindow::connectController()
                     return;
                 m_playlist->applyTracks(path, tracks);
             });
+    // N15：章节
+    connect(m_controller, &MpvController::chaptersChanged, this,
+            [this](const QList<MpvController::ChapterInfo> &list) {
+                // 去重+排序在聚合器内完成（严格 == 保留首项，规则单一持有）
+                m_marks->setChapters(list);
+                updateChapterSlider();
+                // 菜单勾选：timePosChanged 常驻驱动（§3.7），重建在 aboutToShow
+            });
+    // N15.1：章节仓回填（B13 空守卫同 tracks：卸载后 path 不可用，推送无处归属即丢弃）
+    connect(m_controller, &MpvController::chaptersChanged, m_playlist,
+            [this](const QList<MpvController::ChapterInfo> &chapters) {
+                const QString path = m_controller->propertyString(QStringLiteral("path"));
+                if (path.isEmpty())
+                    return;
+                m_playlist->applyChapters(path, chapters);
+            });
+    connect(m_bookmarkMgr, &BookmarkManager::changed, this, [this] {
+        m_marks->invalidate();
+        updateChapterSlider();
+        updateChapterMenuState();
+        if (m_bookmarkEditor)
+            m_bookmarkEditor->refresh();
+    });
+    // duration 变更影响滑条比例与添加书签可用态（全局快捷键 P 不依赖菜单展开）。
+    // 置脏：duration 是文件装载完成信号之一（path 已就位），保证切换后
+    // 按新文件惰性重查一次
+    connect(m_controller, &MpvController::durationChanged, this, [this](double) {
+        m_marks->invalidate();
+        updateChapterSlider();
+        updateChapterMenuState();
+    });
+    // N15 §3.7：菜单打开期间勾选随播放进度实时单选切换
+    //（聚合器有缓存、菜单未展开时 actions 为空，代价可忽略）
+    connect(m_controller, &MpvController::timePosChanged, this, [this](double) {
+        updateChapterMenuChecked();
+    });
+    connect(m_controller, &MpvController::playlistPosChanged, this, [this](int) {
+        // 换行即换文件：章节随文件走，先清除防旧文件章节残留
+        //（新文件 chapter-list 装载后经 chaptersChanged 回填；spec §4.2）
+        m_marks->setChapters({});
+        updateChapterMenuState();
+        updateChapterSlider();
+    });
+    connect(m_controller, &MpvController::idleActive, this, [this](bool) {
+        // 停止即无当前文件：清除章节（spec §4.2，playlistPosChanged(-1) 已先行）
+        m_marks->setChapters({});
+        updateChapterMenuState();
+        updateChapterSlider();
+    });
+
     // N10：起播拿到分辨率即适配窗口。走实时播放态专用通道 videoSizeChanged
     // （与导航器同源）；元数据仓服务展示域档案查询，不用于此（specs/N10.md 裁决）
     connect(m_controller, &MpvController::videoSizeChanged, this,
@@ -1050,7 +1232,9 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         }
     } else if (watched == m_progressSlider) {
         // N8 Part3：tooltip 跟随鼠标实时显示所指进度；拖动期持续刷新防自动隐藏。
-        // 停止态控件已禁用收不到鼠标事件，天然不显示
+        // 停止态控件已禁用收不到鼠标事件，天然不显示。
+        // N15 实测定论（二分定位）：卡顿根因是自绘路径中“单独的手柄绘制调用”
+        // （见 ChapterSlider 注释）；tooltip 无辜，故恢复逐事件直接处理
         switch (event->type()) {
         case QEvent::ToolTip:
         case QEvent::MouseMove: {
@@ -1070,9 +1254,12 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
             const double percent = progressPercentAt(pos);
             if (percent < 0.0)
                 break;
-            QToolTip::showText(global,
-                               Util::formatTimePercent(m_duration * percent / 100.0, m_duration),
-                               m_progressSlider);
+            const double hoverTime = m_duration * percent / 100.0;
+            QString tip;
+            if (const auto hit = m_marks->hit(hoverTime); hit && !hit->title.isEmpty())
+                tip = hit->title + QStringLiteral("\n");
+            tip += Util::formatTimePercent(hoverTime, m_duration);
+            QToolTip::showText(global, tip, m_progressSlider);
             break;
         }
         case QEvent::Leave:
@@ -1718,6 +1905,220 @@ void MainWindow::disableSubtitles()
 {
     m_controller->setProperty(QStringLiteral("sid"), QStringLiteral("no"));
     showOsd(tr("字幕流: 无"));
+}
+
+// ---- N15：章节与书签 ----
+void MainWindow::updateChapterSlider()
+{
+    m_progressSlider->setDuration(m_duration);
+    const auto &marks = m_marks->marks();
+    QList<double> times;
+    times.reserve(marks.size());
+    for (const auto &m : marks)
+        times.append(m.time);
+    m_progressSlider->setMarkTimes(times);
+}
+
+void MainWindow::updateChapterMenuState()
+{
+    const QString path = m_controller->propertyString(QStringLiteral("path"));
+    const bool hasFile = !path.isEmpty() && m_playlistPos >= 0 && m_duration > 0.0;
+    if (auto *a = m_actions->action(ActionManager::Id::AddBookmark))
+        a->setEnabled(hasFile);
+}
+
+void MainWindow::updateChapterMenuChecked()
+{
+    if (!m_chapterMenu || !m_chapterGroup)
+        return;
+    const auto hit = m_marks->hit(m_timePos); // std::optional<Mark>
+    const bool hasHit = hit.has_value();
+    const bool wasExclusive = m_chapterGroup->isExclusive();
+    m_chapterGroup->setExclusive(false);
+    const auto actions = m_chapterMenu->actions();
+    for (QAction *act : actions) {
+        if (!act->isCheckable())
+            continue;
+        double t = act->data().toDouble();
+        bool shouldCheck = hasHit && hit->time == t
+            && ((hit->isBookmark && act->property("isBookmark").toBool())
+                || (!hit->isBookmark && !act->property("isBookmark").toBool()));
+        if (shouldCheck) {
+            if (act->property("title").toString() != hit->title)
+                shouldCheck = false;
+        }
+        act->setChecked(shouldCheck);
+    }
+    m_chapterGroup->setExclusive(wasExclusive);
+}
+
+void MainWindow::rebuildChapterMenu()
+{
+    if (!m_chapterMenu)
+        return;
+    m_chapterMenu->clear();
+    // 菜单项由 clear() 连同销毁，QAction 析构时自动脱离 m_chapterGroup，
+    // 此处重建 action 后重新入组即可
+    const auto marksChapters = m_marks->chapters();
+    const QString curPath = PlaylistWidget::normalizePath(m_controller->propertyString(QStringLiteral("path")));
+    // 书签经聚合器统一读入口（书签永不查重，即原始）
+    const auto bms = m_marks->bookmarks(curPath);
+
+    // 跳转目标 = 菜单构建时的当前文件（菜单条目语义上属于该文件）
+    auto addSection = [this, curPath](const QList<MarkAggregator::Mark> &items) {
+        for (const auto &it : items) {
+            const QString text = QStringLiteral("[%1] %2").arg(Util::formatTimeHMSms(it.time), it.title);
+            QAction *a = m_chapterMenu->addAction(text);
+            a->setCheckable(true);
+            a->setData(it.time);
+            a->setProperty("isBookmark", it.isBookmark);
+            a->setProperty("title", it.title);
+            m_chapterGroup->addAction(a);
+            const double t = it.time;
+            connect(a, &QAction::triggered, this, [this, curPath, t] { jumpToFileTime(curPath, t); });
+        }
+    };
+
+    // 准备章节/书签的 Mark 列表用于菜单分段显示
+    QList<MarkAggregator::Mark> chapterMarks;
+    for (const auto &c : marksChapters)
+        chapterMarks.append({c.time, c.title, false});
+    QList<MarkAggregator::Mark> bookmarkMarks;
+    for (const auto &b : bms)
+        bookmarkMarks.append({b.time, b.title, true});
+
+    // 去重：章节内部严格 == 已在聚合器 chapters 处理；此处仅分段显示，保持原序
+    // 若书签与章节同 time，菜单两段都会显示各自项，但选中跟随以书签优先（updateChapterMenuChecked）
+    // 标记层已合并，菜单允许重复显示以区分来源，符合“平铺显示所有章节/书签”
+    bool hasChapter = !chapterMarks.isEmpty();
+    bool hasBookmark = !bookmarkMarks.isEmpty();
+
+    if (hasChapter) {
+        addSection(chapterMarks);
+    }
+    if (hasChapter && hasBookmark)
+        m_chapterMenu->addSeparator();
+    if (hasBookmark) {
+        addSection(bookmarkMarks);
+    }
+    if (hasChapter || hasBookmark)
+        m_chapterMenu->addSeparator();
+
+    QAction *addAct = m_actions->action(ActionManager::Id::AddBookmark);
+    QAction *editorAct = m_actions->action(ActionManager::Id::BookmarkEditor);
+    if (addAct)
+        m_chapterMenu->addAction(addAct);
+    if (editorAct)
+        m_chapterMenu->addAction(editorAct);
+
+    updateChapterMenuState();
+    updateChapterMenuChecked();
+}
+
+void MainWindow::jumpToFileTime(const QString &path, double time)
+{
+    if (path.isEmpty())
+        return;
+    const QString norm = PlaylistWidget::normalizePath(path);
+    // 查当前激活列表。两侧均为 normalizePath 产物（N15.1 起 Windows 分支
+    // 折叠大小写），字符串相等即路径相等，无需额外分支
+    auto findInTab = [&](int tabIdx) -> int {
+        if (tabIdx < 0 || tabIdx >= m_playlist->count())
+            return -1;
+        const QStringList files = m_playlist->filesOf(tabIdx);
+        for (int i = 0; i < files.size(); ++i)
+            if (PlaylistWidget::normalizePath(files[i]) == norm)
+                return i;
+        return -1;
+    };
+    const int curIdx = m_playlist->currentIndex();
+    const int playingIdx = m_playlist->playingTabIndex();
+    int targetTab = -1;
+    int targetRow = -1;
+    int r = findInTab(curIdx);
+    if (r >= 0) {
+        targetTab = curIdx;
+        targetRow = r;
+    } else {
+        r = findInTab(playingIdx);
+        if (r >= 0 && playingIdx != curIdx) {
+            targetTab = playingIdx;
+            targetRow = r;
+        }
+    }
+    if (targetTab >= 0) {
+        // 复用既有播放路径
+        if (targetTab == playingIdx) {
+            // 同一播放列表内跳转：仅切换条目或 seek
+            const bool isAlreadyPlaying = (m_playlistPos == targetRow);
+            if (isAlreadyPlaying) {
+                m_controller->command({QStringLiteral("seek"), QString::number(time), QStringLiteral("absolute")});
+            } else {
+                // 同列表切文件：复用 playAt（不重建列表）。seek 走挂起机制：
+                // playlist-pos 触发的加载是异步的，立即 seek 会作用于尚未
+                // 卸载的旧文件，待新条目 duration 推送且行号匹配时执行一次
+                playAt(targetRow);
+                m_pendingSeekRow = targetRow;
+                m_pendingSeekTime = time;
+            }
+        } else {
+            // 跨列表跳转：复用 onPlayRequested 整表载入（与双击条目同路径）
+            const QStringList files = m_playlist->filesOf(targetTab);
+            m_playlist->markPlayingTab(targetTab);
+            m_playlist->setCurrentIndex(targetTab);
+            onPlayRequested(files, targetRow, time);
+        }
+        return;
+    }
+    // 复用“打开文件”逻辑：清空默认列表后推入新文件并跳转
+    m_playlist->setDefaultTabFiles({path});
+    m_playlist->markPlayingTab(0);
+    m_playlist->setCurrentIndex(0);
+    onPlayRequested({path}, 0, time);
+}
+
+void MainWindow::ensureBookmarkEditor()
+{
+    if (m_bookmarkEditor) {
+        m_bookmarkEditor->show();
+        m_bookmarkEditor->raise();
+        return;
+    }
+    m_bookmarkEditor = new BookmarkEditorDialog(m_bookmarkMgr,
+        [this](const QString &p, double t) { jumpToFileTime(p, t); }, this);
+    m_bookmarkEditor->setAttribute(Qt::WA_DeleteOnClose, true);
+    connect(m_bookmarkEditor, &QObject::destroyed, this, [this] { m_bookmarkEditor = nullptr; });
+    m_bookmarkEditor->show();
+}
+
+void MainWindow::onAddBookmark()
+{
+    // 原始路径交 BookmarkManager 内部归一：展示保原样（大小写/分隔符）
+    const QString rawPath = m_controller->propertyString(QStringLiteral("path"));
+    if (rawPath.isEmpty() || m_playlistPos < 0)
+        return;
+    const QString path = PlaylistWidget::normalizePath(rawPath);
+    const double t = m_timePos;
+    QString title;
+    if (m_bookmarkMgr) {
+        const auto list = m_marks->bookmarks(path);
+        QSet<QString> titles;
+        for (const auto &b : list)
+            titles.insert(b.title);
+        int n = 1;
+        while (true) {
+            const QString cand = tr("书签 %1").arg(n);
+            if (!titles.contains(cand)) {
+                title = cand;
+                break;
+            }
+            ++n;
+        }
+    } else {
+        title = tr("书签 1");
+    }
+    m_bookmarkMgr->addBookmark(rawPath, t, title);
+    showOsd(tr("已添加书签: [%1] %2").arg(Util::formatTimeHMSms(t), title));
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)

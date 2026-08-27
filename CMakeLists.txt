@@ -46,6 +46,12 @@ add_library(mpvqtcore MODULE
     src/DirProvider.h
     src/PlaylistWidget.cpp
     src/PlaylistWidget.h
+    src/BookmarkManager.cpp
+    src/BookmarkManager.h
+    src/ChapterSlider.cpp
+    src/ChapterSlider.h
+    src/BookmarkEditorDialog.cpp
+    src/BookmarkEditorDialog.h
     src/Util.cpp
     src/Util.h
 )

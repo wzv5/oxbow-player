@@ -71,7 +71,15 @@ PlaylistWidget::PlaylistWidget(const QString &configFile, QWidget *parent)
 
 QString PlaylistWidget::normalizePath(const QString &path)
 {
-    return QDir::cleanPath(QDir::fromNativeSeparators(path));
+    QString p = QDir::cleanPath(QDir::fromNativeSeparators(path));
+#ifdef Q_OS_WIN
+    // N15.1 裁决：Windows 大小写不敏感。命令行小写启动 vs GUI 添加、
+    // 跨会话 INI 等来源会携带不同大小写，仓键/PathRole/书签键统一小写
+    // 防同一文件分裂成幻影条目；UI 展示形态由 item.path（原始入参）保留
+    return p.toLower();
+#else
+    return p;
+#endif
 }
 
 QListWidget *PlaylistWidget::createList()
@@ -329,6 +337,16 @@ void PlaylistWidget::applyTracks(const QString &rawPath, const QList<MpvControll
               [](const MpvController::TrackInfo &a, const MpvController::TrackInfo &b) { return a.id < b.id; });
     item.tracks = sorted;
     repaintAllLists();
+}
+
+void PlaylistWidget::applyChapters(const QString &rawPath, const QList<MpvController::ChapterInfo> &chapters)
+{
+    if (rawPath.isEmpty())
+        return;
+    PlaylistItem &item = materializeByRaw(rawPath);
+    // N15.1 快照语义：原样覆盖（空即清空，不查重）。章节不参与列表行
+    // 绘制（仅属性对话框消费，打开时实时构建），无需 repaintAllLists
+    item.chapters = chapters;
 }
 
 // ——续播记忆三步维护法（N4）——
@@ -1095,6 +1113,26 @@ void PlaylistWidget::showPropertiesDialog(const QString &path)
     for (int i = 0; i < otherSubs.size(); ++i)
         appendGroup(tr("其他字幕 %1").arg(i + 1), otherSubs[i]);
 
+    // N15.1：章节组——置于全部现有分组之后。不走 prop:value 模板，
+    // 每章节一行 `[hh:mm:ss.zzz] 标题`：方括号与标题用值灰、时间用键蓝
+    //（与属性名/属性值同色），组标题沿用浅灰
+    if (!item.chapters.isEmpty()) {
+        if (!cur.atStart())
+            cur.insertBlock();
+        cur.setCharFormat(headFmt);
+        cur.insertText(tr("章节"), headFmt);
+        cur.insertBlock();
+        for (const auto &c : item.chapters) {
+            cur.setCharFormat(valueFmt);
+            cur.insertText(QStringLiteral("["));
+            cur.setCharFormat(nameFmt);
+            cur.insertText(Util::formatTimeHMSms(c.time));
+            cur.setCharFormat(valueFmt);
+            cur.insertText(QStringLiteral("]\t") + c.title);
+            cur.insertBlock();
+        }
+    }
+
     // 光标归位到文档开头，避免打开时选区残留
     view->setTextCursor(QTextCursor(view->document()));
 
@@ -1108,6 +1146,8 @@ void PlaylistWidget::showPropertiesDialog(const QString &path)
         lineCount += g.size() + 2;
     for (const auto &g : otherSubs)
         lineCount += g.size() + 2;
+    if (!item.chapters.isEmpty())
+        lineCount += item.chapters.size() + 1; // N15.1：组标题 + 每章节一行
     dialog.resize(520, qMin(lineCount * 22 + 40, 600));
     dialog.exec();
 }

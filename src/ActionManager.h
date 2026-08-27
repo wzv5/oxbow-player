@@ -17,7 +17,8 @@ public:
         SpeedUp, SpeedDown, SpeedReset,
         Playlist, Navigator, Fullscreen,
         About,
-        Escape // 隐绑定：无菜单实体，仅键盘触发
+        Escape, // 隐绑定：无菜单实体，仅键盘触发
+        AddBookmark, BookmarkEditor
     };
 
     explicit ActionManager(QWidget *host);

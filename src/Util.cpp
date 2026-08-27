@@ -145,8 +145,22 @@ QString formatTimePercent(double seconds, double duration)
     return QStringLiteral("%1(%2%)").arg(formatTimeHMS(seconds)).arg(pct);
 }
 
-QString trimTrailingZeros(const QString &fixed)
+QString formatTimeHMSms(double seconds)
 {
+    const qint64 totalMs = qint64(seconds * 1000.0 + 0.5);
+    const qint64 ms = totalMs % 1000;
+    const qint64 totalS = totalMs / 1000;
+    const int h = int(totalS / 3600);
+    const int m = int((totalS % 3600) / 60);
+    const int s = int(totalS % 60);
+    return QStringLiteral("%1:%2:%3.%4")
+        .arg(h, 2, 10, QLatin1Char('0'))
+        .arg(m, 2, 10, QLatin1Char('0'))
+        .arg(s, 2, 10, QLatin1Char('0'))
+        .arg(int(ms), 3, 10, QLatin1Char('0'));
+}
+
+QString trimTrailingZeros(const QString &fixed){
     QString s = fixed;
     if (s.contains(QLatin1Char('.'))) {
         while (s.endsWith(QLatin1Char('0')))

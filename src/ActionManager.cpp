@@ -27,6 +27,9 @@ ActionManager::ActionManager(QWidget *host) : m_host(host)
     // N6：±5 秒相对 seek，隐绑定无菜单实体
     declareShortcut(Id::SeekForward,  Qt::Key_Right);
     declareShortcut(Id::SeekBackward, Qt::Key_Left);
+    // N15：添加书签
+    declareAction(Id::AddBookmark, tr("添加书签(&P)"), Qt::Key_P);
+    declareAction(Id::BookmarkEditor, tr("书签编辑器(&B)…"));
 }
 
 void ActionManager::declareAction(Id id, const QString &text,

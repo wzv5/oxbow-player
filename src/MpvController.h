@@ -47,6 +47,13 @@ public:
         qint64 metadataBPS = 0;     // bps，0 表无值
     };
 
+    // N15：章节信息（chapter-list 解析产物）
+    struct ChapterInfo
+    {
+        double time = 0.0;
+        QString title;
+    };
+
 signals:
     void timePosChanged(double seconds);
     void durationChanged(double seconds);
@@ -71,6 +78,8 @@ signals:
     void fileFormatChanged(const QString &format);
     // N13：轨道列表（track-list 全量推送）
     void tracksChanged(const QList<TrackInfo> &tracks);
+    // N15：章节列表
+    void chaptersChanged(const QList<ChapterInfo> &chapters);
     void mpvShutdown();
 
 public:

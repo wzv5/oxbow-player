@@ -7,6 +7,10 @@
 class NavigatorPanel;
 class PlaylistWidget;
 class ActionManager;
+class BookmarkManager;
+class BookmarkEditorDialog;
+class ChapterSlider;
+class MarkAggregator; // N15：章节+书签标记聚合器（定义于 MainWindow.cpp）
 
 class MainWindow : public QMainWindow
 {
@@ -99,6 +103,15 @@ private:
     void switchToTrack(const MpvController::TrackInfo &t);
     void disableSubtitles();
 
+    // N15：章节与书签
+    void rebuildChapterMenu();
+    void updateChapterMenuState();
+    void updateChapterMenuChecked();
+    void updateChapterSlider();
+    void jumpToFileTime(const QString &path, double time);
+    void ensureBookmarkEditor();
+    void onAddBookmark();
+
     MpvController *m_controller;
     QString m_configFile; // 配置文件完整路径（插件 DLL 同目录下的 mpv-qt.ini）
     ActionManager *m_actions = nullptr; // A15：全部 UI 动作出生与登记处，先于容器构建
@@ -108,7 +121,7 @@ private:
     QWidget *m_videoWidget = nullptr;
     // N3：布局槽位占位符，普通态视频区几何的锚点；最小尺寸约束在此
     QWidget *m_videoPlaceholder = nullptr;
-    QSlider *m_progressSlider = nullptr;
+    ChapterSlider *m_progressSlider = nullptr; // N15：进度条（带章节/书签标记层）
     QSlider *m_volumeSlider = nullptr;
     // N5：音量调节配置（INI 键 volumeMax / volumeWheelStep / volumeKeyStep）
     int m_volumeMax = 100;      // 音量上限，设置对话框自由填写域 0~400
@@ -177,4 +190,13 @@ private:
     QMenu *m_audioStreamMenu = nullptr;
     QMenu *m_subStreamMenu = nullptr;
     QPushButton *m_streamButton = nullptr; // ♪ 流选择按钮
+
+    // ---- N15：章节与书签 ----
+    QMenu *m_chapterMenu = nullptr;
+    BookmarkManager *m_bookmarkMgr = nullptr;
+    BookmarkEditorDialog *m_bookmarkEditor = nullptr;
+    QActionGroup *m_chapterGroup = nullptr;
+    // 章节+书签标记聚合器（MainWindow.cpp 内实现）：合并规则 + 缓存
+    // 收口于此，主窗口不再持有抽象成员；进程生命周期随主窗口
+    MarkAggregator *m_marks = nullptr;
 };

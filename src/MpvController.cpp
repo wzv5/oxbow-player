@@ -24,6 +24,7 @@ enum ObservedProperty {
     PropMetadata,
     PropFileFormat,      // file-format（N14 文件属性）
     PropTrackList,       // track-list（N13，N14 后为唯一流源）
+    PropChapterList,     // chapter-list（N15）
 };
 
 QVariantList parsePlaylist(const mpv_node *node)
@@ -134,6 +135,34 @@ QList<MpvController::TrackInfo> parseTrackList(const mpv_node *node)
     return result;
 }
 
+// N15：chapter-list 解析
+QList<MpvController::ChapterInfo> parseChapterList(const mpv_node *node)
+{
+    QList<MpvController::ChapterInfo> result;
+    if (!node || node->format != MPV_FORMAT_NODE_ARRAY)
+        return result;
+    mpv_node_list *list = node->u.list;
+    for (int i = 0; i < list->num; ++i) {
+        mpv_node *entry = &list->values[i];
+        if (entry->format != MPV_FORMAT_NODE_MAP)
+            continue;
+        MpvController::ChapterInfo info;
+        mpv_node_list *map = entry->u.list;
+        for (int j = 0; j < map->num; ++j) {
+            const QString key = QString::fromUtf8(map->keys[j]);
+            const mpv_node *v = &map->values[j];
+            if (key == QLatin1String("title") && v->format == MPV_FORMAT_STRING)
+                info.title = QString::fromUtf8(v->u.string);
+            else if (key == QLatin1String("time") && v->format == MPV_FORMAT_DOUBLE)
+                info.time = v->u.double_;
+            else if (key == QLatin1String("time") && v->format == MPV_FORMAT_INT64)
+                info.time = double(v->u.int64);
+        }
+        result.append(info);
+    }
+    return result;
+}
+
 } // namespace
 
 MpvController::MpvController(mpv_handle *mpv, QObject *parent)
@@ -159,6 +188,8 @@ MpvController::MpvController(mpv_handle *mpv, QObject *parent)
     // N14：文件格式（文件属性单设）
     mpv_observe_property(m_mpv, PropFileFormat, "file-format", MPV_FORMAT_STRING);
     mpv_observe_property(m_mpv, PropTrackList, "track-list", MPV_FORMAT_NODE);
+    // N15：章节列表
+    mpv_observe_property(m_mpv, PropChapterList, "chapter-list", MPV_FORMAT_NODE);
 }
 
 MpvController::~MpvController()
@@ -366,6 +397,12 @@ void MpvController::handlePropertyChange(const mpv_event *event)
             emit tracksChanged(parseTrackList(static_cast<mpv_node *>(prop->data)));
         else if (prop->format == MPV_FORMAT_NONE)
             emit tracksChanged(QList<TrackInfo>());
+        break;
+    case PropChapterList:
+        if (prop->format == MPV_FORMAT_NODE && prop->data)
+            emit chaptersChanged(parseChapterList(static_cast<mpv_node *>(prop->data)));
+        else if (prop->format == MPV_FORMAT_NONE)
+            emit chaptersChanged(QList<ChapterInfo>());
         break;
     default:
         break;

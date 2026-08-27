@@ -84,6 +84,8 @@ public:
     void applyMediaMetadata(const QString &path, const QVariantMap &tags);
     void applyFileFormat(const QString &path, const QString &format);
     void applyTracks(const QString &path, const QList<MpvController::TrackInfo> &tracks);
+    // N15.1：章节回填（chapter-list 快照）
+    void applyChapters(const QString &path, const QList<MpvController::ChapterInfo> &chapters);
 
 protected:
     // N5：ShortcutOverride 认领导航键——焦点在列表上时 ↑↓←→/PgUp/PgDn/Home/End

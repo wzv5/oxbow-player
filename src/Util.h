@@ -39,6 +39,9 @@ QString formatTimeHMS(double seconds);
 // duration<=0 时退化为仅时间。三处共用：进度条 tooltip / N7 #6 尾段 / N7 #7 主体
 QString formatTimePercent(double seconds, double duration);
 
+// N15：固定 hh:mm:ss.zzz（毫秒三位，四舍五入）
+QString formatTimeHMSms(double seconds);
+
 // 通用：定点小数去末尾 0（"24.00" -> "24"、"44.10" -> "44.1"）
 QString trimTrailingZeros(const QString &fixed);
 

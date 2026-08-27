@@ -24,4 +24,8 @@ struct PlaylistItem
 
     // N14：全量流存储（按 id 升序），含 selected 标记；属性对话框按 selected 区分当前/其他
     QList<MpvController::TrackInfo> tracks;
+
+    // N15.1：章节列表（chapter-list 快照，原样存储不查重；
+    // 严格 == 去重属菜单/命中层语义，此处为文件事实展示）
+    QList<MpvController::ChapterInfo> chapters;
 };
