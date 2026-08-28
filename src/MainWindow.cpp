@@ -651,10 +651,21 @@ void MainWindow::connectController()
         updateChapterSlider();
     });
 
-    // N10：起播拿到分辨率即适配窗口。走实时播放态专用通道 videoSizeChanged
-    // （与导航器同源）；元数据仓服务展示域档案查询，不用于此（specs/N10.md 裁决）
+    // N10/B16：起播拿到分辨率即适配窗口。videoSizeChanged 由 mpv 的 width/height
+    // 两独立属性分别推送合并触发，单次装载会产生中间对（如 (1920,288) 先于 (1920,1080)）；
+    // 经单发定时器合并突发，仅以最后一次一致对触发一次自适应（B16 草案）
+    m_videoAdaptTimer.setSingleShot(true);
+    connect(&m_videoAdaptTimer, &QTimer::timeout, this, [this] {
+        adaptWindowSizeToVideo(m_pendingVideoW, m_pendingVideoH);
+    });
     connect(m_controller, &MpvController::videoSizeChanged, this,
-            &MainWindow::adaptWindowSizeToVideo);
+            [this](int w, int h) {
+                m_pendingVideoW = w;
+                m_pendingVideoH = h;
+                if (m_fullscreen && w > 0 && h > 0)
+                    m_refitAfterFullscreen = true;
+                m_videoAdaptTimer.start(0);
+            });
     // 停止态步进以选中 tab 为基准，切换 tab 需刷新启停（A16）
     connect(m_playlist, &QTabWidget::currentChanged, this, [this](int) {
         updateNavigationActions();
@@ -1071,8 +1082,22 @@ void MainWindow::adaptWindowSizeToVideo(int videoW, int videoH)
     if (availVideo.width() > 0 && availVideo.height() > 0
         && (want.width() > availVideo.width() || want.height() > availVideo.height()))
         want.scale(availVideo, Qt::KeepAspectRatio);
-    // 视频域增量换算整窗尺寸：菜单栏/控制行/播放列表面板显隐状态天然包含
-    resize(size() + want - m_videoWidget->size());
+    // B16：迭代收敛——单步增量假设"非视频域宽度恒定"不成立（右侧 splitter/播放列表
+    // 会随窗口变宽吸收部分增量），故每步 resize 后强制布局落地、读真实 video 尺寸，
+    // 以残差 want−实际 再补增量，1~2 步收敛到精确 want；无进展（如受占位符最小尺寸
+    // 钳制无法再缩）即停，避免空转
+    QSize target = size() + want - m_videoWidget->size();
+    QSize lastAchieved;
+    for (int i = 0; i < 4; ++i) {
+        resize(target);
+        if (layout())
+            layout()->activate();   // 同步落实子布局（含 splitter/播放列表重分布 + 视频区对位）
+        const QSize achieved = m_videoWidget->size();
+        if (achieved == want || achieved == lastAchieved)
+            break;
+        lastAchieved = achieved;
+        target = size() + want - achieved;
+    }
     // 最小移动收回：仅当外框越出工作区时钳回，不动原本合法的位置
     const QRect fr = frameGeometry();
     QPoint tl = fr.topLeft();
@@ -1104,6 +1129,7 @@ void MainWindow::toggleFullscreen()
             m_navigator->hide();
         m_navigatorAction->setEnabled(false);
         m_fullscreen = true;
+        m_refitAfterFullscreen = false; // 进全屏清空：仅记录"本次全屏期内是否换片"
         // A18 无框手动几何全屏：绕开 WindowFullScreen 状态机（其进出必经
         // 普通几何中间帧并回放最大化动画）。flags 切换触发平台窗口重建并
         // 隐式隐藏，子原生 HWND 经 SetParent 平移保身份，wid 不失效（原型实测）
@@ -1136,6 +1162,12 @@ void MainWindow::toggleFullscreen()
             show();
         menuBar()->show(); // 恢复菜单栏（布局重排会经占位符事件链触发几何同步）
         syncVideoGeometry();
+        // B16：全屏期内若切换过视频，当前尺寸与"进全屏前的小窗"已不一致；
+        // 恢复普通态后按当前视频尺寸重新适配（最大化分支不走此路，保持全屏宽度）
+        if (m_refitAfterFullscreen) {
+            m_refitAfterFullscreen = false;
+            m_videoAdaptTimer.start(0); // 复用合并定时器，布局落定后以当前 pending 触发
+        }
         m_controller->setProperty(QStringLiteral("video-zoom"), m_savedZoom);
         m_controller->setProperty(QStringLiteral("video-pan-x"), m_savedPanX);
         m_controller->setProperty(QStringLiteral("video-pan-y"), m_savedPanY);

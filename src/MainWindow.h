@@ -121,6 +121,14 @@ private:
     QWidget *m_videoWidget = nullptr;
     // N3：布局槽位占位符，普通态视频区几何的锚点；最小尺寸约束在此
     QWidget *m_videoPlaceholder = nullptr;
+    // B16：视频尺寸适配缓冲——videoSizeChanged 突发（width/height 独立推送）经
+    // 单发定时器合并，仅以最后一次一致对触发一次自适应（见 connectController）
+    int m_pendingVideoW = 0;
+    int m_pendingVideoH = 0;
+    QTimer m_videoAdaptTimer;
+    // B16：全屏期间若切换了视频（videoSizeChanged 被守卫跳过），退出普通态时
+    // 需按当前视频尺寸重新适配；同一视频则维持 N10"全屏退出不重新适配"语义
+    bool m_refitAfterFullscreen = false;
     ChapterSlider *m_progressSlider = nullptr; // N15：进度条（带章节/书签标记层）
     QSlider *m_volumeSlider = nullptr;
     // N5：音量调节配置（INI 键 volumeMax / volumeWheelStep / volumeKeyStep）
