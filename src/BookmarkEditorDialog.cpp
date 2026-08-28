@@ -44,8 +44,10 @@ void BookmarkEditorDialog::refresh()
     const QStringList files = m_mgr->allFiles();
     for (const QString &path : files) {
         auto *root = new QTreeWidgetItem(m_tree);
-        // N15 实测修正：展示用原始路径（键为归一化小写，经 displayPath 恢复原样）
-        root->setText(0, QDir::toNativeSeparators(m_mgr->displayPath(path)));
+        // 展示用原始路径（键为归一化小写，经 displayPath 恢复原样）。
+        // displayPath 已按来源处理分隔符（本地原生/网络保持 URL），不再额外
+        // toNativeSeparators（B15：避免网络书签被改写分隔符）
+        root->setText(0, m_mgr->displayPath(path));
         root->setData(0, Qt::UserRole, path);
         root->setExpanded(true);
         const auto list = m_mgr->bookmarks(path);
@@ -75,7 +77,8 @@ void BookmarkEditorDialog::onJump()
     auto *cur = m_tree->currentItem();
     if (!cur || !cur->parent())
         return;
-    const QString path = cur->data(0, Qt::UserRole).toString();
+    // UserRole 存归一化键；跳转需原始显示路径（大小写/分隔符原样，B15）
+    const QString path = m_mgr->displayPath(cur->data(0, Qt::UserRole).toString());
     const double t = cur->data(0, Qt::UserRole + 3).toDouble();
     if (m_jumpCb)
         m_jumpCb(path, t);
@@ -86,7 +89,7 @@ void BookmarkEditorDialog::onItemDoubleClicked(QTreeWidgetItem *item, int column
     Q_UNUSED(column);
     if (!item || !item->parent())
         return;
-    const QString path = item->data(0, Qt::UserRole).toString();
+    const QString path = m_mgr->displayPath(item->data(0, Qt::UserRole).toString());
     const double t = item->data(0, Qt::UserRole + 3).toDouble();
     if (m_jumpCb)
         m_jumpCb(path, t);

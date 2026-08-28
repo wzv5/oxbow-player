@@ -1,7 +1,8 @@
 #include "pch.h"
-
 #include "ListSettingsDialog.h"
+
 #include "Constants.h"
+#include "Util.h"
 #include "DirProvider.h"
 #include "StaticProvider.h"
 
@@ -97,7 +98,8 @@ void ListSettingsDialog::populateFromCurrent()
     if (m_current->type() == PlaylistProvider::Type::Dir) {
         auto *d = static_cast<const DirProvider *>(m_current);
         m_dirRadio->setChecked(true);
-        m_rootEdit->setText(QDir::toNativeSeparators(d->rootPath()));
+        // m_root 已为原生分隔符（来源处处理），不再额外 toNativeSeparators（B15）
+        m_rootEdit->setText(d->rootPath());
         m_recursiveCheck->setChecked(d->recursive());
         m_extensionsEdit->setText(d->extensions().join(QLatin1Char(' ')));
     } else {
@@ -120,7 +122,12 @@ PlaylistProvider::Type ListSettingsDialog::providerType() const
 
 QString ListSettingsDialog::dirRoot() const
 {
-    return QDir::fromNativeSeparators(m_rootEdit->text().trimmed());
+    // 路径来源处（用户可手动输入，可能相对或分隔符不规范）：相对→绝对、转原生分隔符，
+    // 统一走 resolveLocalPath；网络/流保持原样（需求 #6 读写原样）
+    const QString text = m_rootEdit->text().trimmed();
+    if (text.isEmpty())
+        return text;
+    return Util::resolveLocalPath(text);
 }
 
 bool ListSettingsDialog::dirRecursive() const
@@ -142,8 +149,9 @@ void ListSettingsDialog::browseRoot()
 {
     const QString dir = QFileDialog::getExistingDirectory(this, tr("选择目录"),
                                                           dirRoot());
+    // Qt 来源（目录选择）：拿到即转原生分隔符（B15）
     if (!dir.isEmpty())
-        m_rootEdit->setText(QDir::toNativeSeparators(dir));
+        m_rootEdit->setText(Util::nativePath(dir));
 }
 
 void ListSettingsDialog::accept()
@@ -165,6 +173,12 @@ void ListSettingsDialog::accept()
         const QString root = dirRoot();
         if (root.isEmpty()) {
             QMessageBox::warning(this, tr("列表设置"), tr("请选择绑定目录。"));
+            return;
+        }
+        // 本地目录提供者仅接受真实本地路径；网络/流路径（http/ftp/stream 等，含 :// 且非 file:）拒绝。
+        // 用串前缀判定，避免 QUrl::scheme() 误判盘符、QUrl::fromUserInput 误判相对名 "a" 为非本地。
+        if (Util::isNetworkStreamPath(root)) {
+            QMessageBox::warning(this, tr("列表设置"), tr("本地目录提供者不支持网络/流路径。"));
             return;
         }
         if (!QDir(root).exists()) {

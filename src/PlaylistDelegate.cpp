@@ -3,6 +3,7 @@
 #include "PlaylistDelegate.h"
 
 #include "PlaylistItem.h"
+#include "Util.h"
 
 namespace {
 constexpr int kIconSize = 16;
@@ -77,7 +78,7 @@ void PlaylistDelegate::paint(QPainter *painter, const QStyleOptionViewItem &opti
     const int rightEdge = option.rect.right() - kMarginH;
     int durationW = 0;
     if (m_meta) {
-        const auto it = m_meta->constFind(path);
+        const auto it = m_meta->constFind(Util::normalizePathForMatch(path));
         if (it != m_meta->constEnd() && it->duration.has_value()) {
             const QString dur = formatDuration(it->duration.value());
             // 矩形右对齐绘制：值列与右缘保留一个键距的呼吸空隙

@@ -66,7 +66,7 @@ public:
     {
         if (path.isEmpty() || !m_bookmarks)
             return {};
-        return m_bookmarks->bookmarks(PlaylistWidget::normalizePath(path));
+        return m_bookmarks->bookmarks(Util::normalizePathForMatch(path));
     }
     // 书签/装载完成等任意内容变更后调用
     void invalidate() { m_dirty = true; }
@@ -78,7 +78,7 @@ public:
     {
         if (!m_dirty)
             return m_cache;
-        const QString path = PlaylistWidget::normalizePath(m_controller->propertyString(QStringLiteral("path")));
+        const QString path = Util::normalizePathForMatch(m_controller->propertyString(QStringLiteral("path")));
         QList<Mark> out;
         for (const auto &c : m_chapters)
             out.append({c.time, c.title, false});
@@ -544,12 +544,13 @@ void MainWindow::connectController()
         m_controller->command({QStringLiteral("stop")});
     });
     // N4：元数据回填路由——按"当前正播路径"定位全局仓条目（推送数据覆写）。
-    // 路径经 normalizePath 规范化，与条目存储键同形，防止写入幻影条目
+    // 路径经 normalizePathForMatch 规范化，与条目存储键同形，防止写入幻影条目
     connect(m_controller, &MpvController::durationChanged, m_playlist,
             [this](double sec) {
                 if (sec > 0)
+                    // mpv 来源路径：本地 cleanPath+原生分隔符，网络/流保持原样（B15）
                     m_playlist->applyDuration(
-                        PlaylistWidget::normalizePath(
+                        Util::resolveLocalPath(
                             m_controller->propertyString(QStringLiteral("path"))),
                         sec);
             });
@@ -557,13 +558,13 @@ void MainWindow::connectController()
     // B13：文件卸载后 path 属性不可用返回空，此时推送无处归属，直接丢弃；
     // 放行会经 materialize 以 "" 键产生垃圾仓条目。旧条目档案就此冻结在
     // 最后播放态（属性对话框仅在打开瞬间填充，停止态仍展示上次已知值）。
-    // 路径归一化由下游 materializeByRaw 统一处理，此处不再预归一化
+    // mpv 来源路径经 resolveLocalPath 加工为显示路径（B15），仓键由下游归一
     connect(m_controller, &MpvController::mediaMetadataChanged, m_playlist,
             [this](const QVariantMap &tags) {
                 const QString path = m_controller->propertyString(QStringLiteral("path"));
                 if (path.isEmpty())
                     return;
-                m_playlist->applyMediaMetadata(path, tags);
+                m_playlist->applyMediaMetadata(Util::resolveLocalPath(path), tags);
             });
     // N14：文件格式（文件属性单设）
     connect(m_controller, &MpvController::fileFormatChanged, m_playlist,
@@ -571,7 +572,7 @@ void MainWindow::connectController()
                 const QString path = m_controller->propertyString(QStringLiteral("path"));
                 if (path.isEmpty())
                     return;
-                m_playlist->applyFileFormat(path, format);
+                m_playlist->applyFileFormat(Util::resolveLocalPath(path), format);
             });
     // N13/N14：轨道列表驱动菜单与按钮状态 + 仓回填（全量流）
     connect(m_controller, &MpvController::tracksChanged, this,
@@ -598,7 +599,7 @@ void MainWindow::connectController()
                 const QString path = m_controller->propertyString(QStringLiteral("path"));
                 if (path.isEmpty())
                     return;
-                m_playlist->applyTracks(path, tracks);
+                m_playlist->applyTracks(Util::resolveLocalPath(path), tracks);
             });
     // N15：章节
     connect(m_controller, &MpvController::chaptersChanged, this,
@@ -614,7 +615,7 @@ void MainWindow::connectController()
                 const QString path = m_controller->propertyString(QStringLiteral("path"));
                 if (path.isEmpty())
                     return;
-                m_playlist->applyChapters(path, chapters);
+                m_playlist->applyChapters(Util::resolveLocalPath(path), chapters);
             });
     connect(m_bookmarkMgr, &BookmarkManager::changed, this, [this] {
         m_marks->invalidate();
@@ -668,11 +669,14 @@ void MainWindow::openFiles()
     QStringList patterns;
     for (const QString &ext : App::defaultMediaExtensions())
         patterns << QStringLiteral("*.") + ext;
-    const QStringList files = QFileDialog::getOpenFileNames(
+    QStringList files = QFileDialog::getOpenFileNames(
         this, tr("打开文件"), QString(),
         tr("媒体文件 (%1);;所有文件 (*)").arg(patterns.join(QLatin1Char(' '))));
     if (files.isEmpty())
         return;
+    // Qt 来源：拿到即转原生分隔符（B15），逐文件加工
+    for (QString &f : files)
+        f = Util::nativePath(f);
     // N11：主菜单打开文件固定落点默认播放列表——清旧内容与续播记忆后重灌，
     // 随即整表开播（他 tab 播放中被抢占切换）；多选按对话框原始返回顺序从首项播起。
     // 有意不走 addFiles：绕开落点漂移与播放中 append 语义，拖放/右键添加不受影响
@@ -1960,12 +1964,14 @@ void MainWindow::rebuildChapterMenu()
     // 菜单项由 clear() 连同销毁，QAction 析构时自动脱离 m_chapterGroup，
     // 此处重建 action 后重新入组即可
     const auto marksChapters = m_marks->chapters();
-    const QString curPath = PlaylistWidget::normalizePath(m_controller->propertyString(QStringLiteral("path")));
+    const QString curPath = Util::normalizePathForMatch(m_controller->propertyString(QStringLiteral("path")));
+    // 跳转需原始显示路径（大小写/分隔符原样）；curPath 仅作书签仓键匹配用（B15）
+    const QString curDisplay = Util::resolveLocalPath(m_controller->propertyString(QStringLiteral("path")));
     // 书签经聚合器统一读入口（书签永不查重，即原始）
     const auto bms = m_marks->bookmarks(curPath);
 
     // 跳转目标 = 菜单构建时的当前文件（菜单条目语义上属于该文件）
-    auto addSection = [this, curPath](const QList<MarkAggregator::Mark> &items) {
+    auto addSection = [this, curPath, curDisplay](const QList<MarkAggregator::Mark> &items) {
         for (const auto &it : items) {
             const QString text = QStringLiteral("[%1] %2").arg(Util::formatTimeHMSms(it.time), it.title);
             QAction *a = m_chapterMenu->addAction(text);
@@ -1975,7 +1981,7 @@ void MainWindow::rebuildChapterMenu()
             a->setProperty("title", it.title);
             m_chapterGroup->addAction(a);
             const double t = it.time;
-            connect(a, &QAction::triggered, this, [this, curPath, t] { jumpToFileTime(curPath, t); });
+            connect(a, &QAction::triggered, this, [this, curDisplay, t] { jumpToFileTime(curDisplay, t); });
         }
     };
 
@@ -2019,15 +2025,15 @@ void MainWindow::jumpToFileTime(const QString &path, double time)
 {
     if (path.isEmpty())
         return;
-    const QString norm = PlaylistWidget::normalizePath(path);
-    // 查当前激活列表。两侧均为 normalizePath 产物（N15.1 起 Windows 分支
+    const QString norm = Util::normalizePathForMatch(path);
+    // 查当前激活列表。两侧均为 normalizePathForMatch 产物（N15.1 起 Windows 分支
     // 折叠大小写），字符串相等即路径相等，无需额外分支
     auto findInTab = [&](int tabIdx) -> int {
         if (tabIdx < 0 || tabIdx >= m_playlist->count())
             return -1;
         const QStringList files = m_playlist->filesOf(tabIdx);
         for (int i = 0; i < files.size(); ++i)
-            if (PlaylistWidget::normalizePath(files[i]) == norm)
+            if (Util::normalizePathForMatch(files[i]) == norm)
                 return i;
         return -1;
     };
@@ -2093,11 +2099,12 @@ void MainWindow::ensureBookmarkEditor()
 
 void MainWindow::onAddBookmark()
 {
-    // 原始路径交 BookmarkManager 内部归一：展示保原样（大小写/分隔符）
-    const QString rawPath = m_controller->propertyString(QStringLiteral("path"));
+    // mpv 来源路径经 resolveLocalPath 加工为显示路径；BookmarkManager 内部归一为键，
+    // 展示保原样（大小写/分隔符，B15）
+    const QString rawPath = Util::resolveLocalPath(m_controller->propertyString(QStringLiteral("path")));
     if (rawPath.isEmpty() || m_playlistPos < 0)
         return;
-    const QString path = PlaylistWidget::normalizePath(rawPath);
+    const QString path = Util::normalizePathForMatch(rawPath);
     const double t = m_timePos;
     QString title;
     if (m_bookmarkMgr) {

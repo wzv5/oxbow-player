@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "BookmarkManager.h"
 #include "PlaylistWidget.h"
+#include "Util.h"
 
 BookmarkManager::BookmarkManager(const QString &configFile, QObject *parent)
     : QObject(parent), m_configFile(configFile)
@@ -22,7 +23,7 @@ void BookmarkManager::load()
         if (path.isEmpty())
             continue;
         // 键归一化（Windows 统一小写）；原始形态保留给 UI 展示
-        const QString key = PlaylistWidget::normalizePath(path);
+        const QString key = Util::normalizePathForMatch(path);
         const int count = s.value(prefix + QStringLiteral("/count"), 0).toInt();
         QList<Bookmark> list;
         list.reserve(count);
@@ -76,7 +77,7 @@ void BookmarkManager::addBookmark(const QString &rawPath, double time, const QSt
     if (rawPath.isEmpty())
         return;
     // 键归一化（与仓/跳转匹配口径一致）；原始路径供展示
-    const QString key = PlaylistWidget::normalizePath(rawPath);
+    const QString key = Util::normalizePathForMatch(rawPath);
     auto it = m_data.find(key);
     if (it == m_data.end()) {
         m_data[key] = QList<Bookmark>{{time, title}};
@@ -133,9 +134,16 @@ int BookmarkManager::removeInvalid()
 {
     int removed = 0;
     QStringList toRemove;
-    for (const QString &path : std::as_const(m_order)) {
-        if (!QFile::exists(path))
-            toRemove.append(path);
+    for (const QString &key : std::as_const(m_order)) {
+        // 校验以原始显示路径为准（而非小写归一键）；先经 resolveLocalPath 把 file:// 转本地路径，
+        // 使其能按本地文件做存在性判定（本地文件已删除则为失效项，应移除）。
+        // 剩余的网络/流路径（http/ftp/stream 等，含 :// 且非 file:）保持原样、无法以文件存在性判定，须保留。
+        const QString disp = m_displayOf.value(key, key);
+        const QString local = Util::resolveLocalPath(disp);
+        if (Util::isNetworkStreamPath(local))
+            continue;
+        if (!QFile::exists(local))
+            toRemove.append(key);
     }
     for (const QString &p : toRemove) {
         m_data.remove(p);

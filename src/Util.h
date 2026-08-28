@@ -45,4 +45,24 @@ QString formatTimeHMSms(double seconds);
 // 通用：定点小数去末尾 0（"24.00" -> "24"、"44.10" -> "44.1"）
 QString trimTrailingZeros(const QString &fixed);
 
+// 路径规范化（仅内部匹配用：元数据仓键 / 书签键 / 回显比对）。
+// 本地路径先相对→绝对（基于进程 CWD，不访问文件系统，文件不存在亦可），再统一分隔符；
+// Windows 额外转小写。禁止用于 UI 显示或向 mpv 传递。
+QString normalizePathForMatch(const QString &path);
+
+// Qt 来源路径：拿到即转原生分隔符，不做绝对化 / cleanPath / 大小写处理。
+// 用于文件对话框返回值、拖放 url、目录枚举等来源处一次性加工（这些来源本就返回绝对路径）。
+inline QString nativePath(const QString &path) { return QDir::toNativeSeparators(path); }
+
+// 本地路径相对→绝对（基于进程 CWD，纯字符串变换，不访问文件系统，文件不存在亦可），
+// 结果转原生分隔符；网络/流路径（含 :// 或非 file scheme）保持原样。cleanPath 由 absoluteFilePath 已含。
+// 既供 mpv 来源路径（propertyString / playlist filename），也供手动输入的目录根等来源处加工，
+// 即"来源路径 → 显示路径"的唯一出口。
+QString resolveLocalPath(const QString &path);
+
+// 是否网络/流路径（含 :// 且非 file: 前缀）：本地目录提供者据此拒绝、mpv 源据此保持原样。
+// 用串前缀判定，避免 QUrl::scheme() 把 Windows 盘符 "C:\dir" 误判为 scheme、
+// 也避免 QUrl::fromUserInput 把相对名（如 "a"）误判为非本地。
+bool isNetworkStreamPath(const QString &path);
+
 } // namespace Util

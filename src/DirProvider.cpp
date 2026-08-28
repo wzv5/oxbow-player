@@ -3,6 +3,7 @@
 #include "DirProvider.h"
 
 #include "PlaylistWidget.h"
+#include "Util.h"
 
 namespace {
 // 扩展名 → QDir 名称过滤器（*.mp4 形态）
@@ -88,7 +89,8 @@ void DirProvider::collect(const QDir &dir, const QStringList &filters, QStringLi
     const QFileInfoList files =
         dir.entryInfoList(filters, QDir::Files | QDir::Readable, QDir::NoSort);
     for (const QFileInfo &fi : files)
-        out << PlaylistWidget::normalizePath(fi.absoluteFilePath());
+        // Qt 来源（目录枚举）：拿到即转原生分隔符（B15），不做小写/cleanPath
+        out << Util::nativePath(fi.absoluteFilePath());
     if (!m_recursive)
         return;
     // 目录层：先序深入子目录（平铺语义，次序无关紧要——视图层统一重排）

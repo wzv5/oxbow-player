@@ -28,10 +28,6 @@ public:
     // 注入控制器（弱引用）：四步式停止前读取 time-pos 用于进度恢复
     void attachController(MpvController *mpv) { m_mpv = mpv; }
 
-    // 路径规范化：统一正斜杠 + cleanPath。全链路（存键/mpv回显比对）必须一致，
-    // 否则 mpv 推送按其回显路径写入会落进幻影条目
-    static QString normalizePath(const QString &path);
-
     // 用 mpv 播放列表内容刷新"正在播放"tab：重建行、写入播放标记、跟随滚动
     void setPlaylist(const QVariantList &items);
     // 向当前 tab 添加文件（触发 filesAdded 信号）
@@ -149,10 +145,9 @@ private:
     // 条目重排核心（无四步式副作用）：排序/加载填充共用
     void sortListItems(QListWidget *list, SortKey key, bool ascending);
 
-    // 全局元数据仓：缺失键补建并计算文件系统字段（图标/大小/创建/修改时间）
+    // 全局元数据仓：缺失键补建并计算文件系统字段（图标/大小/创建/修改时间）；
+    // path 约定为入口处已加工的显示路径，原样存入 item.path 供 UI/回传 mpv/持久化
     PlaylistItem &materialize(const QString &path);
-    // 变体：先规范化取仓条目，并把原始路径（首次写入者）存入 path 字段供 UI 显示
-    PlaylistItem &materializeByRaw(const QString &rawPath);
     // 为 list 的全部条目补齐元数据（切 tab / 重建后调用）
     void materializeList(QListWidget *list);
     // 统一条目构造：显示文件名、图标取自仓、tooltip 完整路径

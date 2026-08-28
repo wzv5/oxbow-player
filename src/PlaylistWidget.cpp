@@ -11,17 +11,6 @@
 
 namespace {
 
-// 规范化判重键：优先 canonicalFilePath（解析符号链接与大小写真实形态），
-// 失败退化为清理后的绝对路径；Windows 大小写不敏感，统一转小写后比较
-QString canonicalKey(const QString &path)
-{
-    const QFileInfo fi(path);
-    QString key = fi.canonicalFilePath();
-    if (key.isEmpty())
-        key = QDir::cleanPath(fi.absoluteFilePath());
-    return key.toLower();
-}
-
 // 发行时间解析：ISO 8601 优先，兼容常见格式；全败返回空
 QDateTime parseReleaseDate(const QString &s)
 {
@@ -67,19 +56,6 @@ PlaylistWidget::PlaylistWidget(const QString &configFile, QWidget *parent)
     setMinimumWidth(220);
     addTab(createList(), tr("默认"));
     connect(this, &QTabWidget::currentChanged, this, &PlaylistWidget::onTabChanged);
-}
-
-QString PlaylistWidget::normalizePath(const QString &path)
-{
-    QString p = QDir::cleanPath(QDir::fromNativeSeparators(path));
-#ifdef Q_OS_WIN
-    // N15.1 裁决：Windows 大小写不敏感。命令行小写启动 vs GUI 添加、
-    // 跨会话 INI 等来源会携带不同大小写，仓键/PathRole/书签键统一小写
-    // 防同一文件分裂成幻影条目；UI 展示形态由 item.path（原始入参）保留
-    return p.toLower();
-#else
-    return p;
-#endif
 }
 
 QListWidget *PlaylistWidget::createList()
@@ -139,18 +115,13 @@ bool PlaylistWidget::eventFilter(QObject *watched, QEvent *event)
     return QTabWidget::eventFilter(watched, event);
 }
 
-PlaylistItem &PlaylistWidget::materializeByRaw(const QString &rawPath)
-{
-    PlaylistItem &item = materialize(normalizePath(rawPath));
-    // 原始路径首次写入者为准，统一转为 Windows 原生分隔符供 UI 显示
-    if (item.path.isEmpty())
-        item.path = QDir::toNativeSeparators(rawPath);
-    return item;
-}
-
 PlaylistItem &PlaylistWidget::materialize(const QString &path)
 {
-    auto it = m_meta.find(path);
+    // 仓键统一规范化；path 约定为入口处已加工的显示路径（Qt 源经 nativePath、mpv 源经
+    // resolveLocalPath），原样存入 item.path 供 UI/回传 mpv/持久化，不再二次改写，
+    // 以免网络路径被 toNativeSeparators 破坏。
+    const QString key = Util::normalizePathForMatch(path);
+    auto it = m_meta.find(key);
     if (it != m_meta.end())
         return it.value();
 
@@ -160,8 +131,9 @@ PlaylistItem &PlaylistWidget::materialize(const QString &path)
     item.created = fi.birthTime();
     item.modified = fi.lastModified();
     item.icon = fi.exists() ? m_iconProvider.icon(fi) : m_iconProvider.icon(QFileIconProvider::File);
+    item.path = path;
 
-    return m_meta.insert(path, item).value();
+    return m_meta.insert(key, item).value();
 }
 
 void PlaylistWidget::materializeList(QListWidget *list)
@@ -173,14 +145,15 @@ void PlaylistWidget::materializeList(QListWidget *list)
 }
 
 // 统一的条目构造：显示文件名（含扩展名）、图标取自仓、tooltip 为原始路径。
-// 内部匹配键经 normalizePath 规范化；UI 展示用 path 字段保留原生形态
+// PathRole 存显示路径原样（来源处已加工，用于 UI/回传 mpv/持久化）；
+// 内部匹配键经 normalizePathForMatch 规范化后索引 m_meta 仓。
 QListWidgetItem *PlaylistWidget::makeItem(QListWidget *list, const QString &rawPath)
 {
-    const PlaylistItem &meta = materializeByRaw(rawPath);
+    const PlaylistItem &meta = materialize(rawPath);
     auto *item = new QListWidgetItem(list);
     item->setData(Qt::DisplayRole, QFileInfo(meta.path).fileName());
     item->setData(Qt::DecorationRole, meta.icon);
-    item->setData(PathRole, normalizePath(rawPath));
+    item->setData(PathRole, rawPath);
     item->setToolTip(meta.path);
     return item;
 }
@@ -221,7 +194,8 @@ void PlaylistWidget::setPlaylist(const QVariantList &items)
     for (const QVariant &v : items) {
         const QVariantMap map = v.toMap();
         const QString filename = map.value(QStringLiteral("filename")).toString();
-        QListWidgetItem *item = makeItem(list,filename);
+        // mpv 来源路径：本地 cleanPath+原生分隔符，网络/流保持原样（B15）
+        QListWidgetItem *item = makeItem(list, Util::resolveLocalPath(filename));
         // 正在播放标记写入视图条目专用角色（会话层信息不入元数据仓）
         if (map.value(QStringLiteral("current")).toBool()) {
             item->setData(PlayingRole, true);
@@ -291,13 +265,13 @@ void PlaylistWidget::applyDuration(const QString &rawPath, double seconds)
 {
     if (rawPath.isEmpty() || !(seconds > 0))
         return;
-    materializeByRaw(rawPath).duration = seconds;
+    materialize(rawPath).duration = seconds;
     repaintAllLists();
 }
 
 void PlaylistWidget::applyMediaMetadata(const QString &rawPath, const QVariantMap &tags)
 {
-    PlaylistItem &item = materializeByRaw(rawPath);
+    PlaylistItem &item = materialize(rawPath);
     const QString title = tagValue(tags, {"title"});
     const QString album = tagValue(tags, {"album"});
     const QString artist = tagValue(tags, {"artist", "performer"});
@@ -318,7 +292,7 @@ void PlaylistWidget::applyFileFormat(const QString &rawPath, const QString &form
 {
     if (rawPath.isEmpty())
         return;
-    PlaylistItem &item = materializeByRaw(rawPath);
+    PlaylistItem &item = materialize(rawPath);
     if (format.isEmpty())
         item.fileFormat.reset();
     else
@@ -330,7 +304,7 @@ void PlaylistWidget::applyTracks(const QString &rawPath, const QList<MpvControll
 {
     if (rawPath.isEmpty())
         return;
-    PlaylistItem &item = materializeByRaw(rawPath);
+    PlaylistItem &item = materialize(rawPath);
     // N14 快照语义：全量覆盖，按 id 升序存；空即清空
     QList<MpvController::TrackInfo> sorted = tracks;
     std::sort(sorted.begin(), sorted.end(),
@@ -343,7 +317,7 @@ void PlaylistWidget::applyChapters(const QString &rawPath, const QList<MpvContro
 {
     if (rawPath.isEmpty())
         return;
-    PlaylistItem &item = materializeByRaw(rawPath);
+    PlaylistItem &item = materialize(rawPath);
     // N15.1 快照语义：原样覆盖（空即清空，不查重）。章节不参与列表行
     // 绘制（仅属性对话框消费，打开时实时构建），无需 repaintAllLists
     item.chapters = chapters;
@@ -608,7 +582,7 @@ void PlaylistWidget::dropEvent(QDropEvent *event)
     QStringList files;
     for (const QUrl &url : event->mimeData()->urls()) {
         if (url.isLocalFile())
-            files.append(url.toLocalFile());
+            files.append(Util::nativePath(url.toLocalFile()));
     }
     if (!files.isEmpty()) {
         addFiles(files);
@@ -837,7 +811,7 @@ void PlaylistWidget::removeDuplicateItems()
     QSet<QString> seen;
     QList<int> rows;
     for (int i = 0; i < list->count(); ++i) {
-        const QString key = canonicalKey(list->item(i)->data(PathRole).toString());
+        const QString key = Util::normalizePathForMatch(list->item(i)->data(PathRole).toString());
         if (!seen.contains(key))
             seen.insert(key);
         else

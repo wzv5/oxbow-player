@@ -171,4 +171,42 @@ QString trimTrailingZeros(const QString &fixed){
     return s;
 }
 
+QString normalizePathForMatch(const QString &path)
+{
+    // 本地路径先相对→绝对（基于进程 CWD，不访问文件系统），再统一分隔符；
+    // Windows 额外转小写。仅用于内部匹配；UI 展示与向 mpv 传递始终保持原样。
+    const QString abs = Util::resolveLocalPath(path);
+    QString p = QDir::fromNativeSeparators(abs);
+#ifdef Q_OS_WIN
+    p = p.toLower();
+#endif
+    return p;
+}
+
+bool Util::isNetworkStreamPath(const QString &path)
+{
+    // 含 :// 且非 file: 前缀（覆盖 file:// 与 file:/）即视为网络/流。
+    // 串前缀判定规避两陷阱：QUrl::scheme() 把 "C:\dir" 误判 scheme "c"；
+    // QUrl::fromUserInput 把相对名 "a" 误判非本地。
+    return path.contains(QStringLiteral("://"))
+        && !path.startsWith(QStringLiteral("file:"), Qt::CaseInsensitive);
+}
+
+QString resolveLocalPath(const QString &path)
+{
+    if (path.isEmpty())
+        return path;
+    if (Util::isNetworkStreamPath(path))
+        return path; // 网络/流：保持原样，不绝对化
+    // 本地（含 file://、file:/、盘符路径、相对路径、UNC）：file: 前缀先转本地，
+    // 其余相对→绝对（基于进程 CWD 的纯字符串变换，不访问文件系统，文件不存在亦可），
+    // 结果转原生分隔符（即显示路径形态；网络/流已在上一步返回原样，不受 toNativeSeparators 影响）
+    QString local = path;
+    if (path.startsWith(QStringLiteral("file:"), Qt::CaseInsensitive)) {
+        const QUrl u(path);
+        local = u.toLocalFile();
+    }
+    return QDir::toNativeSeparators(QFileInfo(local).absoluteFilePath());
+}
+
 } // namespace Util
