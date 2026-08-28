@@ -93,6 +93,20 @@ void BookmarkManager::addBookmark(const QString &rawPath, double time, const QSt
     emit changed();
 }
 
+void BookmarkManager::updateBookmark(const QString &path, int index, double time, const QString &title)
+{
+    auto it = m_data.find(path);
+    if (it == m_data.end() || index < 0 || index >= it->size())
+        return;
+    (*it)[index].time = time;
+    (*it)[index].title = title;
+    std::stable_sort(it->begin(), it->end(), [](const Bookmark &a, const Bookmark &b) {
+        return a.time < b.time;
+    });
+    save();
+    emit changed();
+}
+
 void BookmarkManager::removeBookmark(const QString &path, int index)
 {
     auto it = m_data.find(path);

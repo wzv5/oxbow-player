@@ -25,6 +25,8 @@ public:
     }
 
     void addBookmark(const QString &rawPath, double time, const QString &title);
+    // N16：按索引改写书签（时间/标题）；校验交给调用方。改后重排+落盘+发 changed
+    void updateBookmark(const QString &path, int index, double time, const QString &title);
     void removeBookmark(const QString &path, int index);
     void removeFile(const QString &path);
     void clearAll();

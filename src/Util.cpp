@@ -160,6 +160,34 @@ QString formatTimeHMSms(double seconds)
         .arg(int(ms), 3, 10, QLatin1Char('0'));
 }
 
+bool parseTimeHMSms(const QString &text, double *outSeconds)
+{
+    const QString s = text.trimmed();
+    if (s.isEmpty())
+        return false;
+    const QStringList parts = s.split(QLatin1Char(':'), Qt::SkipEmptyParts);
+    if (parts.size() != 3)
+        return false;
+    bool okH = false, okM = false, okS = false;
+    const double h = parts[0].toDouble(&okH);
+    const double m = parts[1].toDouble(&okM);
+    const QString &sec = parts[2];
+    const int dot = sec.indexOf(QLatin1Char('.'));
+    if (dot < 0)
+        return false;
+    const QString frac = sec.mid(dot + 1);
+    if (frac.size() != 3)
+        return false;
+    const double sVal = sec.toDouble(&okS);
+    if (!okH || !okM || !okS || h < 0.0 || m < 0.0 || m >= 60.0 || sVal < 0.0)
+        return false;
+    if (sVal >= 60.0) // 秒（含小数）须 < 60
+        return false;
+    if (outSeconds)
+        *outSeconds = h * 3600.0 + m * 60.0 + sVal;
+    return true;
+}
+
 QString trimTrailingZeros(const QString &fixed){
     QString s = fixed;
     if (s.contains(QLatin1Char('.'))) {

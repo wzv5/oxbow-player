@@ -42,6 +42,10 @@ QString formatTimePercent(double seconds, double duration);
 // N15：固定 hh:mm:ss.zzz（毫秒三位，四舍五入）
 QString formatTimeHMSms(double seconds);
 
+// N16：严格时间解析（书签编辑用），仅接受 hh:mm:ss.zzz（3 段、毫秒恰 3 位、分秒<60）；
+// 合法返回 true 并写回秒数，否则 false
+bool parseTimeHMSms(const QString &text, double *outSeconds);
+
 // 通用：定点小数去末尾 0（"24.00" -> "24"、"44.10" -> "44.1"）
 QString trimTrailingZeros(const QString &fixed);
 

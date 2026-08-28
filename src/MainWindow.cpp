@@ -2122,8 +2122,11 @@ void MainWindow::ensureBookmarkEditor()
         m_bookmarkEditor->raise();
         return;
     }
+    // N16：传入当前播放文件归一化键，使编辑器打开即聚焦该文件（若存在书签）
+    const QString curKey = Util::normalizePathForMatch(
+        m_controller->propertyString(QStringLiteral("path")));
     m_bookmarkEditor = new BookmarkEditorDialog(m_bookmarkMgr,
-        [this](const QString &p, double t) { jumpToFileTime(p, t); }, this);
+        [this](const QString &p, double t) { jumpToFileTime(p, t); }, curKey, this);
     m_bookmarkEditor->setAttribute(Qt::WA_DeleteOnClose, true);
     connect(m_bookmarkEditor, &QObject::destroyed, this, [this] { m_bookmarkEditor = nullptr; });
     m_bookmarkEditor->show();
