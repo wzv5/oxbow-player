@@ -32,7 +32,7 @@ NavigatorCanvas::NavigatorCanvas(MpvController *controller, QWidget *renderArea,
 
     connect(controller, &MpvController::videoZoomChanged, this, [this](double z) {
         m_zoom = qBound(kZoomMin, z, kZoomMax);
-        emit zoomVisualChanged(int(qBound(25.0, 100.0 * std::pow(2.0, m_zoom), 800.0) + 0.5));
+        emit zoomVisualChanged(displayPercent());
         update();
     });
     connect(controller, &MpvController::videoPanXChanged, this, [this](double v) {
@@ -49,6 +49,7 @@ NavigatorCanvas::NavigatorCanvas(MpvController *controller, QWidget *renderArea,
         m_videoH = h;
         if (isActive() != wasActive)
             emit activeChanged(isActive());
+        emit zoomVisualChanged(displayPercent()); // 几何/源分辨率变化→百分比重算
         update();
     });
     // 按需创建（N3）：width/height 只在变化时推送，本实例错过了播放开始时的
@@ -58,9 +59,38 @@ NavigatorCanvas::NavigatorCanvas(MpvController *controller, QWidget *renderArea,
     m_videoH = seed.height();
 }
 
-int NavigatorCanvas::zoomPercent() const
+QSizeF NavigatorCanvas::currentFit() const
 {
-    return int(qBound(25.0, 100.0 * std::pow(2.0, m_zoom), 800.0) + 0.5);
+    if (!m_render || m_videoH <= 0)
+        return QSizeF();
+    return fitSize(m_render->size(), double(m_videoW) / m_videoH);
+}
+
+int NavigatorCanvas::displayPercent() const
+{
+    const QSizeF fit = currentFit();
+    if (fit.width() <= 0 || m_videoW <= 0)
+        return 0;
+    // 1:1 相对百分比：显示宽 / 源宽（contain 等比 + 缩放等比，任轴等价）
+    const double scale = fit.width() * std::pow(2.0, m_zoom) / m_videoW;
+    return int(scale * 100.0 + 0.5);
+}
+
+int NavigatorCanvas::zoomToPercent(double zoom) const
+{
+    const QSizeF fit = currentFit();
+    if (fit.width() <= 0 || m_videoW <= 0)
+        return 0;
+    const double scale = fit.width() * std::pow(2.0, zoom) / m_videoW;
+    return int(scale * 100.0 + 0.5);
+}
+
+double NavigatorCanvas::percentToZoom(int percent) const
+{
+    const QSizeF fit = currentFit();
+    if (fit.width() <= 0 || m_videoW <= 0)
+        return 0.0;
+    return std::log2(percent / 100.0 * m_videoW / fit.width());
 }
 
 QRectF NavigatorCanvas::frameRect() const
@@ -151,7 +181,7 @@ void NavigatorCanvas::sendZoom(double zoom)
 {
     m_zoom = qBound(kZoomMin, zoom, kZoomMax);
     m_controller->setProperty(QStringLiteral("video-zoom"), m_zoom);
-    emit zoomVisualChanged(int(qBound(25.0, 100.0 * std::pow(2.0, m_zoom), 800.0) + 0.5));
+    emit zoomVisualChanged(displayPercent());
     update();
 }
 
@@ -261,11 +291,12 @@ void NavigatorCanvas::wheelEvent(QWheelEvent *event)
         event->ignore();
         return;
     }
-    // 每档约 ±10%：百分比乘除 1.1 后换回指数域
-    double pct = 100.0 * std::pow(2.0, m_zoom);
+    // 每档约 ±10%：以 1:1 相对百分比为基准乘除，钳到 zoom 上下界对应百分比
+    double pct = displayPercent();
     pct *= std::pow(1.1, steps);
-    pct = qBound(25.0, pct, 800.0);
-    sendZoom(std::log2(pct / 100.0));
+    const int lo = zoomToPercent(kZoomMin), hi = zoomToPercent(kZoomMax);
+    pct = qBound(double(lo), pct, double(hi));
+    sendZoom(percentToZoom(int(pct + 0.5)));
 }
 
 // ---------------------------------------------------------------------------
@@ -310,14 +341,18 @@ NavigatorPanel::NavigatorPanel(MpvController *controller, QWidget *renderArea, Q
     rowLayout->addWidget(resetBtn);
     layout->addWidget(row);
 
-    // mpv 为唯一事实源：任何来源的缩放变化都经推送统一回刷两个控件
+    // mpv 为唯一事实源：任何来源的缩放变化都经推送统一回刷两个控件。
+    // 滑块按 zoom 线性刻度（currentZoom）；百分比框按 1:1 相对百分比，量程随
+    // 当前窗口几何动态取 zoom 上下界对应百分比（避免 100% 越界不可输入）
     connect(m_canvas, &NavigatorCanvas::zoomVisualChanged, this, [this](int percent) {
         {
             QSignalBlocker b(m_zoomSlider);
-            m_zoomSlider->setValue(int((std::log2(percent / 100.0) + 2.0) * 1000 + 0.5));
+            m_zoomSlider->setValue(int((m_canvas->currentZoom() + 2.0) * 1000 + 0.5));
         }
         {
             QSignalBlocker b(m_zoomSpin);
+            m_zoomSpin->setRange(m_canvas->zoomToPercent(kZoomMin),
+                                  m_canvas->zoomToPercent(kZoomMax));
             m_zoomSpin->setValue(percent);
         }
     });
@@ -332,13 +367,15 @@ NavigatorPanel::NavigatorPanel(MpvController *controller, QWidget *renderArea, Q
     m_zoomSlider->setEnabled(active);
     m_zoomSpin->setEnabled(active);
     if (active) {
-        const int percent = m_canvas->zoomPercent();
+        const int percent = m_canvas->displayPercent();
         {
             QSignalBlocker b(m_zoomSlider); // 防回环触发 requestZoom
-            m_zoomSlider->setValue(int((std::log2(percent / 100.0) + 2.0) * 1000 + 0.5));
+            m_zoomSlider->setValue(int((m_canvas->currentZoom() + 2.0) * 1000 + 0.5));
         }
         {
             QSignalBlocker b(m_zoomSpin);
+            m_zoomSpin->setRange(m_canvas->zoomToPercent(kZoomMin),
+                                  m_canvas->zoomToPercent(kZoomMax));
             m_zoomSpin->setValue(percent);
         }
     }
@@ -347,7 +384,7 @@ NavigatorPanel::NavigatorPanel(MpvController *controller, QWidget *renderArea, Q
         m_canvas->requestZoom(value / 1000.0 - 2.0);
     });
     connect(m_zoomSpin, &QSpinBox::valueChanged, this, [this](int percent) {
-        m_canvas->requestZoom(std::log2(percent / 100.0));
+        m_canvas->requestZoom(m_canvas->percentToZoom(percent));
     });
     connect(resetBtn, &QPushButton::clicked, m_canvas, &NavigatorCanvas::requestReset);
     connect(nativeBtn, &QPushButton::clicked, m_canvas, &NavigatorCanvas::requestNativeSize);

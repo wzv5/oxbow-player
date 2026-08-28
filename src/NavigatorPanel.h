@@ -14,11 +14,23 @@ public:
     explicit NavigatorCanvas(MpvController *controller, QWidget *renderArea,
                              QWidget *parent = nullptr);
 
-    void refresh() { update(); } // 渲染区域尺寸变化时由 MainWindow 驱动重绘
+    // 渲染区域尺寸变化时由 MainWindow 驱动重绘；百分比依赖窗口几何，随尺寸刷新
+    void refresh() {
+        if (isActive())
+            emit zoomVisualChanged(displayPercent());
+        update();
+    }
 
     // 按需创建播种后的初始状态查询（N3）：面板据此初始化控件可用性与显示值
     bool hasVideo() const { return isActive(); }
-    int zoomPercent() const;
+    // 当前 video-zoom（缩放事实源）；面板据其驱动滑块线性刻度
+    double currentZoom() const { return m_zoom; }
+    // 相对 1:1（源分辨率）的显示百分比：100 ⇔ 视频按源分辨率显示
+    int displayPercent() const;
+    // 给定 zoom 对应的 1:1 相对百分比（供量程上下界计算）
+    int zoomToPercent(double zoom) const;
+    // 1:1 相对百分比反解为 video-zoom（输入最终由 requestZoom 钳至上下界）
+    double percentToZoom(int percent) const;
 
     // 以下入口供面板控件调用；空闲态（无视频）下为空操作
     void requestZoom(double zoom);
@@ -26,7 +38,7 @@ public:
     void requestNativeSize(); // 按源分辨率 1:1 显示并居中
 
 signals:
-    // 缩放变化（含外部/属性推送来源），percent 为 25~800 的整数百分比
+    // 缩放变化（含外部/属性推送来源），percent 为相对 1:1（源分辨率）的整数百分比
     void zoomVisualChanged(int percent);
     // 有视频 ↔ 无视频，面板据此启用/灰置控件
     void activeChanged(bool active);
@@ -39,6 +51,9 @@ protected:
     void mouseReleaseEvent(QMouseEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
+
+    // 当前窗口的 contain-fit 尺寸（zoom=0 时 mpv 显示大小）
+    QSizeF currentFit() const;
 
 private:
     bool isActive() const { return m_videoW > 0 && m_videoH > 0; }
