@@ -97,3 +97,13 @@ if(MPV_BIN_DIR)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:mpvqtcore> "${MPVQT_SCRIPT_DIR}/mpvqtcore.dll"
         COMMAND ${WINDEPLOYQT_EXE} --no-translations --compiler-runtime --dir "${MPVQT_SCRIPT_DIR}" $<TARGET_FILE:mpvqtcore>)
 endif()
+
+# ---------------------------------------------------------------------------
+# 可选第三方运行时依赖：MediaInfo.dll
+# 动态加载（不链接），存在即随插件目录部署；缺失仅跳过拷贝不影响编译。
+# ---------------------------------------------------------------------------
+set(MEDIAINFO_DLL "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/mediainfo/MediaInfo.dll")
+if(MPV_BIN_DIR AND EXISTS "${MEDIAINFO_DLL}")
+    add_custom_command(TARGET mpvqtcore POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${MEDIAINFO_DLL}" "${MPVQT_SCRIPT_DIR}/MediaInfo.dll")
+endif()

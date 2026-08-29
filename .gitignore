@@ -17,3 +17,6 @@ ui_*.h
 # Windows 系统杂项
 Thumbs.db
 Desktop.ini
+
+# 第三方运行时依赖（不纳入版本控制，随发布包单独分发）
+thirdparty/mediainfo/MediaInfo.dll
