@@ -98,7 +98,8 @@ private:
     QString formatTrackText(const MpvController::TrackInfo &t) const;
     qint64 trackBitrate(const MpvController::TrackInfo &t) const;
     void rebuildTrackMenus();
-    void updateStreamButton();
+    // B18：流按钮与流子菜单状态统一由 m_tracks 派生
+    void updateStreamControls();
     void showStreamMenu();
     void switchToTrack(const MpvController::TrackInfo &t);
     void disableSubtitles();

@@ -6,7 +6,7 @@ namespace {
 
 enum ObservedProperty {
     PropTimePos = 1,
-    PropDuration,
+    PropDuration,        // duration（B18：双通道 observe 半程，留守）
     PropPause,
     PropVolume,
     PropPlaylistPos,
@@ -18,11 +18,8 @@ enum ObservedProperty {
     PropVideoPanY,
     PropWidth,
     PropHeight,
-    // 媒体元数据（N4，文件级）+ 文件格式（N14 文件属性单设）
-    PropMetadata,
-    PropFileFormat,      // file-format（N14 文件属性）
-    PropTrackList,       // track-list（N13，N14 后为唯一流源）
-    PropChapterList,     // chapter-list（N15）
+    // B18：metadata / file-format / track-list / chapter-list 四项文件级
+    // 属性不再 observe，改由 FILE_LOADED 主动读（见 handleFileLoaded）
 };
 
 QVariantList parsePlaylist(const mpv_node *node)
@@ -181,12 +178,21 @@ public:
             case MPV_EVENT_PROPERTY_CHANGE:
                 m_ctrl->handlePropertyChange(e);
                 break;
+            case MPV_EVENT_START_FILE:
+                m_ctrl->handleStartFile();
+                break;
+            case MPV_EVENT_FILE_LOADED:
+                m_ctrl->handleFileLoaded();
+                break;
             case MPV_EVENT_SHUTDOWN:
                 emit m_ctrl->mpvShutdown();
                 return;
             case MPV_EVENT_END_FILE: {
+                // B18：reason 原值透传——EOF 判定（B9 续播清除）与会话态
+                // 重置由消费者各自处理
                 auto *ef = static_cast<mpv_event_end_file *>(e->data);
-                emit m_ctrl->endFile(ef && ef->reason == MPV_END_FILE_REASON_EOF);
+                emit m_ctrl->endFile(ef ? int(ef->reason)
+                                        : int(MPV_END_FILE_REASON_ERROR));
                 break;
             }
             default:
@@ -220,18 +226,60 @@ MpvController::MpvController(mpv_handle *mpv, QObject *parent)
     mpv_observe_property(m_mpv, PropVideoPanY, "video-pan-y", MPV_FORMAT_DOUBLE);
     mpv_observe_property(m_mpv, PropWidth, "width", MPV_FORMAT_INT64);
     mpv_observe_property(m_mpv, PropHeight, "height", MPV_FORMAT_INT64);
-    // N4：媒体元数据（文件级标签）
-    mpv_observe_property(m_mpv, PropMetadata, "metadata", MPV_FORMAT_NODE);
-    // N14：文件格式（文件属性单设）
-    mpv_observe_property(m_mpv, PropFileFormat, "file-format", MPV_FORMAT_STRING);
-    mpv_observe_property(m_mpv, PropTrackList, "track-list", MPV_FORMAT_NODE);
-    // N15：章节列表
-    mpv_observe_property(m_mpv, PropChapterList, "chapter-list", MPV_FORMAT_NODE);
+    // B18：metadata / file-format / track-list / chapter-list 改 FILE_LOADED
+    // 主动读（见 handleFileLoaded），不再 observe
 }
 
 void MpvController::startEventThread()
 {
     m_eventThread->start();
+}
+
+// B18：START_FILE 时刷新当前文件缓存，作为后续 FILE_LOADED 主动读与
+// duration observe 推送的归属键（仅事件线程读写）
+void MpvController::handleStartFile()
+{
+    m_currentFile = propertyString(QStringLiteral("path"));
+}
+
+// B18：FILE_LOADED 时以缓存为归属键，当场主动读 5 项文件级属性并发射。
+// 与 observe 相比：首值即时（不等 flush）、规避"等值不重推"（连续两文件
+// 值相同也会重新发送）；duration 为双通道的即时读半程（见 PropDuration）
+void MpvController::handleFileLoaded()
+{
+    const QString path = m_currentFile;
+
+    double d = 0;
+    if (mpv_get_property(m_mpv, "duration", MPV_FORMAT_DOUBLE, &d) == 0 && d > 0)
+        emit durationChanged(path, d);
+    else
+        emit durationChanged(path, 0.0);
+
+    mpv_node node;
+    if (mpv_get_property(m_mpv, "metadata", MPV_FORMAT_NODE, &node) == 0) {
+        emit mediaMetadataChanged(path, parseNodeMap(&node));
+        mpv_free_node_contents(&node);
+    } else {
+        emit mediaMetadataChanged(path, QVariantMap());
+    }
+
+    char *fmt = mpv_get_property_string(m_mpv, "file-format");
+    emit fileFormatChanged(path, fmt ? QString::fromUtf8(fmt) : QString());
+    mpv_free(fmt);
+
+    if (mpv_get_property(m_mpv, "track-list", MPV_FORMAT_NODE, &node) == 0) {
+        emit tracksChanged(path, parseTrackList(&node));
+        mpv_free_node_contents(&node);
+    } else {
+        emit tracksChanged(path, QList<TrackInfo>());
+    }
+
+    if (mpv_get_property(m_mpv, "chapter-list", MPV_FORMAT_NODE, &node) == 0) {
+        emit chaptersChanged(path, parseChapterList(&node));
+        mpv_free_node_contents(&node);
+    } else {
+        emit chaptersChanged(path, QList<ChapterInfo>());
+    }
 }
 
 QSize MpvController::videoSize() const
@@ -324,10 +372,11 @@ void MpvController::handlePropertyChange(const mpv_event *event)
             emit timePosChanged(0.0);
         break;
     case PropDuration:
+        // B18：双通道的 observe 半程——payload 配当前文件缓存为归属键（方案 i）。
+        // NONE（卸载路径）不发射：卸载瞬间的 0.0 会被下游按"读取失败即清空"
+        // 处理，反而抹掉刚播完文件的档案；会话态清空由 END_FILE 重置负责
         if (prop->format == MPV_FORMAT_DOUBLE && prop->data)
-            emit durationChanged(*static_cast<double *>(prop->data));
-        else if (prop->format == MPV_FORMAT_NONE)
-            emit durationChanged(0.0);
+            emit durationChanged(m_currentFile, *static_cast<double *>(prop->data));
         break;
     case PropPause:
         if (prop->format == MPV_FORMAT_FLAG && prop->data)
@@ -382,30 +431,8 @@ void MpvController::handlePropertyChange(const mpv_event *event)
         emit videoSizeChanged(m_videoW, m_videoH);
         break;
     }
-    case PropMetadata:
-        if (prop->format == MPV_FORMAT_NODE && prop->data)
-            emit mediaMetadataChanged(parseNodeMap(static_cast<mpv_node *>(prop->data)));
-        else if (prop->format == MPV_FORMAT_NONE)
-            emit mediaMetadataChanged(QVariantMap());
-        break;
-    case PropFileFormat:
-        if (prop->format == MPV_FORMAT_STRING && prop->data)
-            emit fileFormatChanged(QString::fromUtf8(*static_cast<char **>(prop->data)));
-        else if (prop->format == MPV_FORMAT_NONE)
-            emit fileFormatChanged(QString());
-        break;
-    case PropTrackList:
-        if (prop->format == MPV_FORMAT_NODE && prop->data)
-            emit tracksChanged(parseTrackList(static_cast<mpv_node *>(prop->data)));
-        else if (prop->format == MPV_FORMAT_NONE)
-            emit tracksChanged(QList<TrackInfo>());
-        break;
-    case PropChapterList:
-        if (prop->format == MPV_FORMAT_NODE && prop->data)
-            emit chaptersChanged(parseChapterList(static_cast<mpv_node *>(prop->data)));
-        else if (prop->format == MPV_FORMAT_NONE)
-            emit chaptersChanged(QList<ChapterInfo>());
-        break;
+    // B18：PropMetadata / PropFileFormat / PropTrackList / PropChapterList
+    // 分支已随 observe 移除，改由 handleFileLoaded 主动读
     default:
         break;
     }

@@ -261,17 +261,32 @@ void PlaylistWidget::repaintAllLists()
     }
 }
 
+// B18：读取失败（seconds<=0）即清空该条目时长——与 metadata / file-format /
+// track-list / chapter-list 统一"读取失败即清空"语义；卸载路径不发 0.0
+// （PropDuration 跳过 NONE），档案不会因此被误清
 void PlaylistWidget::applyDuration(const QString &rawPath, double seconds)
 {
-    if (rawPath.isEmpty() || !(seconds > 0))
+    if (rawPath.isEmpty())
         return;
-    materialize(rawPath).duration = seconds;
+    if (seconds > 0)
+        materialize(rawPath).duration = seconds;
+    else
+        materialize(rawPath).duration.reset();
     repaintAllLists();
 }
 
 void PlaylistWidget::applyMediaMetadata(const QString &rawPath, const QVariantMap &tags)
 {
     PlaylistItem &item = materialize(rawPath);
+    // B18：空标签表即"该文件无媒体标签"，清空既有标签字段（与其余 4 项统一）
+    if (tags.isEmpty()) {
+        item.title.reset();
+        item.album.reset();
+        item.artist.reset();
+        item.releaseDate.reset();
+        repaintAllLists();
+        return;
+    }
     const QString title = tagValue(tags, {"title"});
     const QString album = tagValue(tags, {"album"});
     const QString artist = tagValue(tags, {"artist", "performer"});

@@ -421,7 +421,7 @@ void MainWindow::connectController()
         if (pt >= 0 && m_playlistPos >= 0 && v > 0.0)
             m_playlist->recordPlayback(pt, m_playlistPos, v);
     });
-    connect(m_controller, &MpvController::durationChanged, this, [this](double v) {
+    connect(m_controller, &MpvController::durationChanged, this, [this](const QString &, double v) {
         m_duration = v;
         updateTimeDisplay();
         if (v <= 0.0) {
@@ -510,9 +510,27 @@ void MainWindow::connectController()
     // 手动停止/四步式等 reason≠eof 不触发。判定点即本事件，零事件顺序依赖；
     // 中间条目接续时清除结果旋即被 playlistPosChanged 的换条目起记覆盖，无副作用。
     // m_playlistPos>=0 守卫排除启动期与已停止态
-    connect(m_controller, &MpvController::endFile, this, [this](bool eof) {
-        if (eof && m_playlistPos >= 0)
+    connect(m_controller, &MpvController::endFile, this, [this](int reason) {
+        if (reason == MPV_END_FILE_REASON_EOF && m_playlistPos >= 0)
             m_playlist->clearResumeProgress(m_playlist->playingTabIndex());
+    });
+    // B18：文件卸载即重置会话态（所有 reason 无条件）——tracks / marks /
+    // duration 绑定当前文件，卸载即失效；时序与现行 observe NONE 推送一致
+    // （卸载瞬间清空，新文件 FILE_LOADED 回填），切换间隙与停止态均无陈旧残留。
+    // 只动会话态，不触碰播放列表仓（档案冻结语义见规格 2.7.2）
+    connect(m_controller, &MpvController::endFile, this, [this](int) {
+        m_timePos = 0.0;
+        m_duration = 0.0;
+        updateTimeDisplay();
+        {
+            // 与 durationChanged(0.0) 旧复位分支同款：不触发用户感知的 moved 信号
+            QSignalBlocker blocker(m_progressSlider);
+            m_progressSlider->setValue(0);
+        }
+        m_tracks.clear();
+        updateStreamControls();
+        m_marks->setChapters({});
+        updateChapterSlider();
     });
     // 列表播完或停止后 mpv 进入空闲，复位播放按钮与进度条（C1）
     connect(m_controller, &MpvController::idleActive, this, [this](bool active) {
@@ -544,78 +562,49 @@ void MainWindow::connectController()
         m_controller->command({QStringLiteral("stop")});
     });
     // N4：元数据回填路由——按"当前正播路径"定位全局仓条目（推送数据覆写）。
-    // 路径经 normalizePathForMatch 规范化，与条目存储键同形，防止写入幻影条目
+    // 路径经 normalizePathForMatch 规范化，与条目存储键同形，防止写入幻影条目。
+    // B18：0 秒（FILE_LOADED 读不到）同其余 4 项一样走"读取失败即清空"，
+    // 故不在此拦截；卸载路径不发 0.0（PropDuration 跳过 NONE），档案不受影响
     connect(m_controller, &MpvController::durationChanged, m_playlist,
-            [this](double sec) {
-                if (sec > 0)
-                    // mpv 来源路径：本地 cleanPath+原生分隔符，网络/流保持原样（B15）
-                    m_playlist->applyDuration(
-                        Util::resolveLocalPath(
-                            m_controller->propertyString(QStringLiteral("path"))),
-                        sec);
+            [this](const QString &p, double sec) {
+                // mpv 来源路径：本地 cleanPath+原生分隔符，网络/流保持原样（B15）
+                m_playlist->applyDuration(Util::resolveLocalPath(p), sec);
             });
-    // N4：元数据/流参数回填路由——按"当前正播路径"定位全局仓条目（推送覆写）。
-    // B13：文件卸载后 path 属性不可用返回空，此时推送无处归属，直接丢弃；
-    // 放行会经 materialize 以 "" 键产生垃圾仓条目。旧条目档案就此冻结在
-    // 最后播放态（属性对话框仅在打开瞬间填充，停止态仍展示上次已知值）。
-    // mpv 来源路径经 resolveLocalPath 加工为显示路径（B15），仓键由下游归一
+    // N4：元数据/流参数回填路由——按信号首参（归属键）定位全局仓条目（推送覆写）。
+    // B18：归属键来自控制器缓存（START_FILE 记录），与载荷同一时刻采样，
+    // 无需也不能现读 path；空值由 applyXxx 统一清空该条目的对应字段。
+    // 旧条目档案就此冻结在最后播放态（属性对话框仅在打开瞬间填充，停止态
+    // 仍展示上次已知值）。mpv 来源路径经 resolveLocalPath 加工为显示路径
+    // （B15），仓键由下游归一
     connect(m_controller, &MpvController::mediaMetadataChanged, m_playlist,
-            [this](const QVariantMap &tags) {
-                const QString path = m_controller->propertyString(QStringLiteral("path"));
-                if (path.isEmpty())
-                    return;
-                m_playlist->applyMediaMetadata(Util::resolveLocalPath(path), tags);
+            [this](const QString &p, const QVariantMap &tags) {
+                m_playlist->applyMediaMetadata(Util::resolveLocalPath(p), tags);
             });
     // N14：文件格式（文件属性单设）
     connect(m_controller, &MpvController::fileFormatChanged, m_playlist,
-            [this](const QString &format) {
-                const QString path = m_controller->propertyString(QStringLiteral("path"));
-                if (path.isEmpty())
-                    return;
-                m_playlist->applyFileFormat(Util::resolveLocalPath(path), format);
+            [this](const QString &p, const QString &format) {
+                m_playlist->applyFileFormat(Util::resolveLocalPath(p), format);
             });
     // N13/N14：轨道列表驱动菜单与按钮状态 + 仓回填（全量流）
     connect(m_controller, &MpvController::tracksChanged, this,
-            [this](const QList<MpvController::TrackInfo> &tracks) {
+            [this](const QString &p, const QList<MpvController::TrackInfo> &tracks) {
                 m_tracks = tracks;
-                updateStreamButton();
-                // 子菜单 enabled
-                int v = 0, a = 0, s = 0;
-                for (const auto &t : tracks) {
-                    if (t.type == QLatin1String("video"))
-                        ++v;
-                    else if (t.type == QLatin1String("audio"))
-                        ++a;
-                    else if (t.type == QLatin1String("sub"))
-                        ++s;
-                }
-                if (m_videoStreamMenu)
-                    m_videoStreamMenu->setEnabled(v > 0);
-                if (m_audioStreamMenu)
-                    m_audioStreamMenu->setEnabled(a > 0);
-                if (m_subStreamMenu)
-                    m_subStreamMenu->setEnabled(s > 0);
-                // N14：按当前 path 回填仓（B13 空守卫）
-                const QString path = m_controller->propertyString(QStringLiteral("path"));
-                if (path.isEmpty())
-                    return;
-                m_playlist->applyTracks(Util::resolveLocalPath(path), tracks);
+                updateStreamControls();
+                // N14：按归属键回填仓（B18：p 为 FILE_LOADED 主动读时缓存，无错配窗口）
+                m_playlist->applyTracks(Util::resolveLocalPath(p), tracks);
             });
     // N15：章节
     connect(m_controller, &MpvController::chaptersChanged, this,
-            [this](const QList<MpvController::ChapterInfo> &list) {
+            [this](const QString &, const QList<MpvController::ChapterInfo> &list) {
                 // 去重+排序在聚合器内完成（严格 == 保留首项，规则单一持有）
                 m_marks->setChapters(list);
                 updateChapterSlider();
                 // 菜单勾选：timePosChanged 常驻驱动（§3.7），重建在 aboutToShow
             });
-    // N15.1：章节仓回填（B13 空守卫同 tracks：卸载后 path 不可用，推送无处归属即丢弃）
+    // N15.1：章节仓回填（归属键同 tracks：B18 缓存采样，无错配窗口）
     connect(m_controller, &MpvController::chaptersChanged, m_playlist,
-            [this](const QList<MpvController::ChapterInfo> &chapters) {
-                const QString path = m_controller->propertyString(QStringLiteral("path"));
-                if (path.isEmpty())
-                    return;
-                m_playlist->applyChapters(Util::resolveLocalPath(path), chapters);
+            [this](const QString &p, const QList<MpvController::ChapterInfo> &chapters) {
+                m_playlist->applyChapters(Util::resolveLocalPath(p), chapters);
             });
     connect(m_bookmarkMgr, &BookmarkManager::changed, this, [this] {
         m_marks->invalidate();
@@ -627,7 +616,7 @@ void MainWindow::connectController()
     // duration 变更影响滑条比例与添加书签可用态（全局快捷键 P 不依赖菜单展开）。
     // 置脏：duration 是文件装载完成信号之一（path 已就位），保证切换后
     // 按新文件惰性重查一次
-    connect(m_controller, &MpvController::durationChanged, this, [this](double) {
+    connect(m_controller, &MpvController::durationChanged, this, [this](const QString &, double) {
         m_marks->invalidate();
         updateChapterSlider();
         updateChapterMenuState();
@@ -1826,7 +1815,9 @@ void MainWindow::rebuildTrackMenus()
     rebuild(m_subStreamMenu, QStringLiteral("sub"));
 }
 
-void MainWindow::updateStreamButton()
+// B18：流按钮与三个流子菜单的状态统一由 m_tracks 派生（tracksChanged 与
+// END_FILE 会话态重置共用；后者清空 m_tracks 即按钮隐藏、菜单全禁用）
+void MainWindow::updateStreamControls()
 {
     int v = 0, a = 0, s = 0;
     for (const auto &t : m_tracks) {
@@ -1842,6 +1833,12 @@ void MainWindow::updateStreamButton()
         m_streamButton->setVisible(visible);
         m_streamButton->setEnabled(visible);
     }
+    if (m_videoStreamMenu)
+        m_videoStreamMenu->setEnabled(v > 0);
+    if (m_audioStreamMenu)
+        m_audioStreamMenu->setEnabled(a > 0);
+    if (m_subStreamMenu)
+        m_subStreamMenu->setEnabled(s > 0);
 }
 
 void MainWindow::showStreamMenu()
