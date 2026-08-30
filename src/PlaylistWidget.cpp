@@ -284,7 +284,6 @@ void PlaylistWidget::applyMediaMetadata(const QString &rawPath, const QVariantMa
         item.album.reset();
         item.artist.reset();
         item.releaseDate.reset();
-        repaintAllLists();
         return;
     }
     const QString title = tagValue(tags, {"title"});
@@ -300,7 +299,6 @@ void PlaylistWidget::applyMediaMetadata(const QString &rawPath, const QVariantMa
     const QDateTime rd = parseReleaseDate(date);
     if (rd.isValid())
         item.releaseDate = rd;
-    repaintAllLists();
 }
 
 void PlaylistWidget::applyFileFormat(const QString &rawPath, const QString &format)
@@ -312,7 +310,6 @@ void PlaylistWidget::applyFileFormat(const QString &rawPath, const QString &form
         item.fileFormat.reset();
     else
         item.fileFormat = format;
-    repaintAllLists();
 }
 
 void PlaylistWidget::applyTracks(const QString &rawPath, const QList<MpvController::TrackInfo> &tracks)
@@ -325,7 +322,6 @@ void PlaylistWidget::applyTracks(const QString &rawPath, const QList<MpvControll
     std::sort(sorted.begin(), sorted.end(),
               [](const MpvController::TrackInfo &a, const MpvController::TrackInfo &b) { return a.id < b.id; });
     item.tracks = sorted;
-    repaintAllLists();
 }
 
 void PlaylistWidget::applyChapters(const QString &rawPath, const QList<MpvController::ChapterInfo> &chapters)
