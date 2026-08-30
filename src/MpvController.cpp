@@ -4,8 +4,6 @@
 
 namespace {
 
-const QEvent::Type WakeupEventType = QEvent::Type(QEvent::registerEventType());
-
 enum ObservedProperty {
     PropTimePos = 1,
     PropDuration,
@@ -165,10 +163,49 @@ QList<MpvController::ChapterInfo> parseChapterList(const mpv_node *node)
 
 } // namespace
 
+// B17：事件专用线程——阻塞 mpv_wait_event(-1)，事件就地分派。
+// 生命周期由 SHUTDOWN 收口：收到 MPV_EVENT_SHUTDOWN 后 emit 并退出，
+// 随后入口函数返回、mpv 销毁 client handle，插件自身从不销毁 handle，
+// 故无需 stop 标志与析构清理。线程启动时机见 startEventThread()。
+class MpvController::EventThread : public QThread
+{
+public:
+    EventThread(MpvController *ctrl, mpv_handle *mpv)
+        : m_ctrl(ctrl), m_mpv(mpv) {}
+
+    void run() override
+    {
+        for (;;) {
+            mpv_event *e = mpv_wait_event(m_mpv, -1);
+            switch (e->event_id) {
+            case MPV_EVENT_PROPERTY_CHANGE:
+                m_ctrl->handlePropertyChange(e);
+                break;
+            case MPV_EVENT_SHUTDOWN:
+                emit m_ctrl->mpvShutdown();
+                return;
+            case MPV_EVENT_END_FILE: {
+                auto *ef = static_cast<mpv_event_end_file *>(e->data);
+                emit m_ctrl->endFile(ef && ef->reason == MPV_END_FILE_REASON_EOF);
+                break;
+            }
+            default:
+                break;
+            }
+        }
+    }
+
+private:
+    MpvController *m_ctrl;
+    mpv_handle *m_mpv;
+};
+
 MpvController::MpvController(mpv_handle *mpv, QObject *parent)
     : QObject(parent), m_mpv(mpv)
 {
-    mpv_set_wakeup_callback(m_mpv, &MpvController::wakeupCallback, this);
+    // 事件线程只创建不启动：启动时机由宿主在嵌入属性就绪后经
+    // startEventThread() 控制（见该函数注释的启动门控说明）
+    m_eventThread = new EventThread(this, m_mpv);
 
     // 观察属性后 mpv 会立即推送一次当前值，无需手动读取初始状态
     mpv_observe_property(m_mpv, PropTimePos, "time-pos", MPV_FORMAT_DOUBLE);
@@ -192,10 +229,17 @@ MpvController::MpvController(mpv_handle *mpv, QObject *parent)
     mpv_observe_property(m_mpv, PropChapterList, "chapter-list", MPV_FORMAT_NODE);
 }
 
-MpvController::~MpvController()
+void MpvController::startEventThread()
 {
-    if (m_mpv)
-        mpv_set_wakeup_callback(m_mpv, nullptr, nullptr);
+    m_eventThread->start();
+}
+
+QSize MpvController::videoSize() const
+{
+    int w = 0, h = 0;
+    mpv_get_property(m_mpv, "width", MPV_FORMAT_INT64, &w);
+    mpv_get_property(m_mpv, "height", MPV_FORMAT_INT64, &h);
+    return QSize(w, h);
 }
 
 void MpvController::command(const QString &cmd)
@@ -263,48 +307,6 @@ bool MpvController::propertyFlag(const QString &name, bool fallback)
     if (mpv_get_property(m_mpv, name.toUtf8().constData(), MPV_FORMAT_FLAG, &v) < 0)
         return fallback;
     return v != 0;
-}
-
-void MpvController::wakeupCallback(void *ctx)
-{
-    // 该回调由 mpv 内部线程触发，禁止在其中调用 mpv 函数；
-    // 仅向 GUI 线程投递事件，由 customEvent 中 drain 事件队列。
-    auto *self = static_cast<MpvController *>(ctx);
-    QCoreApplication::postEvent(self, new QEvent(WakeupEventType));
-}
-
-void MpvController::customEvent(QEvent *event)
-{
-    if (event->type() == WakeupEventType) {
-        drainEvents();
-        return;
-    }
-    QObject::customEvent(event);
-}
-
-void MpvController::drainEvents()
-{
-    for (;;) {
-        mpv_event *event = mpv_wait_event(m_mpv, 0);
-        if (event->event_id == MPV_EVENT_NONE)
-            break;
-        switch (event->event_id) {
-        case MPV_EVENT_PROPERTY_CHANGE:
-            handlePropertyChange(event);
-            break;
-        case MPV_EVENT_SHUTDOWN:
-            emit mpvShutdown();
-            break;
-        case MPV_EVENT_END_FILE: {
-            // B9：读卸载原因供续播记忆清除判定（EOF=自然播完）
-            auto *ef = static_cast<mpv_event_end_file *>(event->data);
-            emit endFile(ef && ef->reason == MPV_END_FILE_REASON_EOF);
-            break;
-        }
-        default:
-            break;
-        }
-    }
 }
 
 void MpvController::handlePropertyChange(const mpv_event *event)

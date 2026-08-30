@@ -11,7 +11,6 @@ class MpvController : public QObject
     Q_OBJECT
 public:
     explicit MpvController(mpv_handle *mpv, QObject *parent = nullptr);
-    ~MpvController() override;
 
     // 发送命令：单行命令字符串，或参数数组（推荐用于含路径的命令，避免转义问题）
     void command(const QString &cmd);
@@ -83,18 +82,22 @@ signals:
     void mpvShutdown();
 
 public:
-    // 当前视频尺寸缓存（N3）：width/height 属性只在变化时推送，
-    // 按需创建的导航器画布错过首推，构造时经此播种初始值
-    QSize videoSize() const { return QSize(m_videoW, m_videoH); }
+    // 当前视频尺寸（N3）：当场重读 width/height 属性，不走缓存；
+    // 返回 QSize(0,0) 表示无视频
+    QSize videoSize() const;
 
-protected:
-    void customEvent(QEvent *event) override;
+    // B17：启动事件线程（阻塞 mpv_wait_event(-1)）。必须在 wid 等嵌入相关
+    // 属性设置完成后调用：首次 mpv_wait_event 会解除 mpv 核心的启动门控
+    // （fuzzy_initialized），核心随即为命令行文件初始化 vo——若此时 wid
+    // 尚未生效，mpv 会先自建窗口再重建嵌入，产生窗口闪烁
+    void startEventThread();
 
 private:
-    static void wakeupCallback(void *ctx);
-    void drainEvents();
+    class EventThread; // 事件专用线程（定义见 .cpp）
+
     void handlePropertyChange(const mpv_event *event);
 
     mpv_handle *m_mpv; // 由 mpv 拥有，插件不销毁
     int m_videoW = 0, m_videoH = 0; // width/height 两属性合并缓存（N1）
+    EventThread *m_eventThread = nullptr; // 随进程存活，不经 delete（与宿主同生命周期）
 };

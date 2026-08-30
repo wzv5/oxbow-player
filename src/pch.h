@@ -73,6 +73,7 @@
 #include <QToolButton>
 #include <QToolTip>
 #include <QTreeWidget>
+#include <QThread>
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QVariantList>
