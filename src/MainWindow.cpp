@@ -570,28 +570,15 @@ void MainWindow::connectController()
                 // mpv 来源路径：本地 cleanPath+原生分隔符，网络/流保持原样（B15）
                 m_playlist->applyDuration(Util::resolveLocalPath(p), sec);
             });
-    // N4：元数据/流参数回填路由——按信号首参（归属键）定位全局仓条目（推送覆写）。
-    // B18：归属键来自控制器缓存（START_FILE 记录），与载荷同一时刻采样，
-    // 无需也不能现读 path；空值由 applyXxx 统一清空该条目的对应字段。
-    // 旧条目档案就此冻结在最后播放态（属性对话框仅在打开瞬间填充，停止态
-    // 仍展示上次已知值）。mpv 来源路径经 resolveLocalPath 加工为显示路径
-    // （B15），仓键由下游归一
-    connect(m_controller, &MpvController::mediaMetadataChanged, m_playlist,
-            [this](const QString &p, const QVariantMap &tags) {
-                m_playlist->applyMediaMetadata(Util::resolveLocalPath(p), tags);
-            });
-    // N14：文件格式（文件属性单设）
-    connect(m_controller, &MpvController::fileFormatChanged, m_playlist,
-            [this](const QString &p, const QString &format) {
-                m_playlist->applyFileFormat(Util::resolveLocalPath(p), format);
-            });
-    // N13/N14：轨道列表驱动菜单与按钮状态 + 仓回填（全量流）
+    // N18：其余 mpv 元数据（media-metadata / file-format / tracks / chapters）
+    // 不再回填 PlaylistWidget——属性对话框改读 MediaInfoHelper 缓存，
+    // 轨道数据由 MainWindow::m_tracks 持有，章节由 MarkAggregator 持有。
+    // MpvController 端信号保留，仍服务上述消费者。
+    // N13/N14：轨道列表驱动菜单与按钮状态
     connect(m_controller, &MpvController::tracksChanged, this,
-            [this](const QString &p, const QList<MpvController::TrackInfo> &tracks) {
+            [this](const QString &, const QList<MpvController::TrackInfo> &tracks) {
                 m_tracks = tracks;
                 updateStreamControls();
-                // N14：按归属键回填仓（B18：p 为 FILE_LOADED 主动读时缓存，无错配窗口）
-                m_playlist->applyTracks(Util::resolveLocalPath(p), tracks);
             });
     // N15：章节
     connect(m_controller, &MpvController::chaptersChanged, this,
@@ -600,11 +587,6 @@ void MainWindow::connectController()
                 m_marks->setChapters(list);
                 updateChapterSlider();
                 // 菜单勾选：timePosChanged 常驻驱动（§3.7），重建在 aboutToShow
-            });
-    // N15.1：章节仓回填（归属键同 tracks：B18 缓存采样，无错配窗口）
-    connect(m_controller, &MpvController::chaptersChanged, m_playlist,
-            [this](const QString &p, const QList<MpvController::ChapterInfo> &chapters) {
-                m_playlist->applyChapters(Util::resolveLocalPath(p), chapters);
             });
     connect(m_bookmarkMgr, &BookmarkManager::changed, this, [this] {
         m_marks->invalidate();

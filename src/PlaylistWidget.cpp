@@ -4,49 +4,11 @@
 
 #include "Constants.h"
 #include "ListSettingsDialog.h"
+#include "MediaInfoHelper.h"
 #include "MpvController.h"
 #include "PlaylistDelegate.h"
 #include "StaticProvider.h"
 #include "Util.h"
-
-namespace {
-
-// 发行时间解析：ISO 8601 优先，兼容常见格式；全败返回空
-QDateTime parseReleaseDate(const QString &s)
-{
-    if (s.isEmpty())
-        return {};
-    const QDateTime dt = QDateTime::fromString(s, Qt::ISODate);
-    if (dt.isValid())
-        return dt;
-    const QDate d = QDate::fromString(s.left(10), Qt::ISODate);
-    if (d.isValid())
-        return {d.startOfDay()};
-    const QStringList formats{
-        QStringLiteral("yyyy-MM-dd"), QStringLiteral("yyyy/MM/dd"),
-        QStringLiteral("yyyy-MM"), QStringLiteral("yyyy"),
-    };
-    for (const QString &fmt : formats) {
-        const QDate d2 = QDate::fromString(s.left(fmt.length()), fmt);
-        if (d2.isValid())
-            return {d2.startOfDay()};
-    }
-    return {};
-}
-
-// 元数据标签不敏感取值：mpv 的键大小写因封装格式而异
-QString tagValue(const QVariantMap &tags, std::initializer_list<const char *> names)
-{
-    for (const char *want : names) {
-        for (auto it = tags.constBegin(); it != tags.constEnd(); ++it) {
-            if (it.key().compare(QLatin1String(want), Qt::CaseInsensitive) == 0)
-                return it.value().toString();
-        }
-    }
-    return {};
-}
-
-} // namespace
 
 PlaylistWidget::PlaylistWidget(const QString &configFile, QWidget *parent)
     : QTabWidget(parent), m_configFile(configFile)
@@ -126,12 +88,16 @@ PlaylistItem &PlaylistWidget::materialize(const QString &path)
         return it.value();
 
     PlaylistItem item;
-    const QFileInfo fi(path);
-    item.fileSize = qMax<qint64>(0, fi.size());
-    item.created = fi.birthTime();
-    item.modified = fi.lastModified();
-    item.icon = fi.exists() ? m_iconProvider.icon(fi) : m_iconProvider.icon(QFileIconProvider::File);
     item.path = path;
+    const QFileInfo fi(path);
+    if (Util::isNetworkStreamPath(path) || !fi.exists()) {
+        item.icon = m_iconProvider.icon(QFileIconProvider::File);
+    } else {
+        item.fileSize = qMax<qint64>(0, fi.size());
+        item.created = fi.birthTime();
+        item.modified = fi.lastModified();
+        item.icon = m_iconProvider.icon(fi);
+    }
 
     return m_meta.insert(key, item).value();
 }
@@ -261,9 +227,9 @@ void PlaylistWidget::repaintAllLists()
     }
 }
 
-// B18：读取失败（seconds<=0）即清空该条目时长——与 metadata / file-format /
-// track-list / chapter-list 统一"读取失败即清空"语义；卸载路径不发 0.0
-// （PropDuration 跳过 NONE），档案不会因此被误清
+// B18：读取失败（seconds<=0）即清空该条目时长——N18 后本函数是 PlaylistItem
+// 唯一保留的 mpv 写入点；卸载路径不发 0.0（PropDuration 跳过 NONE），
+// 档案不会因此被误清
 void PlaylistWidget::applyDuration(const QString &rawPath, double seconds)
 {
     if (rawPath.isEmpty())
@@ -275,63 +241,30 @@ void PlaylistWidget::applyDuration(const QString &rawPath, double seconds)
     repaintAllLists();
 }
 
-void PlaylistWidget::applyMediaMetadata(const QString &rawPath, const QVariantMap &tags)
+// N18：MediaInfo 缓存惰性查询。dll 不可用返 nullptr；命中即返回，
+// 未命中则同步 parse 一次写入缓存（含解析失败写空 Data 防重解析同坏文件）。
+// 调用点仅限排序比较器与 showPropertiesDialog 入口，禁止进入绘制路径
+const MediaInfoHelper::Data *PlaylistWidget::mediaInfoOf(const QString &path)
 {
-    PlaylistItem &item = materialize(rawPath);
-    // B18：空标签表即"该文件无媒体标签"，清空既有标签字段（与其余 4 项统一）
-    if (tags.isEmpty()) {
-        item.title.reset();
-        item.album.reset();
-        item.artist.reset();
-        item.releaseDate.reset();
-        return;
+    if (!MediaInfoHelper::available())
+        return nullptr;
+    const QString key = Util::normalizePathForMatch(path);
+    auto it = m_mediaInfo.find(key);
+    if (it == m_mediaInfo.end()) {
+        MediaInfoHelper::Data parsed = MediaInfoHelper::parse(path);
+        // N18：未播放文件首次解析时把 MediaInfo 的总时长回填到 PlaylistItem，
+        // 让列表"总时长"列立即显示（不必等 mpv 播过）；mpv 后续写入优先
+        PlaylistItem &item = materialize(path);
+        bool filledDuration = false;
+        if (parsed.duration.has_value() && !item.duration.has_value()) {
+            item.duration = *parsed.duration;
+            filledDuration = true;
+        }
+        it = m_mediaInfo.insert(key, parsed);
+        if (filledDuration)
+            repaintAllLists();
     }
-    const QString title = tagValue(tags, {"title"});
-    const QString album = tagValue(tags, {"album"});
-    const QString artist = tagValue(tags, {"artist", "performer"});
-    const QString date = tagValue(tags, {"date", "original_date", "year"});
-    if (!title.isEmpty())
-        item.title = title;
-    if (!album.isEmpty())
-        item.album = album;
-    if (!artist.isEmpty())
-        item.artist = artist;
-    const QDateTime rd = parseReleaseDate(date);
-    if (rd.isValid())
-        item.releaseDate = rd;
-}
-
-void PlaylistWidget::applyFileFormat(const QString &rawPath, const QString &format)
-{
-    if (rawPath.isEmpty())
-        return;
-    PlaylistItem &item = materialize(rawPath);
-    if (format.isEmpty())
-        item.fileFormat.reset();
-    else
-        item.fileFormat = format;
-}
-
-void PlaylistWidget::applyTracks(const QString &rawPath, const QList<MpvController::TrackInfo> &tracks)
-{
-    if (rawPath.isEmpty())
-        return;
-    PlaylistItem &item = materialize(rawPath);
-    // N14 快照语义：全量覆盖，按 id 升序存；空即清空
-    QList<MpvController::TrackInfo> sorted = tracks;
-    std::sort(sorted.begin(), sorted.end(),
-              [](const MpvController::TrackInfo &a, const MpvController::TrackInfo &b) { return a.id < b.id; });
-    item.tracks = sorted;
-}
-
-void PlaylistWidget::applyChapters(const QString &rawPath, const QList<MpvController::ChapterInfo> &chapters)
-{
-    if (rawPath.isEmpty())
-        return;
-    PlaylistItem &item = materialize(rawPath);
-    // N15.1 快照语义：原样覆盖（空即清空，不查重）。章节不参与列表行
-    // 绘制（仅属性对话框消费，打开时实时构建），无需 repaintAllLists
-    item.chapters = chapters;
+    return &it.value();
 }
 
 // ——续播记忆三步维护法（N4）——
@@ -678,18 +611,20 @@ void PlaylistWidget::sortListItems(QListWidget *list, SortKey key, bool ascendin
             return flip(a.fileSize < b.fileSize ? -1 : (b.fileSize < a.fileSize ? 1 : 0));
         case SortKey::Duration:
         case SortKey::ReleaseDate: {
-            // 未知值恒归末尾组、组内原序、不受方向影响
-            const bool ha = (key == SortKey::Duration) ? a.duration.has_value()
-                                                       : a.releaseDate.has_value();
-            const bool hb = (key == SortKey::Duration) ? b.duration.has_value()
-                                                       : b.releaseDate.has_value();
+            // N18：改读 MediaInfo 缓存；dll 缺席/未读到按"未知"处理
+            const MediaInfoHelper::Data *ma = mediaInfoOf(pa);
+            const MediaInfoHelper::Data *mb = mediaInfoOf(pb);
+            const bool ha = ma && (key == SortKey::Duration ? ma->duration.has_value()
+                                                            : ma->recordedDate.isValid());
+            const bool hb = mb && (key == SortKey::Duration ? mb->duration.has_value()
+                                                            : mb->recordedDate.isValid());
             if (!ha || !hb)
                 return ha && !hb; // 已知在前、未知在后；双未知视为等键
             if (key == SortKey::Duration) {
-                return flip(*a.duration < *b.duration ? -1 : (*b.duration < *a.duration ? 1 : 0));
+                return flip(*ma->duration < *mb->duration ? -1 : (*mb->duration < *ma->duration ? 1 : 0));
             }
-            return flip(*a.releaseDate < *b.releaseDate ? -1
-                                                        : (*b.releaseDate < *a.releaseDate ? 1 : 0));
+            return flip(ma->recordedDate < mb->recordedDate ? -1
+                    : (mb->recordedDate < ma->recordedDate ? 1 : 0));
         }
         }
         return false;
@@ -883,7 +818,13 @@ void PlaylistWidget::showPropertiesDialog(const QString &path)
 {
     if (path.isEmpty())
         return;
+    // N18：N4 阶段 m_meta 仅剩文件系统固有属性 + duration；本对话框
+    // 文件系统四行（路径 / 大小 / 创建 / 修改）读 PlaylistItem，
+    // 其余媒体字段（格式 / 总时长 / 视频 / 音频 / 字幕 / 标签 / 章节）
+    // 改读 MediaInfo 缓存——本函数首部即调 mediaInfoOf 触发惰性解析。
+    // 单 Get 5s 超时由 MediaInfoHelper 守卫；二次访问走缓存
     const PlaylistItem &item = materialize(path);
+    const MediaInfoHelper::Data *mi = mediaInfoOf(path);
 
     auto timeText = [](const QDateTime &dt) {
         return dt.isValid() ? dt.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")) : QString();
@@ -936,29 +877,7 @@ void PlaylistWidget::showPropertiesDialog(const QString &path)
             appendRow(r);
     };
 
-    // 常规组（文件级）
-    QList<Row> general;
-    general.append({tr("文件路径"), item.path.isEmpty() ? path : item.path});
-    if (item.fileFormat)
-        general.append({tr("文件格式"), *item.fileFormat});
-    if (item.fileSize > 0)
-        general.append({tr("文件大小"), Util::formatFileSize(item.fileSize)});
-    if (timeText(item.created).size())
-        general.append({tr("创建时间"), timeText(item.created)});
-    if (timeText(item.modified).size())
-        general.append({tr("修改时间"), timeText(item.modified)});
-    if (item.duration)
-        general.append({tr("总时长"), QStringLiteral("%1:%2:%3")
-                                          .arg(qint64(*item.duration) / 3600)
-                                          .arg((qint64(*item.duration) % 3600) / 60, 2, 10, QLatin1Char('0'))
-                                          .arg(qint64(*item.duration) % 60, 2, 10, QLatin1Char('0'))});
-
-    // N14 辅助：码率回退 + 格式化（空格版）
-    auto trackBitrate = [](const MpvController::TrackInfo &t) -> qint64 {
-        if (t.demuxBitrate > 0)
-            return t.demuxBitrate;
-        return t.metadataBPS;
-    };
+    // ——N18 格式化辅助：空格版（与旧版同形态，UI 不变）——
     auto formatKHzSpaced = [](int sr) -> QString {
         QString s = QString::number(sr / 1000.0, 'f', 1);
         if (s.contains(QLatin1Char('.'))) {
@@ -982,136 +901,145 @@ void PlaylistWidget::showPropertiesDialog(const QString &path)
     auto formatKbpsSpaced = [](qint64 bps) -> QString {
         return QString::number((bps + 500) / 1000) + QStringLiteral(" kbps");
     };
-    auto buildVideoRows = [&](const MpvController::TrackInfo &t) -> QList<Row> {
+    auto formatHMS = [](double s) -> QString {
+        return QStringLiteral("%1:%2:%3")
+            .arg(qint64(s) / 3600)
+            .arg((qint64(s) % 3600) / 60, 2, 10, QLatin1Char('0'))
+            .arg(qint64(s) % 60, 2, 10, QLatin1Char('0'));
+    };
+
+    // ——常规组：路径 / 大小 / 创建 / 修改 走 PlaylistItem（文件系统）；
+    // 文件格式 / 总时长 走 MediaInfo
+    QList<Row> general;
+    general.append({tr("文件路径"), item.path.isEmpty() ? path : item.path});
+    if (mi && !mi->format.isEmpty())
+        general.append({tr("文件格式"), mi->format});
+    if (item.fileSize > 0)
+        general.append({tr("文件大小"), Util::formatFileSize(item.fileSize)});
+    if (timeText(item.created).size())
+        general.append({tr("创建时间"), timeText(item.created)});
+    if (timeText(item.modified).size())
+        general.append({tr("修改时间"), timeText(item.modified)});
+    if (mi && mi->duration.has_value())
+        general.append({tr("总时长"), formatHMS(*mi->duration)});
+
+    // 流"大小"格式化："1.23 GB (82%)"，百分比相对 mi->fileSize
+    auto formatStreamSize = [&](qint64 sz, qint64 filesize) -> QString {
+        if (sz <= 0)
+            return {};
+        const QString sizeStr = Util::formatFileSize(sz);
+        if (filesize <= 0)
+            return sizeStr;
+        const int pct = int(double(sz) / double(filesize) * 100.0 + 0.5);
+        return QStringLiteral("%1 (%2%)").arg(sizeStr).arg(pct);
+    };
+
+    // ——流分组：依次遍历 MediaInfo::streams，按 kind 分桶
+    auto buildVideoRows = [&](const MediaInfoHelper::Stream &t) -> QList<Row> {
         QList<Row> rows;
-        if (t.external) {
-            QString p = t.externalFilename.isEmpty() ? QStringLiteral("[local]") : QStringLiteral("[local] %1").arg(t.externalFilename);
-            rows.append({tr("标题"), p});
-        } else if (!t.title.isEmpty()) {
+        if (t.isDefault)
+            rows.append({tr("默认"), tr("是")});
+        if (!t.title.isEmpty())
             rows.append({tr("标题"), t.title});
-        }
-        if (!t.lang.isEmpty())
-            rows.append({tr("语言"), t.lang});
+        if (!t.language.isEmpty())
+            rows.append({tr("语言"), t.language});
         if (!t.codec.isEmpty())
             rows.append({tr("编码"), t.codec});
-        if (t.demuxW > 0 && t.demuxH > 0)
-            rows.append({tr("分辨率"), QStringLiteral("%1 x %2").arg(t.demuxW).arg(t.demuxH)});
-        if (t.demuxFps > 0)
-            rows.append({tr("帧率"), formatFpsSpaced(t.demuxFps)});
-        qint64 br = trackBitrate(t);
-        if (br > 0)
-            rows.append({tr("码率"), formatKbpsSpaced(br)});
+        if (t.width > 0 && t.height > 0)
+            rows.append({tr("分辨率"), QStringLiteral("%1 x %2").arg(t.width).arg(t.height)});
+        if (t.frameRate > 0.0)
+            rows.append({tr("帧率"), formatFpsSpaced(t.frameRate)});
+        if (t.bitrate > 0)
+            rows.append({tr("码率"), formatKbpsSpaced(t.bitrate)});
+        const QString sizeStr = formatStreamSize(t.streamSize, item.fileSize);
+        if (!sizeStr.isEmpty())
+            rows.append({tr("大小"), sizeStr});
         return rows;
     };
-    auto buildAudioRows = [&](const MpvController::TrackInfo &t) -> QList<Row> {
+    auto buildAudioRows = [&](const MediaInfoHelper::Stream &t) -> QList<Row> {
         QList<Row> rows;
-        if (t.external) {
-            QString p = t.externalFilename.isEmpty() ? QStringLiteral("[local]") : QStringLiteral("[local] %1").arg(t.externalFilename);
-            rows.append({tr("标题"), p});
-        } else if (!t.title.isEmpty()) {
+        if (t.isDefault)
+            rows.append({tr("默认"), tr("是")});
+        if (!t.title.isEmpty())
             rows.append({tr("标题"), t.title});
-        }
-        if (!t.lang.isEmpty())
-            rows.append({tr("语言"), t.lang});
+        if (!t.language.isEmpty())
+            rows.append({tr("语言"), t.language});
         if (!t.codec.isEmpty())
             rows.append({tr("编码"), t.codec});
-        if (t.demuxChannelCount > 0)
-            rows.append({tr("通道数"), QString::number(t.demuxChannelCount)});
-        if (t.demuxSamplerate > 0)
-            rows.append({tr("采样率"), formatKHzSpaced(t.demuxSamplerate)});
-        qint64 br = trackBitrate(t);
-        if (br > 0)
-            rows.append({tr("码率"), formatKbpsSpaced(br)});
+        if (t.channelCount > 0)
+            rows.append({tr("通道数"), QString::number(t.channelCount)});
+        if (t.sampleRate > 0)
+            rows.append({tr("采样率"), formatKHzSpaced(t.sampleRate)});
+        if (t.bitrate > 0)
+            rows.append({tr("码率"), formatKbpsSpaced(t.bitrate)});
+        const QString sizeStr = formatStreamSize(t.streamSize, item.fileSize);
+        if (!sizeStr.isEmpty())
+            rows.append({tr("大小"), sizeStr});
         return rows;
     };
-    auto buildSubRows = [&](const MpvController::TrackInfo &t) -> QList<Row> {
+    auto buildTextRows = [&](const MediaInfoHelper::Stream &t) -> QList<Row> {
         QList<Row> rows;
-        if (t.external) {
-            QString p = t.externalFilename.isEmpty() ? QStringLiteral("[local]") : QStringLiteral("[local] %1").arg(t.externalFilename);
-            rows.append({tr("标题"), p});
-        } else if (!t.title.isEmpty()) {
+        if (t.isDefault)
+            rows.append({tr("默认"), tr("是")});
+        if (!t.title.isEmpty())
             rows.append({tr("标题"), t.title});
-        }
-        if (!t.lang.isEmpty())
-            rows.append({tr("语言"), t.lang});
+        if (!t.language.isEmpty())
+            rows.append({tr("语言"), t.language});
         if (!t.codec.isEmpty())
             rows.append({tr("编码"), t.codec});
+        const QString sizeStr = formatStreamSize(t.streamSize, item.fileSize);
+        if (!sizeStr.isEmpty())
+            rows.append({tr("大小"), sizeStr});
         return rows;
     };
 
-    // 当前流（selected）
-    const MpvController::TrackInfo *curVideo = nullptr;
-    const MpvController::TrackInfo *curAudio = nullptr;
-    const MpvController::TrackInfo *curSub = nullptr;
-    for (const auto &t : item.tracks) {
-        if (t.selected) {
-            if (!curVideo && t.type == QLatin1String("video"))
-                curVideo = &t;
-            else if (!curAudio && t.type == QLatin1String("audio"))
-                curAudio = &t;
-            else if (!curSub && t.type == QLatin1String("sub"))
-                curSub = &t;
+    QList<QList<Row>> videos, audios, texts;
+    if (mi) {
+        for (const auto &s : mi->streams) {
+            switch (s.kind) {
+            case MediaInfoHelper::Stream::Kind::Video:
+                videos.append(buildVideoRows(s));
+                break;
+            case MediaInfoHelper::Stream::Kind::Audio:
+                audios.append(buildAudioRows(s));
+                break;
+            case MediaInfoHelper::Stream::Kind::Text:
+                texts.append(buildTextRows(s));
+                break;
+            default: break;
+            }
         }
     }
-    QList<Row> videoCur = curVideo ? buildVideoRows(*curVideo) : QList<Row>();
-    QList<Row> audioCur = curAudio ? buildAudioRows(*curAudio) : QList<Row>();
-    QList<Row> subCur = curSub ? buildSubRows(*curSub) : QList<Row>();
 
-    // 标签组（文件级）
+    // ——标签组：标题 / 专辑 / 作者 / 发行时间
     QList<Row> tags;
-    if (item.title)
-        tags.append({tr("标题"), *item.title});
-    if (item.album)
-        tags.append({tr("专辑"), *item.album});
-    if (item.artist)
-        tags.append({tr("作者"), *item.artist});
-    if (item.releaseDate)
-        tags.append({tr("发行时间"), timeText(*item.releaseDate)});
-
-    // 其他流（非选中，按 id 升序已在 applyTracks 排序）
-    QList<QList<Row>> otherVideos;
-    QList<QList<Row>> otherAudios;
-    QList<QList<Row>> otherSubs;
-    for (const auto &t : item.tracks) {
-        if (t.selected)
-            continue;
-        if (t.type == QLatin1String("video"))
-            otherVideos.append(buildVideoRows(t));
-        else if (t.type == QLatin1String("audio"))
-            otherAudios.append(buildAudioRows(t));
-        else if (t.type == QLatin1String("sub"))
-            otherSubs.append(buildSubRows(t));
-    }
+    if (mi && !mi->title.isEmpty())     tags.append({tr("标题"),     mi->title});
+    if (mi && !mi->album.isEmpty())     tags.append({tr("专辑"),     mi->album});
+    if (mi && !mi->performer.isEmpty()) tags.append({tr("作者"),     mi->performer});
+    if (mi && mi->recordedDate.isValid())
+        tags.append({tr("发行时间"), timeText(mi->recordedDate)});
 
     appendGroup(tr("常规"), general);
-    if (!videoCur.isEmpty())
-        appendGroup(tr("视频"), videoCur);
-    if (!audioCur.isEmpty())
-        appendGroup(tr("音频"), audioCur);
-    if (!subCur.isEmpty())
-        appendGroup(tr("字幕"), subCur);
+    for (int i = 0; i < videos.size(); ++i)
+            appendGroup(tr("视频 #%1").arg(i + 1), videos[i]);
+    for (int i = 0; i < audios.size(); ++i)
+        appendGroup(tr("音频 #%1").arg(i + 1), audios[i]);
+    for (int i = 0; i < texts.size(); ++i)
+        appendGroup(tr("字幕 #%1").arg(i + 1), texts[i]);
     appendGroup(tr("标签"), tags);
-    for (int i = 0; i < otherVideos.size(); ++i)
-        appendGroup(tr("其他视频 %1").arg(i + 1), otherVideos[i]);
-    for (int i = 0; i < otherAudios.size(); ++i)
-        appendGroup(tr("其他音频 %1").arg(i + 1), otherAudios[i]);
-    for (int i = 0; i < otherSubs.size(); ++i)
-        appendGroup(tr("其他字幕 %1").arg(i + 1), otherSubs[i]);
 
-    // N15.1：章节组——置于全部现有分组之后。不走 prop:value 模板，
-    // 每章节一行 `[hh:mm:ss.zzz] 标题`：方括号与标题用值灰、时间用键蓝
-    //（与属性名/属性值同色），组标题沿用浅灰
-    if (!item.chapters.isEmpty()) {
+    // ——章节组：每章节一行 `[hh:mm:ss.zzz] 标题`；媒体信息不可用时不显示
+    if (mi && !mi->chapters.isEmpty()) {
         if (!cur.atStart())
             cur.insertBlock();
         cur.setCharFormat(headFmt);
         cur.insertText(tr("章节"), headFmt);
         cur.insertBlock();
-        for (const auto &c : item.chapters) {
+        for (const auto &c : mi->chapters) {
             cur.setCharFormat(valueFmt);
             cur.insertText(QStringLiteral("["));
             cur.setCharFormat(nameFmt);
-            cur.insertText(Util::formatTimeHMSms(c.time));
+            cur.insertText(Util::formatTimeHMSms(c.timeSeconds));
             cur.setCharFormat(valueFmt);
             cur.insertText(QStringLiteral("]\t") + c.title);
             cur.insertBlock();
@@ -1124,15 +1052,15 @@ void PlaylistWidget::showPropertiesDialog(const QString &path)
     auto *layout = new QVBoxLayout(&dialog);
     layout->setContentsMargins(12, 12, 12, 12);
     layout->addWidget(view);
-    int lineCount = general.size() + videoCur.size() + audioCur.size() + subCur.size() + tags.size() + 8;
-    for (const auto &g : otherVideos)
+    int lineCount = general.size() + videos.size() + audios.size() + texts.size() + tags.size() + 8;
+    for (const auto &g : videos)
         lineCount += g.size() + 2;
-    for (const auto &g : otherAudios)
+    for (const auto &g : audios)
         lineCount += g.size() + 2;
-    for (const auto &g : otherSubs)
+    for (const auto &g : texts)
         lineCount += g.size() + 2;
-    if (!item.chapters.isEmpty())
-        lineCount += item.chapters.size() + 1; // N15.1：组标题 + 每章节一行
+    if (mi && !mi->chapters.isEmpty())
+        lineCount += mi->chapters.size() + 1; // 组标题 + 每章节一行
     dialog.resize(520, qMin(lineCount * 22 + 40, 600));
     dialog.exec();
 }
@@ -1214,9 +1142,18 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event)
     sortActions[2] = sortMenu->addAction(tr("扩展名"));
     sortActions[3] = sortMenu->addAction(tr("创建时间"));
     sortActions[4] = sortMenu->addAction(tr("修改时间"));
-    sortActions[5] = sortMenu->addAction(tr("总时长"));
-    sortActions[6] = sortMenu->addAction(tr("文件大小"));
+    sortActions[5] = sortMenu->addAction(tr("文件大小"));
+    sortActions[6] = sortMenu->addAction(tr("总时长"));
     sortActions[7] = sortMenu->addAction(tr("发行时间"));
+    // N18：菜单 action 显式携带 SortKey，解除"菜单数组下标 +1 == 枚举值"的脆弱不变式
+    sortActions[0]->setData(int(SortKey::FileName));
+    sortActions[1]->setData(int(SortKey::FileNameNumeric));
+    sortActions[2]->setData(int(SortKey::Extension));
+    sortActions[3]->setData(int(SortKey::Created));
+    sortActions[4]->setData(int(SortKey::Modified));
+    sortActions[5]->setData(int(SortKey::FileSize));
+    sortActions[6]->setData(int(SortKey::Duration));
+    sortActions[7]->setData(int(SortKey::ReleaseDate));
     sortMenu->addSeparator();
     // N9：规则为单选勾选组（与持久化配套），方向互斥勾选且切向即时重排
     for (QAction *a : sortActions)
@@ -1227,8 +1164,15 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event)
     const bool curAsc = curProvider ? curProvider->sortAscending() : true;
     for (QAction *a : sortActions)
         ruleGroup->addAction(a);
-    if (curKey != int(SortKey::None))
-        sortActions[int(curKey) - 1]->setChecked(true);
+    if (curKey != int(SortKey::None)) {
+        // N18：从 action data 反查 SortKey 对应 action，避免下标耦合
+        for (QAction *a : sortActions) {
+            if (a->data().toInt() == curKey) {
+                a->setChecked(true);
+                break;
+            }
+        }
+    }
 
     QAction *ascAction = sortMenu->addAction(tr("正序"));
     QAction *descAction = sortMenu->addAction(tr("反序"));
@@ -1273,6 +1217,15 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event)
                                    && QFileInfo::exists(targetPath));
     copyPathAction->setEnabled(hasTarget);
     propsAction->setEnabled(hasTarget);
+
+    // N18：依赖 MediaInfo 缓存的两项排序在 dll 不可用时禁用；其余排序项不受影响
+    if (!MediaInfoHelper::available()) {
+        for (QAction *a : sortActions) {
+            const int k = a->data().toInt();
+            if (k == int(SortKey::Duration) || k == int(SortKey::ReleaseDate))
+                a->setEnabled(false);
+        }
+    }
 
     QAction *chosen = menu.exec(event->globalPos());
     if (!chosen)
@@ -1328,12 +1281,10 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event)
         }
     } else {
         // 排序规则命中：按当前方向执行一次并迁移勾选（sortCurrent 落位状态）
-        for (int k = 0; k < 8; ++k) {
-            if (chosen == sortActions[k]) {
-                sortCurrent(static_cast<SortKey>(k + 1), curAsc);
-                break;
-            }
-        }
+        // N18：从 action data 取 SortKey 而非数组下标 +1（避免菜单顺序与枚举序耦合）
+        const int keyInt = chosen->data().toInt();
+        if (keyInt > int(SortKey::None))
+            sortCurrent(static_cast<SortKey>(keyInt), curAsc);
     }
 }
 

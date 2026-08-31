@@ -237,4 +237,26 @@ QString resolveLocalPath(const QString &path)
     return QDir::toNativeSeparators(QFileInfo(local).absoluteFilePath());
 }
 
+QDateTime parseReleaseDate(const QString &s)
+{
+    if (s.isEmpty())
+        return {};
+    const QDateTime dt = QDateTime::fromString(s, Qt::ISODate);
+    if (dt.isValid())
+        return dt;
+    const QDate d = QDate::fromString(s.left(10), Qt::ISODate);
+    if (d.isValid())
+        return {d.startOfDay()};
+    const QStringList formats{
+        QStringLiteral("yyyy-MM-dd"), QStringLiteral("yyyy/MM/dd"),
+        QStringLiteral("yyyy-MM"), QStringLiteral("yyyy"),
+    };
+    for (const QString &fmt : formats) {
+        const QDate d2 = QDate::fromString(s.left(fmt.length()), fmt);
+        if (d2.isValid())
+            return {d2.startOfDay()};
+    }
+    return {};
+}
+
 } // namespace Util

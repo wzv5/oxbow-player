@@ -2,6 +2,7 @@
 
 #include "pch.h"
 
+#include "MediaInfoHelper.h"
 #include "PlaylistItem.h"
 #include "PlaylistProvider.h"
 
@@ -15,6 +16,9 @@ class MpvController;
 // N4 起条目只携带路径字符串；元数据存于全局仓 m_meta（路径 → PlaylistItem），
 // 由委托按路径查仓绘制。排序与清理对播放中 tab 统一走四步式：
 // 停止 → 本地变更 → playRequested 整表推送并从原文件恢复。
+//
+// N18：原 mpv 元数据回填（media-metadata / file-format / tracks / chapters）已从
+// 本类移除，对话框读源改走 MediaInfoHelper 缓存；duration 是唯一保留的 mpv 写入。
 class PlaylistWidget : public QTabWidget
 {
     Q_OBJECT
@@ -75,13 +79,8 @@ public:
     void loadPlaylists();
     void savePlaylists();
 
-    // ——元数据回填（MainWindow 按"当前正播路径"路由至此）——
+    // ——元数据回填（N18：仅保留 duration 写入）——
     void applyDuration(const QString &path, double seconds);
-    void applyMediaMetadata(const QString &path, const QVariantMap &tags);
-    void applyFileFormat(const QString &path, const QString &format);
-    void applyTracks(const QString &path, const QList<MpvController::TrackInfo> &tracks);
-    // N15.1：章节回填（chapter-list 快照）
-    void applyChapters(const QString &path, const QList<MpvController::ChapterInfo> &chapters);
 
 protected:
     // N5：ShortcutOverride 认领导航键——焦点在列表上时 ↑↓←→/PgUp/PgDn/Home/End
@@ -113,7 +112,9 @@ private slots:
     void onTabChanged(int index);
 
 private:
-    // 排序规则枚举（N4/N9）：None=添加顺序。取值随提供者持久化（int 不透明存储）
+    // 排序规则枚举（N4/N9/N18）：None=添加顺序。取值随提供者持久化（int 不透明存储）。
+    // N18：枚举序与菜单显示顺序解耦——菜单 action 通过 setData(int(SortKey))
+    // 显式携带键值，派发时按 data 取键，不再依赖数组下标 +1 的隐式映射
     enum class SortKey {
         None,
         FileName,
@@ -121,8 +122,8 @@ private:
         Extension,
         Created,
         Modified,
-        Duration,
         FileSize,
+        Duration,
         ReleaseDate,
     };
 
@@ -182,6 +183,11 @@ private:
     QFileIconProvider m_iconProvider;      // 值语义：具体类无多态需求
     QListWidget *m_menuTargetList = nullptr; // 右键命中的列表与行（空白处为 nullptr）
     int m_menuTargetRow = -1;
+    // N18：MediaInfo 缓存（键为 normalizePathForMatch 后的规范化路径），
+    // 仅服务按 Duration/ReleaseDate 排序与属性对话框惰性填充
+    QHash<QString, MediaInfoHelper::Data> m_mediaInfo;
+    // N18：MediaInfo 缓存惰性查询；dll 不可用返回 nullptr；命中即返回，未命中同步解析一次入缓存
+    const MediaInfoHelper::Data *mediaInfoOf(const QString &path);
 
     int m_playingTab = 0;
     QString m_configFile;

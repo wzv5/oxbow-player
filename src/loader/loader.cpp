@@ -88,6 +88,14 @@ static bool LoadCore()
         return false;
     }
 
+    // N18：预先显式加载共置的 MediaInfo.dll（DLL_LOAD_DIR + DEFAULT_DIRS），
+    // 不关心返回值。MediaInfoHelper 经 shim 内 MediaInfoDLL_Load() 调用的
+    // LoadLibrary("MediaInfo.dll") 会命中此已加载模块，复用同一句柄——从而
+    // 绕过 shim 的 GetProcAddress 在进程默认搜索序下找不到同目录 dll 的问题。
+    // 失败时由 MediaInfoHelper::available() 返回 false、UI 优雅降级
+    LoadLibraryExW((pluginDir + L"MediaInfo.dll").c_str(), nullptr,
+                   LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+
     g_entry = reinterpret_cast<MpvOpenCpluginFunc>(
         GetProcAddress(g_core, "mpv_open_cplugin"));
     if (!g_entry) {

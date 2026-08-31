@@ -54,6 +54,8 @@ add_library(mpvqtcore MODULE
     src/BookmarkEditorDialog.h
     src/Util.cpp
     src/Util.h
+    src/MediaInfoHelper.cpp
+    src/MediaInfoHelper.h
 )
 
 # mpv/client.h 已内置在仓库根目录的 mpv/ 下

@@ -69,4 +69,8 @@ QString resolveLocalPath(const QString &path);
 // 也避免 QUrl::fromUserInput 把相对名（如 "a"）误判为非本地。
 bool isNetworkStreamPath(const QString &path);
 
+// 发行时间解析：ISO 8601 优先，兼容常见格式（yyyy-MM-dd / yyyy/MM/dd / yyyy-MM / yyyy）；
+// 全败返回无效 QDateTime
+QDateTime parseReleaseDate(const QString &s);
+
 } // namespace Util
