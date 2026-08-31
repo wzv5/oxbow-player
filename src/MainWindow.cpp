@@ -495,6 +495,10 @@ void MainWindow::connectController() {
                 m_osdCoalescePending = true;
                 QTimer::singleShot(0, this, &MainWindow::flushOsd);
             }
+            // 强制重置播放暂停按钮状态
+            bool paused = m_controller->propertyFlag("pause", true);
+            m_playButton->setIcon(
+                style()->standardIcon(paused ? QStyle::SP_MediaPlay : QStyle::SP_MediaPause));
         }
     });
     // B9 Part1：整表自然播完（EOF）即清进度留记忆项，播放按钮即可从头播；
