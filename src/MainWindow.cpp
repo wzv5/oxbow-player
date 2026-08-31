@@ -258,8 +258,14 @@ QWidget *MainWindow::createLeftArea() {
 
     // 控制行按钮不接受焦点（C2）：Space 归全局快捷键，避免焦点按钮被 Space 二次触发
     for (QPushButton *b : {m_playButton, stopButton, prevButton, nextButton, m_streamButton,
-                           settingsButton, m_playlistToggle})
+                           settingsButton, m_playlistToggle}) {
         b->setFocusPolicy(Qt::NoFocus);
+        // 点击控制按钮时把焦点重置到主窗口
+        connect(b, &QPushButton::pressed, [] {
+            if (auto *fw = QApplication::focusWidget())
+                fw->clearFocus();
+        });
+    }
 
     controlLayout->addWidget(m_playButton);
     controlLayout->addWidget(stopButton);
