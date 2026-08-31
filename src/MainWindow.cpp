@@ -1470,6 +1470,55 @@ void MainWindow::showSettingsDialog() {
         loopCombo->setCurrentIndex(loopIdx);
     layout->addRow(tr("Loop Playback"), loopCombo);
 
+    // 语言：动态枚举 :/i18n 内嵌 qm，第一项 Auto，其余含英文按字母序
+    auto *langCombo = new QComboBox(&dialog);
+    langCombo->addItem(tr("Auto"), QString());
+    {
+        QStringList locales;
+        locales << QStringLiteral("en");
+        QDir dir(QStringLiteral(":/i18n"));
+        const QStringList qmFiles =
+            dir.entryList(QStringList() << QStringLiteral("mpvqt_*.qm"), QDir::Files);
+        for (const QString &f : qmFiles) {
+            if (f.startsWith(QStringLiteral("mpvqt_")) && f.endsWith(QStringLiteral(".qm"))) {
+                QString loc = f.chopped(3).mid(6);
+                if (!loc.isEmpty() && !locales.contains(loc))
+                    locales << loc;
+            }
+        }
+        std::sort(locales.begin(), locales.end(),
+                  [](const QString &a, const QString &b) { return a < b; });
+        for (const QString &loc : locales) {
+            QString display;
+            if (loc == QStringLiteral("en")) {
+                display = QStringLiteral("English");
+            } else {
+                QLocale qloc(loc);
+                display = qloc.nativeLanguageName();
+                if (display.isEmpty())
+                    display = loc;
+                else {
+                    // 首字母大写，Qt 返回多为小写（如 "中文" 不受影响，英文已单独处理）
+                    display[0] = display[0].toUpper();
+                    const QString terr = qloc.nativeTerritoryName();
+                    if (!terr.isEmpty() && !display.contains(terr))
+                        display = QStringLiteral("%1 (%2)").arg(display, terr);
+                }
+            }
+            langCombo->addItem(display, loc);
+        }
+        QSettings settings(m_configFile, QSettings::IniFormat);
+        QString curLang = settings.value(QStringLiteral("language")).toString().trimmed();
+        if (curLang.compare(QStringLiteral("auto"), Qt::CaseInsensitive) == 0)
+            curLang.clear();
+        int curIdx = langCombo->findData(curLang);
+        if (curIdx >= 0)
+            langCombo->setCurrentIndex(curIdx);
+        else
+            langCombo->setCurrentIndex(0);
+    }
+    layout->addRow(tr("Language"), langCombo);
+
     // N5：音量调节三项——上限自由填写（域 0~400），滚轮/方向键步长档位单选
     auto *maxSpin = new QSpinBox(&dialog);
     maxSpin->setRange(0, 400);
@@ -1516,6 +1565,9 @@ void MainWindow::showSettingsDialog() {
         settings.setValue(QStringLiteral("volumeMax"), m_volumeMax);
         settings.setValue(QStringLiteral("volumeWheelStep"), m_volumeWheelStep);
         settings.setValue(QStringLiteral("volumeKeyStep"), m_volumeKeyStep);
+
+        const QString newLang = langCombo->currentData().toString();
+        settings.setValue(QStringLiteral("language"), newLang);
     }
 }
 

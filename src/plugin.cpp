@@ -111,6 +111,40 @@ static QString resolveConfigFilePath() {
     return QDir(fallback).filePath(App::iniFileName());
 }
 
+// 在 QApplication 就绪、MainWindow 构造前安装内嵌翻译：
+// 仅从 :/i18n 资源加载（qt_add_translations 嵌入），失败则静默回退英文原文。
+// 语言来源：mpv-qt.ini 的 language 键；空/"auto" 表示跟随系统， "en" 为英文原文，
+// 其余按 QLocale 对应 :/i18n/mpvqt_<locale>.qm
+static void installTranslator() {
+    if (!qApp)
+        return;
+    QString lang;
+    {
+        QSettings s(resolveConfigFilePath(), QSettings::IniFormat);
+        lang = s.value(QStringLiteral("language")).toString().trimmed();
+    }
+    auto *translator = new QTranslator(qApp);
+    bool loaded = false;
+    if (lang.isEmpty() || lang.compare(QStringLiteral("auto"), Qt::CaseInsensitive) == 0) {
+        loaded = translator->load(QLocale(), QStringLiteral("mpvqt"), QStringLiteral("_"),
+                                  QStringLiteral(":/i18n"));
+    } else if (lang.compare(QStringLiteral("en"), Qt::CaseInsensitive) == 0) {
+        loaded = false;
+    } else {
+        const QLocale loc(lang);
+        if (translator->load(loc, QStringLiteral("mpvqt"), QStringLiteral("_"),
+                             QStringLiteral(":/i18n")))
+            loaded = true;
+        else if (translator->load(QStringLiteral("mpvqt_") + lang, QStringLiteral(":/i18n")))
+            loaded = true;
+    }
+    if (loaded) {
+        QCoreApplication::installTranslator(translator);
+    } else {
+        delete translator;
+    }
+}
+
 extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle) {
     if (!resolveMpvSymbols())
         return 1; // 符号缺失：让 mpv 记为脚本加载失败，而非运行期崩溃
@@ -130,6 +164,8 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle) {
         (void)new QApplication(argc, argv);
         QApplication::setApplicationName(App::name());
     }
+
+    installTranslator();
 
     auto *controller = new MpvController(handle);
     const QString configFile = resolveConfigFilePath();
