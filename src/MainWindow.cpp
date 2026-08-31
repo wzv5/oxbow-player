@@ -1232,6 +1232,9 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
             if (!m_seeking)
                 QToolTip::hideText();
             break;
+        case QEvent::Wheel:
+            // 禁止滚轮控制进度条
+            return true;
         default:
             break;
         }
