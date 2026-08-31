@@ -38,6 +38,7 @@
 #include <QLabel>
 #include <QList>
 #include <QListWidget>
+#include <QLocale>
 #include <QMainWindow>
 #include <QMenu>
 #include <QMenuBar>
@@ -73,6 +74,7 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QToolTip>
+#include <QTranslator>
 #include <QTreeWidget>
 #include <QUrl>
 #include <QVBoxLayout>

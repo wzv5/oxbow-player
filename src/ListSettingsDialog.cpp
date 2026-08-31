@@ -27,31 +27,31 @@ ListSettingsDialog::ListSettingsDialog(QWidget *parent, const QString &currentNa
                                        const PlaylistProvider *current,
                                        const QStringList &occupiedNames)
     : QDialog(parent), m_occupiedNames(occupiedNames), m_current(current) {
-    setWindowTitle(tr("列表设置"));
+    setWindowTitle(tr("List Settings"));
     auto *layout = new QFormLayout(this);
 
     // ——第一步：仅创建控件与布局，全部取中性初值——
     m_nameEdit = new QLineEdit(currentName);
-    layout->addRow(tr("列表名称"), m_nameEdit);
+    layout->addRow(tr("List Name"), m_nameEdit);
 
-    layout->addRow(new QLabel(tr("列表提供者")));
+    layout->addRow(new QLabel(tr("List Provider")));
 
-    m_staticRadio = new QRadioButton(tr("本地静态列表"));
+    m_staticRadio = new QRadioButton(tr("Local Static List"));
     layout->addRow(m_staticRadio);
 
-    m_dirRadio = new QRadioButton(tr("本地目录"));
+    m_dirRadio = new QRadioButton(tr("Local Directory"));
     auto *rootRow = new QHBoxLayout;
     m_rootEdit = new QLineEdit;
-    auto *browseBtn = new QPushButton(tr("浏览…"));
+    auto *browseBtn = new QPushButton(tr("Browse…"));
     rootRow->addWidget(m_rootEdit, 1);
     rootRow->addWidget(browseBtn);
-    m_recursiveCheck = new QCheckBox(tr("包含子目录"));
+    m_recursiveCheck = new QCheckBox(tr("Include Subdirectories"));
     m_extensionsEdit = new QLineEdit;
     auto *extRow = new QHBoxLayout;
     extRow->addWidget(m_extensionsEdit, 1);
     // 恢复默认清单（↺ U+21BA）：与 NavigatorPanel 复位按钮符号一致
     auto *extResetBtn = new QPushButton(QStringLiteral("\u21ba"));
-    extResetBtn->setToolTip(tr("恢复默认扩展名清单"));
+    extResetBtn->setToolTip(tr("Reset to default extension list"));
     extResetBtn->setFixedWidth(28);
     extRow->addWidget(extResetBtn);
     auto *dirPage = new QWidget;
@@ -59,7 +59,8 @@ ListSettingsDialog::ListSettingsDialog(QWidget *parent, const QString &currentNa
     dirLayout->setContentsMargins(16, 0, 0, 0);
     dirLayout->addLayout(rootRow);
     dirLayout->addWidget(m_recursiveCheck);
-    dirLayout->addWidget(new QLabel(tr("媒体扩展名（空格分隔，留空不过滤）：")));
+    dirLayout->addWidget(new QLabel(tr("Media extensions (space-separated; leave empty for no "
+                                       "filter):")));
     dirLayout->addLayout(extRow);
     layout->addRow(m_dirRadio);
     layout->addRow(dirPage);
@@ -133,7 +134,7 @@ std::optional<std::unique_ptr<PlaylistProvider>> ListSettingsDialog::takeProvide
 }
 
 void ListSettingsDialog::browseRoot() {
-    const QString dir = QFileDialog::getExistingDirectory(this, tr("选择目录"), dirRoot());
+    const QString dir = QFileDialog::getExistingDirectory(this, tr("Select Directory"), dirRoot());
     // Qt 来源（目录选择）：拿到即转原生分隔符（B15）
     if (!dir.isEmpty())
         m_rootEdit->setText(Util::nativePath(dir));
@@ -142,32 +143,37 @@ void ListSettingsDialog::browseRoot() {
 void ListSettingsDialog::accept() {
     const QString name = listName();
     if (name.isEmpty()) {
-        QMessageBox::warning(this, tr("列表设置"), tr("列表名称不能为空。"));
+        QMessageBox::warning(this, tr("List Settings"), tr("List name cannot be empty."));
         return;
     }
-    if (name == tr("默认")) {
-        QMessageBox::warning(this, tr("列表设置"), tr("不能使用默认列表的名称。"));
+    if (name == tr("Default")) {
+        QMessageBox::warning(this, tr("List Settings"),
+                             tr("Cannot use the name of the default list."));
         return;
     }
     if (m_occupiedNames.contains(name)) {
-        QMessageBox::warning(this, tr("列表设置"), tr("该名称已被其他列表使用。"));
+        QMessageBox::warning(this, tr("List Settings"),
+                             tr("This name is already used by another list."));
         return;
     }
     if (providerType() == PlaylistProvider::Type::Dir) {
         const QString root = dirRoot();
         if (root.isEmpty()) {
-            QMessageBox::warning(this, tr("列表设置"), tr("请选择绑定目录。"));
+            QMessageBox::warning(this, tr("List Settings"), tr("Please select a bound directory."));
             return;
         }
         // 本地目录提供者仅接受真实本地路径；网络/流路径（http/ftp/stream 等，含 :// 且非
         // file:）拒绝。 用串前缀判定，避免 QUrl::scheme() 误判盘符、QUrl::fromUserInput 误判相对名
         // "a" 为非本地。
         if (Util::isNetworkStreamPath(root)) {
-            QMessageBox::warning(this, tr("列表设置"), tr("本地目录提供者不支持网络/流路径。"));
+            QMessageBox::warning(this, tr("List Settings"),
+                                 tr("Local directory provider does not support network or "
+                                    "stream paths."));
             return;
         }
         if (!QDir(root).exists()) {
-            QMessageBox::warning(this, tr("列表设置"), tr("目录不存在：%1").arg(root));
+            QMessageBox::warning(this, tr("List Settings"),
+                                 tr("Directory does not exist: %1").arg(root));
             return;
         }
     }

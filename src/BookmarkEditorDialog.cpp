@@ -6,7 +6,7 @@
 BookmarkEditorDialog::BookmarkEditorDialog(BookmarkManager *mgr, JumpCallback jumpCb,
                                            const QString &currentPath, QWidget *parent)
     : QDialog(parent), m_mgr(mgr), m_jumpCb(std::move(jumpCb)) {
-    setWindowTitle(tr("书签编辑器"));
+    setWindowTitle(tr("Bookmark Editor"));
     resize(640, 420);
     auto *layout = new QVBoxLayout(this);
     m_tree = new QTreeWidget(this);
@@ -16,10 +16,10 @@ BookmarkEditorDialog::BookmarkEditorDialog(BookmarkManager *mgr, JumpCallback ju
     layout->addWidget(m_tree, 1);
 
     auto *btnRow = new QHBoxLayout;
-    m_jumpBtn = new QPushButton(tr("跳转"), this);
-    m_removeSelBtn = new QPushButton(tr("移除选中"), this);
-    m_removeInvalidBtn = new QPushButton(tr("移除失效项"), this);
-    m_clearBtn = new QPushButton(tr("清空"), this);
+    m_jumpBtn = new QPushButton(tr("Jump"), this);
+    m_removeSelBtn = new QPushButton(tr("Remove Selected"), this);
+    m_removeInvalidBtn = new QPushButton(tr("Remove Invalid"), this);
+    m_clearBtn = new QPushButton(tr("Clear"), this);
     btnRow->addWidget(m_jumpBtn);
     btnRow->addWidget(m_removeSelBtn);
     btnRow->addWidget(m_removeInvalidBtn);
@@ -29,11 +29,11 @@ BookmarkEditorDialog::BookmarkEditorDialog(BookmarkManager *mgr, JumpCallback ju
 
     // N16：编辑行（置于四按钮行之下）
     auto *editRow = new QHBoxLayout;
-    m_timeLabel = new QLabel(tr("时间"), this);
+    m_timeLabel = new QLabel(tr("Time"), this);
     m_timeEdit = new QLineEdit(this);
-    m_titleLabel = new QLabel(tr("标题"), this);
+    m_titleLabel = new QLabel(tr("Title"), this);
     m_titleEdit = new QLineEdit(this);
-    m_applyBtn = new QPushButton(tr("应用"), this);
+    m_applyBtn = new QPushButton(tr("Apply"), this);
     editRow->addWidget(m_timeLabel);
     editRow->addWidget(m_timeEdit, 1);
     editRow->addWidget(m_titleLabel);
@@ -132,18 +132,20 @@ void BookmarkEditorDialog::onApply() {
     double t = 0.0;
     if (!Util::parseTimeHMSms(timeText, &t)) {
         QMessageBox::warning(
-            this, tr("时间格式错误"),
-            tr("时间须为 hh:mm:ss.zzz（如 00:01:02.345），分秒小于 60，毫秒三位。"));
+            this, tr("Invalid Time Format"),
+            tr("Time must be hh:mm:ss.zzz (e.g. 00:01:02.345); minutes and seconds must be "
+               "less than 60, milliseconds exactly three digits."));
         return;
     }
     const QString title = m_titleEdit->text();
     if (title.isEmpty()) {
-        QMessageBox::warning(this, tr("标题为空"), tr("书签标题不可为空。"));
+        QMessageBox::warning(this, tr("Empty Title"), tr("Bookmark title cannot be empty."));
         return;
     }
     if (title.contains(QLatin1Char('&'))) {
-        QMessageBox::warning(this, tr("标题含非法字符"),
-                             tr("标题不可包含字符 &（会与章节菜单助记符冲突）。"));
+        QMessageBox::warning(this, tr("Title Contains Invalid Characters"),
+                             tr("Title must not contain \"&\" (conflicts with chapter menu "
+                                "mnemonics)."));
         return;
     }
     // 改写后整表重建并聚焦本文件父节点（不还原叶选中）
@@ -195,7 +197,7 @@ void BookmarkEditorDialog::onRemoveInvalid() {
 }
 
 void BookmarkEditorDialog::onClearAll() {
-    if (QMessageBox::question(this, tr("确认"), tr("确定清空所有书签？")) != QMessageBox::Yes)
+    if (QMessageBox::question(this, tr("Confirm"), tr("Clear all bookmarks?")) != QMessageBox::Yes)
         return;
     // 非空必发 changed，刷新经主窗口级联
     m_mgr->clearAll();

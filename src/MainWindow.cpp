@@ -220,7 +220,7 @@ QWidget *MainWindow::createLeftArea() {
     m_volumeSlider->installEventFilter(this); // N5：滚轮调节走统一入口
     seekLayout->addWidget(m_progressSlider, 1);
     seekLayout->addSpacing(8);
-    seekLayout->addWidget(new QLabel(tr("音量")));
+    seekLayout->addWidget(new QLabel(tr("Volume")));
     seekLayout->addWidget(m_volumeSlider);
     layout->addWidget(seekRow);
 
@@ -230,29 +230,29 @@ QWidget *MainWindow::createLeftArea() {
     controlLayout->setContentsMargins(8, 0, 8, 8);
     controlLayout->setSpacing(8);
     m_playButton = new QPushButton(style()->standardIcon(QStyle::SP_MediaPlay), QString());
-    m_playButton->setToolTip(tr("播放/暂停"));
+    m_playButton->setToolTip(tr("Play/Pause"));
     m_playButton->setFixedSize(36, 36);
     auto *stopButton = new QPushButton(style()->standardIcon(QStyle::SP_MediaStop), QString());
-    stopButton->setToolTip(tr("停止"));
+    stopButton->setToolTip(tr("Stop"));
     stopButton->setFixedSize(36, 36);
     auto *prevButton =
         new QPushButton(style()->standardIcon(QStyle::SP_MediaSkipBackward), QString());
-    prevButton->setToolTip(tr("上一个文件"));
+    prevButton->setToolTip(tr("Previous File"));
     prevButton->setFixedSize(36, 36);
     auto *nextButton =
         new QPushButton(style()->standardIcon(QStyle::SP_MediaSkipForward), QString());
-    nextButton->setToolTip(tr("下一个文件"));
+    nextButton->setToolTip(tr("Next File"));
     nextButton->setFixedSize(36, 36);
     m_timeLabel = new QLabel(QStringLiteral("00:00 / 00:00"));
     m_streamButton = new QPushButton(QStringLiteral("♪"));
-    m_streamButton->setToolTip(tr("切换流"));
+    m_streamButton->setToolTip(tr("Switch Stream"));
     m_streamButton->setFixedSize(36, 36);
     m_streamButton->hide();
     auto *settingsButton = new QPushButton(QStringLiteral("⚙"));
-    settingsButton->setToolTip(tr("设置"));
+    settingsButton->setToolTip(tr("Settings"));
     settingsButton->setFixedSize(36, 36);
     m_playlistToggle = new QPushButton(QStringLiteral("☰"));
-    m_playlistToggle->setToolTip(tr("显示/隐藏播放列表"));
+    m_playlistToggle->setToolTip(tr("Show/Hide Playlist"));
     m_playlistToggle->setFixedSize(36, 36);
     m_playlistToggle->setCheckable(true);
 
@@ -316,7 +316,7 @@ void MainWindow::createMenus() {
     using AM = ActionManager;
     auto act = [this](AM::Id id) { return m_actions->action(id); };
 
-    QMenu *fileMenu = menuBar()->addMenu(tr("文件(&F)"));
+    QMenu *fileMenu = menuBar()->addMenu(tr("&File"));
     fileMenu->addAction(act(AM::Id::Open));
     connect(act(AM::Id::Open), &QAction::triggered, this, &MainWindow::openFiles);
     fileMenu->addAction(act(AM::Id::Settings));
@@ -325,7 +325,7 @@ void MainWindow::createMenus() {
     fileMenu->addAction(act(AM::Id::Quit));
     connect(act(AM::Id::Quit), &QAction::triggered, this, &QWidget::close);
 
-    QMenu *playMenu = menuBar()->addMenu(tr("播放(&P)"));
+    QMenu *playMenu = menuBar()->addMenu(tr("&Play"));
     playMenu->addAction(act(AM::Id::PlayPause));
     connect(act(AM::Id::PlayPause), &QAction::triggered, this, &MainWindow::togglePause);
     playMenu->addAction(act(AM::Id::Stop));
@@ -353,9 +353,9 @@ void MainWindow::createMenus() {
     connect(act(AM::Id::SpeedReset), &QAction::triggered, this, &MainWindow::resetSpeed);
     // N13：视频/音频/字幕流三子菜单（视频在前），无流时整菜单禁用
     playMenu->addSeparator();
-    m_videoStreamMenu = playMenu->addMenu(tr("视频流"));
-    m_audioStreamMenu = playMenu->addMenu(tr("音频流"));
-    m_subStreamMenu = playMenu->addMenu(tr("字幕流"));
+    m_videoStreamMenu = playMenu->addMenu(tr("Video"));
+    m_audioStreamMenu = playMenu->addMenu(tr("Audio"));
+    m_subStreamMenu = playMenu->addMenu(tr("Subtitle"));
     m_videoStreamMenu->setEnabled(false);
     m_audioStreamMenu->setEnabled(false);
     m_subStreamMenu->setEnabled(false);
@@ -363,7 +363,7 @@ void MainWindow::createMenus() {
     connect(m_audioStreamMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildTrackMenus);
     connect(m_subStreamMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildTrackMenus);
 
-    m_chapterMenu = menuBar()->addMenu(tr("章节(&C)"));
+    m_chapterMenu = menuBar()->addMenu(tr("&Chapter"));
     m_chapterGroup = new QActionGroup(this);
     m_chapterGroup->setExclusive(true);
     connect(m_chapterMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildChapterMenu);
@@ -371,7 +371,7 @@ void MainWindow::createMenus() {
     connect(act(AM::Id::BookmarkEditor), &QAction::triggered, this,
             &MainWindow::ensureBookmarkEditor);
 
-    QMenu *viewMenu = menuBar()->addMenu(tr("视图(&V)"));
+    QMenu *viewMenu = menuBar()->addMenu(tr("&View"));
     m_playlistAction = act(AM::Id::Playlist);
     viewMenu->addAction(m_playlistAction);
     connect(m_playlistAction, &QAction::toggled, this, &MainWindow::setPlaylistVisible);
@@ -399,7 +399,7 @@ void MainWindow::createMenus() {
     connect(m_actions->shortcut(AM::Id::SeekBackward), &QShortcut::activated, this,
             [this] { seekRelative(-5); });
 
-    QMenu *helpMenu = menuBar()->addMenu(tr("帮助(&H)"));
+    QMenu *helpMenu = menuBar()->addMenu(tr("&Help"));
     helpMenu->addAction(act(AM::Id::About));
     connect(act(AM::Id::About), &QAction::triggered, this, &MainWindow::showAboutDialog);
 }
@@ -445,7 +445,7 @@ void MainWindow::connectController() {
                 m_suppressPlayPauseOsd = false;
                 return;
             }
-            m_pendingPlayPause = paused ? tr("暂停") : tr("播放");
+            m_pendingPlayPause = paused ? tr("Pause") : tr("Play");
             if (!m_osdCoalescePending) {
                 m_osdCoalescePending = true;
                 QTimer::singleShot(0, this, &MainWindow::flushOsd);
@@ -495,7 +495,7 @@ void MainWindow::connectController() {
             if (!filename.isEmpty())
                 setWindowTitle(filename); // N8 Part1：标题跟随真实文件名
             else
-                filename = tr("未知文件");
+                filename = tr("Unknown File");
             m_pendingNowPlaying =
                 QStringLiteral("[%1/%2] %3").arg(pos + 1).arg(total).arg(filename);
             if (!m_osdCoalescePending) {
@@ -546,7 +546,7 @@ void MainWindow::connectController() {
             setWindowTitle(App::name());
             // N7 #3：停止 OSD（单源去重，playlistPos -1 不触发，以 m_playlistPos>=0 为守卫）
             if (m_playlistPos >= 0) {
-                m_pendingStop = tr("停止");
+                m_pendingStop = tr("Stop");
                 if (!m_osdCoalescePending) {
                     m_osdCoalescePending = true;
                     QTimer::singleShot(0, this, &MainWindow::flushOsd);
@@ -648,8 +648,8 @@ void MainWindow::openFiles() {
     for (const QString &ext : App::defaultMediaExtensions())
         patterns << QStringLiteral("*.") + ext;
     QStringList files = QFileDialog::getOpenFileNames(
-        this, tr("打开文件"), QString(),
-        tr("媒体文件 (%1);;所有文件 (*)").arg(patterns.join(QLatin1Char(' '))));
+        this, tr("Open File"), QString(),
+        tr("Media files (%1);;All files (*)").arg(patterns.join(QLatin1Char(' '))));
     if (files.isEmpty())
         return;
     // Qt 来源：拿到即转原生分隔符（B15），逐文件加工
@@ -797,8 +797,8 @@ void MainWindow::seekReleased() {
     // N7 #7：进度跳转 OSD（固定 hh:mm:ss）。N8 Part5：duration<=0 分支已删——
     // 停止态滑条禁用后不可达，残余场景（直播流）下 absolute-percent 本就无效
     if (m_duration > 0.0)
-        showOsd(tr("进度跳转: %1")
-                    .arg(Util::formatTimePercent(m_duration * percent / 100.0, m_duration)));
+        showOsd(
+            tr("Seek: %1").arg(Util::formatTimePercent(m_duration * percent / 100.0, m_duration)));
 }
 
 void MainWindow::setPlaylistVisible(bool visible) {
@@ -1138,7 +1138,7 @@ void MainWindow::onVideoClickTimeout() {
     if (m_pendingPauseRestore) {
         // 实时状态校验：防窗口期内空格键反向操作后错显"暂停"
         if (isPaused())
-            showOsd(tr("暂停"));
+            showOsd(tr("Pause"));
     } else {
         togglePause();
     }
@@ -1278,7 +1278,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
 void MainWindow::applyVolume(int value) {
     const int v = qBound(0, value, m_volumeMax);
     m_controller->setProperty(QStringLiteral("volume"), double(v));
-    showOsd(tr("音量: %1%").arg(v));
+    showOsd(tr("Volume: %1%").arg(v));
 }
 
 // N5：统一音量调节入口。以滑条缓存为基准步进后交 applyVolume；
@@ -1333,12 +1333,12 @@ void MainWindow::seekRelative(int deltaSeconds) {
     if (m_duration > 0.0) {
         const double target = qBound(0.0, m_timePos + deltaSeconds, m_duration);
         const QString sign =
-            deltaSeconds >= 0 ? tr("+%1秒").arg(deltaSeconds) : tr("%1秒").arg(deltaSeconds);
-        showOsd(tr("进度跳转: %1 / %2").arg(sign, Util::formatTimePercent(target, m_duration)));
+            deltaSeconds >= 0 ? tr("+%1s").arg(deltaSeconds) : tr("%1s").arg(deltaSeconds);
+        showOsd(tr("Seek: %1 / %2").arg(sign, Util::formatTimePercent(target, m_duration)));
     } else {
         const QString sign =
-            deltaSeconds >= 0 ? tr("+%1秒").arg(deltaSeconds) : tr("%1秒").arg(deltaSeconds);
-        showOsd(tr("进度跳转: %1").arg(sign));
+            deltaSeconds >= 0 ? tr("+%1s").arg(deltaSeconds) : tr("%1s").arg(deltaSeconds);
+        showOsd(tr("Seek: %1").arg(sign));
     }
 }
 
@@ -1355,12 +1355,12 @@ void MainWindow::changeSpeed(double delta) {
         num.chop(1);
     if (num.endsWith(QLatin1Char('.')))
         num.chop(1);
-    showOsd(tr("播放速度: %1倍").arg(num));
+    showOsd(tr("Speed: %1x").arg(num));
 }
 
 void MainWindow::resetSpeed() {
     m_controller->setProperty(QStringLiteral("speed"), 1.0);
-    showOsd(tr("播放速度: 1倍"));
+    showOsd(tr("Speed: 1x"));
 }
 
 // N5：空白区域点击清焦兜底——未被交互控件消费的鼠标按下事件一路冒泡至此，
@@ -1449,7 +1449,7 @@ QString MainWindow::currentLoopMode() const {
 
 void MainWindow::showSettingsDialog() {
     QDialog dialog(this);
-    dialog.setWindowTitle(tr("设置"));
+    dialog.setWindowTitle(tr("Settings"));
     auto *layout = new QFormLayout(&dialog);
 
     auto *hwdecCombo = new QComboBox(&dialog);
@@ -1459,22 +1459,22 @@ void MainWindow::showSettingsDialog() {
     const int idx = hwdecCombo->findText(m_controller->propertyString(QStringLiteral("hwdec")));
     if (idx >= 0)
         hwdecCombo->setCurrentIndex(idx);
-    layout->addRow(tr("硬件解码"), hwdecCombo);
+    layout->addRow(tr("Hardware Decoding"), hwdecCombo);
 
     auto *loopCombo = new QComboBox(&dialog);
-    loopCombo->addItem(tr("不循环"), QStringLiteral("none"));
-    loopCombo->addItem(tr("单个循环"), QStringLiteral("file"));
-    loopCombo->addItem(tr("列表循环"), QStringLiteral("playlist"));
+    loopCombo->addItem(tr("No Loop"), QStringLiteral("none"));
+    loopCombo->addItem(tr("Loop One"), QStringLiteral("file"));
+    loopCombo->addItem(tr("Loop Playlist"), QStringLiteral("playlist"));
     const int loopIdx = loopCombo->findData(currentLoopMode());
     if (loopIdx >= 0)
         loopCombo->setCurrentIndex(loopIdx);
-    layout->addRow(tr("循环播放"), loopCombo);
+    layout->addRow(tr("Loop Playback"), loopCombo);
 
     // N5：音量调节三项——上限自由填写（域 0~400），滚轮/方向键步长档位单选
     auto *maxSpin = new QSpinBox(&dialog);
     maxSpin->setRange(0, 400);
     maxSpin->setValue(m_volumeMax);
-    layout->addRow(tr("音量上限"), maxSpin);
+    layout->addRow(tr("Max Volume"), maxSpin);
 
     auto makeStepCombo = [&dialog](int current) {
         auto *combo = new QComboBox(&dialog);
@@ -1486,9 +1486,9 @@ void MainWindow::showSettingsDialog() {
         return combo;
     };
     auto *wheelStepCombo = makeStepCombo(m_volumeWheelStep);
-    layout->addRow(tr("滚轮步长"), wheelStepCombo);
+    layout->addRow(tr("Wheel Step"), wheelStepCombo);
     auto *keyStepCombo = makeStepCombo(m_volumeKeyStep);
-    layout->addRow(tr("方向键步长"), keyStepCombo);
+    layout->addRow(tr("Arrow Key Step"), keyStepCombo);
 
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
     layout->addRow(buttons);
@@ -1520,9 +1520,10 @@ void MainWindow::showSettingsDialog() {
 }
 
 void MainWindow::showAboutDialog() {
-    QMessageBox::about(this, tr("关于 %1").arg(App::name()),
-                       tr("%1：以 mpv C 插件形式加载的 Qt 播放器界面。\n"
-                          "视频渲染由 mpv 完成，本插件仅提供图形界面。")
+    QMessageBox::about(this, tr("About %1").arg(App::name()),
+                       tr("%1: a Qt-based player GUI loaded as an mpv C plugin.\n"
+                          "Video rendering is performed by mpv; this plugin only provides the "
+                          "graphical interface.")
                            .arg(App::name()));
 }
 
@@ -1723,7 +1724,7 @@ void MainWindow::rebuildTrackMenus() {
             for (const auto &t : filtered)
                 if (t.selected)
                     noSub = false;
-            QAction *none = menu->addAction(tr("无"));
+            QAction *none = menu->addAction(tr("None"));
             none->setCheckable(true);
             none->setChecked(noSub);
             connect(none, &QAction::triggered, this, &MainWindow::disableSubtitles);
@@ -1800,7 +1801,7 @@ void MainWindow::showStreamMenu() {
 
     bool hasPrev = false;
     if (videos.size() > 1) {
-        QAction *header = menu.addAction(tr("视频流"));
+        QAction *header = menu.addAction(tr("Video"));
         header->setEnabled(false);
         for (const auto &t : videos) {
             QAction *a = menu.addAction(formatTrackText(t));
@@ -1814,7 +1815,7 @@ void MainWindow::showStreamMenu() {
     if (audios.size() > 1) {
         if (hasPrev)
             menu.addSeparator();
-        QAction *header = menu.addAction(tr("音频流"));
+        QAction *header = menu.addAction(tr("Audio"));
         header->setEnabled(false);
         for (const auto &t : audios) {
             QAction *a = menu.addAction(formatTrackText(t));
@@ -1828,13 +1829,13 @@ void MainWindow::showStreamMenu() {
     if (!subs.isEmpty()) {
         if (hasPrev)
             menu.addSeparator();
-        QAction *header = menu.addAction(tr("字幕流"));
+        QAction *header = menu.addAction(tr("Subtitle"));
         header->setEnabled(false);
         bool noSub = true;
         for (const auto &t : subs)
             if (t.selected)
                 noSub = false;
-        QAction *none = menu.addAction(tr("无"));
+        QAction *none = menu.addAction(tr("None"));
         none->setCheckable(true);
         none->setChecked(noSub);
         connect(none, &QAction::triggered, this, &MainWindow::disableSubtitles);
@@ -1859,13 +1860,13 @@ void MainWindow::switchToTrack(const MpvController::TrackInfo &t) {
     QString prefix;
     if (t.type == QLatin1String("video")) {
         prop = QStringLiteral("vid");
-        prefix = tr("视频流: ");
+        prefix = tr("Video: ");
     } else if (t.type == QLatin1String("audio")) {
         prop = QStringLiteral("aid");
-        prefix = tr("音频流: ");
+        prefix = tr("Audio: ");
     } else if (t.type == QLatin1String("sub")) {
         prop = QStringLiteral("sid");
-        prefix = tr("字幕流: ");
+        prefix = tr("Subtitle: ");
     } else {
         return;
     }
@@ -1875,7 +1876,7 @@ void MainWindow::switchToTrack(const MpvController::TrackInfo &t) {
 
 void MainWindow::disableSubtitles() {
     m_controller->setProperty(QStringLiteral("sid"), QStringLiteral("no"));
-    showOsd(tr("字幕流: 无"));
+    showOsd(tr("Subtitle: None"));
 }
 
 // ---- N15：章节与书签 ----
@@ -2083,7 +2084,7 @@ void MainWindow::onAddBookmark() {
             titles.insert(b.title);
         int n = 1;
         while (true) {
-            const QString cand = tr("书签 %1").arg(n);
+            const QString cand = tr("Bookmark %1").arg(n);
             if (!titles.contains(cand)) {
                 title = cand;
                 break;
@@ -2091,10 +2092,10 @@ void MainWindow::onAddBookmark() {
             ++n;
         }
     } else {
-        title = tr("书签 1");
+        title = tr("Bookmark 1");
     }
     m_bookmarkMgr->addBookmark(rawPath, t, title);
-    showOsd(tr("已添加书签: [%1] %2").arg(Util::formatTimeHMSms(t), title));
+    showOsd(tr("Bookmark added: [%1] %2").arg(Util::formatTimeHMSms(t), title));
 }
 
 void MainWindow::closeEvent(QCloseEvent *event) {

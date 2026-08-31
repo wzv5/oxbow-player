@@ -4,7 +4,7 @@
 
 PlaylistProvider::Type StaticProvider::type() const { return Type::Static; }
 
-QString StaticProvider::describe() const { return QObject::tr("本地静态列表"); }
+QString StaticProvider::describe() const { return QObject::tr("Local static list"); }
 
 void StaticProvider::setItems(QStringList &&items) { m_items = std::move(items); }
 

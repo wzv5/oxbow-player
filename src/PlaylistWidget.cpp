@@ -15,7 +15,7 @@ PlaylistWidget::PlaylistWidget(const QString &configFile, QWidget *parent)
     setAcceptDrops(true);
     setDocumentMode(true);
     setMinimumWidth(220);
-    addTab(createList(), tr("默认"));
+    addTab(createList(), tr("Default"));
     connect(this, &QTabWidget::currentChanged, this, &PlaylistWidget::onTabChanged);
 }
 
@@ -795,7 +795,7 @@ void PlaylistWidget::showPropertiesDialog(const QString &path) {
     // 只读文本框呈现（维护者裁决）：'\t' 制表对齐两列、整篇可划选复制；
     // 不自动换行，超宽由水平滚动条承接。分组以小号灰色标题行区隔
     QDialog dialog(this);
-    dialog.setWindowTitle(tr("属性"));
+    dialog.setWindowTitle(tr("Properties"));
     auto *view = new QTextEdit(&dialog);
     view->setReadOnly(true);
     view->setFrameShape(QFrame::NoFrame);
@@ -871,17 +871,17 @@ void PlaylistWidget::showPropertiesDialog(const QString &path) {
     // ——常规组：路径 / 大小 / 创建 / 修改 走 PlaylistItem（文件系统）；
     // 文件格式 / 总时长 走 MediaInfo
     QList<Row> general;
-    general.append({tr("文件路径"), item.path.isEmpty() ? path : item.path});
+    general.append({tr("File Path"), item.path.isEmpty() ? path : item.path});
     if (mi && !mi->format.isEmpty())
-        general.append({tr("文件格式"), mi->format});
+        general.append({tr("Format"), mi->format});
     if (item.fileSize > 0)
-        general.append({tr("文件大小"), Util::formatFileSize(item.fileSize)});
+        general.append({tr("File Size"), Util::formatFileSize(item.fileSize)});
     if (timeText(item.created).size())
-        general.append({tr("创建时间"), timeText(item.created)});
+        general.append({tr("Created"), timeText(item.created)});
     if (timeText(item.modified).size())
-        general.append({tr("修改时间"), timeText(item.modified)});
+        general.append({tr("Modified"), timeText(item.modified)});
     if (mi && mi->duration.has_value())
-        general.append({tr("总时长"), formatHMS(*mi->duration)});
+        general.append({tr("Duration"), formatHMS(*mi->duration)});
 
     // 流"大小"格式化："1.23 GB (82%)"，百分比相对 mi->fileSize
     auto formatStreamSize = [&](qint64 sz, qint64 filesize) -> QString {
@@ -898,58 +898,58 @@ void PlaylistWidget::showPropertiesDialog(const QString &path) {
     auto buildVideoRows = [&](const MediaInfoHelper::Stream &t) -> QList<Row> {
         QList<Row> rows;
         if (t.isDefault)
-            rows.append({tr("默认"), tr("是")});
+            rows.append({tr("Default"), tr("Yes")});
         if (!t.title.isEmpty())
-            rows.append({tr("标题"), t.title});
+            rows.append({tr("Title"), t.title});
         if (!t.language.isEmpty())
-            rows.append({tr("语言"), t.language});
+            rows.append({tr("Language"), t.language});
         if (!t.codec.isEmpty())
-            rows.append({tr("编码"), t.codec});
+            rows.append({tr("Codec"), t.codec});
         if (t.width > 0 && t.height > 0)
-            rows.append({tr("分辨率"), QStringLiteral("%1 x %2").arg(t.width).arg(t.height)});
+            rows.append({tr("Resolution"), QStringLiteral("%1 x %2").arg(t.width).arg(t.height)});
         if (t.frameRate > 0.0)
-            rows.append({tr("帧率"), formatFpsSpaced(t.frameRate)});
+            rows.append({tr("Frame Rate"), formatFpsSpaced(t.frameRate)});
         if (t.bitrate > 0)
-            rows.append({tr("码率"), formatKbpsSpaced(t.bitrate)});
+            rows.append({tr("Bitrate"), formatKbpsSpaced(t.bitrate)});
         const QString sizeStr = formatStreamSize(t.streamSize, item.fileSize);
         if (!sizeStr.isEmpty())
-            rows.append({tr("大小"), sizeStr});
+            rows.append({tr("Size"), sizeStr});
         return rows;
     };
     auto buildAudioRows = [&](const MediaInfoHelper::Stream &t) -> QList<Row> {
         QList<Row> rows;
         if (t.isDefault)
-            rows.append({tr("默认"), tr("是")});
+            rows.append({tr("Default"), tr("Yes")});
         if (!t.title.isEmpty())
-            rows.append({tr("标题"), t.title});
+            rows.append({tr("Title"), t.title});
         if (!t.language.isEmpty())
-            rows.append({tr("语言"), t.language});
+            rows.append({tr("Language"), t.language});
         if (!t.codec.isEmpty())
-            rows.append({tr("编码"), t.codec});
+            rows.append({tr("Codec"), t.codec});
         if (t.channelCount > 0)
-            rows.append({tr("通道数"), QString::number(t.channelCount)});
+            rows.append({tr("Channels"), QString::number(t.channelCount)});
         if (t.sampleRate > 0)
-            rows.append({tr("采样率"), formatKHzSpaced(t.sampleRate)});
+            rows.append({tr("Sample Rate"), formatKHzSpaced(t.sampleRate)});
         if (t.bitrate > 0)
-            rows.append({tr("码率"), formatKbpsSpaced(t.bitrate)});
+            rows.append({tr("Bitrate"), formatKbpsSpaced(t.bitrate)});
         const QString sizeStr = formatStreamSize(t.streamSize, item.fileSize);
         if (!sizeStr.isEmpty())
-            rows.append({tr("大小"), sizeStr});
+            rows.append({tr("Size"), sizeStr});
         return rows;
     };
     auto buildTextRows = [&](const MediaInfoHelper::Stream &t) -> QList<Row> {
         QList<Row> rows;
         if (t.isDefault)
-            rows.append({tr("默认"), tr("是")});
+            rows.append({tr("Default"), tr("Yes")});
         if (!t.title.isEmpty())
-            rows.append({tr("标题"), t.title});
+            rows.append({tr("Title"), t.title});
         if (!t.language.isEmpty())
-            rows.append({tr("语言"), t.language});
+            rows.append({tr("Language"), t.language});
         if (!t.codec.isEmpty())
-            rows.append({tr("编码"), t.codec});
+            rows.append({tr("Codec"), t.codec});
         const QString sizeStr = formatStreamSize(t.streamSize, item.fileSize);
         if (!sizeStr.isEmpty())
-            rows.append({tr("大小"), sizeStr});
+            rows.append({tr("Size"), sizeStr});
         return rows;
     };
 
@@ -975,29 +975,29 @@ void PlaylistWidget::showPropertiesDialog(const QString &path) {
     // ——标签组：标题 / 专辑 / 作者 / 发行时间
     QList<Row> tags;
     if (mi && !mi->title.isEmpty())
-        tags.append({tr("标题"), mi->title});
+        tags.append({tr("Title"), mi->title});
     if (mi && !mi->album.isEmpty())
-        tags.append({tr("专辑"), mi->album});
+        tags.append({tr("Album"), mi->album});
     if (mi && !mi->performer.isEmpty())
-        tags.append({tr("作者"), mi->performer});
+        tags.append({tr("Author"), mi->performer});
     if (mi && mi->recordedDate.isValid())
-        tags.append({tr("发行时间"), timeText(mi->recordedDate)});
+        tags.append({tr("Released"), timeText(mi->recordedDate)});
 
-    appendGroup(tr("常规"), general);
+    appendGroup(tr("General"), general);
     for (int i = 0; i < videos.size(); ++i)
-        appendGroup(tr("视频 #%1").arg(i + 1), videos[i]);
+        appendGroup(tr("Video #%1").arg(i + 1), videos[i]);
     for (int i = 0; i < audios.size(); ++i)
-        appendGroup(tr("音频 #%1").arg(i + 1), audios[i]);
+        appendGroup(tr("Audio #%1").arg(i + 1), audios[i]);
     for (int i = 0; i < texts.size(); ++i)
-        appendGroup(tr("字幕 #%1").arg(i + 1), texts[i]);
-    appendGroup(tr("标签"), tags);
+        appendGroup(tr("Subtitle #%1").arg(i + 1), texts[i]);
+    appendGroup(tr("Tags"), tags);
 
     // ——章节组：每章节一行 `[hh:mm:ss.zzz] 标题`；媒体信息不可用时不显示
     if (mi && !mi->chapters.isEmpty()) {
         if (!cur.atStart())
             cur.insertBlock();
         cur.setCharFormat(headFmt);
-        cur.insertText(tr("章节"), headFmt);
+        cur.insertText(tr("Chapters"), headFmt);
         cur.insertBlock();
         for (const auto &c : mi->chapters) {
             cur.setCharFormat(valueFmt);
@@ -1051,9 +1051,9 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
             }
         }
         QMenu menu(this);
-        QAction *newTabAction = menu.addAction(tr("新建播放列表"));
-        QAction *closeTabAction = menu.addAction(tr("删除当前列表"));
-        QAction *settingsAction = menu.addAction(tr("列表设置…"));
+        QAction *newTabAction = menu.addAction(tr("New Playlist"));
+        QAction *closeTabAction = menu.addAction(tr("Delete Current List"));
+        QAction *settingsAction = menu.addAction(tr("List Settings…"));
         closeTabAction->setEnabled(hitTab > 0);
         settingsAction->setEnabled(hitTab > 0); // 默认 tab 与空白区均无删除/设置
 
@@ -1096,19 +1096,19 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
 
     QMenu menu(this);
 
-    QAction *addAction = menu.addAction(tr("添加文件…"));
+    QAction *addAction = menu.addAction(tr("Add Files…"));
     menu.addSeparator();
 
-    QMenu *sortMenu = menu.addMenu(tr("排序"));
+    QMenu *sortMenu = menu.addMenu(tr("Sort"));
     QAction *sortActions[8];
-    sortActions[0] = sortMenu->addAction(tr("文件名"));
-    sortActions[1] = sortMenu->addAction(tr("文件名（数字化）"));
-    sortActions[2] = sortMenu->addAction(tr("扩展名"));
-    sortActions[3] = sortMenu->addAction(tr("创建时间"));
-    sortActions[4] = sortMenu->addAction(tr("修改时间"));
-    sortActions[5] = sortMenu->addAction(tr("文件大小"));
-    sortActions[6] = sortMenu->addAction(tr("总时长"));
-    sortActions[7] = sortMenu->addAction(tr("发行时间"));
+    sortActions[0] = sortMenu->addAction(tr("File Name"));
+    sortActions[1] = sortMenu->addAction(tr("File Name (Numeric)"));
+    sortActions[2] = sortMenu->addAction(tr("Extension"));
+    sortActions[3] = sortMenu->addAction(tr("Created"));
+    sortActions[4] = sortMenu->addAction(tr("Modified"));
+    sortActions[5] = sortMenu->addAction(tr("File Size"));
+    sortActions[6] = sortMenu->addAction(tr("Duration"));
+    sortActions[7] = sortMenu->addAction(tr("Released"));
     // N18：菜单 action 显式携带 SortKey，解除"菜单数组下标 +1 == 枚举值"的脆弱不变式
     sortActions[0]->setData(int(SortKey::FileName));
     sortActions[1]->setData(int(SortKey::FileNameNumeric));
@@ -1138,8 +1138,8 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
         }
     }
 
-    QAction *ascAction = sortMenu->addAction(tr("正序"));
-    QAction *descAction = sortMenu->addAction(tr("反序"));
+    QAction *ascAction = sortMenu->addAction(tr("Ascending"));
+    QAction *descAction = sortMenu->addAction(tr("Descending"));
     for (QAction *a : {ascAction, descAction})
         a->setCheckable(true);
     QActionGroup *dirGroup = new QActionGroup(sortMenu);
@@ -1148,20 +1148,20 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
     ascAction->setChecked(curAsc);
     descAction->setChecked(!curAsc);
 
-    QMenu *removeMenu = menu.addMenu(tr("移除"));
-    QAction *removeSelAction = removeMenu->addAction(tr("移除选中项"));
-    QAction *clearAction = removeMenu->addAction(tr("清空当前列表"));
+    QMenu *removeMenu = menu.addMenu(tr("Remove"));
+    QAction *removeSelAction = removeMenu->addAction(tr("Remove Selected"));
+    QAction *clearAction = removeMenu->addAction(tr("Clear Current List"));
     removeMenu->addSeparator();
-    QAction *removeInvalidAction = removeMenu->addAction(tr("移除无效项"));
-    QAction *removeDupAction = removeMenu->addAction(tr("移除重复项"));
+    QAction *removeInvalidAction = removeMenu->addAction(tr("Remove Invalid"));
+    QAction *removeDupAction = removeMenu->addAction(tr("Remove Duplicates"));
 
-    QAction *refreshAction = menu.addAction(tr("刷新"));
+    QAction *refreshAction = menu.addAction(tr("Refresh"));
     menu.addSeparator();
 
     const QString targetNative = m_menuTargetList ? materialize(targetPath).path : QString();
-    QAction *openLocationAction = menu.addAction(tr("打开文件位置"));
-    QAction *copyPathAction = menu.addAction(tr("复制文件路径"));
-    QAction *propsAction = menu.addAction(tr("属性"));
+    QAction *openLocationAction = menu.addAction(tr("Open File Location"));
+    QAction *copyPathAction = menu.addAction(tr("Copy File Path"));
+    QAction *propsAction = menu.addAction(tr("Properties"));
 
     // ——启用条件——
     const bool hasList = list != nullptr;
@@ -1199,8 +1199,8 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
         for (const QString &ext : App::defaultMediaExtensions())
             patterns << QStringLiteral("*.") + ext;
         const QStringList files = QFileDialog::getOpenFileNames(
-            this, tr("添加文件"), QString(),
-            tr("媒体文件 (%1);;所有文件 (*)").arg(patterns.join(QLatin1Char(' '))));
+            this, tr("Add Files"), QString(),
+            tr("Media files (%1);;All files (*)").arg(patterns.join(QLatin1Char(' '))));
         if (!files.isEmpty())
             addFiles(files);
     } else if (chosen == refreshAction) {
@@ -1278,9 +1278,9 @@ void PlaylistWidget::createNewList() {
     int maxN = 0;
     for (int i = 0; i < count(); ++i) {
         const QString &name = tabText(i);
-        if (name.startsWith(tr("播放列表 "))) {
+        if (name.startsWith(tr("Playlist "))) {
             bool ok = false;
-            int n = name.mid(QString(tr("播放列表 ")).length()).toInt(&ok);
+            int n = name.mid(QString(tr("Playlist ")).length()).toInt(&ok);
             if (ok && n > maxN)
                 maxN = n;
         }
@@ -1289,7 +1289,7 @@ void PlaylistWidget::createNewList() {
     QStringList occupied;
     for (int i = 0; i < count(); ++i)
         occupied << tabText(i);
-    ListSettingsDialog dlg(this, tr("播放列表 %1").arg(maxN + 1), nullptr, occupied);
+    ListSettingsDialog dlg(this, tr("Playlist %1").arg(maxN + 1), nullptr, occupied);
     if (dlg.exec() != QDialog::Accepted)
         return;
     const QString name = dlg.listName();

@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Widgets LinguistTools)
 
 # ---------------------------------------------------------------------------
 # 目标 1：加载壳 main.dll（纯 Win32，无 Qt 依赖）
@@ -78,6 +78,11 @@ endif()
 # 预编译头：Qt 与标准库集中进 src/pch.h，加快编译
 target_precompile_headers(mpvqtcore PRIVATE src/pch.h)
 set_target_properties(mpvqtcore PROPERTIES PREFIX "" OUTPUT_NAME "mpvqtcore")
+
+qt_add_translations(mpvqtcore MERGE_QT_TRANSLATIONS
+    LUPDATE_OPTIONS -no-obsolete
+    TS_FILES translations/mpvqt_zh_CN.ts
+)
 
 # ---------------------------------------------------------------------------
 # 部署：把插件建成独立脚本目录

@@ -24,8 +24,8 @@ DirProvider::DirProvider(const QString &root, bool recursive, const QStringList 
 PlaylistProvider::Type DirProvider::type() const { return Type::Dir; }
 
 QString DirProvider::describe() const {
-    const QString suffix = m_recursive ? QObject::tr("（含子目录）") : QString();
-    return QObject::tr("本地目录：%1%2").arg(m_root, suffix);
+    const QString suffix = m_recursive ? QObject::tr(" (with subdirectories)") : QString();
+    return QObject::tr("Local directory: %1%2").arg(m_root, suffix);
 }
 
 QStringList DirProvider::enumerate() const {

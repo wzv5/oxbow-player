@@ -147,7 +147,7 @@ void NavigatorCanvas::paintEvent(QPaintEvent *) {
 
     if (!isActive()) {
         p.setPen(QPen(palette().color(QPalette::PlaceholderText)));
-        p.drawText(rect(), Qt::AlignCenter, tr("无视频"));
+        p.drawText(rect(), Qt::AlignCenter, tr("No video"));
         return;
     }
 
@@ -281,7 +281,7 @@ void NavigatorCanvas::wheelEvent(QWheelEvent *event) {
 
 NavigatorPanel::NavigatorPanel(MpvController *controller, QWidget *renderArea, QWidget *parent)
     : QWidget(parent, Qt::Tool | Qt::WindowTitleHint | Qt::WindowCloseButtonHint) {
-    setWindowTitle(tr("导航器"));
+    setWindowTitle(tr("Navigator"));
     setMinimumSize(200, 200);
     resize(220, 260);
 
@@ -304,11 +304,13 @@ NavigatorPanel::NavigatorPanel(MpvController *controller, QWidget *renderArea, Q
     m_zoomSpin->setRange(25, 800);
     m_zoomSpin->setSuffix(QStringLiteral("%"));
     auto *nativeBtn = new QPushButton(QStringLiteral("1:1"), row);
-    nativeBtn->setToolTip(tr("原始尺寸：按源分辨率 1:1 显示并居中，超出窗口部分被裁剪"));
+    nativeBtn->setToolTip(
+        tr("Native size: 1:1 at source resolution, centered; parts outside the window are "
+           "clipped."));
     nativeBtn->setFixedWidth(36);
     // ↺（U+21BA）：复位到填充窗口，与 1:1 原始尺寸语义区分
     auto *resetBtn = new QPushButton(QStringLiteral("\u21BA"), row);
-    resetBtn->setToolTip(tr("复位视图：恢复填充窗口（mpv 默认缩放）"));
+    resetBtn->setToolTip(tr("Reset view: restore window-filling zoom (mpv default)."));
     resetBtn->setFixedWidth(28);
     for (auto *w : std::initializer_list<QWidget *>{m_zoomSlider, m_zoomSpin, nativeBtn, resetBtn})
         w->setFocusPolicy(Qt::NoFocus); // C2 同款约束：Space 归全局快捷键
