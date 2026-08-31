@@ -145,7 +145,7 @@ void ListSettingsDialog::accept() {
         QMessageBox::warning(this, tr("列表设置"), tr("列表名称不能为空。"));
         return;
     }
-    if (name == QLatin1String("默认")) {
+    if (name == tr("默认")) {
         QMessageBox::warning(this, tr("列表设置"), tr("不能使用默认列表的名称。"));
         return;
     }

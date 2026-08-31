@@ -496,7 +496,8 @@ void MainWindow::connectController() {
                 setWindowTitle(filename); // N8 Part1：标题跟随真实文件名
             else
                 filename = tr("未知文件");
-            m_pendingNowPlaying = tr("[%1/%2] %3").arg(pos + 1).arg(total).arg(filename);
+            m_pendingNowPlaying =
+                QStringLiteral("[%1/%2] %3").arg(pos + 1).arg(total).arg(filename);
             if (!m_osdCoalescePending) {
                 m_osdCoalescePending = true;
                 QTimer::singleShot(0, this, &MainWindow::flushOsd);
@@ -1331,12 +1332,12 @@ void MainWindow::seekRelative(int deltaSeconds) {
     // N7 #6：进度跳转 OSD（固定 hh:mm:ss）
     if (m_duration > 0.0) {
         const double target = qBound(0.0, m_timePos + deltaSeconds, m_duration);
-        const QString sign = deltaSeconds >= 0 ? QStringLiteral("+%1秒").arg(deltaSeconds)
-                                               : QStringLiteral("%1秒").arg(deltaSeconds);
+        const QString sign =
+            deltaSeconds >= 0 ? tr("+%1秒").arg(deltaSeconds) : tr("%1秒").arg(deltaSeconds);
         showOsd(tr("进度跳转: %1 / %2").arg(sign, Util::formatTimePercent(target, m_duration)));
     } else {
-        const QString sign = deltaSeconds >= 0 ? QStringLiteral("+%1秒").arg(deltaSeconds)
-                                               : QStringLiteral("%1秒").arg(deltaSeconds);
+        const QString sign =
+            deltaSeconds >= 0 ? tr("+%1秒").arg(deltaSeconds) : tr("%1秒").arg(deltaSeconds);
         showOsd(tr("进度跳转: %1").arg(sign));
     }
 }
