@@ -8,10 +8,9 @@
 // mpv 客户端 API 本身线程安全（client.h "Multithreading"），唯一例外是
 // mpv_wait_event 仅单线程可调（本类由 EventThread 专职调用，B17）。
 // 信号允许跨线程发射（自动排队连接，槽在 GUI 线程执行）。
-class MpvController : public QObject
-{
+class MpvController : public QObject {
     Q_OBJECT
-public:
+  public:
     explicit MpvController(mpv_handle *mpv, QObject *parent = nullptr);
 
     // 发送命令：单行命令字符串，或参数数组（推荐用于含路径的命令，避免转义问题）
@@ -28,10 +27,9 @@ public:
     bool propertyFlag(const QString &name, bool fallback);
 
     // N13：轨道信息（track-list 解析产物）
-    struct TrackInfo
-    {
+    struct TrackInfo {
         qint64 id = 0;
-        QString type;               // video / audio / sub
+        QString type; // video / audio / sub
         QString title;
         QString lang;
         QString codec;
@@ -44,18 +42,17 @@ public:
         double demuxFps = 0.0;
         int demuxSamplerate = 0;
         int demuxChannelCount = 0;
-        qint64 demuxBitrate = 0;    // bps，0 表无值
-        qint64 metadataBPS = 0;     // bps，0 表无值
+        qint64 demuxBitrate = 0; // bps，0 表无值
+        qint64 metadataBPS = 0;  // bps，0 表无值
     };
 
     // N15：章节信息（chapter-list 解析产物）
-    struct ChapterInfo
-    {
+    struct ChapterInfo {
         double time = 0.0;
         QString title;
     };
 
-signals:
+  signals:
     void timePosChanged(double seconds);
     // B18：首参为归属键——START_FILE 时缓存、FILE_LOADED/observe 推送当刻
     // 的当前文件路径（快照），接收方不得再向控制器现读
@@ -88,7 +85,7 @@ signals:
     void chaptersChanged(const QString &path, const QList<ChapterInfo> &chapters);
     void mpvShutdown();
 
-public:
+  public:
     // 当前视频尺寸（N3）：当场重读 width/height 属性，不走缓存；
     // 返回 QSize(0,0) 表示无视频
     QSize videoSize() const;
@@ -99,15 +96,15 @@ public:
     // 尚未生效，mpv 会先自建窗口再重建嵌入，产生窗口闪烁
     void startEventThread();
 
-private:
+  private:
     class EventThread; // 事件专用线程（定义见 .cpp）
 
     void handlePropertyChange(const mpv_event *event);
     // B18：生命周期事件分派（均在事件线程执行）
-    void handleStartFile();   // START_FILE：刷新当前文件缓存
-    void handleFileLoaded();  // FILE_LOADED：以缓存为归属键主动读 5 项属性并发射
+    void handleStartFile();  // START_FILE：刷新当前文件缓存
+    void handleFileLoaded(); // FILE_LOADED：以缓存为归属键主动读 5 项属性并发射
 
-    mpv_handle *m_mpv; // 由 mpv 拥有，插件不销毁
+    mpv_handle *m_mpv;              // 由 mpv 拥有，插件不销毁
     int m_videoW = 0, m_videoH = 0; // width/height 两属性合并缓存（N1）
     // B18：当前文件路径缓存——START_FILE 时写入，FILE_LOADED / duration
     // observe 推送读取作为归属键；仅事件线程读写，无需加锁

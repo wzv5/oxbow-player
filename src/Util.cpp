@@ -2,15 +2,9 @@
 
 #include "Util.h"
 
-#ifdef Q_OS_WIN
-#include <shlobj.h>
-#include <qt_windows.h>
-#endif
-
 namespace Util {
 
-QString formatFileSize(qint64 bytes)
-{
+QString formatFileSize(qint64 bytes) {
     if (bytes < 0)
         return QString();
     // 阈值 1024 进位；KB 及以上保留一位小数，末尾 ".0" 去除
@@ -28,8 +22,7 @@ QString formatFileSize(qint64 bytes)
 namespace {
 // 数字段解析：十进制累加并做溢出检测；成功产出数值段（前导零随解析抹平），
 // 溢出则返回 false，调用方将该段降级为普通文本段
-bool parseDigitRun(QStringView run, qlonglong *out)
-{
+bool parseDigitRun(QStringView run, qlonglong *out) {
     qlonglong value = 0;
     for (QChar ch : run) {
         const int d = ch.unicode() - u'0';
@@ -43,8 +36,7 @@ bool parseDigitRun(QStringView run, qlonglong *out)
 }
 } // namespace
 
-QList<NameSegment> segmentName(const QString &name)
-{
+QList<NameSegment> segmentName(const QString &name) {
     QList<NameSegment> segments;
     qsizetype i = 0;
     const qsizetype n = name.size();
@@ -74,8 +66,7 @@ QList<NameSegment> segmentName(const QString &name)
     return segments;
 }
 
-int naturalCompare(const QList<NameSegment> &a, const QList<NameSegment> &b)
-{
+int naturalCompare(const QList<NameSegment> &a, const QList<NameSegment> &b) {
     const qsizetype n = qMin(a.size(), b.size());
     for (qsizetype k = 0; k < n; ++k) {
         const NameSegment &sa = a[k];
@@ -95,8 +86,7 @@ int naturalCompare(const QList<NameSegment> &a, const QList<NameSegment> &b)
     return a.size() == b.size() ? 0 : (a.size() < b.size() ? -1 : 1);
 }
 
-bool openFileLocation(const QString &path, QWidget *parent)
-{
+bool openFileLocation(const QString &path, QWidget *parent) {
     Q_UNUSED(parent);
 #ifdef Q_OS_WIN
     // 三步 Shell 调用；不得用 explorer /select 派生子进程（每次调用残留一个进程）
@@ -114,19 +104,20 @@ bool openFileLocation(const QString &path, QWidget *parent)
     return !dir.isEmpty() && QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
 }
 
-QString formatTime(double seconds)
-{
+QString formatTime(double seconds) {
     const int total = int(seconds + 0.5);
     const int h = total / 3600;
     const int m = (total % 3600) / 60;
     const int s = total % 60;
     if (h > 0)
-        return QStringLiteral("%1:%2:%3").arg(h).arg(m, 2, 10, QLatin1Char('0')).arg(s, 2, 10, QLatin1Char('0'));
+        return QStringLiteral("%1:%2:%3")
+            .arg(h)
+            .arg(m, 2, 10, QLatin1Char('0'))
+            .arg(s, 2, 10, QLatin1Char('0'));
     return QStringLiteral("%1:%2").arg(m, 2, 10, QLatin1Char('0')).arg(s, 2, 10, QLatin1Char('0'));
 }
 
-QString formatTimeHMS(double seconds)
-{
+QString formatTimeHMS(double seconds) {
     const int total = int(seconds + 0.5);
     const int h = total / 3600;
     const int m = (total % 3600) / 60;
@@ -137,16 +128,14 @@ QString formatTimeHMS(double seconds)
         .arg(s, 2, 10, QLatin1Char('0'));
 }
 
-QString formatTimePercent(double seconds, double duration)
-{
+QString formatTimePercent(double seconds, double duration) {
     if (duration <= 0.0)
         return formatTimeHMS(seconds);
     const int pct = int(seconds / duration * 100.0 + 0.5);
     return QStringLiteral("%1(%2%)").arg(formatTimeHMS(seconds)).arg(pct);
 }
 
-QString formatTimeHMSms(double seconds)
-{
+QString formatTimeHMSms(double seconds) {
     const qint64 totalMs = qint64(seconds * 1000.0 + 0.5);
     const qint64 ms = totalMs % 1000;
     const qint64 totalS = totalMs / 1000;
@@ -160,8 +149,7 @@ QString formatTimeHMSms(double seconds)
         .arg(int(ms), 3, 10, QLatin1Char('0'));
 }
 
-bool parseTimeHMSms(const QString &text, double *outSeconds)
-{
+bool parseTimeHMSms(const QString &text, double *outSeconds) {
     const QString s = text.trimmed();
     if (s.isEmpty())
         return false;
@@ -188,7 +176,7 @@ bool parseTimeHMSms(const QString &text, double *outSeconds)
     return true;
 }
 
-QString trimTrailingZeros(const QString &fixed){
+QString trimTrailingZeros(const QString &fixed) {
     QString s = fixed;
     if (s.contains(QLatin1Char('.'))) {
         while (s.endsWith(QLatin1Char('0')))
@@ -199,8 +187,7 @@ QString trimTrailingZeros(const QString &fixed){
     return s;
 }
 
-QString normalizePathForMatch(const QString &path)
-{
+QString normalizePathForMatch(const QString &path) {
     // 本地路径先相对→绝对（基于进程 CWD，不访问文件系统），再统一分隔符；
     // Windows 额外转小写。仅用于内部匹配；UI 展示与向 mpv 传递始终保持原样。
     const QString abs = Util::resolveLocalPath(path);
@@ -211,17 +198,15 @@ QString normalizePathForMatch(const QString &path)
     return p;
 }
 
-bool Util::isNetworkStreamPath(const QString &path)
-{
+bool Util::isNetworkStreamPath(const QString &path) {
     // 含 :// 且非 file: 前缀（覆盖 file:// 与 file:/）即视为网络/流。
     // 串前缀判定规避两陷阱：QUrl::scheme() 把 "C:\dir" 误判 scheme "c"；
     // QUrl::fromUserInput 把相对名 "a" 误判非本地。
-    return path.contains(QStringLiteral("://"))
-        && !path.startsWith(QStringLiteral("file:"), Qt::CaseInsensitive);
+    return path.contains(QStringLiteral("://")) &&
+           !path.startsWith(QStringLiteral("file:"), Qt::CaseInsensitive);
 }
 
-QString resolveLocalPath(const QString &path)
-{
+QString resolveLocalPath(const QString &path) {
     if (path.isEmpty())
         return path;
     if (Util::isNetworkStreamPath(path))
@@ -237,8 +222,7 @@ QString resolveLocalPath(const QString &path)
     return QDir::toNativeSeparators(QFileInfo(local).absoluteFilePath());
 }
 
-QDateTime parseReleaseDate(const QString &s)
-{
+QDateTime parseReleaseDate(const QString &s) {
     if (s.isEmpty())
         return {};
     const QDateTime dt = QDateTime::fromString(s, Qt::ISODate);
@@ -248,8 +232,10 @@ QDateTime parseReleaseDate(const QString &s)
     if (d.isValid())
         return {d.startOfDay()};
     const QStringList formats{
-        QStringLiteral("yyyy-MM-dd"), QStringLiteral("yyyy/MM/dd"),
-        QStringLiteral("yyyy-MM"), QStringLiteral("yyyy"),
+        QStringLiteral("yyyy-MM-dd"),
+        QStringLiteral("yyyy/MM/dd"),
+        QStringLiteral("yyyy-MM"),
+        QStringLiteral("yyyy"),
     };
     for (const QString &fmt : formats) {
         const QDate d2 = QDate::fromString(s.left(fmt.length()), fmt);

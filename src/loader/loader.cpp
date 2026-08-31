@@ -27,8 +27,7 @@ static MpvOpenCpluginFunc g_entry = nullptr;
 static bool g_tried = false;
 
 // 通过本函数自身地址取得当前模块句柄（不依赖模块名）。
-static HMODULE ThisModule()
-{
+static HMODULE ThisModule() {
     HMODULE h = nullptr;
     GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
                            GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
@@ -37,8 +36,7 @@ static HMODULE ThisModule()
 }
 
 // 取模块完整路径：返回值等于缓冲大小时视为截断，倍增重试直至容纳（B4）。
-static std::wstring ModuleFilePath(HMODULE h)
-{
+static std::wstring ModuleFilePath(HMODULE h) {
     std::wstring buf(MAX_PATH, L'\0');
     DWORD len = 0;
     while ((len = GetModuleFileNameW(h, buf.data(), static_cast<DWORD>(buf.size()))) == buf.size())
@@ -48,15 +46,13 @@ static std::wstring ModuleFilePath(HMODULE h)
 }
 
 // 取模块所在目录（含末尾反斜杠）。
-static std::wstring ModuleDir(HMODULE h)
-{
+static std::wstring ModuleDir(HMODULE h) {
     const std::wstring path = ModuleFilePath(h);
     const size_t pos = path.find_last_of(L"\\/");
     return pos == std::wstring::npos ? std::wstring() : path.substr(0, pos + 1);
 }
 
-static bool LoadCore()
-{
+static bool LoadCore() {
     if (g_tried)
         return g_core != nullptr;
     g_tried = true;
@@ -96,8 +92,7 @@ static bool LoadCore()
     LoadLibraryExW((pluginDir + L"MediaInfo.dll").c_str(), nullptr,
                    LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
 
-    g_entry = reinterpret_cast<MpvOpenCpluginFunc>(
-        GetProcAddress(g_core, "mpv_open_cplugin"));
+    g_entry = reinterpret_cast<MpvOpenCpluginFunc>(GetProcAddress(g_core, "mpv_open_cplugin"));
     if (!g_entry) {
         FreeLibrary(g_core);
         g_core = nullptr;
@@ -106,8 +101,7 @@ static bool LoadCore()
     return true;
 }
 
-extern "C" __declspec(dllexport) int mpv_open_cplugin(void *handle)
-{
+extern "C" __declspec(dllexport) int mpv_open_cplugin(void *handle) {
     if (!LoadCore() || !g_entry)
         return 1; // 非 0 表示加载失败
     return g_entry(handle);

@@ -69,11 +69,11 @@
 #include <QTemporaryFile>
 #include <QTextEdit>
 #include <QTextOption>
+#include <QThread>
 #include <QTimer>
 #include <QToolButton>
 #include <QToolTip>
 #include <QTreeWidget>
-#include <QThread>
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QVariantList>
@@ -88,3 +88,11 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+
+#ifdef Q_OS_WIN
+#include <dwmapi.h>
+#include <qt_windows.h>
+#include <shlobj.h>
+#else
+#include <dlfcn.h> // dlsym / RTLD_DEFAULT
+#endif

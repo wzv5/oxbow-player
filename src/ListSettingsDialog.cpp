@@ -1,18 +1,17 @@
-#include "pch.h"
 #include "ListSettingsDialog.h"
+#include "pch.h"
 
 #include "Constants.h"
-#include "Util.h"
 #include "DirProvider.h"
 #include "StaticProvider.h"
+#include "Util.h"
 
 namespace {
 // 扩展名编辑区文本 → 规范清单：按空白拆分、去点、转小写、去重保序
-QStringList parseExtensions(const QString &text)
-{
+QStringList parseExtensions(const QString &text) {
     QStringList out;
-    for (const QString &token : text.split(QRegularExpression(QStringLiteral("\\s+")),
-                                           Qt::SkipEmptyParts)) {
+    for (const QString &token :
+         text.split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts)) {
         QString ext = token;
         while (ext.startsWith(QLatin1Char('.')))
             ext.remove(0, 1);
@@ -27,8 +26,7 @@ QStringList parseExtensions(const QString &text)
 ListSettingsDialog::ListSettingsDialog(QWidget *parent, const QString &currentName,
                                        const PlaylistProvider *current,
                                        const QStringList &occupiedNames)
-    : QDialog(parent), m_occupiedNames(occupiedNames), m_current(current)
-{
+    : QDialog(parent), m_occupiedNames(occupiedNames), m_current(current) {
     setWindowTitle(tr("列表设置"));
     auto *layout = new QFormLayout(this);
 
@@ -87,8 +85,7 @@ ListSettingsDialog::ListSettingsDialog(QWidget *parent, const QString &currentNa
     populateFromCurrent();
 }
 
-void ListSettingsDialog::populateFromCurrent()
-{
+void ListSettingsDialog::populateFromCurrent() {
     if (!m_current) {
         // 新建列表：静态默认，扩展名预填全局默认清单
         m_staticRadio->setChecked(true);
@@ -110,18 +107,13 @@ void ListSettingsDialog::populateFromCurrent()
     }
 }
 
-QString ListSettingsDialog::listName() const
-{
-    return m_nameEdit->text().trimmed();
-}
+QString ListSettingsDialog::listName() const { return m_nameEdit->text().trimmed(); }
 
-PlaylistProvider::Type ListSettingsDialog::providerType() const
-{
+PlaylistProvider::Type ListSettingsDialog::providerType() const {
     return m_dirRadio->isChecked() ? PlaylistProvider::Type::Dir : PlaylistProvider::Type::Static;
 }
 
-QString ListSettingsDialog::dirRoot() const
-{
+QString ListSettingsDialog::dirRoot() const {
     // 路径来源处（用户可手动输入，可能相对或分隔符不规范）：相对→绝对、转原生分隔符，
     // 统一走 resolveLocalPath；网络/流保持原样（需求 #6 读写原样）
     const QString text = m_rootEdit->text().trimmed();
@@ -130,32 +122,24 @@ QString ListSettingsDialog::dirRoot() const
     return Util::resolveLocalPath(text);
 }
 
-bool ListSettingsDialog::dirRecursive() const
-{
-    return m_recursiveCheck->isChecked();
-}
+bool ListSettingsDialog::dirRecursive() const { return m_recursiveCheck->isChecked(); }
 
-QStringList ListSettingsDialog::dirExtensions() const
-{
+QStringList ListSettingsDialog::dirExtensions() const {
     return parseExtensions(m_extensionsEdit->text());
 }
 
-std::optional<std::unique_ptr<PlaylistProvider>> ListSettingsDialog::takeProvider()
-{
+std::optional<std::unique_ptr<PlaylistProvider>> ListSettingsDialog::takeProvider() {
     return std::move(m_result);
 }
 
-void ListSettingsDialog::browseRoot()
-{
-    const QString dir = QFileDialog::getExistingDirectory(this, tr("选择目录"),
-                                                          dirRoot());
+void ListSettingsDialog::browseRoot() {
+    const QString dir = QFileDialog::getExistingDirectory(this, tr("选择目录"), dirRoot());
     // Qt 来源（目录选择）：拿到即转原生分隔符（B15）
     if (!dir.isEmpty())
         m_rootEdit->setText(Util::nativePath(dir));
 }
 
-void ListSettingsDialog::accept()
-{
+void ListSettingsDialog::accept() {
     const QString name = listName();
     if (name.isEmpty()) {
         QMessageBox::warning(this, tr("列表设置"), tr("列表名称不能为空。"));
@@ -175,8 +159,9 @@ void ListSettingsDialog::accept()
             QMessageBox::warning(this, tr("列表设置"), tr("请选择绑定目录。"));
             return;
         }
-        // 本地目录提供者仅接受真实本地路径；网络/流路径（http/ftp/stream 等，含 :// 且非 file:）拒绝。
-        // 用串前缀判定，避免 QUrl::scheme() 误判盘符、QUrl::fromUserInput 误判相对名 "a" 为非本地。
+        // 本地目录提供者仅接受真实本地路径；网络/流路径（http/ftp/stream 等，含 :// 且非
+        // file:）拒绝。 用串前缀判定，避免 QUrl::scheme() 误判盘符、QUrl::fromUserInput 误判相对名
+        // "a" 为非本地。
         if (Util::isNetworkStreamPath(root)) {
             QMessageBox::warning(this, tr("列表设置"), tr("本地目录提供者不支持网络/流路径。"));
             return;
@@ -193,8 +178,8 @@ void ListSettingsDialog::accept()
     if (m_current && m_current->type() == providerType()) {
         if (providerType() == PlaylistProvider::Type::Dir) {
             auto *d = static_cast<const DirProvider *>(m_current);
-            unchanged = d->rootPath() == dirRoot() && d->recursive() == dirRecursive()
-                        && d->extensions() == dirExtensions();
+            unchanged = d->rootPath() == dirRoot() && d->recursive() == dirRecursive() &&
+                        d->extensions() == dirExtensions();
         } else {
             unchanged = true; // 静态无参数，同类型即未变
         }

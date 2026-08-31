@@ -11,11 +11,10 @@ QString formatFileSize(qint64 bytes);
 // 拆分依据仅为 ASCII 0-9；数值段按十进制解析（前导零不敏感，01 与 1 相等），
 // 解析失败（超出 qlonglong 的超长数字串）时该段降级为普通文本段，
 // 此时允许相邻出现多个文本段
-struct NameSegment
-{
+struct NameSegment {
     bool isNumber;
-    QString text;      // isNumber == false 时有效
-    qlonglong number;  // isNumber == true 时有效
+    QString text;     // isNumber == false 时有效
+    qlonglong number; // isNumber == true 时有效
 };
 
 // 预分段（装饰-排序：排序前对每项调用一次，比较仅在段序列间进行）
@@ -59,9 +58,9 @@ QString normalizePathForMatch(const QString &path);
 inline QString nativePath(const QString &path) { return QDir::toNativeSeparators(path); }
 
 // 本地路径相对→绝对（基于进程 CWD，纯字符串变换，不访问文件系统，文件不存在亦可），
-// 结果转原生分隔符；网络/流路径（含 :// 或非 file scheme）保持原样。cleanPath 由 absoluteFilePath 已含。
-// 既供 mpv 来源路径（propertyString / playlist filename），也供手动输入的目录根等来源处加工，
-// 即"来源路径 → 显示路径"的唯一出口。
+// 结果转原生分隔符；网络/流路径（含 :// 或非 file scheme）保持原样。cleanPath 由 absoluteFilePath
+// 已含。 既供 mpv 来源路径（propertyString / playlist
+// filename），也供手动输入的目录根等来源处加工， 即"来源路径 → 显示路径"的唯一出口。
 QString resolveLocalPath(const QString &path);
 
 // 是否网络/流路径（含 :// 且非 file: 前缀）：本地目录提供者据此拒绝、mpv 源据此保持原样。

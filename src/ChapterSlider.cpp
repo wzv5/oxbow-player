@@ -1,10 +1,9 @@
-#include "pch.h"
 #include "ChapterSlider.h"
+#include "pch.h"
 
 ChapterSlider::ChapterSlider(QWidget *parent) : QSlider(parent) {}
 
-void ChapterSlider::setMarkTimes(const QList<double> &times)
-{
+void ChapterSlider::setMarkTimes(const QList<double> &times) {
     if (m_markTimes == times)
         return;
     m_markTimes = times;
@@ -12,8 +11,7 @@ void ChapterSlider::setMarkTimes(const QList<double> &times)
     update();
 }
 
-void ChapterSlider::setDuration(double duration)
-{
+void ChapterSlider::setDuration(double duration) {
     if (m_duration == duration)
         return;
     m_duration = duration;
@@ -21,8 +19,7 @@ void ChapterSlider::setDuration(double duration)
     update();
 }
 
-void ChapterSlider::changeEvent(QEvent *event)
-{
+void ChapterSlider::changeEvent(QEvent *event) {
     QSlider::changeEvent(event);
     if (event->type() == QEvent::PaletteChange || event->type() == QEvent::StyleChange) {
         m_marksLayer = QPixmap(); // 标记颜色取自调色板，需重建
@@ -34,8 +31,7 @@ void ChapterSlider::changeEvent(QEvent *event)
 // N15 实测后保留：二分定位证实标记绘制本身无辜（真凶是自绘路径中单独的手柄
 // 绘制调用，见 paintEvent 注释）；预渲染作为与标记数解耦的冗余保险，使热路径
 // 标记成本恒为零，即使将来标记数量激增也不受影响
-void ChapterSlider::rebuildMarksLayer()
-{
+void ChapterSlider::rebuildMarksLayer() {
     m_marksLayer = QPixmap(size());
     if (m_marksLayer.isNull())
         return;
@@ -73,8 +69,7 @@ void ChapterSlider::rebuildMarksLayer()
     }
 }
 
-void ChapterSlider::paintEvent(QPaintEvent *event)
-{
+void ChapterSlider::paintEvent(QPaintEvent *event) {
     Q_UNUSED(event);
     if (m_markTimes.isEmpty() || m_duration <= 0.0) {
         QSlider::paintEvent(event);

@@ -7,27 +7,25 @@
 namespace {
 // 配色：画布底用窗口默认背景（跟随主题）；画面框内部固定深色模拟视频黑幕。
 // 视口矩形纯色填充、红色边框写死（N1 冻结口径）
-const QColor kScreenBg(0x10, 0x10, 0x10);      // 画面框内部（视频黑幕）
-const QColor kViewFill(0x50, 0x50, 0x50);      // 视口矩形填充
-const QColor kViewBorder(0xFF, 0x30, 0x30);    // 视口矩形红色边框（PS 风格）
+const QColor kScreenBg(0x10, 0x10, 0x10);   // 画面框内部（视频黑幕）
+const QColor kViewFill(0x50, 0x50, 0x50);   // 视口矩形填充
+const QColor kViewBorder(0xFF, 0x30, 0x30); // 视口矩形红色边框（PS 风格）
 
-const double kZoomMin = -2.0;                  // 25%
-const double kZoomMax = 3.0;                   // 800%
-const qreal kMargin = 8.0;                     // 画布内边距
+const double kZoomMin = -2.0; // 25%
+const double kZoomMax = 3.0;  // 800%
+const qreal kMargin = 8.0;    // 画布内边距
 
 // contain-fit：窗口内按比例内接的视频尺寸（zoom=0 时 mpv 的显示大小）
-QSizeF fitSize(const QSize &window, double aspect)
-{
+QSizeF fitSize(const QSize &window, double aspect) {
     const double winAspect = window.width() / double(window.height());
     if (aspect >= winAspect)
         return QSizeF(window.width(), window.width() / aspect);
     return QSizeF(window.height() * aspect, window.height());
 }
-}
+} // namespace
 
 NavigatorCanvas::NavigatorCanvas(MpvController *controller, QWidget *renderArea, QWidget *parent)
-    : QWidget(parent), m_controller(controller), m_render(renderArea)
-{
+    : QWidget(parent), m_controller(controller), m_render(renderArea) {
     setMinimumSize(180, 130);
 
     connect(controller, &MpvController::videoZoomChanged, this, [this](double z) {
@@ -59,15 +57,13 @@ NavigatorCanvas::NavigatorCanvas(MpvController *controller, QWidget *renderArea,
     m_videoH = seed.height();
 }
 
-QSizeF NavigatorCanvas::currentFit() const
-{
+QSizeF NavigatorCanvas::currentFit() const {
     if (!m_render || m_videoH <= 0)
         return QSizeF();
     return fitSize(m_render->size(), double(m_videoW) / m_videoH);
 }
 
-int NavigatorCanvas::displayPercent() const
-{
+int NavigatorCanvas::displayPercent() const {
     const QSizeF fit = currentFit();
     if (fit.width() <= 0 || m_videoW <= 0)
         return 0;
@@ -76,8 +72,7 @@ int NavigatorCanvas::displayPercent() const
     return int(scale * 100.0 + 0.5);
 }
 
-int NavigatorCanvas::zoomToPercent(double zoom) const
-{
+int NavigatorCanvas::zoomToPercent(double zoom) const {
     const QSizeF fit = currentFit();
     if (fit.width() <= 0 || m_videoW <= 0)
         return 0;
@@ -85,16 +80,14 @@ int NavigatorCanvas::zoomToPercent(double zoom) const
     return int(scale * 100.0 + 0.5);
 }
 
-double NavigatorCanvas::percentToZoom(int percent) const
-{
+double NavigatorCanvas::percentToZoom(int percent) const {
     const QSizeF fit = currentFit();
     if (fit.width() <= 0 || m_videoW <= 0)
         return 0.0;
     return std::log2(percent / 100.0 * m_videoW / fit.width());
 }
 
-QRectF NavigatorCanvas::frameRect() const
-{
+QRectF NavigatorCanvas::frameRect() const {
     if (!isActive())
         return QRectF();
     const QRectF avail = rect().adjusted(kMargin, kMargin, -kMargin, -kMargin);
@@ -108,12 +101,11 @@ QRectF NavigatorCanvas::frameRect() const
         fh = avail.height();
         fw = fh * videoAspect;
     }
-    return QRectF(avail.left() + (avail.width() - fw) / 2,
-                  avail.top() + (avail.height() - fh) / 2, fw, fh);
+    return QRectF(avail.left() + (avail.width() - fw) / 2, avail.top() + (avail.height() - fh) / 2,
+                  fw, fh);
 }
 
-double NavigatorCanvas::clampPan(double pan, int windowPx, int videoPx) const
-{
+double NavigatorCanvas::clampPan(double pan, int windowPx, int videoPx) const {
     const double w = windowPx, v = videoPx;
     if (w <= 0 || v <= 0)
         return 0.0;
@@ -124,8 +116,7 @@ double NavigatorCanvas::clampPan(double pan, int windowPx, int videoPx) const
     return 0.0;
 }
 
-QRectF NavigatorCanvas::viewRect() const
-{
+QRectF NavigatorCanvas::viewRect() const {
     const QRectF f = frameRect();
     if (!isActive() || f.isEmpty() || !m_render)
         return QRectF();
@@ -145,12 +136,11 @@ QRectF NavigatorCanvas::viewRect() const
     const double vHi = qBound(0.0, (ws.height() - y0) / vh, 1.0);
     if (uHi <= uLo || vHi <= vLo)
         return QRectF(); // 画面完全离开窗口（钳制下不应出现，防御）
-    return QRectF(f.left() + f.width() * uLo, f.top() + f.height() * vLo,
-                  f.width() * (uHi - uLo), f.height() * (vHi - vLo));
+    return QRectF(f.left() + f.width() * uLo, f.top() + f.height() * vLo, f.width() * (uHi - uLo),
+                  f.height() * (vHi - vLo));
 }
 
-void NavigatorCanvas::paintEvent(QPaintEvent *)
-{
+void NavigatorCanvas::paintEvent(QPaintEvent *) {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing, true);
     p.fillRect(rect(), palette().window()); // 画布底=窗口默认背景（维护者指定）
@@ -162,7 +152,7 @@ void NavigatorCanvas::paintEvent(QPaintEvent *)
     }
 
     const QRectF f = frameRect();
-    p.fillRect(f, kScreenBg); // 画面区深色，与画布底形成对比
+    p.fillRect(f, kScreenBg);                          // 画面区深色，与画布底形成对比
     p.setPen(QPen(palette().color(QPalette::Mid), 1)); // 主题中间调边框，浅/深色主题均可见
     p.drawRect(f);
 
@@ -172,27 +162,23 @@ void NavigatorCanvas::paintEvent(QPaintEvent *)
     p.drawRect(v);
 }
 
-void NavigatorCanvas::resizeEvent(QResizeEvent *)
-{
+void NavigatorCanvas::resizeEvent(QResizeEvent *) {
     update(); // 矩形几何依赖画布尺寸
 }
 
-void NavigatorCanvas::sendZoom(double zoom)
-{
+void NavigatorCanvas::sendZoom(double zoom) {
     m_zoom = qBound(kZoomMin, zoom, kZoomMax);
     m_controller->setProperty(QStringLiteral("video-zoom"), m_zoom);
     emit zoomVisualChanged(displayPercent());
     update();
 }
 
-void NavigatorCanvas::requestZoom(double zoom)
-{
+void NavigatorCanvas::requestZoom(double zoom) {
     if (isActive())
         sendZoom(zoom);
 }
 
-void NavigatorCanvas::sendPan(double panX, double panY)
-{
+void NavigatorCanvas::sendPan(double panX, double panY) {
     m_panX = panX;
     m_panY = panY;
     m_controller->setProperty(QStringLiteral("video-pan-x"), panX);
@@ -200,16 +186,14 @@ void NavigatorCanvas::sendPan(double panX, double panY)
     update();
 }
 
-void NavigatorCanvas::requestReset()
-{
+void NavigatorCanvas::requestReset() {
     if (!isActive())
         return;
     sendZoom(0.0);
     sendPan(0.0, 0.0);
 }
 
-void NavigatorCanvas::requestNativeSize()
-{
+void NavigatorCanvas::requestNativeSize() {
     if (!isActive() || !m_render)
         return;
     // 目标：显示尺寸 = 源分辨率。fit 保形，两轴所需 zoom 相同，取宽轴求解
@@ -222,8 +206,7 @@ void NavigatorCanvas::requestNativeSize()
     sendPan(0.0, 0.0); // 居中；视口矩形经属性推送自动联动
 }
 
-void NavigatorCanvas::panToVideoPoint(double u, double v)
-{
+void NavigatorCanvas::panToVideoPoint(double u, double v) {
     if (!isActive() || !m_render)
         return;
     // 反解 mpv 渲染模型：窗口中心对准归一化点 ⇔ pan = 0.5 − 目标点
@@ -236,8 +219,7 @@ void NavigatorCanvas::panToVideoPoint(double u, double v)
     sendPan(panX, panY);
 }
 
-void NavigatorCanvas::mousePressEvent(QMouseEvent *event)
-{
+void NavigatorCanvas::mousePressEvent(QMouseEvent *event) {
     if (event->button() != Qt::LeftButton || !isActive()) {
         event->ignore();
         return;
@@ -255,8 +237,7 @@ void NavigatorCanvas::mousePressEvent(QMouseEvent *event)
     }
 }
 
-void NavigatorCanvas::mouseMoveEvent(QMouseEvent *event)
-{
+void NavigatorCanvas::mouseMoveEvent(QMouseEvent *event) {
     if (!m_dragging)
         return;
     const QRectF f = frameRect();
@@ -270,22 +251,19 @@ void NavigatorCanvas::mouseMoveEvent(QMouseEvent *event)
     panToVideoPoint(u, v);
 }
 
-void NavigatorCanvas::mouseReleaseEvent(QMouseEvent *event)
-{
+void NavigatorCanvas::mouseReleaseEvent(QMouseEvent *event) {
     if (event->button() == Qt::LeftButton)
         m_dragging = false;
 }
 
-void NavigatorCanvas::mouseDoubleClickEvent(QMouseEvent *event)
-{
+void NavigatorCanvas::mouseDoubleClickEvent(QMouseEvent *event) {
     if (event->button() == Qt::LeftButton && viewRect().contains(event->position()))
         requestReset();
     else
         event->ignore();
 }
 
-void NavigatorCanvas::wheelEvent(QWheelEvent *event)
-{
+void NavigatorCanvas::wheelEvent(QWheelEvent *event) {
     const int steps = event->angleDelta().y() / 120;
     if (steps == 0 || !isActive()) {
         event->ignore();
@@ -302,8 +280,7 @@ void NavigatorCanvas::wheelEvent(QWheelEvent *event)
 // ---------------------------------------------------------------------------
 
 NavigatorPanel::NavigatorPanel(MpvController *controller, QWidget *renderArea, QWidget *parent)
-    : QWidget(parent, Qt::Tool | Qt::WindowTitleHint | Qt::WindowCloseButtonHint)
-{
+    : QWidget(parent, Qt::Tool | Qt::WindowTitleHint | Qt::WindowCloseButtonHint) {
     setWindowTitle(tr("导航器"));
     setMinimumSize(200, 200);
     resize(220, 260);
@@ -352,7 +329,7 @@ NavigatorPanel::NavigatorPanel(MpvController *controller, QWidget *renderArea, Q
         {
             QSignalBlocker b(m_zoomSpin);
             m_zoomSpin->setRange(m_canvas->zoomToPercent(kZoomMin),
-                                  m_canvas->zoomToPercent(kZoomMax));
+                                 m_canvas->zoomToPercent(kZoomMax));
             m_zoomSpin->setValue(percent);
         }
     });
@@ -375,29 +352,25 @@ NavigatorPanel::NavigatorPanel(MpvController *controller, QWidget *renderArea, Q
         {
             QSignalBlocker b(m_zoomSpin);
             m_zoomSpin->setRange(m_canvas->zoomToPercent(kZoomMin),
-                                  m_canvas->zoomToPercent(kZoomMax));
+                                 m_canvas->zoomToPercent(kZoomMax));
             m_zoomSpin->setValue(percent);
         }
     }
 
-    connect(m_zoomSlider, &QSlider::valueChanged, this, [this](int value) {
-        m_canvas->requestZoom(value / 1000.0 - 2.0);
-    });
-    connect(m_zoomSpin, &QSpinBox::valueChanged, this, [this](int percent) {
-        m_canvas->requestZoom(m_canvas->percentToZoom(percent));
-    });
+    connect(m_zoomSlider, &QSlider::valueChanged, this,
+            [this](int value) { m_canvas->requestZoom(value / 1000.0 - 2.0); });
+    connect(m_zoomSpin, &QSpinBox::valueChanged, this,
+            [this](int percent) { m_canvas->requestZoom(m_canvas->percentToZoom(percent)); });
     connect(resetBtn, &QPushButton::clicked, m_canvas, &NavigatorCanvas::requestReset);
     connect(nativeBtn, &QPushButton::clicked, m_canvas, &NavigatorCanvas::requestNativeSize);
 }
 
-void NavigatorPanel::resetAndHide()
-{
+void NavigatorPanel::resetAndHide() {
     m_canvas->requestReset();
     hide();
 }
 
-void NavigatorPanel::closeEvent(QCloseEvent *event)
-{
+void NavigatorPanel::closeEvent(QCloseEvent *event) {
     // 关闭面板 = 复位画面 + 隐藏（N1 冻结口径）；关闭后通知主窗口取消菜单勾选
     m_canvas->requestReset();
     emit panelClosed();

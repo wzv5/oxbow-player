@@ -37,14 +37,12 @@ QString toQString(const std::wstring &ws) {
     return ws.empty() ? QString() : QString::fromStdWString(ws);
 }
 
-MediaInfoHelper::Stream makeStream(MediaInfoDLL::MediaInfo &MI,
-                                   MediaInfoDLL::stream_t kind, size_t i,
-                                   MediaInfoHelper::Stream::Kind outKind) {
+MediaInfoHelper::Stream makeStream(MediaInfoDLL::MediaInfo &MI, MediaInfoDLL::stream_t kind,
+                                   size_t i, MediaInfoHelper::Stream::Kind outKind) {
     using Stream = MediaInfoHelper::Stream;
     Stream st;
     st.kind = outKind;
-    st.isDefault = toQString(MI.Get(kind, i, L"Default"))
-                       .compare("yes", Qt::CaseInsensitive) == 0;
+    st.isDefault = toQString(MI.Get(kind, i, L"Default")).compare("yes", Qt::CaseInsensitive) == 0;
     st.title = toQString(MI.Get(kind, i, L"Title"));
     st.language = toQString(MI.Get(kind, i, L"Language/String"));
     const QString fmt = toQString(MI.Get(kind, i, L"Format"));
@@ -105,7 +103,7 @@ MediaInfoHelper::Data MediaInfoHelper::parse(const QString &path) {
     MediaInfoDLL::MediaInfo MI;
     if (!MI.IsReady())
         return out;
-    MI.Option(L"ParseSpeed", L"0"); // 0=完整模式（最快且全字段）；上游默认即此
+    MI.Option(L"ParseSpeed", L"0");     // 0=完整模式（最快且全字段）；上游默认即此
     MI.Option(L"Timeout_Get", L"5000"); // 单 Get 超时守卫
 
     const std::wstring wpath(path.toStdWString());
@@ -138,14 +136,11 @@ MediaInfoHelper::Data MediaInfoHelper::parse(const QString &path) {
     // ——多流——
     using Stream = MediaInfoHelper::Stream;
     for (size_t i = 0; i < MI.Count_Get(MediaInfoDLL::Stream_Video); ++i)
-        out.streams.append(
-            makeStream(MI, MediaInfoDLL::Stream_Video, i, Stream::Kind::Video));
+        out.streams.append(makeStream(MI, MediaInfoDLL::Stream_Video, i, Stream::Kind::Video));
     for (size_t i = 0; i < MI.Count_Get(MediaInfoDLL::Stream_Audio); ++i)
-        out.streams.append(
-            makeStream(MI, MediaInfoDLL::Stream_Audio, i, Stream::Kind::Audio));
+        out.streams.append(makeStream(MI, MediaInfoDLL::Stream_Audio, i, Stream::Kind::Audio));
     for (size_t i = 0; i < MI.Count_Get(MediaInfoDLL::Stream_Text); ++i)
-        out.streams.append(
-            makeStream(MI, MediaInfoDLL::Stream_Text, i, Stream::Kind::Text));
+        out.streams.append(makeStream(MI, MediaInfoDLL::Stream_Text, i, Stream::Kind::Text));
 
     // ——章节：MP4/MKV 章节在 MediaInfo 上游按"索引条目"暴露
     // 取法：先读 Chapters_Pos_Begin / Chapters_Pos_End 得章节范围，
@@ -156,20 +151,16 @@ MediaInfoHelper::Data MediaInfoHelper::parse(const QString &path) {
         if (MI.Count_Get(kind) == 0)
             return;
         bool okB = false, okE = false;
-        const size_t begin =
-            toQString(MI.Get(kind, 0, L"Chapters_Pos_Begin")).toUShort(&okB);
-        const size_t end =
-            toQString(MI.Get(kind, 0, L"Chapters_Pos_End")).toUShort(&okE);
+        const size_t begin = toQString(MI.Get(kind, 0, L"Chapters_Pos_Begin")).toUShort(&okB);
+        const size_t end = toQString(MI.Get(kind, 0, L"Chapters_Pos_End")).toUShort(&okE);
         if (!okB || !okE || end <= begin)
             return;
         for (size_t pos = begin; pos < end; ++pos) {
             // 标题：Info_Text 模式（按 Pos 整数查）——返回章节标题字符串
-            const QString title =
-                toQString(MI.Get(kind, 0, pos, MediaInfoDLL::Info_Text));
+            const QString title = toQString(MI.Get(kind, 0, pos, MediaInfoDLL::Info_Text));
             // 时间：Info_Name 模式（按 Pos 整数查）——返回 "HH:MM:SS.fff"
             // 时间戳字符串
-            const QString stamp =
-                toQString(MI.Get(kind, 0, pos, MediaInfoDLL::Info_Name));
+            const QString stamp = toQString(MI.Get(kind, 0, pos, MediaInfoDLL::Info_Name));
             // 解析 HH:MM:SS.fff → 秒
             double secs = 0.0;
             const QStringList parts = stamp.split(QLatin1Char(':'));

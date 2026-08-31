@@ -6,9 +6,8 @@
 // enumerate 返回所持条目——与目录实现同构，视图统一从提供者取内容；
 // 序列化写类型键 + 全部条目（不持久化排序键）；默认 tab 同样使用本实现，
 // 仅持久化侧跳过
-class StaticProvider : public PlaylistProvider
-{
-public:
+class StaticProvider : public PlaylistProvider {
+  public:
     // 视图 → 提供者内容回写（移交所有权）
     void setItems(QStringList &&items);
 
@@ -22,7 +21,6 @@ public:
 
     static std::unique_ptr<StaticProvider> load(QSettings &settings);
 
-private:
+  private:
     QStringList m_items; // 规范化路径有序表
 };
-

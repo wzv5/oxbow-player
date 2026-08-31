@@ -6,7 +6,7 @@ namespace {
 
 enum ObservedProperty {
     PropTimePos = 1,
-    PropDuration,        // duration（B18：双通道 observe 半程，留守）
+    PropDuration, // duration（B18：双通道 observe 半程，留守）
     PropPause,
     PropVolume,
     PropPlaylistPos,
@@ -22,8 +22,7 @@ enum ObservedProperty {
     // 属性不再 observe，改由 FILE_LOADED 主动读（见 handleFileLoaded）
 };
 
-QVariantList parsePlaylist(const mpv_node *node)
-{
+QVariantList parsePlaylist(const mpv_node *node) {
     QVariantList items;
     if (!node || node->format != MPV_FORMAT_NODE_ARRAY)
         return items;
@@ -53,8 +52,7 @@ QVariantList parsePlaylist(const mpv_node *node)
 }
 
 // 浅层转换：metadata 字典（字符串标签）转 QVariantMap
-QVariantMap parseNodeMap(const mpv_node *node)
-{
+QVariantMap parseNodeMap(const mpv_node *node) {
     QVariantMap result;
     if (!node || node->format != MPV_FORMAT_NODE_MAP)
         return result;
@@ -67,8 +65,7 @@ QVariantMap parseNodeMap(const mpv_node *node)
 }
 
 // N13：track-list 解析
-QList<MpvController::TrackInfo> parseTrackList(const mpv_node *node)
-{
+QList<MpvController::TrackInfo> parseTrackList(const mpv_node *node) {
     QList<MpvController::TrackInfo> result;
     if (!node || node->format != MPV_FORMAT_NODE_ARRAY)
         return result;
@@ -115,8 +112,8 @@ QList<MpvController::TrackInfo> parseTrackList(const mpv_node *node)
             else if (key == QLatin1String("metadata") && v->format == MPV_FORMAT_NODE_MAP) {
                 mpv_node_list *mmap = v->u.list;
                 for (int k = 0; k < mmap->num; ++k) {
-                    if (QLatin1String(mmap->keys[k]) == QLatin1String("BPS")
-                        && mmap->values[k].format == MPV_FORMAT_STRING) {
+                    if (QLatin1String(mmap->keys[k]) == QLatin1String("BPS") &&
+                        mmap->values[k].format == MPV_FORMAT_STRING) {
                         bool ok = false;
                         qint64 bps = QString::fromUtf8(mmap->values[k].u.string).toLongLong(&ok);
                         if (ok)
@@ -131,8 +128,7 @@ QList<MpvController::TrackInfo> parseTrackList(const mpv_node *node)
 }
 
 // N15：chapter-list 解析
-QList<MpvController::ChapterInfo> parseChapterList(const mpv_node *node)
-{
+QList<MpvController::ChapterInfo> parseChapterList(const mpv_node *node) {
     QList<MpvController::ChapterInfo> result;
     if (!node || node->format != MPV_FORMAT_NODE_ARRAY)
         return result;
@@ -164,14 +160,11 @@ QList<MpvController::ChapterInfo> parseChapterList(const mpv_node *node)
 // 生命周期由 SHUTDOWN 收口：收到 MPV_EVENT_SHUTDOWN 后 emit 并退出，
 // 随后入口函数返回、mpv 销毁 client handle，插件自身从不销毁 handle，
 // 故无需 stop 标志与析构清理。线程启动时机见 startEventThread()。
-class MpvController::EventThread : public QThread
-{
-public:
-    EventThread(MpvController *ctrl, mpv_handle *mpv)
-        : m_ctrl(ctrl), m_mpv(mpv) {}
+class MpvController::EventThread : public QThread {
+  public:
+    EventThread(MpvController *ctrl, mpv_handle *mpv) : m_ctrl(ctrl), m_mpv(mpv) {}
 
-    void run() override
-    {
+    void run() override {
         for (;;) {
             mpv_event *e = mpv_wait_event(m_mpv, -1);
             switch (e->event_id) {
@@ -191,8 +184,7 @@ public:
                 // B18：reason 原值透传——EOF 判定（B9 续播清除）与会话态
                 // 重置由消费者各自处理
                 auto *ef = static_cast<mpv_event_end_file *>(e->data);
-                emit m_ctrl->endFile(ef ? int(ef->reason)
-                                        : int(MPV_END_FILE_REASON_ERROR));
+                emit m_ctrl->endFile(ef ? int(ef->reason) : int(MPV_END_FILE_REASON_ERROR));
                 break;
             }
             default:
@@ -201,14 +193,12 @@ public:
         }
     }
 
-private:
+  private:
     MpvController *m_ctrl;
     mpv_handle *m_mpv;
 };
 
-MpvController::MpvController(mpv_handle *mpv, QObject *parent)
-    : QObject(parent), m_mpv(mpv)
-{
+MpvController::MpvController(mpv_handle *mpv, QObject *parent) : QObject(parent), m_mpv(mpv) {
     // 事件线程只创建不启动：启动时机由宿主在嵌入属性就绪后经
     // startEventThread() 控制（见该函数注释的启动门控说明）
     m_eventThread = new EventThread(this, m_mpv);
@@ -230,23 +220,16 @@ MpvController::MpvController(mpv_handle *mpv, QObject *parent)
     // 主动读（见 handleFileLoaded），不再 observe
 }
 
-void MpvController::startEventThread()
-{
-    m_eventThread->start();
-}
+void MpvController::startEventThread() { m_eventThread->start(); }
 
 // B18：START_FILE 时刷新当前文件缓存，作为后续 FILE_LOADED 主动读与
 // duration observe 推送的归属键（仅事件线程读写）
-void MpvController::handleStartFile()
-{
-    m_currentFile = propertyString(QStringLiteral("path"));
-}
+void MpvController::handleStartFile() { m_currentFile = propertyString(QStringLiteral("path")); }
 
 // B18：FILE_LOADED 时以缓存为归属键，当场主动读 5 项文件级属性并发射。
 // 与 observe 相比：首值即时（不等 flush）、规避"等值不重推"（连续两文件
 // 值相同也会重新发送）；duration 为双通道的即时读半程（见 PropDuration）
-void MpvController::handleFileLoaded()
-{
+void MpvController::handleFileLoaded() {
     const QString path = m_currentFile;
 
     double d = 0;
@@ -282,21 +265,18 @@ void MpvController::handleFileLoaded()
     }
 }
 
-QSize MpvController::videoSize() const
-{
+QSize MpvController::videoSize() const {
     int w = 0, h = 0;
     mpv_get_property(m_mpv, "width", MPV_FORMAT_INT64, &w);
     mpv_get_property(m_mpv, "height", MPV_FORMAT_INT64, &h);
     return QSize(w, h);
 }
 
-void MpvController::command(const QString &cmd)
-{
+void MpvController::command(const QString &cmd) {
     mpv_command_string(m_mpv, cmd.toUtf8().constData());
 }
 
-void MpvController::command(const QStringList &args)
-{
+void MpvController::command(const QStringList &args) {
     if (args.isEmpty())
         return;
     QList<QByteArray> utf8;
@@ -311,54 +291,46 @@ void MpvController::command(const QStringList &args)
     mpv_command(m_mpv, argv.data());
 }
 
-void MpvController::setProperty(const QString &name, const QString &value)
-{
+void MpvController::setProperty(const QString &name, const QString &value) {
     mpv_set_property_string(m_mpv, name.toUtf8().constData(), value.toUtf8().constData());
 }
 
-void MpvController::setProperty(const QString &name, int value)
-{
+void MpvController::setProperty(const QString &name, int value) {
     int64_t v = value;
     mpv_set_property(m_mpv, name.toUtf8().constData(), MPV_FORMAT_INT64, &v);
 }
 
-void MpvController::setProperty(const QString &name, double value)
-{
+void MpvController::setProperty(const QString &name, double value) {
     mpv_set_property(m_mpv, name.toUtf8().constData(), MPV_FORMAT_DOUBLE, &value);
 }
 
-void MpvController::setProperty(const QString &name, bool value)
-{
+void MpvController::setProperty(const QString &name, bool value) {
     int v = value ? 1 : 0;
     mpv_set_property(m_mpv, name.toUtf8().constData(), MPV_FORMAT_FLAG, &v);
 }
 
-QString MpvController::propertyString(const QString &name)
-{
+QString MpvController::propertyString(const QString &name) {
     char *s = mpv_get_property_string(m_mpv, name.toUtf8().constData());
     QString result = s ? QString::fromUtf8(s) : QString();
     mpv_free(s);
     return result;
 }
 
-double MpvController::propertyDouble(const QString &name, double fallback)
-{
+double MpvController::propertyDouble(const QString &name, double fallback) {
     double v = fallback;
     if (mpv_get_property(m_mpv, name.toUtf8().constData(), MPV_FORMAT_DOUBLE, &v) < 0)
         return fallback; // 失败时不写入 v
     return v;
 }
 
-bool MpvController::propertyFlag(const QString &name, bool fallback)
-{
+bool MpvController::propertyFlag(const QString &name, bool fallback) {
     int v = fallback ? 1 : 0;
     if (mpv_get_property(m_mpv, name.toUtf8().constData(), MPV_FORMAT_FLAG, &v) < 0)
         return fallback;
     return v != 0;
 }
 
-void MpvController::handlePropertyChange(const mpv_event *event)
-{
+void MpvController::handlePropertyChange(const mpv_event *event) {
     auto *prop = static_cast<mpv_event_property *>(event->data);
     if (!prop)
         return;
@@ -423,7 +395,8 @@ void MpvController::handlePropertyChange(const mpv_event *event)
     case PropHeight: {
         // 尺寸两属性独立推送，合并缓存后成对上报；任一侧失效按 0 处理
         const int value = (prop->format == MPV_FORMAT_INT64 && prop->data)
-                              ? int(*static_cast<int64_t *>(prop->data)) : 0;
+                              ? int(*static_cast<int64_t *>(prop->data))
+                              : 0;
         if (int(event->reply_userdata) == PropWidth)
             m_videoW = value;
         else

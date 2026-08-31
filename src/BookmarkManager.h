@@ -1,12 +1,10 @@
 #pragma once
 #include "pch.h"
 
-class BookmarkManager : public QObject
-{
+class BookmarkManager : public QObject {
     Q_OBJECT
-public:
-    struct Bookmark
-    {
+  public:
+    struct Bookmark {
         double time = 0.0;
         QString title;
     };
@@ -19,8 +17,7 @@ public:
     QStringList allFiles() const { return m_order; }
     QList<Bookmark> bookmarks(const QString &path) const;
     // UI 展示用：归一化键 → 首见原始路径（保留大小写/分隔符形态）
-    QString displayPath(const QString &normalizedKey) const
-    {
+    QString displayPath(const QString &normalizedKey) const {
         return m_displayOf.value(normalizedKey, normalizedKey);
     }
 
@@ -33,10 +30,10 @@ public:
     // 一键移除不存在文件
     int removeInvalid();
 
-signals:
+  signals:
     void changed();
 
-private:
+  private:
     QString m_configFile;
     QMap<QString, QList<Bookmark>> m_data;
     QMap<QString, QString> m_displayOf; // 归一化键 → 原始路径（N15 实测修正：展示保原样）

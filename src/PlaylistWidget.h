@@ -19,10 +19,9 @@ class MpvController;
 //
 // N18：原 mpv 元数据回填（media-metadata / file-format / tracks / chapters）已从
 // 本类移除，对话框读源改走 MediaInfoHelper 缓存；duration 是唯一保留的 mpv 写入。
-class PlaylistWidget : public QTabWidget
-{
+class PlaylistWidget : public QTabWidget {
     Q_OBJECT
-public:
+  public:
     // 条目数据角色约定
     static constexpr int PathRole = Qt::UserRole;        // 文件路径字符串
     static constexpr int PlayingRole = Qt::UserRole + 1; // 正在播放标记（bool）
@@ -82,13 +81,13 @@ public:
     // ——元数据回填（N18：仅保留 duration 写入）——
     void applyDuration(const QString &path, double seconds);
 
-protected:
+  protected:
     // N5：ShortcutOverride 认领导航键——焦点在列表上时 ↑↓←→/PgUp/PgDn/Home/End
     // 走列表原生导航，全局音量动作（↑/↓）本次不触发。
     // 该事件定向投递焦点控件、不沿父链冒泡，故过滤器必须装在每个列表自身
     bool eventFilter(QObject *watched, QEvent *event) override;
 
-signals:
+  signals:
     // 请求整表载入并播放 files 中第 index 个；seekTo > 0 时就绪后恢复到该进度
     // （N4 四步式的进度恢复与此同一通道；发出前已将 tab 标记为正在播放列表）
     void playRequested(const QStringList &files, int index, double seekTo);
@@ -101,17 +100,17 @@ signals:
     // 四步式第一步（N4）：排序/清理播放中 tab 前，由 MainWindow 下发 stop
     void stopRequested();
 
-protected:
+  protected:
     void dragEnterEvent(QDragEnterEvent *event) override;
     void dragMoveEvent(QDragMoveEvent *event) override;
     void dropEvent(QDropEvent *event) override;
     void contextMenuEvent(QContextMenuEvent *event) override;
 
-private slots:
+  private slots:
     void onItemDoubleClicked(QListWidgetItem *item);
     void onTabChanged(int index);
 
-private:
+  private:
     // 排序规则枚举（N4/N9/N18）：None=添加顺序。取值随提供者持久化（int 不透明存储）。
     // N18：枚举序与菜单显示顺序解耦——菜单 action 通过 setData(int(SortKey))
     // 显式携带键值，派发时按 data 取键，不再依赖数组下标 +1 的隐式映射
@@ -129,8 +128,7 @@ private:
 
     // 单个 tab 的播放记忆（默认 tab 仅进程内有效，持久化时跳过索引 0）。
     // N9：lastPath 为记忆条目规范化路径，恢复时序号校验失败按其寻位
-    struct TabMemory
-    {
+    struct TabMemory {
         int lastPos = -1;
         double lastTimePos = -1.0;
         QString lastPath;
@@ -179,8 +177,8 @@ private:
     // 正在播放条目所在行（PlayingRole 命中处），无则 -1
     int playingRowOf(const QListWidget *list) const;
 
-    QHash<QString, PlaylistItem> m_meta;   // 全局元数据仓：路径 → 条目
-    QFileIconProvider m_iconProvider;      // 值语义：具体类无多态需求
+    QHash<QString, PlaylistItem> m_meta;     // 全局元数据仓：路径 → 条目
+    QFileIconProvider m_iconProvider;        // 值语义：具体类无多态需求
     QListWidget *m_menuTargetList = nullptr; // 右键命中的列表与行（空白处为 nullptr）
     int m_menuTargetRow = -1;
     // N18：MediaInfo 缓存（键为 normalizePathForMatch 后的规范化路径），

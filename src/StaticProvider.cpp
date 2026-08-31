@@ -2,38 +2,19 @@
 
 #include "StaticProvider.h"
 
-PlaylistProvider::Type StaticProvider::type() const
-{
-    return Type::Static;
-}
+PlaylistProvider::Type StaticProvider::type() const { return Type::Static; }
 
-QString StaticProvider::describe() const
-{
-    return QObject::tr("本地静态列表");
-}
+QString StaticProvider::describe() const { return QObject::tr("本地静态列表"); }
 
-void StaticProvider::setItems(QStringList &&items)
-{
-    m_items = std::move(items);
-}
+void StaticProvider::setItems(QStringList &&items) { m_items = std::move(items); }
 
-QStringList StaticProvider::enumerate() const
-{
-    return m_items;
-}
+QStringList StaticProvider::enumerate() const { return m_items; }
 
-bool StaticProvider::supportsRemove() const
-{
-    return true;
-}
+bool StaticProvider::supportsRemove() const { return true; }
 
-bool StaticProvider::supportsSort() const
-{
-    return true;
-}
+bool StaticProvider::supportsSort() const { return true; }
 
-void StaticProvider::saveSettings(QSettings &settings) const
-{
+void StaticProvider::saveSettings(QSettings &settings) const {
     // 静态列表不持久化排序键（顺序即添加顺序）
     settings.setValue(QStringLiteral("provider"), QStringLiteral("static"));
     settings.setValue(QStringLiteral("itemCount"), m_items.size());
@@ -41,8 +22,7 @@ void StaticProvider::saveSettings(QSettings &settings) const
         settings.setValue(QString::number(j), m_items[j]);
 }
 
-std::unique_ptr<StaticProvider> StaticProvider::load(QSettings &settings)
-{
+std::unique_ptr<StaticProvider> StaticProvider::load(QSettings &settings) {
     auto provider = std::make_unique<StaticProvider>();
     // B6：按显式计数字段逐条读取。childKeys() 顺序未定义，键多时呈字典序
     // （"0","1","10","100","11"...），百项级列表会乱序呈现，不可用

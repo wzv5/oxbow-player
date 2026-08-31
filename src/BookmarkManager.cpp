@@ -1,15 +1,12 @@
-#include "pch.h"
 #include "BookmarkManager.h"
 #include "PlaylistWidget.h"
 #include "Util.h"
+#include "pch.h"
 
 BookmarkManager::BookmarkManager(const QString &configFile, QObject *parent)
-    : QObject(parent), m_configFile(configFile)
-{
-}
+    : QObject(parent), m_configFile(configFile) {}
 
-void BookmarkManager::load()
-{
+void BookmarkManager::load() {
     m_data.clear();
     m_order.clear();
     m_displayOf.clear();
@@ -34,9 +31,8 @@ void BookmarkManager::load()
             list.append({t, title});
         }
         // 按 time 升序，稳定
-        std::stable_sort(list.begin(), list.end(), [](const Bookmark &a, const Bookmark &b) {
-            return a.time < b.time;
-        });
+        std::stable_sort(list.begin(), list.end(),
+                         [](const Bookmark &a, const Bookmark &b) { return a.time < b.time; });
         if (!m_data.contains(key))
             m_order.append(key);
         m_displayOf[key] = path;
@@ -44,8 +40,7 @@ void BookmarkManager::load()
     }
 }
 
-void BookmarkManager::save() const
-{
+void BookmarkManager::save() const {
     if (m_configFile.isEmpty())
         return;
     QSettings s(m_configFile, QSettings::IniFormat);
@@ -67,13 +62,11 @@ void BookmarkManager::save() const
     s.sync();
 }
 
-QList<BookmarkManager::Bookmark> BookmarkManager::bookmarks(const QString &path) const
-{
+QList<BookmarkManager::Bookmark> BookmarkManager::bookmarks(const QString &path) const {
     return m_data.value(path);
 }
 
-void BookmarkManager::addBookmark(const QString &rawPath, double time, const QString &title)
-{
+void BookmarkManager::addBookmark(const QString &rawPath, double time, const QString &title) {
     if (rawPath.isEmpty())
         return;
     // 键归一化（与仓/跳转匹配口径一致）；原始路径供展示
@@ -85,30 +78,27 @@ void BookmarkManager::addBookmark(const QString &rawPath, double time, const QSt
         m_displayOf[key] = rawPath;
     } else {
         it->append({time, title});
-        std::stable_sort(it->begin(), it->end(), [](const Bookmark &a, const Bookmark &b) {
-            return a.time < b.time;
-        });
+        std::stable_sort(it->begin(), it->end(),
+                         [](const Bookmark &a, const Bookmark &b) { return a.time < b.time; });
     }
     save();
     emit changed();
 }
 
-void BookmarkManager::updateBookmark(const QString &path, int index, double time, const QString &title)
-{
+void BookmarkManager::updateBookmark(const QString &path, int index, double time,
+                                     const QString &title) {
     auto it = m_data.find(path);
     if (it == m_data.end() || index < 0 || index >= it->size())
         return;
     (*it)[index].time = time;
     (*it)[index].title = title;
-    std::stable_sort(it->begin(), it->end(), [](const Bookmark &a, const Bookmark &b) {
-        return a.time < b.time;
-    });
+    std::stable_sort(it->begin(), it->end(),
+                     [](const Bookmark &a, const Bookmark &b) { return a.time < b.time; });
     save();
     emit changed();
 }
 
-void BookmarkManager::removeBookmark(const QString &path, int index)
-{
+void BookmarkManager::removeBookmark(const QString &path, int index) {
     auto it = m_data.find(path);
     if (it == m_data.end() || index < 0 || index >= it->size())
         return;
@@ -122,8 +112,7 @@ void BookmarkManager::removeBookmark(const QString &path, int index)
     emit changed();
 }
 
-void BookmarkManager::removeFile(const QString &path)
-{
+void BookmarkManager::removeFile(const QString &path) {
     if (!m_data.contains(path))
         return;
     m_data.remove(path);
@@ -133,8 +122,7 @@ void BookmarkManager::removeFile(const QString &path)
     emit changed();
 }
 
-void BookmarkManager::clearAll()
-{
+void BookmarkManager::clearAll() {
     if (m_data.isEmpty())
         return;
     m_data.clear();
@@ -144,14 +132,14 @@ void BookmarkManager::clearAll()
     emit changed();
 }
 
-int BookmarkManager::removeInvalid()
-{
+int BookmarkManager::removeInvalid() {
     int removed = 0;
     QStringList toRemove;
     for (const QString &key : std::as_const(m_order)) {
         // 校验以原始显示路径为准（而非小写归一键）；先经 resolveLocalPath 把 file:// 转本地路径，
         // 使其能按本地文件做存在性判定（本地文件已删除则为失效项，应移除）。
-        // 剩余的网络/流路径（http/ftp/stream 等，含 :// 且非 file:）保持原样、无法以文件存在性判定，须保留。
+        // 剩余的网络/流路径（http/ftp/stream 等，含 :// 且非
+        // file:）保持原样、无法以文件存在性判定，须保留。
         const QString disp = m_displayOf.value(key, key);
         const QString local = Util::resolveLocalPath(disp);
         if (Util::isNetworkStreamPath(local))

@@ -7,9 +7,8 @@ class QSettings;
 // 播放列表提供者抽象接口（N9）：条目来源策略与列表视图解耦。
 // enumerate 返回规范化路径有序表，视图层据此物化条目并施加排序规则；
 // 序列化（存什么、怎么存）完全由具体提供者决定——含各自的排序键读写
-class PlaylistProvider
-{
-public:
+class PlaylistProvider {
+  public:
     enum class Type { Static, Dir };
 
     virtual ~PlaylistProvider();
@@ -37,7 +36,7 @@ public:
     bool sortAscending() const { return m_sortAscending; }
     void setSortRule(int key, bool ascending);
 
-private:
-    int m_sortKey = 0;          // 0 = None
+  private:
+    int m_sortKey = 0; // 0 = None
     bool m_sortAscending = true;
 };

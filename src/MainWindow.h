@@ -12,17 +12,16 @@ class BookmarkEditorDialog;
 class ChapterSlider;
 class MarkAggregator; // N15：章节+书签标记聚合器（定义于 MainWindow.cpp）
 
-class MainWindow : public QMainWindow
-{
+class MainWindow : public QMainWindow {
     Q_OBJECT
-public:
+  public:
     explicit MainWindow(MpvController *controller, const QString &configFile = QString(),
                         QWidget *parent = nullptr);
 
     // 视频显示区域（mpv 通过 wid 嵌入的目标窗口）
     QWidget *videoWidget() const { return m_videoWidget; }
 
-protected:
+  protected:
     void closeEvent(QCloseEvent *event) override;
     void moveEvent(QMoveEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
@@ -31,7 +30,7 @@ protected:
     // N5：空白区域点击清焦（未被交互控件消费的按下事件冒泡至此）
     void mousePressEvent(QMouseEvent *event) override;
 
-private slots:
+  private slots:
     void openFiles();
     void togglePause();
     void stop();
@@ -52,7 +51,7 @@ private slots:
     void onClearRequested();
     void onMpvShutdown();
 
-private:
+  private:
     void createMenus();
     QWidget *createLeftArea();
     // A15：无状态按钮统一接线——事件来源走 action trigger，启停跟随 action enabled
@@ -114,7 +113,7 @@ private:
     void onAddBookmark();
 
     MpvController *m_controller;
-    QString m_configFile; // 配置文件完整路径（插件 DLL 同目录下的 mpv-qt.ini）
+    QString m_configFile;               // 配置文件完整路径（插件 DLL 同目录下的 mpv-qt.ini）
     ActionManager *m_actions = nullptr; // A15：全部 UI 动作出生与登记处，先于容器构建
     QSplitter *m_splitter = nullptr;
     // 视频显示区域（mpv wid 嵌入目标）：主窗直接子控件（N3），
@@ -133,24 +132,24 @@ private:
     ChapterSlider *m_progressSlider = nullptr; // N15：进度条（带章节/书签标记层）
     QSlider *m_volumeSlider = nullptr;
     // N5：音量调节配置（INI 键 volumeMax / volumeWheelStep / volumeKeyStep）
-    int m_volumeMax = 100;      // 音量上限，设置对话框自由填写域 0~400
-    int m_volumeWheelStep = 1;  // 滚轮每格步长
-    int m_volumeKeyStep = 5;    // 方向键每格步长
+    int m_volumeMax = 100;     // 音量上限，设置对话框自由填写域 0~400
+    int m_volumeWheelStep = 1; // 滚轮每格步长
+    int m_volumeKeyStep = 5;   // 方向键每格步长
     QPushButton *m_playButton = nullptr;
     QLabel *m_timeLabel = nullptr;
     QPushButton *m_playlistToggle = nullptr;
     QAction *m_playlistAction = nullptr;
     PlaylistWidget *m_playlist = nullptr;
-    QAction *m_navigatorAction = nullptr; // 视图菜单"导航器"勾选项（N1）
+    QAction *m_navigatorAction = nullptr;  // 视图菜单"导航器"勾选项（N1）
     NavigatorPanel *m_navigator = nullptr; // 导航器浮窗（N3 按需创建）：null=未打开
     QAction *m_fullscreenAction = nullptr; // 视图菜单"全屏"勾选项（N3）
 
     double m_duration = 0.0;
     double m_timePos = 0.0;
     bool m_seeking = false;
-    int m_playlistPos = -1;   // mpv 当前播放项，-1 表示停止状态
+    int m_playlistPos = -1; // mpv 当前播放项，-1 表示停止状态
     bool m_startupPlaybackCheckDone = false;
-    int m_pendingSeekRow = -1;      // >=0：有挂起的会话恢复 seek，值为目标行；-1 无
+    int m_pendingSeekRow = -1;       // >=0：有挂起的会话恢复 seek，值为目标行；-1 无
     double m_pendingSeekTime = -1.0; // 挂起 seek 的目标进度（秒），配合 m_pendingSeekRow 使用
     // 会话数据每次进程只落盘一次（A11）：二次保存在窗口隐藏后触发，
     // isVisible() 等活体状态会被读错（playlistExpanded 曾被覆写为 false）
@@ -173,8 +172,9 @@ private:
     void ensureVideoOverlay();
 
     // ---- N8：主窗口显示优化 ----
-    QString playingFilename();                          // 正播真实文件名（含后缀，标题与 OSD 同源）
-    double progressPercentAt(const QPoint &pos) const;  // 进度条鼠标 x → 百分比（0~100），无效返回 -1
+    QString playingFilename(); // 正播真实文件名（含后缀，标题与 OSD 同源）
+    double
+    progressPercentAt(const QPoint &pos) const; // 进度条鼠标 x → 百分比（0~100），无效返回 -1
 
     // ---- N3：单击/双击分流与覆盖式全屏 ----
     QTimer *m_clickTimer = nullptr;     // 单次定时器，间隔=双击间隔
@@ -183,11 +183,11 @@ private:
     // B14：一次性吞咽标志——视频区单击引发的暂停/恢复属性回声不入 OSD 队列；
     // 暂停 OSD 由单击超时补显，双击场景全程静默
     bool m_suppressPlayPauseOsd = false;
-    bool m_fullscreen = false;          // 覆盖式全屏态标志（syncVideoGeometry 分支依据）
-    double m_savedZoom = 0.0;           // 进全屏前 zoom/pan 快照（先存后写零）
+    bool m_fullscreen = false; // 覆盖式全屏态标志（syncVideoGeometry 分支依据）
+    double m_savedZoom = 0.0;  // 进全屏前 zoom/pan 快照（先存后写零）
     double m_savedPanX = 0.0;
     double m_savedPanY = 0.0;
-    bool m_preFsMaximized = false;      // 进全屏前是否最大化（退出分流依据）
+    bool m_preFsMaximized = false; // 进全屏前是否最大化（退出分流依据）
     // A18 无框全屏：进全屏前完整几何快照（含位置，普通态恢复用）+ 窗口样式快照；
     // 落盘守卫与退出恢复共用
     QRect m_preFsRect;

@@ -7,8 +7,7 @@
 
 namespace {
 // 扩展名 → QDir 名称过滤器（*.mp4 形态）
-QStringList toNameFilters(const QStringList &extensions)
-{
+QStringList toNameFilters(const QStringList &extensions) {
     QStringList filters;
     filters.reserve(extensions.size());
     for (const QString &ext : extensions)
@@ -20,49 +19,32 @@ QStringList toNameFilters(const QStringList &extensions)
 DirProvider::DirProvider() = default;
 
 DirProvider::DirProvider(const QString &root, bool recursive, const QStringList &extensions)
-    : m_root(root), m_recursive(recursive), m_extensions(extensions)
-{
-}
+    : m_root(root), m_recursive(recursive), m_extensions(extensions) {}
 
-PlaylistProvider::Type DirProvider::type() const
-{
-    return Type::Dir;
-}
+PlaylistProvider::Type DirProvider::type() const { return Type::Dir; }
 
-QString DirProvider::describe() const
-{
+QString DirProvider::describe() const {
     const QString suffix = m_recursive ? QObject::tr("（含子目录）") : QString();
     return QObject::tr("本地目录：%1%2").arg(m_root, suffix);
 }
 
-QStringList DirProvider::enumerate() const
-{
+QStringList DirProvider::enumerate() const {
     QStringList out;
     if (!isValid())
         return out;
     // 扩展名空表＝不过滤；过滤器一次构造逐层复用
-    collect(QDir(m_root),
-            m_extensions.isEmpty() ? QStringList() : toNameFilters(m_extensions), out);
+    collect(QDir(m_root), m_extensions.isEmpty() ? QStringList() : toNameFilters(m_extensions),
+            out);
     return out;
 }
 
-bool DirProvider::supportsRemove() const
-{
-    return false;
-}
+bool DirProvider::supportsRemove() const { return false; }
 
-bool DirProvider::supportsSort() const
-{
-    return true;
-}
+bool DirProvider::supportsSort() const { return true; }
 
-bool DirProvider::isValid() const
-{
-    return !m_root.isEmpty() && QDir(m_root).exists();
-}
+bool DirProvider::isValid() const { return !m_root.isEmpty() && QDir(m_root).exists(); }
 
-void DirProvider::saveSettings(QSettings &settings) const
-{
+void DirProvider::saveSettings(QSettings &settings) const {
     settings.setValue(QStringLiteral("provider"), QStringLiteral("dir"));
     settings.setValue(QStringLiteral("dirRoot"), m_root);
     settings.setValue(QStringLiteral("dirRecursive"), m_recursive);
@@ -72,8 +54,7 @@ void DirProvider::saveSettings(QSettings &settings) const
     settings.setValue(QStringLiteral("sortAscending"), sortAscending());
 }
 
-std::unique_ptr<DirProvider> DirProvider::load(QSettings &settings)
-{
+std::unique_ptr<DirProvider> DirProvider::load(QSettings &settings) {
     auto provider = std::make_unique<DirProvider>(
         settings.value(QStringLiteral("dirRoot")).toString(),
         settings.value(QStringLiteral("dirRecursive")).toBool(),
@@ -83,8 +64,7 @@ std::unique_ptr<DirProvider> DirProvider::load(QSettings &settings)
     return provider;
 }
 
-void DirProvider::collect(const QDir &dir, const QStringList &filters, QStringList &out) const
-{
+void DirProvider::collect(const QDir &dir, const QStringList &filters, QStringList &out) const {
     // 文件层：命中扩展名的条目规范化后追加
     const QFileInfoList files =
         dir.entryInfoList(filters, QDir::Files | QDir::Readable, QDir::NoSort);

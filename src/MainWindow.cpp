@@ -12,11 +12,6 @@
 #include "PlaylistWidget.h"
 #include "Util.h"
 
-#ifdef Q_OS_WIN
-#include <dwmapi.h>
-#include <qt_windows.h>
-#endif
-
 // N15：章节+书签数据与合并规则的唯一持有者（MainWindow.cpp 文件内实现，
 // 头文件仅前向声明）。职责：接收原始章节 → 内部严格 == 去重 + time 升序；
 // 对外提供三视图——去重章节（菜单段/标记基数）、原始章节（全量）、
@@ -24,11 +19,9 @@
 // 统一读入口）。三处消费者（滑条标记 / tooltip 命中 / 章节菜单勾选）共用
 // 同一合并规则。缓存键仅剩脏标志：章节/书签/文件切换均为低频信号，全部
 // 经 setChapters/invalidate 置脏，path 只在脏时惰性同步查询一次——命中路径零 IPC
-class MarkAggregator
-{
-public:
-    struct Mark
-    {
+class MarkAggregator {
+  public:
+    struct Mark {
         double time = 0.0;
         QString title;
         bool isBookmark = false;
@@ -39,21 +32,22 @@ public:
 
     // 章节数据：接收原始（不去重），内部严格 == 去重（保留首项）+ time 升序。
     // 传空即清空（文件切换/停止）。去重规则与合并规则同处收口
-    void setChapters(const QList<MpvController::ChapterInfo> &raw)
-    {
+    void setChapters(const QList<MpvController::ChapterInfo> &raw) {
         m_rawChapters = raw;
         m_chapters.clear();
         for (const auto &c : raw) {
             bool dup = false;
             for (const auto &d : m_chapters)
-                if (d.time == c.time) { dup = true; break; }
+                if (d.time == c.time) {
+                    dup = true;
+                    break;
+                }
             if (!dup)
                 m_chapters.append(c);
         }
         std::stable_sort(m_chapters.begin(), m_chapters.end(),
-                         [](const MpvController::ChapterInfo &a, const MpvController::ChapterInfo &b) {
-                             return a.time < b.time;
-                         });
+                         [](const MpvController::ChapterInfo &a,
+                            const MpvController::ChapterInfo &b) { return a.time < b.time; });
         m_dirty = true;
     }
 
@@ -62,8 +56,7 @@ public:
     // 原始章节（原样不去重；需要全量时用）
     const QList<MpvController::ChapterInfo> &rawChapters() const { return m_rawChapters; }
     // 原始书签（书签永不查重；path 归一化后查表，空路径返回空）
-    QList<BookmarkManager::Bookmark> bookmarks(const QString &path) const
-    {
+    QList<BookmarkManager::Bookmark> bookmarks(const QString &path) const {
         if (path.isEmpty() || !m_bookmarks)
             return {};
         return m_bookmarks->bookmarks(Util::normalizePathForMatch(path));
@@ -74,11 +67,11 @@ public:
     // 合并清单：当前文件的章节 ∪ 书签，time 升序；同 time（严格 ==）书签覆盖章节。
     // 返回内部缓存 const 引用（零拷贝）；引用仅在下次 marks()/invalidate 前有效，
     // 调用方须即时消费，不得跨变更持有
-    const QList<Mark> &marks() const
-    {
+    const QList<Mark> &marks() const {
         if (!m_dirty)
             return m_cache;
-        const QString path = Util::normalizePathForMatch(m_controller->propertyString(QStringLiteral("path")));
+        const QString path =
+            Util::normalizePathForMatch(m_controller->propertyString(QStringLiteral("path")));
         QList<Mark> out;
         for (const auto &c : m_chapters)
             out.append({c.time, c.title, false});
@@ -109,8 +102,7 @@ public:
     }
 
     // 命中：marks 中 time ≤ timePos 的最大项；无命中返回空
-    std::optional<Mark> hit(double timePos) const
-    {
+    std::optional<Mark> hit(double timePos) const {
         const auto &list = marks();
         std::optional<Mark> result;
         for (const auto &m : list) {
@@ -122,9 +114,9 @@ public:
         return result;
     }
 
-private:
-    MpvController *m_controller;  // 非拥有
-    BookmarkManager *m_bookmarks; // 非拥有
+  private:
+    MpvController *m_controller;                     // 非拥有
+    BookmarkManager *m_bookmarks;                    // 非拥有
     QList<MpvController::ChapterInfo> m_rawChapters; // 原始章节（setChapters 入参原样）
     QList<MpvController::ChapterInfo> m_chapters;    // 严格 == 去重 + time 升序
     mutable QList<Mark> m_cache;
@@ -132,8 +124,7 @@ private:
 };
 
 MainWindow::MainWindow(MpvController *controller, const QString &configFile, QWidget *parent)
-    : QMainWindow(parent), m_controller(controller), m_configFile(configFile)
-{
+    : QMainWindow(parent), m_controller(controller), m_configFile(configFile) {
     setWindowTitle(App::name());
 
     m_actions = new ActionManager(this); // A15：先于任何容器构建
@@ -189,8 +180,7 @@ MainWindow::MainWindow(MpvController *controller, const QString &configFile, QWi
     updateChapterSlider();
 }
 
-QWidget *MainWindow::createLeftArea()
-{
+QWidget *MainWindow::createLeftArea() {
     auto *left = new QWidget;
     auto *layout = new QVBoxLayout(left);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -245,10 +235,12 @@ QWidget *MainWindow::createLeftArea()
     auto *stopButton = new QPushButton(style()->standardIcon(QStyle::SP_MediaStop), QString());
     stopButton->setToolTip(tr("停止"));
     stopButton->setFixedSize(36, 36);
-    auto *prevButton = new QPushButton(style()->standardIcon(QStyle::SP_MediaSkipBackward), QString());
+    auto *prevButton =
+        new QPushButton(style()->standardIcon(QStyle::SP_MediaSkipBackward), QString());
     prevButton->setToolTip(tr("上一个文件"));
     prevButton->setFixedSize(36, 36);
-    auto *nextButton = new QPushButton(style()->standardIcon(QStyle::SP_MediaSkipForward), QString());
+    auto *nextButton =
+        new QPushButton(style()->standardIcon(QStyle::SP_MediaSkipForward), QString());
     nextButton->setToolTip(tr("下一个文件"));
     nextButton->setFixedSize(36, 36);
     m_timeLabel = new QLabel(QStringLiteral("00:00 / 00:00"));
@@ -265,8 +257,8 @@ QWidget *MainWindow::createLeftArea()
     m_playlistToggle->setCheckable(true);
 
     // 控制行按钮不接受焦点（C2）：Space 归全局快捷键，避免焦点按钮被 Space 二次触发
-    for (QPushButton *b :
-         {m_playButton, stopButton, prevButton, nextButton, m_streamButton, settingsButton, m_playlistToggle})
+    for (QPushButton *b : {m_playButton, stopButton, prevButton, nextButton, m_streamButton,
+                           settingsButton, m_playlistToggle})
         b->setFocusPolicy(Qt::NoFocus);
 
     controlLayout->addWidget(m_playButton);
@@ -298,24 +290,23 @@ QWidget *MainWindow::createLeftArea()
     connect(m_progressSlider, &QSlider::sliderPressed, this, [this] { m_seeking = true; });
     connect(m_progressSlider, &QSlider::sliderReleased, this, &MainWindow::seekReleased);
     connect(m_volumeSlider, &QSlider::valueChanged, this, [this](int value) {
-        applyVolume(value); // B14：用户手势统一入口（拖动/点击；回流回写被 QSignalBlocker 拦截不入此）
+        applyVolume(
+            value); // B14：用户手势统一入口（拖动/点击；回流回写被 QSignalBlocker 拦截不入此）
     });
 
     return left;
 }
 
 // A15：无状态按钮统一接线。注意 trigger() 是编程式激活、绕过 enabled 检查
-//（只有菜单点击/快捷键分发尊重禁用态），故必须同步 enabledChanged 让按钮
+// （只有菜单点击/快捷键分发尊重禁用态），故必须同步 enabledChanged 让按钮
 // 随 action 置灰，用户路径才能真正被拦住
-void MainWindow::bindButton(QAbstractButton *btn, QAction *action)
-{
+void MainWindow::bindButton(QAbstractButton *btn, QAction *action) {
     connect(btn, &QAbstractButton::clicked, action, &QAction::trigger);
     connect(action, &QAction::enabledChanged, btn, &QWidget::setEnabled);
     btn->setEnabled(action->isEnabled());
 }
 
-void MainWindow::createMenus()
-{
+void MainWindow::createMenus() {
     using AM = ActionManager;
     auto act = [this](AM::Id id) { return m_actions->action(id); };
 
@@ -349,11 +340,9 @@ void MainWindow::createMenus()
     // N6：速度控制组
     playMenu->addSeparator();
     playMenu->addAction(act(AM::Id::SpeedUp));
-    connect(act(AM::Id::SpeedUp), &QAction::triggered, this,
-            [this] { changeSpeed(+0.25); });
+    connect(act(AM::Id::SpeedUp), &QAction::triggered, this, [this] { changeSpeed(+0.25); });
     playMenu->addAction(act(AM::Id::SpeedDown));
-    connect(act(AM::Id::SpeedDown), &QAction::triggered, this,
-            [this] { changeSpeed(-0.25); });
+    connect(act(AM::Id::SpeedDown), &QAction::triggered, this, [this] { changeSpeed(-0.25); });
     playMenu->addAction(act(AM::Id::SpeedReset));
     connect(act(AM::Id::SpeedReset), &QAction::triggered, this, &MainWindow::resetSpeed);
     // N13：视频/音频/字幕流三子菜单（视频在前），无流时整菜单禁用
@@ -373,7 +362,8 @@ void MainWindow::createMenus()
     m_chapterGroup->setExclusive(true);
     connect(m_chapterMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildChapterMenu);
     connect(act(AM::Id::AddBookmark), &QAction::triggered, this, &MainWindow::onAddBookmark);
-    connect(act(AM::Id::BookmarkEditor), &QAction::triggered, this, &MainWindow::ensureBookmarkEditor);
+    connect(act(AM::Id::BookmarkEditor), &QAction::triggered, this,
+            &MainWindow::ensureBookmarkEditor);
 
     QMenu *viewMenu = menuBar()->addMenu(tr("视图(&V)"));
     m_playlistAction = act(AM::Id::Playlist);
@@ -408,8 +398,7 @@ void MainWindow::createMenus()
     connect(act(AM::Id::About), &QAction::triggered, this, &MainWindow::showAboutDialog);
 }
 
-void MainWindow::connectController()
-{
+void MainWindow::connectController() {
     connect(m_controller, &MpvController::timePosChanged, this, [this](double v) {
         m_timePos = v;
         updateTimeDisplay();
@@ -435,11 +424,13 @@ void MainWindow::connectController()
             const double target = m_pendingSeekTime;
             m_pendingSeekRow = -1;
             m_pendingSeekTime = -1.0;
-            m_controller->command({QStringLiteral("seek"), QString::number(target), QStringLiteral("absolute")});
+            m_controller->command(
+                {QStringLiteral("seek"), QString::number(target), QStringLiteral("absolute")});
         }
     });
     connect(m_controller, &MpvController::pauseChanged, this, [this](bool paused) {
-        m_playButton->setIcon(style()->standardIcon(paused ? QStyle::SP_MediaPlay : QStyle::SP_MediaPause));
+        m_playButton->setIcon(
+            style()->standardIcon(paused ? QStyle::SP_MediaPlay : QStyle::SP_MediaPause));
         // N7 #1：播放↔暂停 OSD（仅播放态互切，起停由 #2/#3 去重覆盖）
         if (m_playlistPos >= 0) {
             // B14：视频区单击引发的回声在此一次性吞咽——暂停 OSD 由单击
@@ -460,11 +451,11 @@ void MainWindow::connectController()
         m_volumeSlider->setValue(int(v + 0.5));
         // B14：推送仅同步滑条，OSD 已移至用户动作统一入口 applyVolume 直显
     });
-    connect(m_controller, &MpvController::playlistChanged, m_playlist, &PlaylistWidget::setPlaylist);
+    connect(m_controller, &MpvController::playlistChanged, m_playlist,
+            &PlaylistWidget::setPlaylist);
     // 播放态列表长度变化影响步进启停（A16）
-    connect(m_controller, &MpvController::playlistChanged, this, [this](const QVariantList &) {
-        updateNavigationActions();
-    });
+    connect(m_controller, &MpvController::playlistChanged, this,
+            [this](const QVariantList &) { updateNavigationActions(); });
     connect(m_controller, &MpvController::playlistPosChanged, this, [this](int pos) {
         const bool switchedItem = pos != m_playlistPos; // B9：实际换条目（值不变 mpv 不推送）
         m_playlistPos = pos;
@@ -558,9 +549,8 @@ void MainWindow::connectController()
     connect(m_playlist, &PlaylistWidget::removeRequested, this, &MainWindow::onRemoveRequested);
     connect(m_playlist, &PlaylistWidget::clearRequested, this, &MainWindow::onClearRequested);
     // N4：四步式第一步——排序/清理播放中 tab 前下发停止
-    connect(m_playlist, &PlaylistWidget::stopRequested, this, [this]() {
-        m_controller->command({QStringLiteral("stop")});
-    });
+    connect(m_playlist, &PlaylistWidget::stopRequested, this,
+            [this]() { m_controller->command({QStringLiteral("stop")}); });
     // N4：元数据回填路由——按"当前正播路径"定位全局仓条目（推送数据覆写）。
     // 路径经 normalizePathForMatch 规范化，与条目存储键同形，防止写入幻影条目。
     // B18：0 秒（FILE_LOADED 读不到）同其余 4 项一样走"读取失败即清空"，
@@ -604,13 +594,12 @@ void MainWindow::connectController()
         updateChapterMenuState();
     });
     // N15 §3.7：菜单打开期间勾选随播放进度实时单选切换
-    //（聚合器有缓存、菜单未展开时 actions 为空，代价可忽略）
-    connect(m_controller, &MpvController::timePosChanged, this, [this](double) {
-        updateChapterMenuChecked();
-    });
+    // （聚合器有缓存、菜单未展开时 actions 为空，代价可忽略）
+    connect(m_controller, &MpvController::timePosChanged, this,
+            [this](double) { updateChapterMenuChecked(); });
     connect(m_controller, &MpvController::playlistPosChanged, this, [this](int) {
         // 换行即换文件：章节随文件走，先清除防旧文件章节残留
-        //（新文件 chapter-list 装载后经 chaptersChanged 回填；spec §4.2）
+        // （新文件 chapter-list 装载后经 chaptersChanged 回填；spec §4.2）
         m_marks->setChapters({});
         updateChapterMenuState();
         updateChapterSlider();
@@ -626,27 +615,23 @@ void MainWindow::connectController()
     // 两独立属性分别推送合并触发，单次装载会产生中间对（如 (1920,288) 先于 (1920,1080)）；
     // 经单发定时器合并突发，仅以最后一次一致对触发一次自适应（B16 草案）
     m_videoAdaptTimer.setSingleShot(true);
-    connect(&m_videoAdaptTimer, &QTimer::timeout, this, [this] {
-        adaptWindowSizeToVideo(m_pendingVideoW, m_pendingVideoH);
+    connect(&m_videoAdaptTimer, &QTimer::timeout, this,
+            [this] { adaptWindowSizeToVideo(m_pendingVideoW, m_pendingVideoH); });
+    connect(m_controller, &MpvController::videoSizeChanged, this, [this](int w, int h) {
+        m_pendingVideoW = w;
+        m_pendingVideoH = h;
+        if (m_fullscreen && w > 0 && h > 0)
+            m_refitAfterFullscreen = true;
+        m_videoAdaptTimer.start(0);
     });
-    connect(m_controller, &MpvController::videoSizeChanged, this,
-            [this](int w, int h) {
-                m_pendingVideoW = w;
-                m_pendingVideoH = h;
-                if (m_fullscreen && w > 0 && h > 0)
-                    m_refitAfterFullscreen = true;
-                m_videoAdaptTimer.start(0);
-            });
     // 停止态步进以选中 tab 为基准，切换 tab 需刷新启停（A16）
-    connect(m_playlist, &QTabWidget::currentChanged, this, [this](int) {
-        updateNavigationActions();
-    });
+    connect(m_playlist, &QTabWidget::currentChanged, this,
+            [this](int) { updateNavigationActions(); });
     // mpv 侧退出：补保存会话后再结束事件循环（A6）
     connect(m_controller, &MpvController::mpvShutdown, this, &MainWindow::onMpvShutdown);
 }
 
-void MainWindow::openFiles()
-{
+void MainWindow::openFiles() {
     // N9：过滤器模式由全局媒体扩展名清单生成（与 DirProvider 默认值同源）
     QStringList patterns;
     for (const QString &ext : App::defaultMediaExtensions())
@@ -668,17 +653,15 @@ void MainWindow::openFiles()
     onPlayRequested(files, 0, -1.0);
 }
 
-void MainWindow::playAt(int index)
-{
-    m_pendingSeekRow = -1;   // 手动播放丢弃未执行的挂起 seek，防陈旧跳转
+void MainWindow::playAt(int index) {
+    m_pendingSeekRow = -1; // 手动播放丢弃未执行的挂起 seek，防陈旧跳转
     m_controller->setProperty(QStringLiteral("playlist-pos"), index);
     m_controller->setProperty(QStringLiteral("pause"), false);
     // 若 pause 原本就是 no，mpv 不会再推送属性变化，图标需手动更新
     m_playButton->setIcon(style()->standardIcon(QStyle::SP_MediaPause));
 }
 
-void MainWindow::togglePause()
-{
+void MainWindow::togglePause() {
     if (m_playlistPos < 0) {
         // 停止态点播放：目标恒为当前选中的 tab（A8）。
         // 有播放记忆（含默认 tab 的进程内记忆）→ 从记忆项与进度续播；
@@ -704,21 +687,16 @@ void MainWindow::togglePause()
     m_controller->command({QStringLiteral("cycle"), QStringLiteral("pause")});
 }
 
-void MainWindow::enterStoppedState()
-{
+void MainWindow::enterStoppedState() {
     // stop 默认会清空播放列表，keep-playlist 标志只停止播放
     m_controller->command({QStringLiteral("stop"), QStringLiteral("keep-playlist")});
     // stop 不改变 pause 属性，按钮图标不会自动更新，手动置为“可播放”态
     m_playButton->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
 }
 
-void MainWindow::stop()
-{
-    enterStoppedState();
-}
+void MainWindow::stop() { enterStoppedState(); }
 
-void MainWindow::playlistPrev()
-{
+void MainWindow::playlistPrev() {
     if (m_playlistPos < 0) {
         stepStopped(false);
         return;
@@ -732,8 +710,7 @@ void MainWindow::playlistPrev()
         m_playlist->setCurrentIndex(pt);
 }
 
-void MainWindow::playlistNext()
-{
+void MainWindow::playlistNext() {
     if (m_playlistPos < 0) {
         stepStopped(true);
         return;
@@ -749,8 +726,7 @@ void MainWindow::playlistNext()
 
 // 停止态的上一个/下一个（A9/A16）：以当前选中列表为基准步进并开始播放。
 // 起点：有记忆取记忆项，否则第 0 项；列表循环开启时首尾互绕，非循环越界无动作
-void MainWindow::stepStopped(bool next)
-{
+void MainWindow::stepStopped(bool next) {
     const int cur = m_playlist->currentIndex();
     const QStringList files = m_playlist->filesOf(cur);
     if (files.isEmpty())
@@ -763,7 +739,7 @@ void MainWindow::stepStopped(bool next)
         if (target < 0)
             target = files.size() - 1; // 首项上一个 → 绕尾项
         else if (target >= files.size())
-            target = 0;                // 尾项下一个 → 绕首项
+            target = 0; // 尾项下一个 → 绕首项
     } else if (target < 0 || target >= files.size()) {
         return;
     }
@@ -773,8 +749,7 @@ void MainWindow::stepStopped(bool next)
 
 // A16：上一/下一动作三路联动启停（矩阵见 specs/A16.md）。
 // 仅操作这两个动作，不得触碰其他动作的禁用逻辑（如全屏期导航器守卫）
-void MainWindow::updateNavigationActions()
-{
+void MainWindow::updateNavigationActions() {
     const bool loop = currentLoopMode() == QLatin1String("playlist");
     QAction *prevAction = m_actions->action(ActionManager::Id::PrevFile);
     QAction *nextAction = m_actions->action(ActionManager::Id::NextFile);
@@ -803,19 +778,19 @@ void MainWindow::updateNavigationActions()
     nextAction->setEnabled(loop || base < files.size() - 1);
 }
 
-void MainWindow::seekReleased()
-{
+void MainWindow::seekReleased() {
     m_seeking = false;
     const double percent = m_progressSlider->value() / 10.0;
-    m_controller->command({QStringLiteral("seek"), QString::number(percent), QStringLiteral("absolute-percent")});
+    m_controller->command(
+        {QStringLiteral("seek"), QString::number(percent), QStringLiteral("absolute-percent")});
     // N7 #7：进度跳转 OSD（固定 hh:mm:ss）。N8 Part5：duration<=0 分支已删——
     // 停止态滑条禁用后不可达，残余场景（直播流）下 absolute-percent 本就无效
     if (m_duration > 0.0)
-        showOsd(tr("进度跳转: %1").arg(Util::formatTimePercent(m_duration * percent / 100.0, m_duration)));
+        showOsd(tr("进度跳转: %1")
+                    .arg(Util::formatTimePercent(m_duration * percent / 100.0, m_duration)));
 }
 
-void MainWindow::setPlaylistVisible(bool visible)
-{
+void MainWindow::setPlaylistVisible(bool visible) {
     m_playlist->setVisible(visible);
     // 三个控件的状态统一由本函数收口（A12）：启动恢复路径不经过
     // 按钮→动作链，若不同步 QAction，两者分叉会导致首次点击空转
@@ -830,8 +805,7 @@ void MainWindow::setPlaylistVisible(bool visible)
 // 导航器面板显隐（N1 显隐语义 + N3 按需创建生命周期）：零持久化——
 // 每次打开都新建实例并定位到主窗口右下角；关闭（菜单/系统关闭钮）
 // 统一经 destroyNavigator 复位画面并销毁
-void MainWindow::setNavigatorVisible(bool visible)
-{
+void MainWindow::setNavigatorVisible(bool visible) {
     if (visible) {
         ensureNavigator();
         return;
@@ -840,8 +814,7 @@ void MainWindow::setNavigatorVisible(bool visible)
 }
 
 // 首次需要时构造导航器浮窗并接好信号，再走标准显示流程（N1）
-void MainWindow::ensureNavigator()
-{
+void MainWindow::ensureNavigator() {
     if (!m_navigator) {
         m_navigator = new NavigatorPanel(m_controller, videoWidget(), this);
         connect(m_navigator, &NavigatorPanel::panelClosed, this, &MainWindow::destroyNavigator);
@@ -855,8 +828,7 @@ void MainWindow::ensureNavigator()
 // 统一关闭收口（N3 口径 b，幂等）：复位画面 → 取消菜单勾选 → 销毁置 null。
 // 系统关闭钮路径 closeEvent 内已做过一次 requestReset，此处 resetAndHide
 // 再触发一次属写零属性幂等空转。QSignalBlocker 防止取消勾选递归回本函数
-void MainWindow::destroyNavigator()
-{
+void MainWindow::destroyNavigator() {
     if (!m_navigator)
         return;
     m_navigator->resetAndHide();
@@ -871,14 +843,12 @@ void MainWindow::destroyNavigator()
 // 浮窗不随属主联动，主窗口移动/缩放时手动跟随并刷新映射。
 // 用 frameGeometry（含标题栏外框）锚定：move() 定位的是外框左上角，
 // 按客户区尺寸计算会让外框越过主窗口底边约一个标题栏高度
-void MainWindow::repositionNavigator()
-{
+void MainWindow::repositionNavigator() {
     if (!m_navigator || !m_navigator->isVisible())
         return;
     const QPoint corner = mapToGlobal(QPoint(width(), height()));
     const QRect frame = m_navigator->frameGeometry();
-    QPoint pos(corner.x() - frame.width() - 12,
-               corner.y() - frame.height() - 12);
+    QPoint pos(corner.x() - frame.width() - 12, corner.y() - frame.height() - 12);
     const QRect avail = m_navigator->screen()->availableGeometry();
     pos.setX(qBound(avail.left(), pos.x(), avail.right() - frame.width()));
     pos.setY(qBound(avail.top(), pos.y(), avail.bottom() - frame.height()));
@@ -888,13 +858,12 @@ void MainWindow::repositionNavigator()
 
 // ---- N7：VideoOverlay 统一 OSD（A3 顶级 Tool 浮窗）----
 namespace {
-class OsdLabel : public QLabel
-{
-public:
+class OsdLabel : public QLabel {
+  public:
     using QLabel::QLabel;
-protected:
-    void paintEvent(QPaintEvent *) override
-    {
+
+  protected:
+    void paintEvent(QPaintEvent *) override {
         QPainter p(this);
         p.setRenderHints(QPainter::Antialiasing | QPainter::TextAntialiasing);
         const QString text = this->text();
@@ -913,8 +882,7 @@ protected:
         p.strokePath(path, pen);
         p.fillPath(path, QBrush(Qt::white));
     }
-    QSize sizeHint() const override
-    {
+    QSize sizeHint() const override {
         QFont f = font();
         f.setPointSize(20);
         f.setBold(true);
@@ -927,12 +895,12 @@ protected:
 };
 } // namespace
 
-void MainWindow::ensureVideoOverlay()
-{
+void MainWindow::ensureVideoOverlay() {
     if (m_videoOverlay)
         return;
-    m_videoOverlay = new QWidget(this, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowDoesNotAcceptFocus
-                                      | Qt::WindowTransparentForInput);
+    m_videoOverlay =
+        new QWidget(this, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowDoesNotAcceptFocus |
+                              Qt::WindowTransparentForInput);
     m_videoOverlay->setAttribute(Qt::WA_TranslucentBackground);
     m_videoOverlay->setAttribute(Qt::WA_ShowWithoutActivating);
     m_videoOverlay->setAttribute(Qt::WA_TransparentForMouseEvents, true);
@@ -961,16 +929,14 @@ void MainWindow::ensureVideoOverlay()
     });
 }
 
-void MainWindow::repositionVideoOverlay()
-{
+void MainWindow::repositionVideoOverlay() {
     if (!m_videoOverlay || !m_videoWidget)
         return;
     const QPoint globalPos = m_videoWidget->mapToGlobal(QPoint(0, 0));
     m_videoOverlay->setGeometry(QRect(globalPos, m_videoWidget->size()));
 }
 
-void MainWindow::showOsd(const QString &text)
-{
+void MainWindow::showOsd(const QString &text) {
     ensureVideoOverlay();
     m_osdLabel->setText(text);
     m_osdLabel->adjustSize();
@@ -981,8 +947,7 @@ void MainWindow::showOsd(const QString &text)
     m_osdTimer->start(2000);
 }
 
-void MainWindow::flushOsd()
-{
+void MainWindow::flushOsd() {
     m_osdCoalescePending = false;
     // 优先级：#2 起播/切文件 > #3 停止 > #1 播放/暂停
     QString text;
@@ -999,15 +964,13 @@ void MainWindow::flushOsd()
         showOsd(text);
 }
 
-void MainWindow::moveEvent(QMoveEvent *event)
-{
+void MainWindow::moveEvent(QMoveEvent *event) {
     QMainWindow::moveEvent(event);
     repositionNavigator();
     repositionVideoOverlay();
 }
 
-void MainWindow::resizeEvent(QResizeEvent *event)
-{
+void MainWindow::resizeEvent(QResizeEvent *event) {
     QMainWindow::resizeEvent(event);
     repositionNavigator();
     repositionVideoOverlay();
@@ -1019,8 +982,7 @@ void MainWindow::resizeEvent(QResizeEvent *event)
 // 视频区几何手动同步（N3）：按窗口模式分支计算目标几何。
 // 全屏铺满整个客户区；普通态对齐占位符——占位符 geometry 相对其父容器，
 // 须 mapTo 主窗坐标系
-void MainWindow::syncVideoGeometry()
-{
+void MainWindow::syncVideoGeometry() {
     if (!m_videoWidget || !m_videoPlaceholder)
         return;
     if (m_fullscreen) {
@@ -1037,8 +999,7 @@ void MainWindow::syncVideoGeometry()
 // 工作区即整窗等比缩到恰好放入；resize 后外框越出工作区时按最小移动原则
 // 两轴独立钳回（恰好不越界）。全屏/最大化/无视频流不动作；
 // 停止不复位、全屏退出维持全屏前普通尺寸（本函数仅在分辨率推送时触发）
-void MainWindow::adaptWindowSizeToVideo(int videoW, int videoH)
-{
+void MainWindow::adaptWindowSizeToVideo(int videoW, int videoH) {
     if (videoW <= 0 || videoH <= 0 || m_fullscreen || isMaximized())
         return;
     const QRect work = screen()->availableGeometry();
@@ -1050,8 +1011,8 @@ void MainWindow::adaptWindowSizeToVideo(int videoW, int videoH)
     const QSize frameChrome = frameGeometry().size() - geometry().size();
     const QSize clientReserve = geometry().size() - m_videoWidget->size();
     const QSize availVideo = work.size() - frameChrome - clientReserve;
-    if (availVideo.width() > 0 && availVideo.height() > 0
-        && (want.width() > availVideo.width() || want.height() > availVideo.height()))
+    if (availVideo.width() > 0 && availVideo.height() > 0 &&
+        (want.width() > availVideo.width() || want.height() > availVideo.height()))
         want.scale(availVideo, Qt::KeepAspectRatio);
     // B16：迭代收敛——单步增量假设"非视频域宽度恒定"不成立（右侧 splitter/播放列表
     // 会随窗口变宽吸收部分增量），故每步 resize 后强制布局落地、读真实 video 尺寸，
@@ -1062,7 +1023,7 @@ void MainWindow::adaptWindowSizeToVideo(int videoW, int videoH)
     for (int i = 0; i < 4; ++i) {
         resize(target);
         if (layout())
-            layout()->activate();   // 同步落实子布局（含 splitter/播放列表重分布 + 视频区对位）
+            layout()->activate(); // 同步落实子布局（含 splitter/播放列表重分布 + 视频区对位）
         const QSize achieved = m_videoWidget->size();
         if (achieved == want || achieved == lastAchieved)
             break;
@@ -1079,8 +1040,7 @@ void MainWindow::adaptWindowSizeToVideo(int videoW, int videoH)
 }
 
 // 覆盖式全屏切换（N3）：不隐藏控件、不重父化、wid 不重设、零黑闪
-void MainWindow::toggleFullscreen()
-{
+void MainWindow::toggleFullscreen() {
     if (!m_fullscreen) {
         // 全屏态落盘守卫：快照进全屏前几何（saveSettings 落盘 + 退出恢复共用）。
         // A18：快照扩为整矩形（含位置），无框方案的普通态退出恢复需要
@@ -1112,8 +1072,7 @@ void MainWindow::toggleFullscreen()
         // 的新 HWND 故紧随 flags 切换。退出无需处理——再次重建回归系统默认，
         // 且最大化态本就自动方角
         const DWORD cornerPref = DWMWCP_DONOTROUND;
-        DwmSetWindowAttribute(reinterpret_cast<HWND>(winId()),
-                              DWMWA_WINDOW_CORNER_PREFERENCE,
+        DwmSetWindowAttribute(reinterpret_cast<HWND>(winId()), DWMWA_WINDOW_CORNER_PREFERENCE,
                               &cornerPref, sizeof(cornerPref));
 #endif
         setWindowState(Qt::WindowNoState);
@@ -1156,16 +1115,12 @@ void MainWindow::toggleFullscreen()
 
 // 实时读 mpv 的 pause（缓存可能滞后一个事件周期）；读取失败按已暂停处理，
 // 走延迟路径更安全
-bool MainWindow::isPaused()
-{
-    return m_controller->propertyFlag(QStringLiteral("pause"), true);
-}
+bool MainWindow::isPaused() { return m_controller->propertyFlag(QStringLiteral("pause"), true); }
 
 // 单击定时器超时：确非双击，按按压来源分流收尾。
 // 播放态点击（B14）：暂停已即时生效，此处补显被吞咽的暂停 OSD；
 // 暂停/停止态点击：执行延迟的恢复/开播动作
-void MainWindow::onVideoClickTimeout()
-{
+void MainWindow::onVideoClickTimeout() {
     if (!m_clickActionPending)
         return;
     m_clickActionPending = false;
@@ -1180,8 +1135,7 @@ void MainWindow::onVideoClickTimeout()
 
 // 占位符几何跟随 + 视频区单击/双击分流（N3）。
 // 右键与 Release 不处理：右键无任何行为变化
-bool MainWindow::eventFilter(QObject *watched, QEvent *event)
-{
+bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
     if (watched == m_videoPlaceholder) {
         if (event->type() == QEvent::Resize || event->type() == QEvent::Move)
             syncVideoGeometry();
@@ -1289,7 +1243,8 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
             // N8 Part4：拖动期间显示当前音量（isSliderDown 区分拖动与悬停）
             if (m_volumeSlider->isSliderDown())
                 QToolTip::showText(static_cast<QMouseEvent *>(event)->globalPosition().toPoint(),
-                                   QStringLiteral("%1%").arg(m_volumeSlider->value()), m_volumeSlider);
+                                   QStringLiteral("%1%").arg(m_volumeSlider->value()),
+                                   m_volumeSlider);
             break;
         case QEvent::MouseButtonRelease:
         case QEvent::Leave:
@@ -1306,8 +1261,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 // 三条路径汇入：changeVolume（滚轮/快捷键）、滑条 valueChanged（拖动/点击）。
 // 启动恢复刻意绕行：restoreSettings 以 QSignalBlocker 直写滑条并直接
 // setProperty，不经此函数——启动路径从此无任何 OSD 调用点
-void MainWindow::applyVolume(int value)
-{
+void MainWindow::applyVolume(int value) {
     const int v = qBound(0, value, m_volumeMax);
     m_controller->setProperty(QStringLiteral("volume"), double(v));
     showOsd(tr("音量: %1%").arg(v));
@@ -1315,17 +1269,13 @@ void MainWindow::applyVolume(int value)
 
 // N5：统一音量调节入口。以滑条缓存为基准步进后交 applyVolume；
 // UI 不在此处回写，由 volumeChanged 观察回流刷新（防环已有 QSignalBlocker）
-void MainWindow::changeVolume(int delta)
-{
-    applyVolume(m_volumeSlider->value() + delta);
-}
+void MainWindow::changeVolume(int delta) { applyVolume(m_volumeSlider->value() + delta); }
 
 // B11：正在播放的真实文件名（含后缀不含路径），标题与 OSD #2 同源。
 // 列表镜像优先——playlist-pos 推送早于新文件装载完成，此刻读 filename 属性
 // 会拿到上一个文件的残留值（概率性错名根因）；本地镜像顺序与 mpv 恒一致，
 // 按 pos 取名为确定性来源。属性仅作镜像缺失时的兜底（如起播早期回刷未达）
-QString MainWindow::playingFilename()
-{
+QString MainWindow::playingFilename() {
     const int pt = m_playlist->playingTabIndex();
     if (pt >= 0 && m_playlistPos >= 0) {
         const QStringList files = m_playlist->filesOf(pt);
@@ -1337,8 +1287,7 @@ QString MainWindow::playingFilename()
 
 // N8 Part3：进度条鼠标 x → 百分比（0~100）。经样式反查 groove/handle 几何，
 // 扣除滑块半宽后线性映射，与拖动定位算法同口径
-double MainWindow::progressPercentAt(const QPoint &pos) const
-{
+double MainWindow::progressPercentAt(const QPoint &pos) const {
     QStyleOptionSlider opt;
     opt.initFrom(m_progressSlider);
     opt.subControls = QStyle::SC_SliderGroove | QStyle::SC_SliderHandle;
@@ -1347,20 +1296,22 @@ double MainWindow::progressPercentAt(const QPoint &pos) const
     opt.maximum = m_progressSlider->maximum();
     opt.sliderPosition = m_progressSlider->sliderPosition();
     opt.sliderValue = m_progressSlider->value();
-    const QRect groove = style()->subControlRect(QStyle::CC_Slider, &opt, QStyle::SC_SliderGroove, m_progressSlider);
-    const QRect handle = style()->subControlRect(QStyle::CC_Slider, &opt, QStyle::SC_SliderHandle, m_progressSlider);
+    const QRect groove =
+        style()->subControlRect(QStyle::CC_Slider, &opt, QStyle::SC_SliderGroove, m_progressSlider);
+    const QRect handle =
+        style()->subControlRect(QStyle::CC_Slider, &opt, QStyle::SC_SliderHandle, m_progressSlider);
     const int span = groove.width() - handle.width();
     if (span <= 0)
         return -1.0;
     const int dx = pos.x() - handle.width() / 2 - groove.left();
-    const int value = QStyle::sliderValueFromPosition(opt.minimum, opt.maximum, qBound(0, dx, span), span);
+    const int value =
+        QStyle::sliderValueFromPosition(opt.minimum, opt.maximum, qBound(0, dx, span), span);
     return value / 10.0;
 }
 
 // N6：相对 seek。停止态（m_playlistPos<0）无播放位置可寻址，直接忽略；
 // 不指定 flags 走 mpv 默认相对关键帧寻址，响应优先于逐帧精度
-void MainWindow::seekRelative(int deltaSeconds)
-{
+void MainWindow::seekRelative(int deltaSeconds) {
     if (m_playlistPos < 0)
         return;
     m_controller->command({QStringLiteral("seek"), QString::number(deltaSeconds)});
@@ -1379,8 +1330,7 @@ void MainWindow::seekRelative(int deltaSeconds)
 
 // N6：速度步进——实时读 speed 属性做读改写（不设观察缓存），
 // 钳制到 [0.25, 8]；±0.25 为二进制精确小数，域内累加无舍入误差
-void MainWindow::changeSpeed(double delta)
-{
+void MainWindow::changeSpeed(double delta) {
     const double cur = m_controller->propertyDouble(QStringLiteral("speed"), 1.0);
     const double target = qBound(0.25, cur + delta, 8.0);
     m_controller->setProperty(QStringLiteral("speed"), target);
@@ -1394,8 +1344,7 @@ void MainWindow::changeSpeed(double delta)
     showOsd(tr("播放速度: %1倍").arg(num));
 }
 
-void MainWindow::resetSpeed()
-{
+void MainWindow::resetSpeed() {
     m_controller->setProperty(QStringLiteral("speed"), 1.0);
     showOsd(tr("播放速度: 1倍"));
 }
@@ -1403,8 +1352,7 @@ void MainWindow::resetSpeed()
 // N5：空白区域点击清焦兜底——未被交互控件消费的鼠标按下事件一路冒泡至此，
 // 清除焦点使方向键回到全局音量模式；列表/滑条/按钮等自行消费按下事件，
 // 不会到达此处，语义自动正确
-void MainWindow::mousePressEvent(QMouseEvent *event)
-{
+void MainWindow::mousePressEvent(QMouseEvent *event) {
     if (event->button() == Qt::LeftButton) {
         if (auto *fw = QApplication::focusWidget())
             fw->clearFocus();
@@ -1412,10 +1360,9 @@ void MainWindow::mousePressEvent(QMouseEvent *event)
     QMainWindow::mousePressEvent(event);
 }
 
-void MainWindow::onPlayRequested(const QStringList &files, int index, double seekTo)
-{
+void MainWindow::onPlayRequested(const QStringList &files, int index, double seekTo) {
     // 统一播放入口（N4 合并）：整表载入 → 跳转 index → 挂起恢复进度。
-    m_pendingSeekRow = -1;   // 丢弃未执行的挂起 seek
+    m_pendingSeekRow = -1; // 丢弃未执行的挂起 seek
     m_pendingSeekTime = -1.0;
     if (files.isEmpty())
         return;
@@ -1440,24 +1387,22 @@ void MainWindow::onPlayRequested(const QStringList &files, int index, double see
     m_playButton->setIcon(style()->standardIcon(QStyle::SP_MediaPause));
 }
 
-void MainWindow::onRemoveRequested(QList<int> rows)
-{
+void MainWindow::onRemoveRequested(QList<int> rows) {
     // 从后往前删，避免索引失效
     std::sort(rows.rbegin(), rows.rend());
     for (int row : rows)
         m_controller->command({QStringLiteral("playlist-remove"), QString::number(row)});
 }
 
-void MainWindow::onClearRequested()
-{
+void MainWindow::onClearRequested() {
     // 同样需要先 stop，否则当前播放的条目会被保留
     m_controller->command({QStringLiteral("stop")});
     m_controller->command({QStringLiteral("playlist-clear")});
 }
 
-void MainWindow::onFilesAdded(const QStringList &files)
-{
-    updateNavigationActions(); // 本地 tab 新增内容影响停止态步进（A16）；播放态由 playlistChanged 兜底
+void MainWindow::onFilesAdded(const QStringList &files) {
+    updateNavigationActions(); // 本地 tab 新增内容影响停止态步进（A16）；播放态由 playlistChanged
+                               // 兜底
     // 只有添加到“正在播放”tab 的文件才同步进 mpv 播放列表；
     // 其他 tab 为本地列表，双击播放时整体载入。
     if (!m_playlist->currentIsPlayingTab())
@@ -1466,8 +1411,7 @@ void MainWindow::onFilesAdded(const QStringList &files)
         m_controller->command({QStringLiteral("loadfile"), file, QStringLiteral("append-play")});
 }
 
-void MainWindow::applyLoopMode(const QString &mode)
-{
+void MainWindow::applyLoopMode(const QString &mode) {
     if (mode == QLatin1String("file")) {
         m_controller->setProperty(QStringLiteral("loop-file"), QStringLiteral("inf"));
         m_controller->setProperty(QStringLiteral("loop-playlist"), QStringLiteral("no"));
@@ -1481,8 +1425,7 @@ void MainWindow::applyLoopMode(const QString &mode)
     updateNavigationActions(); // 循环模式切换立即刷新启停（A16）
 }
 
-QString MainWindow::currentLoopMode() const
-{
+QString MainWindow::currentLoopMode() const {
     if (m_controller->propertyString(QStringLiteral("loop-file")) == QLatin1String("inf"))
         return QStringLiteral("file");
     if (m_controller->propertyString(QStringLiteral("loop-playlist")) == QLatin1String("inf"))
@@ -1490,15 +1433,15 @@ QString MainWindow::currentLoopMode() const
     return QStringLiteral("none");
 }
 
-void MainWindow::showSettingsDialog()
-{
+void MainWindow::showSettingsDialog() {
     QDialog dialog(this);
     dialog.setWindowTitle(tr("设置"));
     auto *layout = new QFormLayout(&dialog);
 
     auto *hwdecCombo = new QComboBox(&dialog);
     hwdecCombo->addItems({QStringLiteral("auto"), QStringLiteral("auto-safe"),
-                          QStringLiteral("d3d11va"), QStringLiteral("dxva2"), QStringLiteral("no")});
+                          QStringLiteral("d3d11va"), QStringLiteral("dxva2"),
+                          QStringLiteral("no")});
     const int idx = hwdecCombo->findText(m_controller->propertyString(QStringLiteral("hwdec")));
     if (idx >= 0)
         hwdecCombo->setCurrentIndex(idx);
@@ -1562,23 +1505,21 @@ void MainWindow::showSettingsDialog()
     }
 }
 
-void MainWindow::showAboutDialog()
-{
+void MainWindow::showAboutDialog() {
     QMessageBox::about(this, tr("关于 %1").arg(App::name()),
                        tr("%1：以 mpv C 插件形式加载的 Qt 播放器界面。\n"
-                          "视频渲染由 mpv 完成，本插件仅提供图形界面。").arg(App::name()));
+                          "视频渲染由 mpv 完成，本插件仅提供图形界面。")
+                           .arg(App::name()));
 }
 
-void MainWindow::onMpvShutdown()
-{
+void MainWindow::onMpvShutdown() {
     // mpv 侧发起退出（终端按 q、其他脚本发 quit）时 closeEvent 不会触发，
     // 在此补保存会话；窗口关闭路径随后到来的重复保存写同值幂等无害
     saveSettings();
     QApplication::quit();
 }
 
-void MainWindow::saveSettings()
-{
+void MainWindow::saveSettings() {
     // A11：每次进程只落盘一次。关窗路径会保存两次（closeEvent + SHUTDOWN 补存），
     // 第二次发生在窗口隐藏后，isVisible() 等活体状态会被读错
     if (m_settingsSaved)
@@ -1611,12 +1552,12 @@ void MainWindow::saveSettings()
     m_playlist->savePlaylists();
 }
 
-void MainWindow::restoreSettings()
-{
+void MainWindow::restoreSettings() {
     QSettings settings(m_configFile, QSettings::IniFormat);
 
     // 循环模式
-    const QString loopMode = settings.value(QStringLiteral("loopMode"), QStringLiteral("none")).toString();
+    const QString loopMode =
+        settings.value(QStringLiteral("loopMode"), QStringLiteral("none")).toString();
     applyLoopMode(loopMode);
 
     // 硬件解码
@@ -1628,7 +1569,8 @@ void MainWindow::restoreSettings()
     // 否则旧音量可能被默认量程 100 截断）
     m_volumeMax = qBound(0, settings.value(QStringLiteral("volumeMax"), m_volumeMax).toInt(), 400);
     m_volumeSlider->setRange(0, m_volumeMax);
-    m_volumeWheelStep = settings.value(QStringLiteral("volumeWheelStep"), m_volumeWheelStep).toInt();
+    m_volumeWheelStep =
+        settings.value(QStringLiteral("volumeWheelStep"), m_volumeWheelStep).toInt();
     m_volumeKeyStep = settings.value(QStringLiteral("volumeKeyStep"), m_volumeKeyStep).toInt();
     if (settings.contains(QStringLiteral("volume"))) {
         const double vol =
@@ -1657,22 +1599,18 @@ void MainWindow::restoreSettings()
     updateNavigationActions(); // A16：启动恢复完成后的初始启停状态
 }
 
-void MainWindow::updateTimeDisplay()
-{
-    m_timeLabel->setText(QStringLiteral("%1 / %2").arg(Util::formatTime(m_timePos), Util::formatTime(m_duration)));
+void MainWindow::updateTimeDisplay() {
+    m_timeLabel->setText(
+        QStringLiteral("%1 / %2").arg(Util::formatTime(m_timePos), Util::formatTime(m_duration)));
     if (!m_seeking && m_duration > 0.0)
         m_progressSlider->setValue(int(m_timePos / m_duration * 1000.0));
 }
 
-QString MainWindow::formatTime(double seconds)
-{
-    return Util::formatTime(seconds);
-}
+QString MainWindow::formatTime(double seconds) { return Util::formatTime(seconds); }
 
 // ---- N13：轨道文案与切换 ----
 
-qint64 MainWindow::trackBitrate(const MpvController::TrackInfo &t) const
-{
+qint64 MainWindow::trackBitrate(const MpvController::TrackInfo &t) const {
     if (t.demuxBitrate > 0)
         return t.demuxBitrate;
     if (t.metadataBPS > 0)
@@ -1680,8 +1618,7 @@ qint64 MainWindow::trackBitrate(const MpvController::TrackInfo &t) const
     return 0;
 }
 
-QString MainWindow::formatTrackText(const MpvController::TrackInfo &t) const
-{
+QString MainWindow::formatTrackText(const MpvController::TrackInfo &t) const {
     // 本地外挂流固定格式：[local] 文件名 [语言] (格式)
     if (t.external) {
         QString fn = QFileInfo(t.externalFilename).fileName();
@@ -1752,8 +1689,7 @@ QString MainWindow::formatTrackText(const MpvController::TrackInfo &t) const
     return result;
 }
 
-void MainWindow::rebuildTrackMenus()
-{
+void MainWindow::rebuildTrackMenus() {
     auto rebuild = [this](QMenu *menu, const QString &type) {
         if (!menu)
             return;
@@ -1763,7 +1699,9 @@ void MainWindow::rebuildTrackMenus()
             if (t.type == type)
                 filtered.append(t);
         std::sort(filtered.begin(), filtered.end(),
-                  [](const MpvController::TrackInfo &a, const MpvController::TrackInfo &b) { return a.id < b.id; });
+                  [](const MpvController::TrackInfo &a, const MpvController::TrackInfo &b) {
+                      return a.id < b.id;
+                  });
 
         if (type == QLatin1String("sub")) {
             // 字幕首项"无"
@@ -1799,8 +1737,7 @@ void MainWindow::rebuildTrackMenus()
 
 // B18：流按钮与三个流子菜单的状态统一由 m_tracks 派生（tracksChanged 与
 // END_FILE 会话态重置共用；后者清空 m_tracks 即按钮隐藏、菜单全禁用）
-void MainWindow::updateStreamControls()
-{
+void MainWindow::updateStreamControls() {
     int v = 0, a = 0, s = 0;
     for (const auto &t : m_tracks) {
         if (t.type == QLatin1String("video"))
@@ -1823,8 +1760,7 @@ void MainWindow::updateStreamControls()
         m_subStreamMenu->setEnabled(s > 0);
 }
 
-void MainWindow::showStreamMenu()
-{
+void MainWindow::showStreamMenu() {
     QMenu menu(this);
     QList<MpvController::TrackInfo> videos, audios, subs;
     for (const auto &t : m_tracks) {
@@ -1836,11 +1772,17 @@ void MainWindow::showStreamMenu()
             subs.append(t);
     }
     std::sort(videos.begin(), videos.end(),
-              [](const MpvController::TrackInfo &a, const MpvController::TrackInfo &b) { return a.id < b.id; });
+              [](const MpvController::TrackInfo &a, const MpvController::TrackInfo &b) {
+                  return a.id < b.id;
+              });
     std::sort(audios.begin(), audios.end(),
-              [](const MpvController::TrackInfo &a, const MpvController::TrackInfo &b) { return a.id < b.id; });
+              [](const MpvController::TrackInfo &a, const MpvController::TrackInfo &b) {
+                  return a.id < b.id;
+              });
     std::sort(subs.begin(), subs.end(),
-              [](const MpvController::TrackInfo &a, const MpvController::TrackInfo &b) { return a.id < b.id; });
+              [](const MpvController::TrackInfo &a, const MpvController::TrackInfo &b) {
+                  return a.id < b.id;
+              });
 
     bool hasPrev = false;
     if (videos.size() > 1) {
@@ -1892,12 +1834,13 @@ void MainWindow::showStreamMenu()
     }
     if (menu.isEmpty())
         return;
-    const QPoint pos = m_streamButton ? m_streamButton->mapToGlobal(QPoint(0, m_streamButton->height())) : QCursor::pos();
+    const QPoint pos = m_streamButton
+                           ? m_streamButton->mapToGlobal(QPoint(0, m_streamButton->height()))
+                           : QCursor::pos();
     menu.exec(pos);
 }
 
-void MainWindow::switchToTrack(const MpvController::TrackInfo &t)
-{
+void MainWindow::switchToTrack(const MpvController::TrackInfo &t) {
     QString prop;
     QString prefix;
     if (t.type == QLatin1String("video")) {
@@ -1916,15 +1859,13 @@ void MainWindow::switchToTrack(const MpvController::TrackInfo &t)
     showOsd(prefix + formatTrackText(t));
 }
 
-void MainWindow::disableSubtitles()
-{
+void MainWindow::disableSubtitles() {
     m_controller->setProperty(QStringLiteral("sid"), QStringLiteral("no"));
     showOsd(tr("字幕流: 无"));
 }
 
 // ---- N15：章节与书签 ----
-void MainWindow::updateChapterSlider()
-{
+void MainWindow::updateChapterSlider() {
     m_progressSlider->setDuration(m_duration);
     const auto &marks = m_marks->marks();
     QList<double> times;
@@ -1934,16 +1875,14 @@ void MainWindow::updateChapterSlider()
     m_progressSlider->setMarkTimes(times);
 }
 
-void MainWindow::updateChapterMenuState()
-{
+void MainWindow::updateChapterMenuState() {
     const QString path = m_controller->propertyString(QStringLiteral("path"));
     const bool hasFile = !path.isEmpty() && m_playlistPos >= 0 && m_duration > 0.0;
     if (auto *a = m_actions->action(ActionManager::Id::AddBookmark))
         a->setEnabled(hasFile);
 }
 
-void MainWindow::updateChapterMenuChecked()
-{
+void MainWindow::updateChapterMenuChecked() {
     if (!m_chapterMenu || !m_chapterGroup)
         return;
     const auto hit = m_marks->hit(m_timePos); // std::optional<Mark>
@@ -1955,9 +1894,9 @@ void MainWindow::updateChapterMenuChecked()
         if (!act->isCheckable())
             continue;
         double t = act->data().toDouble();
-        bool shouldCheck = hasHit && hit->time == t
-            && ((hit->isBookmark && act->property("isBookmark").toBool())
-                || (!hit->isBookmark && !act->property("isBookmark").toBool()));
+        bool shouldCheck = hasHit && hit->time == t &&
+                           ((hit->isBookmark && act->property("isBookmark").toBool()) ||
+                            (!hit->isBookmark && !act->property("isBookmark").toBool()));
         if (shouldCheck) {
             if (act->property("title").toString() != hit->title)
                 shouldCheck = false;
@@ -1967,24 +1906,26 @@ void MainWindow::updateChapterMenuChecked()
     m_chapterGroup->setExclusive(wasExclusive);
 }
 
-void MainWindow::rebuildChapterMenu()
-{
+void MainWindow::rebuildChapterMenu() {
     if (!m_chapterMenu)
         return;
     m_chapterMenu->clear();
     // 菜单项由 clear() 连同销毁，QAction 析构时自动脱离 m_chapterGroup，
     // 此处重建 action 后重新入组即可
     const auto marksChapters = m_marks->chapters();
-    const QString curPath = Util::normalizePathForMatch(m_controller->propertyString(QStringLiteral("path")));
+    const QString curPath =
+        Util::normalizePathForMatch(m_controller->propertyString(QStringLiteral("path")));
     // 跳转需原始显示路径（大小写/分隔符原样）；curPath 仅作书签仓键匹配用（B15）
-    const QString curDisplay = Util::resolveLocalPath(m_controller->propertyString(QStringLiteral("path")));
+    const QString curDisplay =
+        Util::resolveLocalPath(m_controller->propertyString(QStringLiteral("path")));
     // 书签经聚合器统一读入口（书签永不查重，即原始）
     const auto bms = m_marks->bookmarks(curPath);
 
     // 跳转目标 = 菜单构建时的当前文件（菜单条目语义上属于该文件）
     auto addSection = [this, curPath, curDisplay](const QList<MarkAggregator::Mark> &items) {
         for (const auto &it : items) {
-            const QString text = QStringLiteral("[%1] %2").arg(Util::formatTimeHMSms(it.time), it.title);
+            const QString text =
+                QStringLiteral("[%1] %2").arg(Util::formatTimeHMSms(it.time), it.title);
             QAction *a = m_chapterMenu->addAction(text);
             a->setCheckable(true);
             a->setData(it.time);
@@ -1992,7 +1933,8 @@ void MainWindow::rebuildChapterMenu()
             a->setProperty("title", it.title);
             m_chapterGroup->addAction(a);
             const double t = it.time;
-            connect(a, &QAction::triggered, this, [this, curDisplay, t] { jumpToFileTime(curDisplay, t); });
+            connect(a, &QAction::triggered, this,
+                    [this, curDisplay, t] { jumpToFileTime(curDisplay, t); });
         }
     };
 
@@ -2032,8 +1974,7 @@ void MainWindow::rebuildChapterMenu()
     updateChapterMenuChecked();
 }
 
-void MainWindow::jumpToFileTime(const QString &path, double time)
-{
+void MainWindow::jumpToFileTime(const QString &path, double time) {
     if (path.isEmpty())
         return;
     const QString norm = Util::normalizePathForMatch(path);
@@ -2069,7 +2010,8 @@ void MainWindow::jumpToFileTime(const QString &path, double time)
             // 同一播放列表内跳转：仅切换条目或 seek
             const bool isAlreadyPlaying = (m_playlistPos == targetRow);
             if (isAlreadyPlaying) {
-                m_controller->command({QStringLiteral("seek"), QString::number(time), QStringLiteral("absolute")});
+                m_controller->command(
+                    {QStringLiteral("seek"), QString::number(time), QStringLiteral("absolute")});
             } else {
                 // 同列表切文件：复用 playAt（不重建列表）。seek 走挂起机制：
                 // playlist-pos 触发的加载是异步的，立即 seek 会作用于尚未
@@ -2094,28 +2036,27 @@ void MainWindow::jumpToFileTime(const QString &path, double time)
     onPlayRequested({path}, 0, time);
 }
 
-void MainWindow::ensureBookmarkEditor()
-{
+void MainWindow::ensureBookmarkEditor() {
     if (m_bookmarkEditor) {
         m_bookmarkEditor->show();
         m_bookmarkEditor->raise();
         return;
     }
     // N16：传入当前播放文件归一化键，使编辑器打开即聚焦该文件（若存在书签）
-    const QString curKey = Util::normalizePathForMatch(
-        m_controller->propertyString(QStringLiteral("path")));
-    m_bookmarkEditor = new BookmarkEditorDialog(m_bookmarkMgr,
-        [this](const QString &p, double t) { jumpToFileTime(p, t); }, curKey, this);
+    const QString curKey =
+        Util::normalizePathForMatch(m_controller->propertyString(QStringLiteral("path")));
+    m_bookmarkEditor = new BookmarkEditorDialog(
+        m_bookmarkMgr, [this](const QString &p, double t) { jumpToFileTime(p, t); }, curKey, this);
     m_bookmarkEditor->setAttribute(Qt::WA_DeleteOnClose, true);
     connect(m_bookmarkEditor, &QObject::destroyed, this, [this] { m_bookmarkEditor = nullptr; });
     m_bookmarkEditor->show();
 }
 
-void MainWindow::onAddBookmark()
-{
+void MainWindow::onAddBookmark() {
     // mpv 来源路径经 resolveLocalPath 加工为显示路径；BookmarkManager 内部归一为键，
     // 展示保原样（大小写/分隔符，B15）
-    const QString rawPath = Util::resolveLocalPath(m_controller->propertyString(QStringLiteral("path")));
+    const QString rawPath =
+        Util::resolveLocalPath(m_controller->propertyString(QStringLiteral("path")));
     if (rawPath.isEmpty() || m_playlistPos < 0)
         return;
     const QString path = Util::normalizePathForMatch(rawPath);
@@ -2142,8 +2083,7 @@ void MainWindow::onAddBookmark()
     showOsd(tr("已添加书签: [%1] %2").arg(Util::formatTimeHMSms(t), title));
 }
 
-void MainWindow::closeEvent(QCloseEvent *event)
-{
+void MainWindow::closeEvent(QCloseEvent *event) {
     saveSettings();
     // mpv 是宿主进程：关闭 GUI 时让 mpv 一并退出
     m_controller->command({QStringLiteral("quit")});

@@ -1,12 +1,11 @@
-#include "pch.h"
 #include "BookmarkEditorDialog.h"
 #include "BookmarkManager.h"
 #include "Util.h"
+#include "pch.h"
 
 BookmarkEditorDialog::BookmarkEditorDialog(BookmarkManager *mgr, JumpCallback jumpCb,
-                                             const QString &currentPath, QWidget *parent)
-    : QDialog(parent), m_mgr(mgr), m_jumpCb(std::move(jumpCb))
-{
+                                           const QString &currentPath, QWidget *parent)
+    : QDialog(parent), m_mgr(mgr), m_jumpCb(std::move(jumpCb)) {
     setWindowTitle(tr("书签编辑器"));
     resize(640, 420);
     auto *layout = new QVBoxLayout(this);
@@ -42,11 +41,14 @@ BookmarkEditorDialog::BookmarkEditorDialog(BookmarkManager *mgr, JumpCallback ju
     editRow->addWidget(m_applyBtn);
     layout->addLayout(editRow);
 
-    connect(m_tree, &QTreeWidget::itemSelectionChanged, this, &BookmarkEditorDialog::onSelectionChanged);
-    connect(m_tree, &QTreeWidget::itemDoubleClicked, this, &BookmarkEditorDialog::onItemDoubleClicked);
+    connect(m_tree, &QTreeWidget::itemSelectionChanged, this,
+            &BookmarkEditorDialog::onSelectionChanged);
+    connect(m_tree, &QTreeWidget::itemDoubleClicked, this,
+            &BookmarkEditorDialog::onItemDoubleClicked);
     connect(m_jumpBtn, &QPushButton::clicked, this, &BookmarkEditorDialog::onJump);
     connect(m_removeSelBtn, &QPushButton::clicked, this, &BookmarkEditorDialog::onRemoveSelected);
-    connect(m_removeInvalidBtn, &QPushButton::clicked, this, &BookmarkEditorDialog::onRemoveInvalid);
+    connect(m_removeInvalidBtn, &QPushButton::clicked, this,
+            &BookmarkEditorDialog::onRemoveInvalid);
     connect(m_clearBtn, &QPushButton::clicked, this, &BookmarkEditorDialog::onClearAll);
     connect(m_applyBtn, &QPushButton::clicked, this, &BookmarkEditorDialog::onApply);
 
@@ -57,8 +59,7 @@ BookmarkEditorDialog::BookmarkEditorDialog(BookmarkManager *mgr, JumpCallback ju
     onSelectionChanged();
 }
 
-void BookmarkEditorDialog::refresh()
-{
+void BookmarkEditorDialog::refresh() {
     m_tree->clear();
     const QStringList files = m_mgr->allFiles();
     for (const QString &path : files) {
@@ -74,7 +75,8 @@ void BookmarkEditorDialog::refresh()
         for (int i = 0; i < list.size(); ++i) {
             const auto &bm = list[i];
             auto *leaf = new QTreeWidgetItem(root);
-            leaf->setText(0, QStringLiteral("[%1] %2").arg(Util::formatTimeHMSms(bm.time), bm.title));
+            leaf->setText(0,
+                          QStringLiteral("[%1] %2").arg(Util::formatTimeHMSms(bm.time), bm.title));
             leaf->setData(0, Qt::UserRole, path);
             leaf->setData(0, Qt::UserRole + 2, i);
             leaf->setData(0, Qt::UserRole + 3, bm.time);
@@ -95,8 +97,7 @@ void BookmarkEditorDialog::refresh()
     onSelectionChanged();
 }
 
-void BookmarkEditorDialog::onSelectionChanged()
-{
+void BookmarkEditorDialog::onSelectionChanged() {
     auto *cur = m_tree->currentItem();
     const bool hasSel = cur != nullptr;
     bool isLeaf = cur && cur->parent() != nullptr;
@@ -126,13 +127,13 @@ void BookmarkEditorDialog::onSelectionChanged()
     }
 }
 
-void BookmarkEditorDialog::onApply()
-{
+void BookmarkEditorDialog::onApply() {
     const QString timeText = m_timeEdit->text();
     double t = 0.0;
     if (!Util::parseTimeHMSms(timeText, &t)) {
-        QMessageBox::warning(this, tr("时间格式错误"),
-                             tr("时间须为 hh:mm:ss.zzz（如 00:01:02.345），分秒小于 60，毫秒三位。"));
+        QMessageBox::warning(
+            this, tr("时间格式错误"),
+            tr("时间须为 hh:mm:ss.zzz（如 00:01:02.345），分秒小于 60，毫秒三位。"));
         return;
     }
     const QString title = m_titleEdit->text();
@@ -150,8 +151,7 @@ void BookmarkEditorDialog::onApply()
     m_mgr->updateBookmark(m_selPath, m_selIndex, t, title);
 }
 
-void BookmarkEditorDialog::onJump()
-{
+void BookmarkEditorDialog::onJump() {
     auto *cur = m_tree->currentItem();
     if (!cur || !cur->parent())
         return;
@@ -162,8 +162,7 @@ void BookmarkEditorDialog::onJump()
         m_jumpCb(path, t);
 }
 
-void BookmarkEditorDialog::onItemDoubleClicked(QTreeWidgetItem *item, int column)
-{
+void BookmarkEditorDialog::onItemDoubleClicked(QTreeWidgetItem *item, int column) {
     Q_UNUSED(column);
     if (!item || !item->parent())
         return;
@@ -173,8 +172,7 @@ void BookmarkEditorDialog::onItemDoubleClicked(QTreeWidgetItem *item, int column
         m_jumpCb(path, t);
 }
 
-void BookmarkEditorDialog::onRemoveSelected()
-{
+void BookmarkEditorDialog::onRemoveSelected() {
     auto *cur = m_tree->currentItem();
     if (!cur)
         return;
@@ -191,14 +189,12 @@ void BookmarkEditorDialog::onRemoveSelected()
     // 刷新统一走 changed → 主窗口级联，此处不直接调用
 }
 
-void BookmarkEditorDialog::onRemoveInvalid()
-{
+void BookmarkEditorDialog::onRemoveInvalid() {
     // 有删除必发 changed（无删除早退不发），刷新经主窗口级联
     m_mgr->removeInvalid();
 }
 
-void BookmarkEditorDialog::onClearAll()
-{
+void BookmarkEditorDialog::onClearAll() {
     if (QMessageBox::question(this, tr("确认"), tr("确定清空所有书签？")) != QMessageBox::Yes)
         return;
     // 非空必发 changed，刷新经主窗口级联

@@ -1,19 +1,18 @@
 #pragma once
 #include "pch.h"
 
-class ChapterSlider : public QSlider
-{
+class ChapterSlider : public QSlider {
     Q_OBJECT
-public:
+  public:
     explicit ChapterSlider(QWidget *parent = nullptr);
     void setMarkTimes(const QList<double> &times);
     void setDuration(double duration);
 
-protected:
+  protected:
     void paintEvent(QPaintEvent *event) override;
     void changeEvent(QEvent *event) override;
 
-private:
+  private:
     // 标记层预渲染为透明位图，热路径仅 blit——重建只在标记/时长/尺寸/
     // 调色板变化时发生（N15 实测后保留的冗余保险，见 cpp 注释）
     void rebuildMarksLayer();

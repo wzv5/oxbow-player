@@ -4,9 +4,8 @@
 
 // 本地目录提供者（N9）：绑定一个目录，可选含子目录，按扩展名清单同步枚举。
 // 枚举结果平铺为单一序列（子目录不分组），排序由视图层按每 tab 规则施加
-class DirProvider : public PlaylistProvider
-{
-public:
+class DirProvider : public PlaylistProvider {
+  public:
     DirProvider();
     DirProvider(const QString &root, bool recursive, const QStringList &extensions);
 
@@ -26,7 +25,7 @@ public:
 
     static std::unique_ptr<DirProvider> load(QSettings &settings);
 
-private:
+  private:
     // 递归收集辅助：dir 内命中过滤器的文件追加至 out
     void collect(const QDir &dir, const QStringList &filters, QStringList &out) const;
 

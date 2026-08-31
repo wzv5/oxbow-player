@@ -11,17 +11,11 @@
 
 #include "pch.h"
 
-#ifdef _WIN32
-#include <windows.h>
-#else
-#include <dlfcn.h> // dlsym / RTLD_DEFAULT
-#endif
-
 #include <mpv/client.h>
 
+#include "Constants.h"
 #include "MainWindow.h"
 #include "MpvController.h"
-#include "Constants.h"
 
 // 本模块通过 MPV_CPLUGIN_DYNAMIC_SYM 把 mpv_* 编译为指向 pfn_* 的指针，
 // 这些指针本应由 mpv 在“直接加载的模块”里填充。但本模块在 Windows 上是由壳
@@ -32,8 +26,7 @@
 // 比运行到一半空指针崩溃更可诊断。
 // 平台差异：Windows 从 mpv.exe 取；POSIX 从全局符号表（RTLD_DEFAULT，即 mpv
 // 主程序导出的符号）取。
-static void *resolveMpvSymbol(const char *name)
-{
+static void *resolveMpvSymbol(const char *name) {
 #ifdef _WIN32
     return reinterpret_cast<void *>(GetProcAddress(GetModuleHandleW(nullptr), name));
 #else
@@ -41,20 +34,19 @@ static void *resolveMpvSymbol(const char *name)
 #endif
 }
 
-static bool resolveMpvSymbols()
-{
+static bool resolveMpvSymbols() {
     static bool done = false;
     if (done)
         return true;
     done = true;
 
     const char *missing = nullptr;
-    #define RESOLVE(name) \
-        do { \
-            pfn_##name = reinterpret_cast<decltype(pfn_##name)>(resolveMpvSymbol(#name)); \
-            if (!pfn_##name && !missing) \
-                missing = #name; \
-        } while (0)
+#define RESOLVE(name)                                                                              \
+    do {                                                                                           \
+        pfn_##name = reinterpret_cast<decltype(pfn_##name)>(resolveMpvSymbol(#name));              \
+        if (!pfn_##name && !missing)                                                               \
+            missing = #name;                                                                       \
+    } while (0)
     RESOLVE(mpv_set_property_string);
     RESOLVE(mpv_set_property);
     RESOLVE(mpv_observe_property);
@@ -65,7 +57,7 @@ static bool resolveMpvSymbols()
     RESOLVE(mpv_free);
     RESOLVE(mpv_free_node_contents); // B18：FILE_LOADED 主动读 NODE 属性后释放
     RESOLVE(mpv_wait_event);
-    #undef RESOLVE
+#undef RESOLVE
 
     if (missing) {
 #ifdef _WIN32
@@ -83,19 +75,18 @@ static bool resolveMpvSymbols()
 // 解析插件配置文件完整路径：直接放在插件 DLL 所在目录下，命名为 mpv-qt.ini。
 // 取本模块（mpvqtcore.dll）所在目录，在其下直接读写配置文件，目录本身已存在。
 // 无法获取模块路径时退回到 Qt 标准配置位置。
-static QString resolveConfigFilePath()
-{
+static QString resolveConfigFilePath() {
     QString modulePath;
 #ifdef _WIN32
     HMODULE hModule = nullptr;
-    if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS
-                               | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+    if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                               GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
                            reinterpret_cast<LPCWSTR>(&resolveConfigFilePath), &hModule)) {
         // 按需增长缓冲直至不被截断（B4 终版方案，不写死长度）
         std::wstring buf(MAX_PATH, L'\0');
         DWORD n = 0;
-        while ((n = GetModuleFileNameW(hModule, buf.data(),
-                                       static_cast<DWORD>(buf.size()))) == buf.size())
+        while ((n = GetModuleFileNameW(hModule, buf.data(), static_cast<DWORD>(buf.size()))) ==
+               buf.size())
             buf.resize(buf.size() * 2);
         modulePath = QString::fromWCharArray(buf.data(), static_cast<int>(n));
     }
@@ -120,8 +111,7 @@ static QString resolveConfigFilePath()
     return QDir(fallback).filePath(App::iniFileName());
 }
 
-extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle)
-{
+extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle) {
     if (!resolveMpvSymbols())
         return 1; // 符号缺失：让 mpv 记为脚本加载失败，而非运行期崩溃
 
