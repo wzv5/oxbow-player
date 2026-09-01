@@ -1,12 +1,4 @@
-// 不依赖项目 pch.h（MpvConf 仅为 Core 依赖，让 test 目标可不链 Widgets）。
-#include <QChar>
-#include <QFile>
-#include <QFileInfo>
-#include <QIODevice>
-#include <QRegularExpression>
-#include <QSaveFile>
-#include <QString>
-#include <QStringList>
+#include "pch.h"
 
 #include "MpvConf.h"
 

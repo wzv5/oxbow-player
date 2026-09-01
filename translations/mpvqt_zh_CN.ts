@@ -274,254 +274,203 @@
 <context>
     <name>MainWindow</name>
     <message>
-        <location filename="../src/MainWindow.cpp" line="223"/>
+        <location filename="../src/MainWindow.cpp" line="225"/>
         <source>Volume</source>
         <translation>音量</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="233"/>
+        <location filename="../src/MainWindow.cpp" line="235"/>
         <source>Play/Pause</source>
         <translation>播放/暂停</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="236"/>
-        <location filename="../src/MainWindow.cpp" line="549"/>
+        <location filename="../src/MainWindow.cpp" line="238"/>
+        <location filename="../src/MainWindow.cpp" line="554"/>
         <source>Stop</source>
         <translation>停止</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="240"/>
+        <location filename="../src/MainWindow.cpp" line="242"/>
         <source>Previous File</source>
         <translation>上一个文件</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="244"/>
+        <location filename="../src/MainWindow.cpp" line="246"/>
         <source>Next File</source>
         <translation>下一个文件</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="248"/>
+        <location filename="../src/MainWindow.cpp" line="250"/>
         <source>Switch Stream</source>
         <translation>切换流</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="252"/>
-        <location filename="../src/MainWindow.cpp" line="1452"/>
+        <location filename="../src/MainWindow.cpp" line="254"/>
         <source>Settings</source>
         <translation>设置</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="255"/>
+        <location filename="../src/MainWindow.cpp" line="257"/>
         <source>Show/Hide Playlist</source>
         <translation>显示/隐藏播放列表</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="319"/>
+        <location filename="../src/MainWindow.cpp" line="321"/>
         <source>&amp;File</source>
         <translation>文件(&amp;F)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="328"/>
+        <location filename="../src/MainWindow.cpp" line="330"/>
         <source>&amp;Play</source>
         <translation>播放(&amp;P)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="356"/>
-        <location filename="../src/MainWindow.cpp" line="1856"/>
+        <location filename="../src/MainWindow.cpp" line="358"/>
+        <location filename="../src/MainWindow.cpp" line="1751"/>
         <source>Video</source>
         <translation>视频流</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="357"/>
-        <location filename="../src/MainWindow.cpp" line="1870"/>
+        <location filename="../src/MainWindow.cpp" line="359"/>
+        <location filename="../src/MainWindow.cpp" line="1765"/>
         <source>Audio</source>
         <translation>音频流</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="358"/>
-        <location filename="../src/MainWindow.cpp" line="1884"/>
+        <location filename="../src/MainWindow.cpp" line="360"/>
+        <location filename="../src/MainWindow.cpp" line="1779"/>
         <source>Subtitle</source>
         <translation>字幕流</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="366"/>
+        <location filename="../src/MainWindow.cpp" line="368"/>
         <source>&amp;Chapter</source>
         <translation>章节(&amp;C)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="374"/>
+        <location filename="../src/MainWindow.cpp" line="376"/>
         <source>&amp;View</source>
         <translation>视图(&amp;V)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="402"/>
+        <location filename="../src/MainWindow.cpp" line="404"/>
         <source>&amp;Help</source>
         <translation>帮助(&amp;H)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="448"/>
-        <location filename="../src/MainWindow.cpp" line="1141"/>
+        <location filename="../src/MainWindow.cpp" line="450"/>
+        <location filename="../src/MainWindow.cpp" line="1146"/>
         <source>Pause</source>
         <translation>暂停</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="448"/>
+        <location filename="../src/MainWindow.cpp" line="450"/>
         <source>Play</source>
         <translation>播放</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="498"/>
+        <location filename="../src/MainWindow.cpp" line="503"/>
         <source>Unknown File</source>
         <translation>未知文件</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="651"/>
+        <location filename="../src/MainWindow.cpp" line="656"/>
         <source>Open File</source>
         <translation>打开文件</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="652"/>
+        <location filename="../src/MainWindow.cpp" line="657"/>
         <source>Media files (%1);;All files (*)</source>
         <translation>媒体文件 (%1);;所有文件 (*)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="801"/>
-        <location filename="../src/MainWindow.cpp" line="1341"/>
+        <location filename="../src/MainWindow.cpp" line="806"/>
+        <location filename="../src/MainWindow.cpp" line="1346"/>
         <source>Seek: %1</source>
         <translation>进度跳转: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1281"/>
+        <location filename="../src/MainWindow.cpp" line="1286"/>
         <source>Volume: %1%</source>
         <translation>音量: %1%</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1336"/>
-        <location filename="../src/MainWindow.cpp" line="1340"/>
+        <location filename="../src/MainWindow.cpp" line="1341"/>
+        <location filename="../src/MainWindow.cpp" line="1345"/>
         <source>+%1s</source>
         <translation>+%1秒</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1336"/>
-        <location filename="../src/MainWindow.cpp" line="1340"/>
+        <location filename="../src/MainWindow.cpp" line="1341"/>
+        <location filename="../src/MainWindow.cpp" line="1345"/>
         <source>%1s</source>
         <translation>%1秒</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1337"/>
+        <location filename="../src/MainWindow.cpp" line="1342"/>
         <source>Seek: %1 / %2</source>
         <translation>进度跳转: %1 / %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1358"/>
+        <location filename="../src/MainWindow.cpp" line="1363"/>
         <source>Speed: %1x</source>
         <translation>播放速度: %1倍</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1363"/>
+        <location filename="../src/MainWindow.cpp" line="1368"/>
         <source>Speed: 1x</source>
         <translation>播放速度: 1倍</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1462"/>
-        <source>Hardware Decoding</source>
-        <translation>硬件解码</translation>
-    </message>
-    <message>
-        <location filename="../src/MainWindow.cpp" line="1465"/>
-        <source>No Loop</source>
-        <translation>不循环</translation>
-    </message>
-    <message>
-        <location filename="../src/MainWindow.cpp" line="1466"/>
-        <source>Loop One</source>
-        <translation>单个循环</translation>
-    </message>
-    <message>
-        <location filename="../src/MainWindow.cpp" line="1467"/>
-        <source>Loop Playlist</source>
-        <translation>列表循环</translation>
-    </message>
-    <message>
-        <location filename="../src/MainWindow.cpp" line="1471"/>
-        <source>Loop Playback</source>
-        <translation>循环播放</translation>
-    </message>
-    <message>
-        <location filename="../src/MainWindow.cpp" line="1475"/>
-        <source>Auto</source>
-        <translation>自动</translation>
-    </message>
-    <message>
-        <location filename="../src/MainWindow.cpp" line="1520"/>
-        <source>Language</source>
-        <translation>语言</translation>
-    </message>
-    <message>
-        <location filename="../src/MainWindow.cpp" line="1526"/>
-        <source>Max Volume</source>
-        <translation>音量上限</translation>
-    </message>
-    <message>
-        <location filename="../src/MainWindow.cpp" line="1538"/>
-        <source>Wheel Step</source>
-        <translation>滚轮步长</translation>
-    </message>
-    <message>
-        <location filename="../src/MainWindow.cpp" line="1540"/>
-        <source>Arrow Key Step</source>
-        <translation>方向键步长</translation>
-    </message>
-    <message>
-        <location filename="../src/MainWindow.cpp" line="1575"/>
+        <location filename="../src/MainWindow.cpp" line="1479"/>
         <source>About %1</source>
         <translation>关于 %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1576"/>
+        <location filename="../src/MainWindow.cpp" line="1480"/>
         <source>%1: a Qt-based player GUI loaded as an mpv C plugin.
 Video rendering is performed by mpv; this plugin only provides the graphical interface.</source>
         <translation>%1：以 mpv C 插件形式加载的 Qt 播放器界面。
 视频渲染由 mpv 完成，本插件仅提供图形界面。</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1779"/>
-        <location filename="../src/MainWindow.cpp" line="1890"/>
+        <location filename="../src/MainWindow.cpp" line="1674"/>
+        <location filename="../src/MainWindow.cpp" line="1785"/>
         <source>None</source>
         <translation>无</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1915"/>
+        <location filename="../src/MainWindow.cpp" line="1810"/>
         <source>Video: </source>
         <translation>视频流: </translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1918"/>
+        <location filename="../src/MainWindow.cpp" line="1813"/>
         <source>Audio: </source>
         <translation>音频流: </translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1921"/>
+        <location filename="../src/MainWindow.cpp" line="1816"/>
         <source>Subtitle: </source>
         <translation>字幕流: </translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1931"/>
+        <location filename="../src/MainWindow.cpp" line="1826"/>
         <source>Subtitle: None</source>
         <translation>字幕流: 无</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2139"/>
+        <location filename="../src/MainWindow.cpp" line="2034"/>
         <source>Bookmark %1</source>
         <translation>书签 %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2147"/>
+        <location filename="../src/MainWindow.cpp" line="2042"/>
         <source>Bookmark 1</source>
         <translation>书签 1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2150"/>
+        <location filename="../src/MainWindow.cpp" line="2045"/>
         <source>Bookmark added: [%1] %2</source>
         <translation>已添加书签: [%1] %2</translation>
     </message>
@@ -838,6 +787,94 @@ Video rendering is performed by mpv; this plugin only provides the graphical int
         <location filename="../src/StaticProvider.cpp" line="7"/>
         <source>Local static list</source>
         <translation>本地静态列表</translation>
+    </message>
+</context>
+<context>
+    <name>SettingsDialog</name>
+    <message>
+        <location filename="../src/SettingsDialog.cpp" line="155"/>
+        <source>Auto</source>
+        <translation>自动</translation>
+    </message>
+    <message>
+        <location filename="../src/SettingsDialog.cpp" line="179"/>
+        <source>Custom (do not override)</source>
+        <translation>自定义（不干涉）</translation>
+    </message>
+    <message>
+        <location filename="../src/SettingsDialog.cpp" line="180"/>
+        <source>No Loop</source>
+        <translation>不循环</translation>
+    </message>
+    <message>
+        <location filename="../src/SettingsDialog.cpp" line="184"/>
+        <source>Loop One</source>
+        <translation>单个循环</translation>
+    </message>
+    <message>
+        <location filename="../src/SettingsDialog.cpp" line="188"/>
+        <source>Loop Playlist</source>
+        <translation>列表循环</translation>
+    </message>
+    <message>
+        <location filename="../src/SettingsDialog.cpp" line="209"/>
+        <source>Basic</source>
+        <translation>基础</translation>
+    </message>
+    <message>
+        <location filename="../src/SettingsDialog.cpp" line="212"/>
+        <source>Language</source>
+        <translation>语言</translation>
+    </message>
+    <message>
+        <location filename="../src/SettingsDialog.cpp" line="216"/>
+        <source>Wheel Step</source>
+        <translation>滚轮步长</translation>
+    </message>
+    <message>
+        <location filename="../src/SettingsDialog.cpp" line="221"/>
+        <source>Arrow Key Step</source>
+        <translation>方向键步长</translation>
+    </message>
+    <message>
+        <location filename="../src/SettingsDialog.cpp" line="228"/>
+        <source>Playback</source>
+        <translation>播放</translation>
+    </message>
+    <message>
+        <location filename="../src/SettingsDialog.cpp" line="231"/>
+        <source>Max Volume</source>
+        <translation>音量上限</translation>
+    </message>
+    <message>
+        <location filename="../src/SettingsDialog.cpp" line="237"/>
+        <source>Loop Playback</source>
+        <translation>循环播放</translation>
+    </message>
+    <message>
+        <location filename="../src/SettingsDialog.cpp" line="244"/>
+        <source>Video</source>
+        <translation>视频</translation>
+    </message>
+    <message>
+        <location filename="../src/SettingsDialog.cpp" line="247"/>
+        <source>Hardware Decoding</source>
+        <translation>硬件解码</translation>
+    </message>
+    <message>
+        <location filename="../src/SettingsDialog.cpp" line="254"/>
+        <source>Audio</source>
+        <translation>音频</translation>
+    </message>
+    <message>
+        <location filename="../src/SettingsDialog.cpp" line="257"/>
+        <source>Audio Filters</source>
+        <translation>音频滤镜</translation>
+    </message>
+    <message>
+        <location filename="../src/SettingsDialog.cpp" line="393"/>
+        <source>Settings</source>
+        <translation>设置</translation>
     </message>
 </context>
 </TS>

@@ -7,6 +7,7 @@
 #include <QActionGroup>
 #include <QApplication>
 #include <QButtonGroup>
+#include <QChar>
 #include <QCheckBox>
 #include <QClipboard>
 #include <QCloseEvent>
@@ -24,6 +25,7 @@
 #include <QDragMoveEvent>
 #include <QDropEvent>
 #include <QEvent>
+#include <QFile>
 #include <QFileDialog>
 #include <QFileIconProvider>
 #include <QFileInfo>
@@ -32,14 +34,17 @@
 #include <QHBoxLayout>
 #include <QHash>
 #include <QHelpEvent>
+#include <QIODevice>
 #include <QIcon>
 #include <QInputDialog>
 #include <QKeySequence>
 #include <QLabel>
+#include <QLineEdit>
 #include <QList>
 #include <QListWidget>
 #include <QLocale>
 #include <QMainWindow>
+#include <QMap>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
@@ -51,6 +56,7 @@
 #include <QPushButton>
 #include <QRadioButton>
 #include <QRegularExpression>
+#include <QSaveFile>
 #include <QSet>
 #include <QSettings>
 #include <QShortcut>
@@ -59,6 +65,7 @@
 #include <QSlider>
 #include <QSpinBox>
 #include <QSplitter>
+#include <QStackedWidget>
 #include <QStandardPaths>
 #include <QString>
 #include <QStringList>

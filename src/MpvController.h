@@ -25,6 +25,8 @@ class MpvController : public QObject {
     // 实时读属性（N3）：失败返 fallback；pause 等标志属性必须走 FLAG 格式
     double propertyDouble(const QString &name, double fallback);
     bool propertyFlag(const QString &name, bool fallback);
+    // 实时读整型属性（R4 类型化回填）：失败返 fallback
+    qint64 propertyInt64(const QString &name, qint64 fallback);
 
     // N13：轨道信息（track-list 解析产物）
     struct TrackInfo {

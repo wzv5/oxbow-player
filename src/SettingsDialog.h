@@ -8,27 +8,29 @@ class MpvController;
 class QListWidget;
 class QStackedWidget;
 class QDialogButtonBox;
-class QComboBox;
-class QSpinBox;
 class QWidget;
 
-// 主设置对话框（R3）：从 MainWindow 独立出来，左侧分类列表 + 右侧分页选项。
-// 分类与归属：
-//   基本   → 插件本体选项（写 mpv-qt.ini）
-//   播放   → mpv 选项（写 mpv.conf + 下发 MpvController）
-//   视频   → mpv 选项（写 mpv.conf + 下发 MpvController）
+// 目录项数据模型（R4 §4.1）：完整定义在 SettingsDialog.cpp 全局作用域——成员
+// 函数签名需引用该类型，匿名命名空间类型无法与之同一实体。头文件仅以指针形态
+// 引用：static 目录生命周期内指针稳定，可直接作为暂存 / 索引的 key
+struct SettingItem;
+
+// 主设置对话框（R4）：数据定义驱动。
+// "分类 → 设置项"两层目录定义内嵌于 SettingsDialog.cpp（目录常量与选项
+// provider 在匿名命名空间，数据模型类型在 cpp 全局作用域给出完整定义），
+// 本类只保留构建 / 回填 / 应用三条通用路径，不含任何具体设置项的过程式代码；
+// 新增设置项只改目录定义。
 //
-// 铁律（R3 §3.3 / §3.4）：
-//   - 回填：mpv 选项仅从 MpvController::propertyString/propertyDouble 取，不读 conf / INI；
-//           不可读则取 mpv 文档默认值（hwdec="auto" / volume-max=130 / loopMode="none"）。
-//   - 写盘：mpv 选项先经 MpvConf::open() 加载原 conf（保留注释/空行/section 头/非法行），
-//           再 setGlobal 修改目标 key，最后 commit() 原子写回。
-//
-// 循环模式特例：mpv 端为双属性（loop-file /
-// loop-playlist），插件侧以三态单值（none/file/playlist）抽象； 回填时检测到不在预设 3
-// 种组合内（用户手改 conf 产生）则选“自定义（不干涉）”，Apply/OK 不下发不写 conf。
-//
-// 应用语义：valueChanged 仅更新内存暂存 m_pending，不下盘 / 不下 mpv；Apply/OK 才落盘+下发。
+// 铁律（承 R3 §2.1，语义不变）：
+//   - 回填：mpv 选项仅从 MpvController::propertyString/propertyDouble 取，不读
+//           conf / INI；不可读取则落目录定义的 fallback（mpv 文档默认值）。
+//   - 写盘：mpv 选项先经 MpvConf::open() 加载原 conf（保留注释/空行/section 头/
+//           非法行），再 setGlobal 修改目标 key，最后 commit() 原子写回。
+//   - 应用：valueChanged 仅更新内存暂存 m_pending（key=目录项指针，static 目录
+//           生命周期内稳定），不下盘 / 不下 mpv；Apply/OK 才落盘+下发；Cancel 丢弃。
+//   - 占位：mpvAssignments 为空的选项回填永不命中、应用整项跳过（不下发不写 conf）。
+//   - 联动：dependsOn 主控 CheckBox 未选中 → 依赖项禁用、不回填、落 fallback，
+//           自动不参与 dirty 比对与应用。
 class SettingsDialog : public QDialog {
     Q_OBJECT
   public:
@@ -36,29 +38,34 @@ class SettingsDialog : public QDialog {
                             const QString &pluginIniPath);
 
   private:
-    // 通用 valueChanged 槽（任何标了 iniKey/mpvKey/loopModeOnly 的控件都连此槽）
-    void onControlChanged();
+    // 通用 valueChanged 槽：item 为触发控件的目录项指针（connect 时以 lambda
+    // 捕获传入，static 目录生命周期内稳定）；若该项是联动主控 CheckBox，
+    // 则联动刷新其依赖项
+    void onControlChanged(const SettingItem *item);
 
-    // 构建：建主布局、左侧分类列表、右侧堆栈、底部按钮、分类页面与控件
+    // 构建：建主布局、左侧分类列表、右侧堆栈、底部按钮；遍历目录动态生成
+    // 各分类页面与控件（含可选备注行），构建后统一做一次联动刷新
     void buildUi();
-    QWidget *buildBasicPage();    // 插件本体：语言 / 滚轮步进 / 方向键步进
-    QWidget *buildPlaybackPage(); // mpv：音量上限 / 循环模式
-    QWidget *buildVideoPage();    // mpv：硬件解码
 
-    // 入参回填（构造期一次性）：mpv 选项仅从 controller 取；插件选项仅从 INI 取；
-    // 整段用 m_blockApply 守护，避免构造期 valueChanged 污染 m_pending
+    // 入参回填（构造期一次性）：无依赖项从后端读取；依赖项按主控状态分流——
+    // 选中→启用并回填，未选中→禁用落 fallback 不读后端。整段用 m_blockApply
+    // 守护，避免构造期 valueChanged 污染 m_pending
     void applyToControls();
 
-    // Apply / OK 时统一落盘：遍历 m_pending，按 dynamic property 判定路径
+    // 单项回填：从后端（INI / mpv）读取并写入控件与 m_pending，按 kind × 后端分派
+    void fillItemFromBackend(const SettingItem *item);
+
+    // 禁用落 fallback：不读后端，控件与 m_pending 直接落目录定义的兜底值
+    void applyFallback(const SettingItem *item);
+
+    // 联动刷新：masterId 主控状态变化 → 逐依赖项启用重回填 / 禁用落 fallback
+    void refreshDependents(const QString &masterId);
+
+    // Apply / OK 时统一落盘：遍历 m_pending，按目录定义的后端字段分发
     bool applyAll();
 
-    // loopMode 特殊路径：仅下发 mpv（双属性），不写 mpv.conf（避免双 key 歧义）
-    void applyLoopModeOption(const QString &mode);
-
-    // 语言枚举：扫 :/i18n/mpvqt_*.qm + "en"，按字母序排；"Auto" 项 data 为空串
-    void populateLanguageCombo(QComboBox *combo, const QString &currentLocale);
-
-    // 从控件读取当前值（统一接口：QComboBox 取 currentData；QSpinBox 取 value）
+    // 从控件读取当前值（按控件类型分派：Combo 取 currentData、EditableCombo 取
+    // currentText、SpinBox 取 value、CheckBox 取 isChecked）
     QVariant readControlValue(QWidget *control) const;
 
     MpvController *m_controller = nullptr;
@@ -70,18 +77,15 @@ class SettingsDialog : public QDialog {
     QStackedWidget *m_pageStack = nullptr;
     QDialogButtonBox *m_buttonBox = nullptr;
 
-    // 控件指针缓存（applyAll / applyToControls / readControlValue 用）
-    QComboBox *m_langCombo = nullptr;
-    QComboBox *m_wheelStepCombo = nullptr;
-    QComboBox *m_keyStepCombo = nullptr;
-    QSpinBox *m_volumeMaxSpin = nullptr;
-    QComboBox *m_loopModeCombo = nullptr;
-    QComboBox *m_hwdecCombo = nullptr;
+    // 目录项指针 → 控件；回填 / 联动刷新 / 应用时定位用
+    QMap<const SettingItem *, QWidget *> m_controls;
+    // 联动主控 id → CheckBox 控件
+    QMap<QString, QWidget *> m_masters;
 
-    // 统一 pending 模型（方案 §3.5）：key=控件指针（map 去重），value=当前控件值
-    QMap<QWidget *, QVariant> m_pending;
+    // 统一 pending 模型（R4 §4.3.1）：key=目录项指针，value=当前控件值
+    QMap<const SettingItem *, QVariant> m_pending;
     // 已应用快照：上次 Apply/OK 后的值（或初始回填值）；用于比对 "用户是否修改"
-    QMap<QWidget *, QVariant> m_appliedSnapshot;
+    QMap<const SettingItem *, QVariant> m_appliedSnapshot;
     bool m_blockApply = false;
     // Apply 按钮启用状态：任一控件值与 snapshot 不同 → dirty
     bool m_dirty = false;

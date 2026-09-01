@@ -334,6 +334,13 @@ bool MpvController::propertyFlag(const QString &name, bool fallback) {
     return v != 0;
 }
 
+qint64 MpvController::propertyInt64(const QString &name, qint64 fallback) {
+    qint64 v = fallback;
+    if (mpv_get_property(m_mpv, name.toUtf8().constData(), MPV_FORMAT_INT64, &v) < 0)
+        return fallback;
+    return v;
+}
+
 void MpvController::handlePropertyChange(const mpv_event *event) {
     auto *prop = static_cast<mpv_event_property *>(event->data);
     if (!prop)
