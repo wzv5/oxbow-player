@@ -18,6 +18,8 @@ enum ObservedProperty {
     PropVideoPanY,
     PropWidth,
     PropHeight,
+    // R3：音量上限（mpv 自管 volume-max 属性，运行时推送驱动 MainWindow 滑条量程）
+    PropVolumeMax,
     // B18：metadata / file-format / track-list / chapter-list 四项文件级
     // 属性不再 observe，改由 FILE_LOADED 主动读（见 handleFileLoaded）
 };
@@ -216,6 +218,8 @@ MpvController::MpvController(mpv_handle *mpv, QObject *parent) : QObject(parent)
     mpv_observe_property(m_mpv, PropVideoPanY, "video-pan-y", MPV_FORMAT_DOUBLE);
     mpv_observe_property(m_mpv, PropWidth, "width", MPV_FORMAT_INT64);
     mpv_observe_property(m_mpv, PropHeight, "height", MPV_FORMAT_INT64);
+    // R3：音量上限观测，启动后立即推送当前值（mpv 默认 130）
+    mpv_observe_property(m_mpv, PropVolumeMax, "volume-max", MPV_FORMAT_DOUBLE);
     // B18：metadata / file-format / track-list / chapter-list 改 FILE_LOADED
     // 主动读（见 handleFileLoaded），不再 observe
 }
@@ -357,6 +361,11 @@ void MpvController::handlePropertyChange(const mpv_event *event) {
     case PropVolume:
         if (prop->format == MPV_FORMAT_DOUBLE && prop->data)
             emit volumeChanged(*static_cast<double *>(prop->data));
+        break;
+    case PropVolumeMax:
+        // R3：音量上限推送；NONE（不可能）按 0 不发射，滑条量程保持现有值
+        if (prop->format == MPV_FORMAT_DOUBLE && prop->data)
+            emit volumeMaxChanged(*static_cast<double *>(prop->data));
         break;
     case PropPlaylistPos:
         // 停止后 playlist-pos 不可用（MPV_FORMAT_NONE），以 -1 表示无当前项

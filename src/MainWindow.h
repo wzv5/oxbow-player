@@ -39,7 +39,7 @@ class MainWindow : public QMainWindow {
     void seekReleased();
     void setPlaylistVisible(bool visible);
     void setNavigatorVisible(bool visible);
-    void showSettingsDialog();
+    void ensureSettingsDialog(); // R3：按需创建/唤起设置对话框（非模态）
     void showAboutDialog();
     // N6：速度控制（读改写 speed 属性，钳制 0.25~8）
     void changeSpeed(double delta);
@@ -52,6 +52,8 @@ class MainWindow : public QMainWindow {
     void onMpvShutdown();
 
   private:
+    // R3：音量上限推送回调（由 MpvController::volumeMaxChanged 驱动）
+    void applyVolumeMax(int v);
     void createMenus();
     QWidget *createLeftArea();
     // A15：无状态按钮统一接线——事件来源走 action trigger，启停跟随 action enabled
@@ -132,7 +134,7 @@ class MainWindow : public QMainWindow {
     ChapterSlider *m_progressSlider = nullptr; // N15：进度条（带章节/书签标记层）
     QSlider *m_volumeSlider = nullptr;
     // N5：音量调节配置（INI 键 volumeMax / volumeWheelStep / volumeKeyStep）
-    int m_volumeMax = 100;     // 音量上限，设置对话框自由填写域 0~400
+    int m_volumeMax = 130;     // R3：音量上限，mpv 默认 130；运行时由 applyVolumeMax 同步
     int m_volumeWheelStep = 1; // 滚轮每格步长
     int m_volumeKeyStep = 5;   // 方向键每格步长
     QPushButton *m_playButton = nullptr;
@@ -204,6 +206,8 @@ class MainWindow : public QMainWindow {
     QMenu *m_chapterMenu = nullptr;
     BookmarkManager *m_bookmarkMgr = nullptr;
     BookmarkEditorDialog *m_bookmarkEditor = nullptr;
+    // R3：设置对话框（非模态，按需创建）
+    class SettingsDialog *m_settingsDialog = nullptr;
     QActionGroup *m_chapterGroup = nullptr;
     // 章节+书签标记聚合器（MainWindow.cpp 内实现）：合并规则 + 缓存
     // 收口于此，主窗口不再持有抽象成员；进程生命周期随主窗口

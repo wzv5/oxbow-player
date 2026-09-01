@@ -72,4 +72,9 @@ bool isNetworkStreamPath(const QString &path);
 // 全败返回无效 QDateTime
 QDateTime parseReleaseDate(const QString &s);
 
+// R3：mpv.conf 路径解析。从 pluginDir（plugin.ini 的绝对目录）上溯两级即
+// portable_config（必存在目录），优先其下 mpv.conf；其次 %APPDATA%/mpv/mpv.conf；
+// 都不存在返回 portable_config/mpv.conf 作为创建目标（目录必然存在，无需 mkpath）。
+QString resolveMpvConfPath(const QString &pluginDir);
+
 } // namespace Util

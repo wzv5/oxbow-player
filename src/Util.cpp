@@ -245,4 +245,22 @@ QDateTime parseReleaseDate(const QString &s) {
     return {};
 }
 
+QString resolveMpvConfPath(const QString &pluginDir) {
+    // 第一候选：<portable_config>/mpv.conf（插件目录上溯两级即 portable_config，
+    // mpv 启动时若不存在会自动创建，必存在）
+    const QString portableConf =
+        QDir::cleanPath(pluginDir + QStringLiteral("/../..")) + QStringLiteral("/mpv.conf");
+    if (QFileInfo::exists(portableConf))
+        return portableConf;
+    // 第二候选：%APPDATA%/mpv/mpv.conf
+    const QString appdata = qEnvironmentVariable("APPDATA");
+    if (!appdata.isEmpty()) {
+        const QString userConf = appdata + QStringLiteral("/mpv/mpv.conf");
+        if (QFileInfo::exists(userConf))
+            return userConf;
+    }
+    // 都不存在：返回创建目标（目录必存在，由 commit() 创建文件）
+    return portableConf;
+}
+
 } // namespace Util

@@ -6,6 +6,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets LinguistTools)
+# R3：单元测试（Qt Test）。仅构建不部署/不随插件分发；运行需手动调 mpvqt_tests.exe。
+option(MPVQT_BUILD_TESTS "Build Qt Test unit tests for mpv-qt" OFF)
 
 # ---------------------------------------------------------------------------
 # 目标 1：加载壳 main.dll（纯 Win32，无 Qt 依赖）
@@ -56,6 +58,10 @@ add_library(mpvqtcore MODULE
     src/Util.h
     src/MediaInfoHelper.cpp
     src/MediaInfoHelper.h
+    src/MpvConf.cpp
+    src/MpvConf.h
+    src/SettingsDialog.cpp
+    src/SettingsDialog.h
 )
 
 # mpv/client.h 已内置在仓库根目录的 mpv/ 下
@@ -113,4 +119,27 @@ set(MEDIAINFO_DLL "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/mediainfo/MediaInfo.dl
 if(MPV_BIN_DIR AND EXISTS "${MEDIAINFO_DLL}")
     add_custom_command(TARGET mpvqtcore POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${MEDIAINFO_DLL}" "${MPVQT_SCRIPT_DIR}/MediaInfo.dll")
+endif()
+
+# ---------------------------------------------------------------------------
+# R3：单元测试目标（默认不构建）。不纳入插件部署路径。
+# 启用方式：cmake -B build -DMPVQT_BUILD_TESTS=ON ...
+# 运行：./build/Release/mpvqt_tests.exe   （或 -platform offscreen）
+# ---------------------------------------------------------------------------
+if(MPVQT_BUILD_TESTS)
+    find_package(Qt6 REQUIRED COMPONENTS Test)
+    enable_testing()
+    add_executable(mpvqt_tests
+        tests/tst_MpvConf.cpp
+        src/MpvConf.cpp
+        src/MpvConf.h
+    )
+    target_include_directories(mpvqt_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(mpvqt_tests PRIVATE Qt6::Widgets Qt6::Test)
+    if(MSVC)
+        target_compile_options(mpvqt_tests PRIVATE /utf-8)
+    endif()
+    add_custom_command(TARGET mpvqt_tests POST_BUILD
+        COMMAND ${WINDEPLOYQT_EXE} --no-translations --compiler-runtime $<TARGET_FILE:mpvqt_tests>)
+    add_test(NAME mpvqt_tests COMMAND mpvqt_tests)
 endif()

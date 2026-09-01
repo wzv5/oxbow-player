@@ -10,6 +10,7 @@
 #include "MpvController.h"
 #include "NavigatorPanel.h"
 #include "PlaylistWidget.h"
+#include "SettingsDialog.h"
 #include "Util.h"
 
 // N15：章节+书签数据与合并规则的唯一持有者（MainWindow.cpp 文件内实现，
@@ -213,7 +214,8 @@ QWidget *MainWindow::createLeftArea() {
     m_progressSlider->setEnabled(false);
     m_progressSlider->setValue(0);
     m_volumeSlider = new QSlider(Qt::Horizontal);
-    // N5：上限可配置，构造期用成员默认值 100（restoreSettings 读 ini 后再调）
+    // R3：音量上限由 mpv 自管（volume-max 属性推送）；构造期用成员默认值 130
+    // （与 mpv 默认一致），运行时经 applyVolumeMax(qRound) 同步。
     m_volumeSlider->setRange(0, m_volumeMax);
     m_volumeSlider->setValue(100);
     m_volumeSlider->setFixedWidth(100);
@@ -320,7 +322,7 @@ void MainWindow::createMenus() {
     fileMenu->addAction(act(AM::Id::Open));
     connect(act(AM::Id::Open), &QAction::triggered, this, &MainWindow::openFiles);
     fileMenu->addAction(act(AM::Id::Settings));
-    connect(act(AM::Id::Settings), &QAction::triggered, this, &MainWindow::showSettingsDialog);
+    connect(act(AM::Id::Settings), &QAction::triggered, this, &MainWindow::ensureSettingsDialog);
     fileMenu->addSeparator();
     fileMenu->addAction(act(AM::Id::Quit));
     connect(act(AM::Id::Quit), &QAction::triggered, this, &QWidget::close);
@@ -457,6 +459,9 @@ void MainWindow::connectController() {
         m_volumeSlider->setValue(int(v + 0.5));
         // B14：推送仅同步滑条，OSD 已移至用户动作统一入口 applyVolume 直显
     });
+    // R3：音量上限（mpv volume-max）推送，同步滑条量程
+    connect(m_controller, &MpvController::volumeMaxChanged, this,
+            [this](double v) { applyVolumeMax(qRound(v)); });
     connect(m_controller, &MpvController::playlistChanged, m_playlist,
             &PlaylistWidget::setPlaylist);
     // 播放态列表长度变化影响步进启停（A16）
@@ -1447,128 +1452,27 @@ QString MainWindow::currentLoopMode() const {
     return QStringLiteral("none");
 }
 
-void MainWindow::showSettingsDialog() {
-    QDialog dialog(this);
-    dialog.setWindowTitle(tr("Settings"));
-    auto *layout = new QFormLayout(&dialog);
-
-    auto *hwdecCombo = new QComboBox(&dialog);
-    hwdecCombo->addItems({QStringLiteral("auto"), QStringLiteral("auto-safe"),
-                          QStringLiteral("d3d11va"), QStringLiteral("dxva2"),
-                          QStringLiteral("no")});
-    const int idx = hwdecCombo->findText(m_controller->propertyString(QStringLiteral("hwdec")));
-    if (idx >= 0)
-        hwdecCombo->setCurrentIndex(idx);
-    layout->addRow(tr("Hardware Decoding"), hwdecCombo);
-
-    auto *loopCombo = new QComboBox(&dialog);
-    loopCombo->addItem(tr("No Loop"), QStringLiteral("none"));
-    loopCombo->addItem(tr("Loop One"), QStringLiteral("file"));
-    loopCombo->addItem(tr("Loop Playlist"), QStringLiteral("playlist"));
-    const int loopIdx = loopCombo->findData(currentLoopMode());
-    if (loopIdx >= 0)
-        loopCombo->setCurrentIndex(loopIdx);
-    layout->addRow(tr("Loop Playback"), loopCombo);
-
-    // 语言：动态枚举 :/i18n 内嵌 qm，第一项 Auto，其余含英文按字母序
-    auto *langCombo = new QComboBox(&dialog);
-    langCombo->addItem(tr("Auto"), QString());
-    {
-        QStringList locales;
-        locales << QStringLiteral("en");
-        QDir dir(QStringLiteral(":/i18n"));
-        const QStringList qmFiles =
-            dir.entryList(QStringList() << QStringLiteral("mpvqt_*.qm"), QDir::Files);
-        for (const QString &f : qmFiles) {
-            if (f.startsWith(QStringLiteral("mpvqt_")) && f.endsWith(QStringLiteral(".qm"))) {
-                QString loc = f.chopped(3).mid(6);
-                if (!loc.isEmpty() && !locales.contains(loc))
-                    locales << loc;
-            }
-        }
-        std::sort(locales.begin(), locales.end(),
-                  [](const QString &a, const QString &b) { return a < b; });
-        for (const QString &loc : locales) {
-            QString display;
-            if (loc == QStringLiteral("en")) {
-                display = QStringLiteral("English");
-            } else {
-                QLocale qloc(loc);
-                display = qloc.nativeLanguageName();
-                if (display.isEmpty())
-                    display = loc;
-                else {
-                    // 首字母大写，Qt 返回多为小写（如 "中文" 不受影响，英文已单独处理）
-                    display[0] = display[0].toUpper();
-                    const QString terr = qloc.nativeTerritoryName();
-                    if (!terr.isEmpty() && !display.contains(terr))
-                        display = QStringLiteral("%1 (%2)").arg(display, terr);
-                }
-            }
-            langCombo->addItem(display, loc);
-        }
-        QSettings settings(m_configFile, QSettings::IniFormat);
-        QString curLang = settings.value(QStringLiteral("language")).toString().trimmed();
-        if (curLang.compare(QStringLiteral("auto"), Qt::CaseInsensitive) == 0)
-            curLang.clear();
-        int curIdx = langCombo->findData(curLang);
-        if (curIdx >= 0)
-            langCombo->setCurrentIndex(curIdx);
-        else
-            langCombo->setCurrentIndex(0);
+// R3：按需创建/唤起设置对话框（仿 ensureBookmarkEditor 生命周期）。
+// 非模态、关闭即销毁；菜单再次触发可重建并恢复已应用值。
+void MainWindow::ensureSettingsDialog() {
+    if (m_settingsDialog) {
+        m_settingsDialog->show();
+        m_settingsDialog->raise();
+        m_settingsDialog->activateWindow();
+        return;
     }
-    layout->addRow(tr("Language"), langCombo);
+    m_settingsDialog = new SettingsDialog(this, m_controller, m_configFile);
+    m_settingsDialog->setAttribute(Qt::WA_DeleteOnClose, true);
+    connect(m_settingsDialog, &QObject::destroyed, this, [this] { m_settingsDialog = nullptr; });
+    m_settingsDialog->show();
+}
 
-    // N5：音量调节三项——上限自由填写（域 0~400），滚轮/方向键步长档位单选
-    auto *maxSpin = new QSpinBox(&dialog);
-    maxSpin->setRange(0, 400);
-    maxSpin->setValue(m_volumeMax);
-    layout->addRow(tr("Max Volume"), maxSpin);
-
-    auto makeStepCombo = [&dialog](int current) {
-        auto *combo = new QComboBox(&dialog);
-        for (int step : {1, 2, 5, 10})
-            combo->addItem(QString::number(step), step);
-        const int idx = combo->findData(current);
-        if (idx >= 0)
-            combo->setCurrentIndex(idx);
-        return combo;
-    };
-    auto *wheelStepCombo = makeStepCombo(m_volumeWheelStep);
-    layout->addRow(tr("Wheel Step"), wheelStepCombo);
-    auto *keyStepCombo = makeStepCombo(m_volumeKeyStep);
-    layout->addRow(tr("Arrow Key Step"), keyStepCombo);
-
-    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
-    layout->addRow(buttons);
-    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-
-    if (dialog.exec() == QDialog::Accepted) {
-        m_controller->setProperty(QStringLiteral("hwdec"), hwdecCombo->currentText());
-
-        QSettings settings(m_configFile, QSettings::IniFormat);
-        settings.setValue(QStringLiteral("hwdec"), hwdecCombo->currentText());
-
-        const QString loopMode = loopCombo->currentData().toString();
-        applyLoopMode(loopMode);
-        settings.setValue(QStringLiteral("loopMode"), loopMode);
-
-        // 音量上限：setRange 自动把超限旧值钳回并经既有直通连接推送 mpv
-        const int newMax = maxSpin->value();
-        if (newMax != m_volumeMax) {
-            m_volumeMax = newMax;
-            m_volumeSlider->setRange(0, m_volumeMax);
-        }
-        m_volumeWheelStep = wheelStepCombo->currentData().toInt();
-        m_volumeKeyStep = keyStepCombo->currentData().toInt();
-        settings.setValue(QStringLiteral("volumeMax"), m_volumeMax);
-        settings.setValue(QStringLiteral("volumeWheelStep"), m_volumeWheelStep);
-        settings.setValue(QStringLiteral("volumeKeyStep"), m_volumeKeyStep);
-
-        const QString newLang = langCombo->currentData().toString();
-        settings.setValue(QStringLiteral("language"), newLang);
-    }
+// R3：MpvController::volumeMaxChanged 回调——同步 m_volumeMax 与滑条量程。
+// mpv 启动时会立即推送当前值（默认 130），无需手动初始化。
+void MainWindow::applyVolumeMax(int v) {
+    m_volumeMax = v;
+    if (m_volumeSlider)
+        m_volumeSlider->setRange(0, m_volumeMax);
 }
 
 void MainWindow::showAboutDialog() {
@@ -1622,20 +1526,11 @@ void MainWindow::saveSettings() {
 void MainWindow::restoreSettings() {
     QSettings settings(m_configFile, QSettings::IniFormat);
 
-    // 循环模式
-    const QString loopMode =
-        settings.value(QStringLiteral("loopMode"), QStringLiteral("none")).toString();
-    applyLoopMode(loopMode);
+    // R3：循环模式 / 硬件解码 / 音量上限 改由 mpv 自管（mpv.conf + observe），
+    // 插件 INI 不再读写这三项；启动期经 MpvController::volumeMaxChanged 推送
+    // 经 applyVolumeMax 同步滑条量程（见 connectController）。
 
-    // 硬件解码
-    const QString hwdec = settings.value(QStringLiteral("hwdec")).toString();
-    if (!hwdec.isEmpty())
-        m_controller->setProperty(QStringLiteral("hwdec"), hwdec);
-
-    // 音量（N5：先恢复上限并调整滑条量程，再恢复音量值——顺序敏感，
-    // 否则旧音量可能被默认量程 100 截断）
-    m_volumeMax = qBound(0, settings.value(QStringLiteral("volumeMax"), m_volumeMax).toInt(), 400);
-    m_volumeSlider->setRange(0, m_volumeMax);
+    // 音量步长（插件本体选项）
     m_volumeWheelStep =
         settings.value(QStringLiteral("volumeWheelStep"), m_volumeWheelStep).toInt();
     m_volumeKeyStep = settings.value(QStringLiteral("volumeKeyStep"), m_volumeKeyStep).toInt();
