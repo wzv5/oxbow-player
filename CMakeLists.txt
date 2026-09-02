@@ -5,9 +5,14 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets LinguistTools)
-# R3：单元测试（Qt Test）。仅构建不部署/不随插件分发；运行需手动调 mpvqt_tests.exe。
 option(MPVQT_BUILD_TESTS "Build Qt Test unit tests for mpv-qt" OFF)
+option(MPVQT_STATICQT "Link Qt statically (skip windeployqt at deploy time)" OFF)
+
+if(MPVQT_STATICQT)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreaded)
+endif()
+
+find_package(Qt6 REQUIRED COMPONENTS Widgets LinguistTools)
 
 # ---------------------------------------------------------------------------
 # 目标 1：加载壳 main.dll（纯 Win32，无 Qt 依赖）
@@ -74,6 +79,9 @@ target_compile_definitions(mpvqtcore PRIVATE MPV_CPLUGIN_DYNAMIC_SYM)
 if(MSVC)
     target_compile_options(mpvqtcore PRIVATE /utf-8)
 endif()
+if(MPVQT_STATICQT)
+    target_compile_definitions(mpvqtcore PRIVATE MPVQT_STATICQT)
+endif()
 
 target_link_libraries(mpvqtcore PRIVATE Qt6::Widgets)
 # A19：全屏期 DWM 圆角裁切抑制（仅 Windows；dwmapi 为 Vista 起系统组件）
@@ -96,19 +104,26 @@ qt_add_translations(mpvqtcore MERGE_QT_TRANSLATIONS
 #   portable_config/scripts/mpvqt/mpvqtcore.dll    （真插件）
 #   portable_config/scripts/mpvqt/*.dll + plugins/ （Qt 运行库，随插件目录分发）
 # Qt 运行库用 windeployqt 部署到插件所在目录，而不是 mpv 主程序目录。
+# MPVQT_STATICQT=ON 时 Qt 已静态链接进 mpvqtcore.dll，跳过 windeployqt；
+# 加载壳 main.dll 仍照常部署——MediaInfo.dll 依赖壳预加载才能被解析。
 # ---------------------------------------------------------------------------
 set(MPV_BIN_DIR "" CACHE PATH "mpv.exe 所在目录；设置后构建完毕自动部署")
 if(MPV_BIN_DIR)
-    set(MPVQT_SCRIPT_DIR "${MPV_BIN_DIR}/portable_config/scripts/mpvqt")
-    find_program(WINDEPLOYQT_EXE windeployqt HINTS "${Qt6_DIR}/../../../bin")
-    if(NOT WINDEPLOYQT_EXE)
-        message(FATAL_ERROR "windeployqt 未找到：请确认 CMAKE_PREFIX_PATH 指向 Qt 安装目录（其 bin 下含 windeployqt）")
+    if(NOT MPVQT_STATICQT)
+        find_program(WINDEPLOYQT_EXE windeployqt HINTS "${Qt6_DIR}/../../../bin")
+        if(NOT WINDEPLOYQT_EXE)
+            message(FATAL_ERROR "windeployqt 未找到：请确认 CMAKE_PREFIX_PATH 指向 Qt 安装目录（其 bin 下含 windeployqt）")
+        endif()
     endif()
+    set(MPVQT_SCRIPT_DIR "${MPV_BIN_DIR}/portable_config/scripts/mpvqt")
     add_custom_command(TARGET mpvqtcore POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory "${MPVQT_SCRIPT_DIR}"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:mpvqt_loader> "${MPVQT_SCRIPT_DIR}/main.dll"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:mpvqtcore> "${MPVQT_SCRIPT_DIR}/mpvqtcore.dll"
-        COMMAND ${WINDEPLOYQT_EXE} --no-translations --compiler-runtime --dir "${MPVQT_SCRIPT_DIR}" $<TARGET_FILE:mpvqtcore>)
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:mpvqtcore> "${MPVQT_SCRIPT_DIR}/mpvqtcore.dll")
+    if(NOT MPVQT_STATICQT)
+        add_custom_command(TARGET mpvqtcore POST_BUILD
+            COMMAND ${WINDEPLOYQT_EXE} --no-translations --compiler-runtime "${MPVQT_SCRIPT_DIR}/mpvqtcore.dll")
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------
@@ -139,7 +154,9 @@ if(MPVQT_BUILD_TESTS)
     if(MSVC)
         target_compile_options(mpvqt_tests PRIVATE /utf-8)
     endif()
-    add_custom_command(TARGET mpvqt_tests POST_BUILD
-        COMMAND ${WINDEPLOYQT_EXE} --no-translations --compiler-runtime $<TARGET_FILE:mpvqt_tests>)
+    if(NOT MPVQT_STATICQT)
+        add_custom_command(TARGET mpvqt_tests POST_BUILD
+            COMMAND ${WINDEPLOYQT_EXE} --no-translations --compiler-runtime $<TARGET_FILE:mpvqt_tests>)
+    endif()
     add_test(NAME mpvqt_tests COMMAND mpvqt_tests)
 endif()

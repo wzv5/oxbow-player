@@ -61,6 +61,7 @@ static bool LoadCore() {
     if (pluginDir.empty())
         return false;
 
+#ifndef MPVQT_STATICQT
     // 让 Qt 在运行时能定位到共置的插件（平台插件/样式/图像格式等）。
     // windeployqt 默认把这些插件类型目录直接部署在插件目录下
     // （platforms/qwindows.dll、styles/、imageformats/ …），因此：
@@ -70,6 +71,7 @@ static bool LoadCore() {
 
     const std::wstring platformPath = pluginDir + L"platforms";
     SetEnvironmentVariableW(L"QT_QPA_PLATFORM_PLUGIN_PATH", platformPath.c_str());
+#endif
 
     const std::wstring corePath = pluginDir + L"mpvqtcore.dll";
 
