@@ -25,4 +25,13 @@ inline QStringList defaultMediaExtensions() {
             QStringLiteral("wav"),  QStringLiteral("m4a")};
 }
 
+// 播放列表展开宽度默认值（客户区像素，A20）：展开时主窗口向右扩展该宽度；
+// 用户拖动过 splitter 把手则用进程内记忆宽度
+inline int playlistDefaultWidth() { return 310; }
+
+// 视频区默认尺寸（A20）：启动时视频区恰好为此尺寸；同时作为视频区最小尺寸下限
+// （占位符最小尺寸取此值，也是空间不足时压缩视频区的下限）。
+// 宽度 480 为实测下限——再窄底部控制栏即显示不全，勿再下调
+inline QSize videoDefaultSize() { return QSize(480, 320); }
+
 } // namespace App

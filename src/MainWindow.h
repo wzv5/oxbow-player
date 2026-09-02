@@ -25,6 +25,8 @@ class MainWindow : public QMainWindow {
     void closeEvent(QCloseEvent *event) override;
     void moveEvent(QMoveEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
+    // A20：启动几何收口的一次性触发点（首次 show 时外框几何与所在屏才可靠）
+    void showEvent(QShowEvent *event) override;
     // N3：占位符几何跟随 + 视频区单击/双击分流
     bool eventFilter(QObject *watched, QEvent *event) override;
     // N5：空白区域点击清焦（未被交互控件消费的按下事件冒泡至此）
@@ -76,6 +78,16 @@ class MainWindow : public QMainWindow {
     // N10：普通态窗口尺寸自适应视频（videoSizeChanged 直连触发，
     // 物理像素 1:1、工作区钳制、最小移动收回）
     void adaptWindowSizeToVideo(int videoW, int videoH);
+    // A20：播放列表显隐几何联动——左 pane 宽度不变、主窗口向右扩展，
+    // 空间不足先压视频区触底再压播放列表宽度（实测值写回记忆）
+    void applyPlaylistGeometry(bool expanding, int leftAnchor);
+    // A20：启动几何收口（定宽 → 定高 → 居中），仅首次 show 执行
+    void applyStartupGeometry();
+    // A20：主窗口居中到所在屏工作区（外框口径，居中后钳回兜底）
+    void centerOnScreen();
+    // A20：最小移动钳回——外框矩形按两轴独立、越界多少移多少收进区域，
+    // 返回外框左上角（未越界原样返回）；MainWindow 内多处复用
+    QPoint minimalMoveTopLeft(const QRect &frame, const QRect &area) const;
     bool isPaused();
     void onVideoClickTimeout();
     // N5：统一音量调节入口——钳制到 [0, 上限] 后下发 mpv，UI 经观察回流刷新
@@ -142,9 +154,13 @@ class MainWindow : public QMainWindow {
     QPushButton *m_playlistToggle = nullptr;
     QAction *m_playlistAction = nullptr;
     PlaylistWidget *m_playlist = nullptr;
-    QAction *m_navigatorAction = nullptr;  // 视图菜单"导航器"勾选项（N1）
-    NavigatorPanel *m_navigator = nullptr; // 导航器浮窗（N3 按需创建）：null=未打开
-    QAction *m_fullscreenAction = nullptr; // 视图菜单"全屏"勾选项（N3）
+    // ---- A20：播放列表显隐几何联动 ----
+    int m_playlistWidth = 0; // 进程内记忆的播放列表宽度（客户区像素）；0 = 未定，用默认值
+    bool m_playlistGeometryPending = false; // 构造期展开，几何调整延后到首次 show
+    bool m_firstShowDone = false;           // showEvent 一次性守卫（最小化恢复/全屏退出也会触发）
+    QAction *m_navigatorAction = nullptr;   // 视图菜单"导航器"勾选项（N1）
+    NavigatorPanel *m_navigator = nullptr;  // 导航器浮窗（N3 按需创建）：null=未打开
+    QAction *m_fullscreenAction = nullptr;  // 视图菜单"全屏"勾选项（N3）
 
     double m_duration = 0.0;
     double m_timePos = 0.0;

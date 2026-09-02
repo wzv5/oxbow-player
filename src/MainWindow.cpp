@@ -157,8 +157,18 @@ MainWindow::MainWindow(MpvController *controller, const QString &configFile, QWi
     m_splitter->setStretchFactor(0, 1);
     m_splitter->setStretchFactor(1, 0);
     m_splitter->setCollapsible(0, false);
-    m_splitter->setCollapsible(1, true);
+    // A20：禁止把手把播放列表拖到 0——显隐统一走专门入口（Ctrl+L/☰/菜单）并
+    // 收口于 setPlaylistVisible；拖没列表会绕过收口导致勾选分叉且窗口宽度不收回，
+    // 同时消除"记忆宽度可能为 0"的防御分支。不涉及 stretchFactor，
+    // "窗口增量归左 pane"的既有语义不变
+    m_splitter->setCollapsible(1, false);
     m_playlist->setVisible(false); // 播放列表默认隐藏
+    // A20：拖动把手即时刷新记忆宽度，使"拖动后直接收缩"也记住正确宽度；
+    // 已禁止拖到 0，无需零宽过滤
+    connect(m_splitter, &QSplitter::splitterMoved, this, [this] {
+        if (m_playlist->isVisible())
+            m_playlistWidth = m_playlist->width();
+    });
     m_playlist->loadPlaylists();
 
     m_bookmarkMgr = new BookmarkManager(configFile, this);
@@ -191,7 +201,9 @@ QWidget *MainWindow::createLeftArea() {
     // 此处仅提供布局槽位与几何锚点；黑色背景保证视觉不变，
     // 最小尺寸约束必须挂在受布局管理的占位符上（对手动的视频区无效）
     m_videoPlaceholder = new QWidget;
-    m_videoPlaceholder->setMinimumSize(480, 270);
+    // A20：最小尺寸按常量设置——默认尺寸即下限（480 为控制栏不裁切的实测下限，
+    // 原值 480×270 的高度下限由 270 抬到 320）
+    m_videoPlaceholder->setMinimumSize(App::videoDefaultSize());
     m_videoPlaceholder->setAutoFillBackground(true);
     QPalette pal = m_videoPlaceholder->palette();
     pal.setColor(QPalette::Window, Qt::black);
@@ -807,7 +819,20 @@ void MainWindow::seekReleased() {
 }
 
 void MainWindow::setPlaylistVisible(bool visible) {
-    m_playlist->setVisible(visible);
+    if (visible) {
+        // 锚点必须在改变可见性前取：setVisible 只让布局失效、重排可能异步，
+        // 晚读会拿到已被挤窄的宽度（A20 坑 2）
+        const int leftW = m_splitter->widget(0)->width();
+        m_playlist->setVisible(true);
+        applyPlaylistGeometry(true, leftW);
+    } else {
+        // 宽度必须在隐藏前读：隐藏后 splitter 不再排布它，读到的是失效值（A20 坑 1）
+        if (const int p = m_playlist->width(); p > 0)
+            m_playlistWidth = p;
+        const int leftW = m_splitter->widget(0)->width();
+        m_playlist->setVisible(false);
+        applyPlaylistGeometry(false, leftW);
+    }
     // 三个控件的状态统一由本函数收口（A12）：启动恢复路径不经过
     // 按钮→动作链，若不同步 QAction，两者分叉会导致首次点击空转
     {
@@ -816,6 +841,145 @@ void MainWindow::setPlaylistVisible(bool visible) {
     }
     QSignalBlocker actionBlocker(m_playlistAction);
     m_playlistAction->setChecked(visible);
+}
+
+// ---- A20：播放列表显隐几何联动 ----
+
+// 把外框矩形 frame 按最小移动原则收进 area：两轴独立钳制，能不动就不动，
+// 越界多少移多少；返回外框左上角，未越界时原样返回（调用方据此决定是否 move）。
+// +1：QRect::right() == left + width - 1，合法左上角上限为区域右边界 − 外框宽度 + 1；
+// qMax 兜住"框比区还大"时钳制区间颠倒的退化
+QPoint MainWindow::minimalMoveTopLeft(const QRect &frame, const QRect &area) const {
+    const int maxX = qMax(area.left(), area.right() - frame.width() + 1);
+    const int maxY = qMax(area.top(), area.bottom() - frame.height() + 1);
+    return {qBound(area.left(), frame.left(), maxX), qBound(area.top(), frame.top(), maxY)};
+}
+
+// 播放列表显隐的几何联动：左 pane（视频区）宽度保持不变，展开所需宽度全部由
+// 主窗口向右扩展承担；工作区不足时先压视频区至下限，触底后再压播放列表宽度并
+// 按实测值改写记忆。全屏/最大化/窗口未显示时不动几何
+void MainWindow::applyPlaylistGeometry(bool expanding, int leftAnchor) {
+    if (m_fullscreen || isMaximized())
+        return;         // 几何由全屏/平台托管：仅显隐
+    if (!isVisible()) { // 构造期（启动恢复）：外框尺寸与所在屏均不可靠（N1⑥ 同类）
+        if (expanding)
+            m_playlistGeometryPending = true;
+        return;
+    }
+
+    // A20 修正（实测日志定位）：setVisible 引发的 splitter 重排是延迟事件
+    // （LayoutRequest 入队，事件循环才派发），而主窗布局每次 activate 都会把
+    // 当时的布局最小宽"钉"成主窗显式 minimumWidth（QLayout::activate 的
+    // SetDefaultConstraint 行为），且该最小宽存在多跳缓存（splitter 重排 →
+    // 主窗布局缓存失效逐级传播）。显隐后立即 resize 会被旧钉钳住——实测隐藏后
+    // minimumWidth 仍钉着可见态的 705，窗口收不回 480、视频区被动右扩。
+    // 故循环冲刷延迟布局事件直至最小尺寸稳定（每轮推进一跳），再手动 activate
+    // 一次重钉新值，随后的 resize 收敛才不被旧值拦截
+    for (int k = 0; k < 4; ++k) {
+        const QSize minBefore = minimumSizeHint();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+        if (minimumSizeHint() == minBefore)
+            break;
+    }
+    if (layout())
+        layout()->activate();
+
+    const QRect avail = screen()->availableGeometry();
+    const int chromeW = frameGeometry().width() - width(); // 外框水平装饰
+    const int maxClientW = avail.width() - chromeW;        // 客户区宽度上限（桌面宽度）
+    const int handle = m_splitter->handleWidth();
+    const int videoMinW = App::videoDefaultSize().width(); // 480，视频区最小宽度
+    const int pMin = m_playlist->minimumWidth();           // 220
+
+    int p = m_playlistWidth > 0 ? m_playlistWidth : App::playlistDefaultWidth();
+    int videoW = leftAnchor; // 左 pane（视频区）目标宽度
+    int clientW;
+    if (expanding) {
+        clientW = qMin(leftAnchor + p + handle, maxClientW); // ① 工作区宽度封顶
+        videoW = qMin(leftAnchor, clientW - p - handle);     // ② 先压视频区
+        if (videoW < videoMinW) {                            // 视频区触底 → 再压播放列表
+            videoW = videoMinW;
+            p = qMax(pMin, qMin(p, maxClientW - videoW - handle)); // ③ 压缩播放列表宽度
+            clientW = qMin(videoW + p + handle, maxClientW);
+        }
+    } else {
+        // 隐藏后左 pane 独占客户区（把手随隐藏项隐去），窗口宽度收回
+        clientW = qMin(leftAnchor, maxClientW);
+        videoW = clientW;
+    }
+
+    // 迭代收敛（B16 同款）：不写死"把手宽度 / splitter 边距 / 非视频域恒定"等假设，
+    // 每步读左 pane 实测宽度补残差，最多 3 步；无进展即停，避免受最小尺寸钳制时空转
+    int lastAchieved = -1;
+    for (int i = 0; i < 3; ++i) {
+        resize(qMax(minimumWidth(), clientW), height());
+        if (layout())
+            layout()->activate();
+        if (expanding)
+            m_splitter->setSizes({videoW, p}); // 增量必须显式交给播放列表（A20 事实 2）
+        if (layout())
+            layout()->activate();
+        const int achieved = m_splitter->widget(0)->width();
+        if (achieved == videoW || achieved == lastAchieved)
+            break;
+        lastAchieved = achieved;
+        clientW = qMin(clientW + (videoW - achieved), maxClientW);
+    }
+
+    // 记忆按收敛后的实测宽度写回：窗口被最小宽度钳制时目标与实际分叉，
+    // 按目标写回会让下次展开/收缩口径错位（评审修订）
+    if (expanding) {
+        if (const int actual = m_playlist->width(); actual > 0)
+            m_playlistWidth = actual;
+    }
+
+    // 最小移动收回：宽度变化只可能产生右向越界，仅水平轴实际生效；垂直轴不动
+    const QRect fr = frameGeometry();
+    const QPoint tl = minimalMoveTopLeft(fr, avail);
+    if (tl != fr.topLeft())
+        move(tl); // move() 对外框坐标（N1⑥），resize() 对客户区坐标（N10）
+}
+
+// 启动几何收口：视频区恰好为默认尺寸 480×320——宽度经 applyPlaylistGeometry
+// 一次定死（setSizes 锁定左 pane），高度单独迭代收敛（只动高度：若顺手改宽度，
+// splitter 会重新分配、视频区宽度被破坏），最后居中。只在首次 show 执行
+void MainWindow::applyStartupGeometry() {
+    const int wantW = App::videoDefaultSize().width();
+    const int wantH = App::videoDefaultSize().height();
+    if (m_playlistGeometryPending) {
+        m_playlistGeometryPending = false;
+        applyPlaylistGeometry(true, wantW); // 展开：视频区 480 + 播放列表 + 把手
+    } else {
+        applyPlaylistGeometry(false, wantW); // 隐藏：左 pane 独占，客户区宽 = 480
+    }
+    // 高度：以 m_videoWidget 实测高度补残差（B16 同款，通常 1 步到位）。
+    // 读数依赖占位符 resize 事件链触发的 syncVideoGeometry，前置定宽流程已布局落地
+    int lastAchieved = -1;
+    for (int i = 0; i < 4; ++i) {
+        const int delta = wantH - m_videoWidget->height();
+        resize(width(), height() + delta);
+        if (layout())
+            layout()->activate();
+        const int achieved = m_videoWidget->height();
+        if (achieved == wantH || achieved == lastAchieved)
+            break;
+        lastAchieved = achieved;
+    }
+    centerOnScreen();
+}
+
+// 窗口居中到所在屏工作区：外框居中（move 定位外框左上角，故按外框尺寸算）。
+// 末尾过一遍最小移动钳回，兜住"窗口比工作区还大"的退化（此时居中会让四周越界）。
+// 居中必须是启动几何的最后一步：定宽/定高都会改变外框，先居中会被后续 resize 破坏
+void MainWindow::centerOnScreen() {
+    const QRect avail = screen()->availableGeometry();
+    const QRect fr = frameGeometry();
+    move(avail.left() + (avail.width() - fr.width()) / 2,
+         avail.top() + (avail.height() - fr.height()) / 2);
+    const QRect after = frameGeometry();
+    const QPoint clamped = minimalMoveTopLeft(after, avail);
+    if (clamped != after.topLeft())
+        move(clamped);
 }
 
 // 导航器面板显隐（N1 显隐语义 + N3 按需创建生命周期）：零持久化——
@@ -865,9 +1029,9 @@ void MainWindow::repositionNavigator() {
     const QPoint corner = mapToGlobal(QPoint(width(), height()));
     const QRect frame = m_navigator->frameGeometry();
     QPoint pos(corner.x() - frame.width() - 12, corner.y() - frame.height() - 12);
+    // 可用区来源是导航器所在屏而非主窗屏，替换最小移动实现时保留口径（A20 3.8）
     const QRect avail = m_navigator->screen()->availableGeometry();
-    pos.setX(qBound(avail.left(), pos.x(), avail.right() - frame.width()));
-    pos.setY(qBound(avail.top(), pos.y(), avail.bottom() - frame.height()));
+    pos = minimalMoveTopLeft(QRect(pos, frame.size()), avail); // 顺带修正旧实现缺失 +1 的 1px 过移
     m_navigator->move(pos);
     m_navigator->refresh(); // 渲染区域尺寸可能已变，视口矩形需重算
 }
@@ -995,6 +1159,17 @@ void MainWindow::resizeEvent(QResizeEvent *event) {
     syncVideoGeometry();
 }
 
+// A20：启动几何收口的触发点——首次 show 时 frameGeometry() 与 screen() 才可靠
+// （构造期二者均不可信，N1⑥ 同类）。最小化恢复、A18 全屏退出的 show() 都会
+// 再触发本事件，必须一次性守卫：重复执行会把窗口越推越大、把位置反复拉回居中
+void MainWindow::showEvent(QShowEvent *event) {
+    QMainWindow::showEvent(event);
+    if (m_firstShowDone)
+        return;
+    m_firstShowDone = true;
+    applyStartupGeometry();
+}
+
 // 视频区几何手动同步（N3）：按窗口模式分支计算目标几何。
 // 全屏铺满整个客户区；普通态对齐占位符——占位符 geometry 相对其父容器，
 // 须 mapTo 主窗坐标系
@@ -1046,11 +1221,9 @@ void MainWindow::adaptWindowSizeToVideo(int videoW, int videoH) {
         lastAchieved = achieved;
         target = size() + want - achieved;
     }
-    // 最小移动收回：仅当外框越出工作区时钳回，不动原本合法的位置
+    // 最小移动收回：仅当外框越出工作区时钳回，不动原本合法的位置（A20 复用私有辅助）
     const QRect fr = frameGeometry();
-    QPoint tl = fr.topLeft();
-    tl.setX(qBound(work.left(), tl.x(), work.right() - fr.width() + 1));
-    tl.setY(qBound(work.top(), tl.y(), work.bottom() - fr.height() + 1));
+    const QPoint tl = minimalMoveTopLeft(fr, work);
     if (tl != fr.topLeft())
         move(tl);
 }
@@ -1075,6 +1248,8 @@ void MainWindow::toggleFullscreen() {
         if (m_navigator)
             m_navigator->hide();
         m_navigatorAction->setEnabled(false);
+        // A20：全屏禁用播放列表切换（禁动作即禁快捷键；禁用不影响 setChecked 同步）
+        m_playlistAction->setEnabled(false);
         m_fullscreen = true;
         m_refitAfterFullscreen = false; // 进全屏清空：仅记录"本次全屏期内是否换片"
         // A18 无框手动几何全屏：绕开 WindowFullScreen 状态机（其进出必经
@@ -1122,6 +1297,7 @@ void MainWindow::toggleFullscreen() {
             repositionNavigator();
         }
         m_navigatorAction->setEnabled(true);
+        m_playlistAction->setEnabled(true); // A20：退出全屏恢复播放列表切换
     }
     {
         QSignalBlocker blocker(m_fullscreenAction); // 防循环触发 toggleFullscreen
