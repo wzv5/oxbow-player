@@ -16,8 +16,9 @@ class PlaylistProvider {
     virtual Type type() const = 0;
     // UI 展示描述（列表设置对话框回显）
     virtual QString describe() const = 0;
-    // 枚举条目（同步）：内容唯一来源。空源/失败返回空表
-    virtual QStringList enumerate() const = 0;
+    // 枚举条目（同步）：内容唯一来源。N19 起返回 expected——成功带路径有序表，
+    // 失败带错误文案（空目录成功返回空表，与失败区分）
+    virtual std::expected<QStringList, QString> enumerate() const = 0;
     // 能力位：动态类内容以枚举为准，移除类操作整组禁用（失效清理走刷新）
     virtual bool supportsRemove() const = 0;
     // 能力位：m3u 类列表不支持排序（预留）

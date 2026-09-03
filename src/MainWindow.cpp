@@ -502,7 +502,7 @@ void MainWindow::connectController() {
                 m_startupPlaybackCheckDone = true;
                 const int pt = m_playlist->playingTabIndex();
                 if (pt >= 0 && m_playlist->currentIndex() != pt)
-                    m_playlist->setCurrentIndex(pt);
+                    m_playlist->requestTab(pt); // N19：忙时排队，空闲补执行
             }
             // N7 #2 + N8 Part1：起播/切文件 OSD 与窗口标题同源（helper 收敛，
             // 真实文件名含后缀，不用 media-title）
@@ -655,6 +655,10 @@ void MainWindow::connectController() {
     // 停止态步进以选中 tab 为基准，切换 tab 需刷新启停（A16）
     connect(m_playlist, &QTabWidget::currentChanged, this,
             [this](int) { updateNavigationActions(); });
+    // N19+A17：异步收尾/本地增删清后条目数已变（切 tab 时可能还是空表），补刷新启停；
+    // 播放中 tab 另有 mpv 事件兜底，此处幂等重刷
+    connect(m_playlist, &PlaylistWidget::contentsChanged, this,
+            [this]() { updateNavigationActions(); });
     // mpv 侧退出：补保存会话后再结束事件循环（A6）
     connect(m_controller, &MpvController::mpvShutdown, this, &MainWindow::onMpvShutdown);
 }
@@ -677,7 +681,7 @@ void MainWindow::openFiles() {
     // 有意不走 addFiles：绕开落点漂移与播放中 append 语义，拖放/右键添加不受影响
     m_playlist->setDefaultTabFiles(files);
     m_playlist->markPlayingTab(0);
-    m_playlist->setCurrentIndex(0); // Q2 裁决：抢占切换时激活态同步跳到默认 tab
+    m_playlist->requestTab(0); // Q2 裁决：抢占切换时激活态同步跳到默认 tab（N19 忙时排队）
     onPlayRequested(files, 0, -1.0);
 }
 
@@ -732,10 +736,10 @@ void MainWindow::playlistPrev() {
     m_controller->command({QStringLiteral("playlist-prev")});
     // 步进隐含开始播放（A9/A14）：暂停态下新条目继承 pause=yes，显式恢复播放
     m_controller->setProperty(QStringLiteral("pause"), false);
-    // 始终选中正在播放的列表（A9）
+    // 始终选中正在播放的列表（A9；N19 忙时排队）
     const int pt = m_playlist->playingTabIndex();
     if (pt >= 0 && m_playlist->currentIndex() != pt)
-        m_playlist->setCurrentIndex(pt);
+        m_playlist->requestTab(pt);
 }
 
 void MainWindow::playlistNext() {
@@ -746,10 +750,10 @@ void MainWindow::playlistNext() {
     m_controller->command({QStringLiteral("playlist-next")});
     // 同上（A9/A14）
     m_controller->setProperty(QStringLiteral("pause"), false);
-    // 始终选中正在播放的列表（A9）
+    // 始终选中正在播放的列表（A9；N19 忙时排队）
     const int pt = m_playlist->playingTabIndex();
     if (pt >= 0 && m_playlist->currentIndex() != pt)
-        m_playlist->setCurrentIndex(pt);
+        m_playlist->requestTab(pt);
 }
 
 // 停止态的上一个/下一个（A9/A16）：以当前选中列表为基准步进并开始播放。
@@ -2162,7 +2166,7 @@ void MainWindow::jumpToFileTime(const QString &path, double time) {
             // 跨列表跳转：复用 onPlayRequested 整表载入（与双击条目同路径）
             const QStringList files = m_playlist->filesOf(targetTab);
             m_playlist->markPlayingTab(targetTab);
-            m_playlist->setCurrentIndex(targetTab);
+            m_playlist->requestTab(targetTab); // N19：忙时排队
             onPlayRequested(files, targetRow, time);
         }
         return;
@@ -2170,7 +2174,7 @@ void MainWindow::jumpToFileTime(const QString &path, double time) {
     // 复用“打开文件”逻辑：清空默认列表后推入新文件并跳转
     m_playlist->setDefaultTabFiles({path});
     m_playlist->markPlayingTab(0);
-    m_playlist->setCurrentIndex(0);
+    m_playlist->requestTab(0); // N19：忙时排队
     onPlayRequested({path}, 0, time);
 }
 

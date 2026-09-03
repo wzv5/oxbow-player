@@ -8,7 +8,9 @@ QString StaticProvider::describe() const { return QObject::tr("Local static list
 
 void StaticProvider::setItems(QStringList &&items) { m_items = std::move(items); }
 
-QStringList StaticProvider::enumerate() const { return m_items; }
+std::expected<QStringList, QString> StaticProvider::enumerate() const {
+    return m_items; // 静态列表永成功
+}
 
 bool StaticProvider::supportsRemove() const { return true; }
 

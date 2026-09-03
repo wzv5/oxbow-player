@@ -2,6 +2,7 @@
 
 #include "pch.h"
 
+#include "LoadingOverlay.h"
 #include "MediaInfoHelper.h"
 #include "PlaylistItem.h"
 #include "PlaylistProvider.h"
@@ -23,10 +24,12 @@ class PlaylistWidget : public QTabWidget {
     Q_OBJECT
   public:
     // 条目数据角色约定
-    static constexpr int PathRole = Qt::UserRole;        // 文件路径字符串
-    static constexpr int PlayingRole = Qt::UserRole + 1; // 正在播放标记（bool）
+    static constexpr int PathRole = Qt::UserRole;         // 文件路径字符串
+    static constexpr int PlayingRole = Qt::UserRole + 1;  // 正在播放标记（bool）
+    static constexpr int PlaceholderRole = Qt::UserRole + 2; // N19 枚举失败占位行标记（bool）
 
     explicit PlaylistWidget(const QString &configFile = QString(), QWidget *parent = nullptr);
+    ~PlaylistWidget() override; // N19：在途枚举线程 wait(2000) 收尾
 
     // 注入控制器（弱引用）：四步式停止前读取 time-pos 用于进度恢复
     void attachController(MpvController *mpv) { m_mpv = mpv; }
@@ -61,6 +64,10 @@ class PlaylistWidget : public QTabWidget {
     double lastTimePosOf(int tabIndex) const;
     // 按 tab 标题查找索引，找不到返回 -1
     int indexOfName(const QString &name) const;
+    // N19：程序化切 tab 统一入口——MainWindow 侧全部经此调用。忙时（加载在途/
+    // 预读中）且目标非当前 tab 则排队（last-wins），空闲后补执行；其余直调
+    void requestTab(int index);
+    bool isBusy() const { return m_busy; }
 
     // ——N9 提供者——
     // 动态提供者 tab 判定（内容来自枚举；静态为手工条目）
@@ -99,12 +106,16 @@ class PlaylistWidget : public QTabWidget {
     void clearRequested();
     // 四步式第一步（N4）：排序/清理播放中 tab 前，由 MainWindow 下发 stop
     void stopRequested();
+    // N19+A17：内容条目数已变（异步加载收尾/本地增删清/静态重建），MainWindow 刷新导航启停；
+    // 播放中 tab 的变更另有 mpv 事件兜底，此信号幂等重刷无害
+    void contentsChanged();
 
   protected:
     void dragEnterEvent(QDragEnterEvent *event) override;
     void dragMoveEvent(QDragMoveEvent *event) override;
     void dropEvent(QDropEvent *event) override;
     void contextMenuEvent(QContextMenuEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override; // N19：遮罩几何跟随
 
   private slots:
     void onItemDoubleClicked(QListWidgetItem *item);
@@ -139,8 +150,36 @@ class PlaylistWidget : public QTabWidget {
 
     // ——N9 内部辅助——
     PlaylistProvider *providerAt(int tabIndex) const;
-    // 动态 tab：清空现有条目 → enumerate → 按该 tab 排序规则重排 → 物化填充
+    // 同步填充（静态 tab 路径）：enumerate → 解包 → fillListFromEntries
     void fillFromProvider(QListWidget *list);
+    // GUI 线程填充：清空 → 逐条 materialize + makeItem → 应用非元数据排序规则
+    //（Duration/ReleaseDate 且 MediaInfo 可用时跳过，由预读后的 applySort 执行）
+    void fillListFromEntries(QListWidget *list, const QStringList &entries);
+    // ——N19 异步加载与忙时——
+    void activateTab(int index); // 原 onTabChanged 体：选中记忆行/播放行滚动
+    void startLoadAsync(QListWidget *list);
+    void finishLoad(QListWidget *list, const std::expected<QStringList, QString> &r);
+    void setBusy(bool on);
+    void flushPendingTab();
+    void setListsEnabled(bool on);
+    void armOverlay(LoadingOverlay::Mode mode, int total);
+    // ——N19 元数据预读——
+    bool runMetaScan(QPointer<QListWidget> list, int total);
+    QStringList allPathsOf(QListWidget *list) const;
+    void applySort(QListWidget *list, SortKey key, bool ascending, bool writeRule);
+    // 预读公共骨架（不碰 m_busy，调用方负责 setBusy 包裹）：遮罩 + 循环 + 收尾重绘；
+    // 成功置位 mediaInfoLoaded 并返回 true，取消/销毁返回 false
+    bool runMetaPrescan(QListWidget *list);
+    // 任一 tab 刷新清全局缓存（静态/动态共用）
+    void clearGlobalMeta();
+    // 已加载 tab 切入重读判定：内容已载、无占位、标志失效、排序依赖元数据
+    bool needsMetaRescan(int tabIndex) const;
+    // 已加载 tab 切入即重读：预读 → 排序 → 选中跟随（忙时包裹）
+    void reactivateRescan(QListWidget *list, int tabIndex);
+    // ——N19 失败占位——
+    static bool isPlaceholderRow(const QListWidgetItem *item);
+    void showPlaceholder(QListWidget *list, const QString &error);
+    bool clearPlaceholder(QListWidget *list); // 返回是否清掉过占位行
     // 条目重排核心（无四步式副作用）：排序/加载填充共用
     void sortListItems(QListWidget *list, SortKey key, bool ascending);
 
@@ -195,4 +234,38 @@ class PlaylistWidget : public QTabWidget {
     // N9：每 tab 提供者（list 创建即配静态默认，加载/设置时替换）。
     // unique_ptr 自动回收；unordered_map 容纳不可拷贝值类型
     std::unordered_map<const QListWidget *, std::unique_ptr<PlaylistProvider>> m_providerOf;
+
+    // ——N19 per-tab 加载状态——
+    struct TabLoadState {
+        bool entriesLoaded = false; // 提供者枚举已执行（静态 tab 创建即置位）
+        bool mediaInfoLoaded = false; // 当前排序键所需 MediaInfo 已全表读取
+        QString loadError; // 非空 = 上次枚举失败（占位行显示中）
+    };
+    QHash<const QListWidget *, TabLoadState> m_loadState;
+
+    // ——N19 忙时与单飞行——
+    bool m_busy = false; // 加载在途或预读中：tab 栏 + 列表 + 右键菜单冻结
+    int m_pendingTab = -1; // 忙时排队的程序化切 tab（last-wins）
+    QThread *m_loadThread = nullptr; // 在途枚举线程（禁切 tab 后同时最多一个）
+    QPointer<QListWidget> m_loadingList; // 在途加载的目标 tab（仅 GUI 线程读写；回刷同 tab 才递增 generation）
+    quint64 m_loadGen = 0; // 单调 generation：旧批次收尾与同 tab 回刷重建时失配丢弃
+    // N19：跨线程存活旗（堆上共享，工作线程只读此旗；QPointer 禁止在工作线程读写）。
+    // 析构先置 false 再 wait；收尾调用经 invokeMethod 上下文机制双保险
+    std::shared_ptr<std::atomic<bool>> m_alive = std::make_shared<std::atomic<bool>>(true);
+    LoadingOverlay *m_overlay = nullptr;
+    LoadingOverlay::Mode m_overlayMode = LoadingOverlay::Mode::Loading;
+    int m_overlayTotal = 0;
+    QTimer m_overlayTimer; // 遮罩 300ms 延迟显示（可取消）
+    // ——N19 预读状态——
+    bool m_metaCancel = false; // 取消按钮已点，下一个文件边界生效
+    int m_scanDone = 0;
+    bool m_scanSuppressRepaint = false; // 预读期间抑制 mediaInfoOf 逐条重绘
+    // ——N19 收尾挂起（refresh 播放恢复 / 设置页首选项 / 保存）——
+    struct PendingLoad {
+        QPointer<QListWidget> list;
+        bool selectFirst = false; // 完成后选中首项（列表设置换源）
+        QString resumePath; // 非空 = 动态刷新播放中 tab，收尾递延 stop→续播
+        bool saveAfter = false; // 完成后 savePlaylists（动态刷新非播放非默认 tab）
+    };
+    PendingLoad m_pendingLoad;
 };

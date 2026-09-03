@@ -24,11 +24,13 @@
 #include <QDragEnterEvent>
 #include <QDragMoveEvent>
 #include <QDropEvent>
+#include <QElapsedTimer>
 #include <QEvent>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileIconProvider>
 #include <QFileInfo>
+#include <QFontDatabase>
 #include <QFontMetrics>
 #include <QFormLayout>
 #include <QHBoxLayout>
@@ -48,11 +50,13 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QMetaObject>
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QObject>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPointer>
 #include <QPushButton>
 #include <QRadioButton>
 #include <QRegularExpression>
@@ -90,10 +94,13 @@
 #include <QtGlobal>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <expected>
 #include <functional>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>

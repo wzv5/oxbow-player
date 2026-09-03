@@ -28,13 +28,26 @@ QString DirProvider::describe() const {
     return QObject::tr("Local directory: %1%2").arg(m_root, suffix);
 }
 
-QStringList DirProvider::enumerate() const {
-    QStringList out;
-    if (!isValid())
-        return out;
+std::expected<QStringList, QString> DirProvider::enumerate() const {
+    return enumerateDir(m_root, m_recursive, m_extensions);
+}
+
+std::expected<QStringList, QString>
+DirProvider::enumerateDir(const QString &root, bool recursive, const QStringList &extensions) {
+    if (root.isEmpty())
+        return std::unexpected(QObject::tr("No directory bound."));
+    const QDir rootDir(root);
+    if (!rootDir.exists())
+        return std::unexpected(QObject::tr("Directory does not exist: %1").arg(root));
+    if (!rootDir.isReadable())
+        return std::unexpected(QObject::tr("Directory is not readable: %1").arg(root));
     // 扩展名空表＝不过滤；过滤器一次构造逐层复用
-    collect(QDir(m_root), m_extensions.isEmpty() ? QStringList() : toNameFilters(m_extensions),
-            out);
+    QStringList out;
+    QStringList warnings;
+    collect(rootDir, extensions.isEmpty() ? QStringList() : toNameFilters(extensions), recursive,
+            out, warnings);
+    if (!warnings.isEmpty())
+        return std::unexpected(warnings.join(QStringLiteral("\n")));
     return out;
 }
 
@@ -64,18 +77,26 @@ std::unique_ptr<DirProvider> DirProvider::load(QSettings &settings) {
     return provider;
 }
 
-void DirProvider::collect(const QDir &dir, const QStringList &filters, QStringList &out) const {
+void DirProvider::collect(const QDir &dir, const QStringList &filters, bool recursive,
+                            QStringList &out, QStringList &warnings) {
     // 文件层：命中扩展名的条目规范化后追加
     const QFileInfoList files =
         dir.entryInfoList(filters, QDir::Files | QDir::Readable, QDir::NoSort);
     for (const QFileInfo &fi : files)
         // Qt 来源（目录枚举）：拿到即转原生分隔符（B15），不做小写/cleanPath
         out << Util::nativePath(fi.absoluteFilePath());
-    if (!m_recursive)
+    if (!recursive)
         return;
-    // 目录层：先序深入子目录（平铺语义，次序无关紧要——视图层统一重排）
+    // 目录层：先序深入子目录（平铺语义，次序无关紧要——视图层统一重排）；
+    // 不可读子目录记 warning 后跳过（部分成功语义）
     const QFileInfoList subDirs =
         dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::NoSort);
-    for (const QFileInfo &fi : subDirs)
-        collect(fi.absoluteFilePath(), filters, out);
+    for (const QFileInfo &fi : subDirs) {
+        if (!QDir(fi.absoluteFilePath()).isReadable()) {
+            warnings << QObject::tr("Subdirectory is not readable, skipped: %1")
+                            .arg(fi.absoluteFilePath());
+            continue;
+        }
+        collect(fi.absoluteFilePath(), filters, recursive, out, warnings);
+    }
 }

@@ -13,7 +13,7 @@ class StaticProvider : public PlaylistProvider {
 
     PlaylistProvider::Type type() const override;
     QString describe() const override;
-    QStringList enumerate() const override;
+    std::expected<QStringList, QString> enumerate() const override;
     bool supportsRemove() const override;
     bool supportsSort() const override;
 
