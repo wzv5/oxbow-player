@@ -29,8 +29,7 @@ PlaylistWidget::PlaylistWidget(const QString &configFile, QWidget *parent)
     m_overlayTimer.setSingleShot(true);
     connect(&m_overlayTimer, &QTimer::timeout, this,
             [this] { m_overlay->begin(m_overlayMode, m_overlayTotal); });
-    connect(m_overlay, &LoadingOverlay::cancelRequested, this,
-            [this] { m_metaCancel = true; });
+    connect(m_overlay, &LoadingOverlay::cancelRequested, this, [this] { m_metaCancel = true; });
 }
 
 // N19：在途枚举线程收尾。先置存活旗（工作线程检查后不再投递收尾），再 wait；
@@ -177,8 +176,8 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
     bool identical = !hadPlaceholder && list->count() == items.size();
     if (identical) {
         for (int i = 0; i < list->count(); ++i) {
-            const QString disk =
-                Util::resolveLocalPath(items[i].toMap().value(QStringLiteral("filename")).toString());
+            const QString disk = Util::resolveLocalPath(
+                items[i].toMap().value(QStringLiteral("filename")).toString());
             if (list->item(i)->data(PathRole).toString() != disk) {
                 identical = false;
                 break;
@@ -207,9 +206,10 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
     // 记录重建前的选中行（单选）：停止后 mpv 列表无 current 项，
     // 不恢复的话整体重建会把界面上的选中清空（仅显示问题）
     const int prevRow = list->currentRow();
+    // N20：回刷为权威内容，先按表驱逐（必须在 clear() 之前，内含 mediaInfoLoaded=false）；
+    // 仅同 tab 在途加载需丢弃收尾
+    evictListKeys(list);
     list->clear();
-    // N19：内容真变，已读元数据不再可信；仅同 tab 在途加载需丢弃收尾
-    m_loadState[list].mediaInfoLoaded = false;
     if (list == m_loadingList)
         ++m_loadGen;
 
@@ -776,8 +776,7 @@ void PlaylistWidget::finishLoad(QListWidget *list, const std::expected<QStringLi
     // 刷新场景：重建前抄录记忆行（首载空表跳过，防 INI 记忆被空快照误清）
     const bool hadRows = list->count() > 0;
     const QString captured = hadRows ? captureMemoryPath(list) : QString{};
-    const bool hadMem =
-        hadRows && m_memory.contains(list) && m_memory.value(list).lastPos >= 0;
+    const bool hadMem = hadRows && m_memory.contains(list) && m_memory.value(list).lastPos >= 0;
     fillListFromEntries(list, r.value());
 
     const int tab = indexOf(list);
@@ -949,8 +948,7 @@ void PlaylistWidget::sortCurrent(SortKey key, bool ascending) {
         return;
 
     // N19：元数据键走预读流程——先全表预读再排序，取消则规则不写、一切不动
-    if (MediaInfoHelper::available() &&
-        (key == SortKey::Duration || key == SortKey::ReleaseDate)) {
+    if (MediaInfoHelper::available() && (key == SortKey::Duration || key == SortKey::ReleaseDate)) {
         setBusy(true); // 忙时即重入守卫（预读期菜单/tab 栏已冻结）
         const bool ok = runMetaPrescan(list);
         if (!ok) {
@@ -1155,11 +1153,10 @@ void PlaylistWidget::refreshCurrentTab() {
     if (!list || m_busy)
         return; // N19：忙时菜单已禁用，此为兜底
     // N19：动态 tab 刷新＝异步重枚举；播放中 tab 的停止/恢复递延到收尾
-    //（枚举与预读期间不断播，取消路径零副作用）。
-    // 任一 tab 刷新都清空全局元数据缓存（静态/动态同规则），依赖元数据的各 tab
-    // 下次切入重读
+    // （枚举与预读期间不断播，取消路径零副作用）。
+    // N20：刷新只驱逐本表 key（静态/动态同规则），他表缓存不受影响
     if (isDynamicTab(currentIndex())) {
-        clearGlobalMeta();
+        evictListKeys(list); // N20：条目只驱逐本表；flag 重置所有表（共享条目时长耦合）
         TabLoadState &st = m_loadState[list];
         st.entriesLoaded = false;
         st.loadError.clear();
@@ -1176,7 +1173,7 @@ void PlaylistWidget::refreshCurrentTab() {
         return;
     }
 
-    clearGlobalMeta(); // N19：任一 tab 刷新都清空全局缓存（N18 遗留遗漏一并补清）
+    evictListKeys(list);   // N20：条目只驱逐本表；flag 重置所有表（共享条目时长耦合）
     materializeList(list); // 当前 tab 立即重新物化（图标/大小/时间自取）
     repaintAllLists();     // 其他 tab 待访问时惰性补齐
     // 统一重排：按持久化规则重排（None 跳过；播放中 tab 走四步式保续播，与手动排序一致）
@@ -1203,11 +1200,21 @@ void PlaylistWidget::refreshCurrentTab() {
     }
 }
 
-// N19：全局元数据缓存清空 + 所有 tab 已读标志重置。任一 tab 刷新共用；
-// 排序依赖元数据的各 tab 下次切入经 needsMetaRescan 重读
-void PlaylistWidget::clearGlobalMeta() {
-    m_meta.clear();      // 清空全局仓
-    m_mediaInfo.clear(); // 补清 MediaInfo 缓存
+// N20：按表精确驱逐。遍历该表全部非占位行，按仓键逐个删除；
+// flag 必须重置所有表：仓 duration 回填使 m_meta 与 m_mediaInfo 耦合，
+// 逐 key 驱逐可能删掉他表共享条目的时长，而他表 flag 为 true 则切入永不重填（行序虽在、时长列空）。
+// 多表共享条目被误删后，他表切入经 needsMetaRescan 重读或 materializeList 惰性重建
+void PlaylistWidget::evictListKeys(QListWidget *list) {
+    if (!list)
+        return;
+    for (int i = 0; i < list->count(); ++i) {
+        const QListWidgetItem *item = list->item(i);
+        if (isPlaceholderRow(item))
+            continue;
+        const QString key = Util::normalizePathForMatch(item->data(PathRole).toString());
+        m_meta.remove(key);
+        m_mediaInfo.remove(key);
+    }
     for (auto it = m_loadState.begin(); it != m_loadState.end(); ++it)
         it.value().mediaInfoLoaded = false;
 }
@@ -1686,7 +1693,7 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
     // N19：枚举失败占位态仅启用刷新与排序（排序只改持久化规则，不执行）
     const bool loadFailed = hasList && !m_loadState.value(list).loadError.isEmpty();
     addAction->setEnabled(!dynamic && !loadFailed); // 动态 tab 内容来自枚举，禁手工添加
-    auto *menuProvider = providerAt(tab); // 排序能力遵从提供者（单项目录亦可持久化规则）
+    auto *menuProvider = providerAt(tab);           // 排序能力遵从提供者（单项目录亦可持久化规则）
     sortMenu->setEnabled(hasList && menuProvider && menuProvider->supportsSort());
     refreshAction->setEnabled(dynamic || itemCount > 0); // 动态刷新不受空内容限制
     // N9：动态 tab 移除子菜单整组禁用（失效清理走刷新）
@@ -1903,7 +1910,7 @@ void PlaylistWidget::openListSettings(int tabIndex) {
         st.entriesLoaded = true;
         if (list->count() > 0)
             list->setCurrentRow(0); // 选中第一项，不开始播放
-        emit contentsChanged(); // A17：静态重建条目数可能变化，刷新导航启停
+        emit contentsChanged();     // A17：静态重建条目数可能变化，刷新导航启停
     }
     savePlaylists();
 }
