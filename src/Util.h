@@ -68,6 +68,12 @@ QString resolveLocalPath(const QString &path);
 // 也避免 QUrl::fromUserInput 把相对名（如 "a"）误判为非本地。
 bool isNetworkStreamPath(const QString &path);
 
+// N25：按序子序列判定——sub 的元素能否在 full 中按原序不跳序地逐一命中（双指针，O(n)）。
+// 空序列是任何序列的子序列；两序列相等亦返回 true。
+// 用于回刷的本地在途回显：识别"同一变更的在途中间态"（整表载入的部分列表是最终列表的前缀，
+// 批量删除的部分列表以最终列表为子序列）
+bool isOrderedSubsequence(const QStringList &sub, const QStringList &full);
+
 // 发行时间解析：ISO 8601 优先，兼容常见格式（yyyy-MM-dd / yyyy/MM/dd / yyyy-MM / yyyy）；
 // 全败返回无效 QDateTime
 QDateTime parseReleaseDate(const QString &s);

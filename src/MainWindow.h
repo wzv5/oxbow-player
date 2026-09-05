@@ -191,6 +191,9 @@ class MainWindow : public QMainWindow {
 
     // ---- N8：主窗口显示优化 ----
     QString playingFilename(); // 正播真实文件名（含后缀，标题与 OSD 同源）
+    // N25：标题与 OSD #2 同源刷新（B11 镜像取名）。playlist-pos 值不变不再推送，
+    // 回刷收编后的正播名错位须经此主动刷新
+    void updateNowPlayingUi();
     double
     progressPercentAt(const QPoint &pos) const; // 进度条鼠标 x → 百分比（0~100），无效返回 -1
 

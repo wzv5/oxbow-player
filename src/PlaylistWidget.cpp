@@ -163,36 +163,69 @@ int PlaylistWidget::playingRowOf(const QListWidget *list) const {
     return -1;
 }
 
+// N25：回刷策略——本地在途回显 → 空列表忽略 → 一致静默 → 占位/枚举失败忽略 → 差异收编默认 tab。
+// 回刷不再重建正在播放的 tab：本地发起的变更一律本地先行，回刷因此恒为一致而静默；
+// 真正的外部变更统一收编到默认 tab（mpv 会话镜像：临时、不持久化、可随时被替换）
 void PlaylistWidget::setPlaylist(const QVariantList &items) {
+    QStringList pushed;
+    QList<bool> current;
+    pushed.reserve(items.size());
+    current.reserve(items.size());
+    for (const QVariant &v : items) {
+        const QVariantMap map = v.toMap();
+        // mpv 来源路径：本地 cleanPath+原生分隔符，网络/流保持原样（B15）
+        pushed.append(Util::resolveLocalPath(map.value(QStringLiteral("filename")).toString()));
+        current.append(map.value(QStringLiteral("current")).toBool());
+    }
+
+    // 1. 本地在途回显：本地下发的是多命令序列，mpv 可能分批推送中间态（空列表/部分列表）。
+    // 这些中间态若被判为差异会把列表搬去默认 tab，故按"同序子序列关系"识别并忽略
+    if (m_localPush.pending) {
+        if (pushed == m_localPush.snapshot) {
+            m_localPush.pending = false; // 回显确认：继续走常规判定（翻转播放标记）
+        } else if (Util::isOrderedSubsequence(pushed, m_localPush.snapshot) ||
+                   Util::isOrderedSubsequence(m_localPush.snapshot, pushed)) {
+            return; // 同一变更的在途中间态
+        } else {
+            m_localPush.pending = false; // 回显失配：放弃，按外部变更处理
+        }
+    }
+
+    // 2. 空列表无正播项、无收编意义（本地 stop/clear/删 tab/换源均已本地先行），一律忽略
+    if (pushed.isEmpty())
+        return;
+
     QListWidget *list = listAt(m_playingTab);
     if (!list)
         return;
 
-    // N19：回刷为权威内容——占位存在即视为变化，重建时一并清除
-    const bool hadPlaceholder = clearPlaceholder(list) || !m_loadState[list].loadError.isEmpty();
-    m_loadState[list].loadError.clear();
+    // 3. 占位/枚举失败态：占位只应由刷新或重枚举清除，且占位行无路径会令比较恒为差异
+    bool hasPlaceholder = false;
+    for (int i = 0; i < list->count(); ++i) {
+        if (isPlaceholderRow(list->item(i))) {
+            hasPlaceholder = true;
+            break;
+        }
+    }
+    if (hasPlaceholder || !m_loadState[list].loadError.isEmpty())
+        return;
 
-    // N19：先比对，完全一致静默忽略（无重建、无闪烁、无选中丢失）
-    bool identical = !hadPlaceholder && list->count() == items.size();
-    if (identical) {
+    // 4. 逐行一致即静默：只翻转播放标记，正播行变化才迁移选中+滚动（无重建、无闪烁）
+    if (list->count() == pushed.size()) {
+        bool identical = true;
         for (int i = 0; i < list->count(); ++i) {
-            const QString disk = Util::resolveLocalPath(
-                items[i].toMap().value(QStringLiteral("filename")).toString());
-            if (list->item(i)->data(PathRole).toString() != disk) {
+            if (list->item(i)->data(PathRole).toString() != pushed.at(i)) {
                 identical = false;
                 break;
             }
         }
         if (identical) {
-            // 播放标记跟随 current 变化：只动翻转的行（防整表 dataChanged 重绘），
-            // 正播行变化才迁移选中+滚动（与旧整体重建的可见行为一致）
             const int oldPlaying = playingRowOf(list);
             int newPlaying = -1;
             for (int i = 0; i < list->count(); ++i) {
-                const bool cur = items[i].toMap().value(QStringLiteral("current")).toBool();
-                if (list->item(i)->data(PlayingRole).toBool() != cur)
-                    list->item(i)->setData(PlayingRole, cur);
-                if (cur)
+                if (list->item(i)->data(PlayingRole).toBool() != current.at(i))
+                    list->item(i)->setData(PlayingRole, current.at(i));
+                if (current.at(i))
                     newPlaying = i;
             }
             if (newPlaying >= 0 && newPlaying != oldPlaying) {
@@ -203,36 +236,39 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
         }
     }
 
-    // 记录重建前的选中行（单选）：停止后 mpv 列表无 current 项，
-    // 不恢复的话整体重建会把界面上的选中清空（仅显示问题）
-    const int prevRow = list->currentRow();
-    // N20：回刷为权威内容，先按表驱逐（必须在 clear() 之前，内含 mediaInfoLoaded=false）；
-    // 仅同 tab 在途加载需丢弃收尾
-    evictListKeys(list);
-    list->clear();
-    if (list == m_loadingList)
-        ++m_loadGen;
+    // 5. 差异＝外部变更：整体收编到默认 tab，原 playing tab 一字不动
+    QListWidget *def = listAt(0);
+    if (!def)
+        return;
+    if (def == m_loadingList)
+        ++m_loadGen; // 默认 tab 无异步加载，此为防御
+
+    // 记录收编前的选中行（单选）：推送无 current 项（如停止态外部编辑）时
+    // 整表替换会把界面选中清空（仅显示问题），沿用旧重建语义恢复
+    const int prevRow = def->currentRow();
+    def->clear();
+    m_loadState[def].mediaInfoLoaded = false; // N19：条目集合已变，已读元数据不可信
 
     QListWidgetItem *newCurrent = nullptr;
-    for (const QVariant &v : items) {
-        const QVariantMap map = v.toMap();
-        const QString filename = map.value(QStringLiteral("filename")).toString();
-        // mpv 来源路径：本地 cleanPath+原生分隔符，网络/流保持原样（B15）
-        QListWidgetItem *item = makeItem(list, Util::resolveLocalPath(filename));
-        // 正在播放标记写入视图条目专用角色（会话层信息不入元数据仓）
-        if (map.value(QStringLiteral("current")).toBool()) {
+    for (int i = 0; i < pushed.size(); ++i) {
+        QListWidgetItem *item = makeItem(def, pushed.at(i));
+        if (current.at(i)) {
             item->setData(PlayingRole, true);
             newCurrent = item;
         }
     }
-
     if (newCurrent) {
-        list->setCurrentItem(newCurrent);
+        def->setCurrentItem(newCurrent);
         // 跟随滚动（N4）：正播项变动时最小位移滚入可见范围
-        list->scrollToItem(newCurrent, QListWidget::EnsureVisible);
-    } else if (prevRow >= 0 && prevRow < list->count()) {
-        list->setCurrentRow(prevRow);
+        def->scrollToItem(newCurrent, QListWidget::EnsureVisible);
+    } else if (prevRow >= 0 && prevRow < def->count()) {
+        def->setCurrentRow(prevRow);
     }
+    markPlayingTab(0);         // B10：异 tab 转移清旧标记；同 tab 早退（默认 tab 自覆盖不误清）
+    m_memory.remove(def);      // 内容被替换即作废续播记忆（新记忆随 mpv playlist-pos 推送重建）
+    emit contentsChanged();    // A17：条目数已变，刷新导航启停
+    emit playingListAdopted(); // N25：镜像已重新一致，MainWindow 刷新标题/OSD 正播名
+    requestTab(0);             // 可见 tab 跟随；N19 忙时排队，枚举/预读结束后补执行
 }
 
 void PlaylistWidget::addFiles(const QStringList &files) {
@@ -248,15 +284,27 @@ void PlaylistWidget::addFiles(const QStringList &files) {
         p->setSortRule(int(SortKey::None), p->sortAscending());
     m_loadState[list].mediaInfoLoaded = false; // N19：条目集合变化，已读元数据不可信
 
-    // 正在播放 tab 的内容以 mpv 回刷为准，本地不重复插入（C4：消除双刷新闪烁）
-    if (!currentIsPlayingTab()) {
-        for (const QString &file : files)
-            makeItem(list, file);
-        // 非默认本地 tab 添加后持久化
-        if (currentIndex() != 0)
-            savePlaylists();
-    }
+    // N25：本地先行——播放中 tab 也立即插行（回刷只会把"本地未改"的差异搬去默认 tab），
+    // 插入后本地序列即等于 mpv 追加后的序列，回刷恒一致而静默
+    for (const QString &file : files)
+        makeItem(list, file);
+    // 非默认本地 tab 添加后持久化（默认 tab 永不落盘，N9/N4 既定）
+    if (currentIndex() != 0)
+        savePlaylists();
+    // 仅播放中 tab 的增删会同步进 mpv（MainWindow::onFilesAdded 同款守卫）：
+    // 非播放 tab 不会引发推送，登记在途会留下永不回显的快照
+    if (currentIsPlayingTab())
+        noteLocalPush(filesOf(currentIndex()));
     emit filesAdded(files);
+}
+
+// N25：本地在途回显登记。空序列不登记——清空/删 tab 之后 mpv 侧本就变空，
+// 由回刷的"空列表忽略"兜底，登记反而会让后续推送被误判为在途中间态
+void PlaylistWidget::noteLocalPush(const QStringList &snapshot) {
+    if (snapshot.isEmpty())
+        return;
+    m_localPush.snapshot = snapshot;
+    m_localPush.pending = true;
 }
 
 // N11：主菜单"打开文件"固定落点——整体替换默认 tab 内容并作废其续播记忆
@@ -436,17 +484,27 @@ void PlaylistWidget::savePlaylists() {
     settings.endGroup();
 }
 
+// N25：写入前校验 (tab, pos) 与 mpv 实际正播文件一致。外部结构变更在途时
+// playlist-pos 先于 playlist 推送更新（如终端移动正播条目），旧 playing tab 配
+// mpv 新索引会把别行写成"正在播放"（实测：移动后原 tab 续播记忆串位）。
+// time-pos 心跳仅在文件真正播放后才带 v>0，此时 path 必为正播文件，校验恒过；
+// 切条目瞬间 pos 推送若 path 尚未更新则跳过一次，随即由 time-pos 心跳自愈
 void PlaylistWidget::recordPlayback(int tabIndex, int pos, double seconds) {
     if (tabIndex < 0 || pos < 0) // 负索引无效；默认 tab 允许进程内记忆（不持久化）
         return;
     QListWidget *list = listAt(tabIndex);
-    if (!list)
+    if (!list || pos >= list->count())
         return;
+    const QString mpvPath = Util::normalizePathForMatch(
+        m_mpv ? m_mpv->propertyString(QStringLiteral("path")) : QString());
+    if (mpvPath.isEmpty() ||
+        Util::normalizePathForMatch(list->item(pos)->data(PathRole).toString()) != mpvPath)
+        return; // 索引与正播文件对不上：结构变更在途，不写本表记忆
     TabMemory &mem = m_memory[list];
     mem.lastPos = pos;
     mem.lastTimePos = seconds;
     // N9：路径随写入点采集（路径+序号双存）
-    mem.lastPath = (pos < list->count()) ? list->item(pos)->data(PathRole).toString() : QString();
+    mem.lastPath = list->item(pos)->data(PathRole).toString();
 }
 
 void PlaylistWidget::clearResumeProgress(int tabIndex) {
@@ -603,7 +661,8 @@ void PlaylistWidget::onItemDoubleClicked(QListWidgetItem *item) {
         return;
 
     markPlayingTab(tab);
-    emit playRequested(filesOf(tab), list->row(item), -1.0);
+    emit playRequested(filesOf(tab), list->row(item),
+                       -1.0); // 回显由 MainWindow 统一入口登记（N25）
 }
 
 // N19：程序化切 tab 统一入口。忙时目标非当前则排队，空闲后补执行
@@ -765,6 +824,14 @@ void PlaylistWidget::finishLoad(QListWidget *list, const std::expected<QStringLi
     if (!r.has_value()) {
         m_loadState[list].loadError = r.error();
         showPlaceholder(list, r.error());
+        // N25：播放中 tab 枚举失败即停止——枚举已失败，后续切曲大概率同失败，
+        // 继续播放无意义。stop 不带 keep-playlist，一并清空 mpv 播放列表
+        // （随后的空列表推送由回刷"空列表忽略"吸收，不改写任何 tab）
+        const int failTab = indexOf(list);
+        if (failTab >= 0 && failTab == m_playingTab) {
+            emit stopRequested();
+            m_playingTab = 0; // 同步目标归位默认 tab（恒 >= 0，不悬空）
+        }
         m_loadingList = nullptr;
         emit contentsChanged(); // 占位行计入行数，导航启停需刷新
         setBusy(false);
@@ -839,7 +906,7 @@ void PlaylistWidget::finishLoad(QListWidget *list, const std::expected<QStringLi
                 m_mpv ? m_mpv->propertyDouble(QStringLiteral("time-pos"), -1.0) : -1.0;
             emit stopRequested();
             if (const int idx = files.indexOf(target); idx >= 0)
-                emit playRequested(files, idx, resumeSec);
+                emit playRequested(files, idx, resumeSec); // 回显由 MainWindow 统一入口登记（N25）
             // 目标已不在新列表：保持停止（与旧同步语义一致）
         }
     } else if (pend.saveAfter && tab > 0) {
@@ -1017,7 +1084,7 @@ void PlaylistWidget::applySort(QListWidget *list, SortKey key, bool ascending, b
         const QStringList files = filesOf(tab);
         const int idx = files.indexOf(resumePath);
         if (idx >= 0)
-            emit playRequested(files, idx, resumeSec);
+            emit playRequested(files, idx, resumeSec); // 回显由 MainWindow 统一入口登记（N25）
         // idx < 0 理论不可达（排序不删行）；保守起见不恢复
     }
 
@@ -1109,13 +1176,35 @@ void PlaylistWidget::executeRemoval(const QList<int> &rows) {
         const int idx = files.indexOf(resumePath);
         // P 仍在列表：从原进度恢复；P 自身已失效被清则保持停止
         if (idx >= 0)
-            emit playRequested(files, idx, resumeSec);
+            emit playRequested(files, idx, resumeSec); // 回显由 MainWindow 统一入口登记（N25）
     } else if (tab != 0) {
         savePlaylists();
     }
 
     restoreMemoryPath(list, captured, hadMemory);
     emit contentsChanged(); // A17：本地删/清条目数已变，刷新导航启停
+}
+
+// N25：播放中 tab 的本地先行删行（供"删除选中"走逐行 playlist-remove 同步通道时用）。
+// 不含四步式的停止/重推——删除不需要中断播放，mpv 逐个移除后推送的最终序列即本地序列
+void PlaylistWidget::removeRowsLocal(QListWidget *list, const QList<int> &rows) {
+    if (!list || rows.isEmpty())
+        return;
+    const int tab = indexOf(list);
+    m_loadState[list].mediaInfoLoaded = false; // N19：条目集合变化
+    const bool hadMemory = m_memory.contains(list) && m_memory.value(list).lastPos >= 0;
+    const QString captured = captureMemoryPath(list);
+
+    QList<int> sorted = rows;
+    std::sort(sorted.begin(), sorted.end(), std::greater<int>());
+    for (int row : sorted) {
+        if (row >= 0 && row < list->count())
+            delete list->takeItem(row);
+    }
+    restoreMemoryPath(list, captured, hadMemory);
+    if (tab >= 0)
+        noteLocalPush(filesOf(tab));
+    emit contentsChanged(); // A17：本地删行条目数已变，刷新导航启停
 }
 
 void PlaylistWidget::removeInvalidItems() {
@@ -1742,20 +1831,21 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
         for (QListWidgetItem *sel : list->selectedItems())
             rows.append(list->row(sel));
         if (isPlayingTab) {
-            // 播放 tab 的移除仍走既有同步通道（逐行 playlist-remove）
+            // N25：本地先行删行，再走既有同步通道（逐行 playlist-remove）——
+            // mpv 逐个移除推送的中间态以本地序列为子序列，最终序列与本地一致，回刷均静默
+            removeRowsLocal(list, rows);
             emit removeRequested(rows);
         } else {
             executeRemoval(rows);
         }
     } else if (chosen == clearAction && list && !dynamic) {
-        if (isPlayingTab) {
-            emit clearRequested();
-        } else {
-            QList<int> all;
-            for (int i = 0; i < list->count(); ++i)
-                all.append(i);
-            executeRemoval(all);
-        }
+        QList<int> all;
+        for (int i = 0; i < list->count(); ++i)
+            all.append(i);
+        if (isPlayingTab)
+            emit stopRequested(); // N25：先停（stop 不带 keep-playlist 即清空 mpv 列表），
+                                  // 空列表推送被回刷忽略；随后 executeRemoval 本地清空
+        executeRemoval(all);
     } else if (chosen == removeInvalidAction && !dynamic) {
         removeInvalidItems();
     } else if (chosen == removeDupAction && !dynamic) {
@@ -1785,8 +1875,8 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
 }
 
 // N9：删除指定 tab（表头菜单，作用于右键命中的 tab）。关闭正在播放的列表：
-// 先停播并清空 mpv 侧，同步目标置 -1 悬空，防空列表回刷误清其他 tab；
-// 下次双击经 markPlayingTab 重建
+// 先停播并清空 mpv 侧；同步目标归位默认 tab（N25：空列表推送由回刷忽略，
+// 不再需要悬空态挡刷）。下次双击经 markPlayingTab 重建
 void PlaylistWidget::removeTabAt(int tabIndex) {
     const int idx = tabIndex;
     if (idx <= 0 || idx >= count() || m_busy)
@@ -1794,7 +1884,7 @@ void PlaylistWidget::removeTabAt(int tabIndex) {
     if (idx == m_playingTab) {
         emit stopRequested();
         emit clearRequested();
-        m_playingTab = -1;
+        m_playingTab = 0;
     }
     if (QListWidget *closing = listAt(idx)) {
         m_providerOf.erase(closing); // unique_ptr 自动回收提供者（含排序规则）
@@ -1855,7 +1945,7 @@ void PlaylistWidget::createNewList() {
 
 // N9：存量列表设置——改名/换提供者。非法参数由对话框校验报错留在窗口；
 // 合法后：仅改名直接生效；提供者有变则静默清空重建，作用对象为播放中 tab 时
-// 停止并选中首项不播（悬空同步目标防回刷竞态）
+// 停止（N25：同步目标归位默认 tab，空列表推送由回刷忽略）
 void PlaylistWidget::openListSettings(int tabIndex) {
     if (tabIndex <= 0 || m_busy)
         return; // N19：忙时表头菜单已禁用，此为兜底
@@ -1884,7 +1974,7 @@ void PlaylistWidget::openListSettings(int tabIndex) {
     const bool wasPlaying = (tabIndex == m_playingTab);
     if (wasPlaying) {
         emit stopRequested(); // 纯 stop 清空 mpv 侧列表（AGENTS 陷阱条目）
-        m_playingTab = -1;    // 悬空：挡掉随后的空列表回刷误清新填充内容
+        m_playingTab = 0;     // N25：同步目标归位默认 tab（空列表推送由回刷忽略，无需悬空）
     }
 
     m_providerOf[list] = std::move(*result);

@@ -34,7 +34,9 @@ class PlaylistWidget : public QTabWidget {
     // 注入控制器（弱引用）：四步式停止前读取 time-pos 用于进度恢复
     void attachController(MpvController *mpv) { m_mpv = mpv; }
 
-    // 用 mpv 播放列表内容刷新"正在播放"tab：重建行、写入播放标记、跟随滚动
+    // N25：mpv 播放列表回刷。本地在途回显 → 空列表忽略 → 与"正在播放"tab 逐行一致即静默
+    // （仅翻转播放标记）→ 占位/枚举失败态忽略 → 差异则整体收编到默认 tab 并转移同步目标。
+    // 回刷不再重建正在播放的 tab，也不驱逐任何元数据缓存
     void setPlaylist(const QVariantList &items);
     // 向当前 tab 添加文件（触发 filesAdded 信号）
     void addFiles(const QStringList &files);
@@ -69,14 +71,21 @@ class PlaylistWidget : public QTabWidget {
     void requestTab(int index);
     bool isBusy() const { return m_busy; }
 
+    // N25：本地在途回显登记——本地向 mpv 下发多命令序列（整表载入/批量移除/追加）前，
+    // 记录本地变更后的最终序列。回刷据此识别"同一变更的在途中间态"（空列表/部分列表）
+    // 并忽略，避免误判为外部变更而把列表搬去默认 tab。空序列不登记（清空/删 tab
+    // 由回刷的"空列表忽略"兜底）。整表载入统一在 MainWindow::onPlayRequested 登记；
+    // 追加（addFiles）与批量移除（removeRowsLocal）在各自发射点登记
+    void noteLocalPush(const QStringList &snapshot);
+
     // ——N9 提供者——
     // 动态提供者 tab 判定（内容来自枚举；静态为手工条目）
     bool isDynamicTab(int tabIndex) const;
     // 表头菜单"新建播放列表"：弹列表设置对话框后建 tab（动态则枚举填充）
     void createNewList();
     // 表头菜单"列表设置…"：存量列表改名/换提供者。非法参数报错留在对话框；
-    // 合法后静默清空重建；仅改名则直接生效不清空。播放中 tab 换提供者时
-    // 停止并选中首项不播（同步目标悬空防回刷竞态）
+    // 合法后静默清空重建；仅改名则直接生效不清空。播放中 tab 换提供者时停止，
+    // 同步目标归位默认 tab（N25：空中列表推送由回刷忽略，不再需要悬空态）
     void openListSettings(int tabIndex);
     // 删除指定 tab（表头菜单，作用于右键命中的 tab）
     void removeTabAt(int tabIndex);
@@ -109,6 +118,10 @@ class PlaylistWidget : public QTabWidget {
     // N19+A17：内容条目数已变（异步加载收尾/本地增删清/静态重建），MainWindow 刷新导航启停；
     // 播放中 tab 的变更另有 mpv 事件兜底，此信号幂等重刷无害
     void contentsChanged();
+    // N25：回刷差异收编（外部变更覆盖默认 tab 并转移同步目标）后发射。
+    // 收编不引发 playlist-pos 推送（值不变不推），MainWindow 须主动刷新标题/OSD
+    // 的正播名（pos 推送时刻按旧镜像取名已错）
+    void playingListAdopted();
 
   protected:
     void dragEnterEvent(QDragEnterEvent *event) override;
@@ -208,6 +221,9 @@ class PlaylistWidget : public QTabWidget {
     void removeDuplicateItems();
     // 收集待删行号后统一执行的收尾：播放 tab 四步式后半段或本地直删
     void executeRemoval(const QList<int> &rows);
+    // N25：播放 tab 的本地先行删行（走逐行 playlist-remove 同步通道时用）：
+    // 逆序删行 + 记忆复位 + 刷新导航，不含四步式的停止/重推
+    void removeRowsLocal(QListWidget *list, const QList<int> &rows);
 
     // 右键菜单动作实现（第七节）
     void refreshCurrentTab();
@@ -227,7 +243,7 @@ class PlaylistWidget : public QTabWidget {
     // N18：MediaInfo 缓存惰性查询；dll 不可用返回 nullptr；命中即返回，未命中同步解析一次入缓存
     const MediaInfoHelper::Data *mediaInfoOf(const QString &path);
 
-    int m_playingTab = 0;
+    int m_playingTab = 0; // N25：恒 >= 0（默认 0）；同步目标失效时归位 0，不再悬空
     QString m_configFile;
     MpvController *m_mpv = nullptr; // 弱引用，attachController 注入（N4 进度恢复用）
     // 以 list 指针为键：不受 tab 增删导致的索引漂移影响
@@ -270,4 +286,10 @@ class PlaylistWidget : public QTabWidget {
         bool saveAfter = false;   // 完成后 savePlaylists（动态刷新非播放非默认 tab）
     };
     PendingLoad m_pendingLoad;
+    // ——N25 本地在途回显——
+    struct LocalPush {
+        QStringList snapshot; // 本地变更后的最终序列（回显比对基准）
+        bool pending = false; // 有尚未回显确认的本地序列
+    };
+    LocalPush m_localPush;
 };

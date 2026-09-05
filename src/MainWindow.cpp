@@ -479,6 +479,14 @@ void MainWindow::connectController() {
     // 播放态列表长度变化影响步进启停（A16）
     connect(m_controller, &MpvController::playlistChanged, this,
             [this](const QVariantList &) { updateNavigationActions(); });
+    // N25：回刷差异收编后镜像重新与 mpv 序列一致，但 playlist-pos 值不变不再推送，
+    // pos 推送时刻按旧镜像取的错名会挂到下一次切条目——仅错名时主动刷新标题/OSD
+    // （追加等不影响正播名的收编不弹 OSD）
+    connect(m_playlist, &PlaylistWidget::playingListAdopted, this, [this]() {
+        const QString f = playingFilename();
+        if (!f.isEmpty() && f != windowTitle())
+            updateNowPlayingUi();
+    });
     connect(m_controller, &MpvController::playlistPosChanged, this, [this](int pos) {
         const bool switchedItem = pos != m_playlistPos; // B9：实际换条目（值不变 mpv 不推送）
         m_playlistPos = pos;
@@ -506,19 +514,7 @@ void MainWindow::connectController() {
             }
             // N7 #2 + N8 Part1：起播/切文件 OSD 与窗口标题同源（helper 收敛，
             // 真实文件名含后缀，不用 media-title）
-            QString filename = playingFilename();
-            const int curPt2 = m_playlist->playingTabIndex();
-            const int total = curPt2 >= 0 ? m_playlist->filesOf(curPt2).size() : pos + 1;
-            if (!filename.isEmpty())
-                setWindowTitle(filename); // N8 Part1：标题跟随真实文件名
-            else
-                filename = tr("Unknown File");
-            m_pendingNowPlaying =
-                QStringLiteral("[%1/%2] %3").arg(pos + 1).arg(total).arg(filename);
-            if (!m_osdCoalescePending) {
-                m_osdCoalescePending = true;
-                QTimer::singleShot(0, this, &MainWindow::flushOsd);
-            }
+            updateNowPlayingUi();
             // 强制重置播放暂停按钮状态
             bool paused = m_controller->propertyFlag("pause", true);
             m_playButton->setIcon(
@@ -1484,6 +1480,28 @@ QString MainWindow::playingFilename() {
     return m_controller->propertyString(QStringLiteral("filename"));
 }
 
+// N7 #2 + N8 Part1：标题与 OSD #2 同源刷新（B11 镜像取名）。
+// N25：收编（外部变更落默认 tab）后镜像重新与 mpv 序列一致，但 playlist-pos
+// 值不变不会再推送，pos 推送时刻按旧镜像取的错名会挂到下一次切条目——
+// 收编后经 playingListAdopted 主动刷新一次
+void MainWindow::updateNowPlayingUi() {
+    if (m_playlistPos < 0)
+        return; // 停止态无"正在播放"可言
+    QString filename = playingFilename();
+    const int pt = m_playlist->playingTabIndex();
+    const int total = pt >= 0 ? m_playlist->filesOf(pt).size() : m_playlistPos + 1;
+    if (!filename.isEmpty())
+        setWindowTitle(filename); // N8 Part1：标题跟随真实文件名
+    else
+        filename = tr("Unknown File");
+    m_pendingNowPlaying =
+        QStringLiteral("[%1/%2] %3").arg(m_playlistPos + 1).arg(total).arg(filename);
+    if (!m_osdCoalescePending) {
+        m_osdCoalescePending = true;
+        QTimer::singleShot(0, this, &MainWindow::flushOsd);
+    }
+}
+
 // N8 Part3：进度条鼠标 x → 百分比（0~100）。经样式反查 groove/handle 几何，
 // 扣除滑块半宽后线性映射，与拖动定位算法同口径
 double MainWindow::progressPercentAt(const QPoint &pos) const {
@@ -1565,6 +1583,9 @@ void MainWindow::onPlayRequested(const QStringList &files, int index, double see
     m_pendingSeekTime = -1.0;
     if (files.isEmpty())
         return;
+    // N25：整表载入是多命令序列（stop→clear→N×append→pos），登记本地在途回显基准，
+    // 使回刷把空列表/部分列表的中间态识别为本变更在途而忽略（files 即本地列表内容）
+    m_playlist->noteLocalPush(files);
     // mpv 的 playlist-clear 会保留当前播放的条目，先 stop 才能真正清空
     m_controller->command({QStringLiteral("stop")});
     m_controller->command({QStringLiteral("playlist-clear")});

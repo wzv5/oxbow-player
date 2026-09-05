@@ -206,6 +206,19 @@ bool Util::isNetworkStreamPath(const QString &path) {
            !path.startsWith(QStringLiteral("file:"), Qt::CaseInsensitive);
 }
 
+// N25：按序子序列判定（回刷在途中间态识别用）
+bool Util::isOrderedSubsequence(const QStringList &sub, const QStringList &full) {
+    int j = 0;
+    for (const QString &s : sub) {
+        while (j < full.size() && full.at(j) != s)
+            ++j;
+        if (j == full.size())
+            return false;
+        ++j;
+    }
+    return true;
+}
+
 QString resolveLocalPath(const QString &path) {
     if (path.isEmpty())
         return path;
