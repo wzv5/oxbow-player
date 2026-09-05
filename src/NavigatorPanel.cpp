@@ -50,11 +50,17 @@ NavigatorCanvas::NavigatorCanvas(MpvController *controller, QWidget *renderArea,
         emit zoomVisualChanged(displayPercent()); // 几何/源分辨率变化→百分比重算
         update();
     });
-    // 按需创建（N3）：width/height 只在变化时推送，本实例错过了播放开始时的
-    // 首推，从控制器缓存播种初始尺寸，否则播放中打开恒显示"无视频"
+    // 按需创建（N3/B19）：mpv 对值不变的属性不推送，本实例错过了播放开始时的首推，
+    // 四项状态全部当场现读播种（只读、不下发），否则：尺寸缺失 → 播放中打开恒显示
+    // "无视频"；缩放/平移缺失 → 显示与实际不符（全屏往返可达：全屏前存的缩放值在
+    // 退全屏时还原，而面板彼时已被销毁，新实例读到的是初值 0）
     const QSize seed = controller->videoSize();
     m_videoW = seed.width();
     m_videoH = seed.height();
+    m_zoom =
+        qBound(kZoomMin, controller->propertyDouble(QStringLiteral("video-zoom"), 0.0), kZoomMax);
+    m_panX = controller->propertyDouble(QStringLiteral("video-pan-x"), 0.0);
+    m_panY = controller->propertyDouble(QStringLiteral("video-pan-y"), 0.0);
 }
 
 QSizeF NavigatorCanvas::currentFit() const {

@@ -269,11 +269,15 @@ void MpvController::handleFileLoaded() {
     }
 }
 
+// 安全约定：mpv_get_property 的接收缓冲必须与 MPV_FORMAT_* 的基本类型同宽
+// （FLAG=int / INT64=int64_t / DOUBLE=double，见 mpv/client.h 的 mpv_node 联合体）。
+// 窄类型接收宽写入会踩坏相邻栈槽——B19 即 int 接 INT64，第二次写入的高 4 字节
+// 把 w 覆成 0，导航器播种恒判"无视频"。新增调用点务必按此表核对。
 QSize MpvController::videoSize() const {
-    int w = 0, h = 0;
+    int64_t w = 0, h = 0;
     mpv_get_property(m_mpv, "width", MPV_FORMAT_INT64, &w);
     mpv_get_property(m_mpv, "height", MPV_FORMAT_INT64, &h);
-    return QSize(w, h);
+    return QSize(int(w), int(h));
 }
 
 void MpvController::command(const QString &cmd) {
