@@ -28,7 +28,9 @@ class PlaylistProvider {
     virtual std::expected<EntityList, QString> enumerate() const = 0;
     // 视图 → 提供者内容回传（只读引用）。基类默认实现忽略——不可修改的提供者
     // 不参与回传。回传是内容落盘的唯一入口：savePlaylists 对可修改提供者逐个回传
-    // 后随即序列化，回传与落盘不得拆开（N27）
+    // 后随即序列化，回传与落盘不得拆开（N27）。
+    // N28：回传另有守卫——未加载（含首载在途）的表实体集合为空，回传会清空提供者
+    // 自持内容造成永久丢数据，故整段跳过；落盘侧照走 saveSettings
     // 不变式：实现方只许从实体提取标量（本轮即 playUrl），不得保存实体指针——
     // 实体归视图层，视图 refresh() / 重建后提供者持有的实例即成陈旧副本
     virtual void setItems(const EntityList &entities) { Q_UNUSED(entities); }
@@ -44,8 +46,10 @@ class PlaylistProvider {
     virtual void saveSettings(QSettings &settings) const = 0;
 
     // 工厂：按 group 内 provider 键分派到对应实现的 load；
-    // static 或缺失键 → 静态提供者
-    static std::unique_ptr<PlaylistProvider> load(QSettings &settings);
+    // static 或缺失键 → 静态提供者。
+    // N28：直接产出 shared_ptr——提供者所有权模型即共享（视图容器 + 枚举线程），
+    // 调用点无需再经 unique_ptr 中间形态转换
+    static std::shared_ptr<PlaylistProvider> load(QSettings &settings);
 
     // ——排序规则（非虚，统一持有；取值域见 PlaylistWidget::SortKey，
     // 提供者仅作不透明值存储并自行持久化）——

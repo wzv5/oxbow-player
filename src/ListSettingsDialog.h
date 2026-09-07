@@ -26,7 +26,8 @@ class ListSettingsDialog : public QDialog {
     QStringList dirExtensions() const;
 
     // 确定后的提供者交付：nullopt＝未变更；否则为新构建实例
-    std::optional<std::unique_ptr<PlaylistProvider>> takeProvider();
+    // （N28：shared_ptr 交付，与视图容器的所有权模型一致）
+    std::optional<std::shared_ptr<PlaylistProvider>> takeProvider();
 
   protected:
     void accept() override;
@@ -44,7 +45,7 @@ class ListSettingsDialog : public QDialog {
     QLineEdit *m_extensionsEdit = nullptr;       // 空格分隔扩展名
     QStringList m_occupiedNames;                 // 已占用列表名（重名校验用）
     const PlaylistProvider *m_current = nullptr; // 入口提供者（null＝新建）
-    std::optional<std::unique_ptr<PlaylistProvider>> m_result;
+    std::optional<std::shared_ptr<PlaylistProvider>> m_result;
 
     void browseRoot();
 };

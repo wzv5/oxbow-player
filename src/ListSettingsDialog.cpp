@@ -129,7 +129,7 @@ QStringList ListSettingsDialog::dirExtensions() const {
     return parseExtensions(m_extensionsEdit->text());
 }
 
-std::optional<std::unique_ptr<PlaylistProvider>> ListSettingsDialog::takeProvider() {
+std::optional<std::shared_ptr<PlaylistProvider>> ListSettingsDialog::takeProvider() {
     return std::move(m_result);
 }
 
@@ -197,8 +197,8 @@ void ListSettingsDialog::accept() {
 
     // 构建新提供者；排序规则默认由调用方在接入点按类型施加
     if (providerType() == PlaylistProvider::Type::Dir)
-        m_result = std::make_unique<DirProvider>(dirRoot(), dirRecursive(), dirExtensions());
+        m_result = std::make_shared<DirProvider>(dirRoot(), dirRecursive(), dirExtensions());
     else
-        m_result = std::make_unique<StaticProvider>();
+        m_result = std::make_shared<StaticProvider>();
     QDialog::accept();
 }

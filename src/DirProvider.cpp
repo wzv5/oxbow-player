@@ -73,8 +73,8 @@ void DirProvider::saveSettings(QSettings &settings) const {
     settings.setValue(QStringLiteral("sortAscending"), sortAscending());
 }
 
-std::unique_ptr<DirProvider> DirProvider::load(QSettings &settings) {
-    auto provider = std::make_unique<DirProvider>(
+std::shared_ptr<DirProvider> DirProvider::load(QSettings &settings) {
+    auto provider = std::make_shared<DirProvider>(
         settings.value(QStringLiteral("dirRoot")).toString(),
         settings.value(QStringLiteral("dirRecursive")).toBool(),
         settings.value(QStringLiteral("dirExtensions")).toStringList());

@@ -38,8 +38,8 @@ void StaticProvider::saveSettings(QSettings &settings) const {
         settings.setValue(QString::number(j), m_urls[j]);
 }
 
-std::unique_ptr<StaticProvider> StaticProvider::load(QSettings &settings) {
-    auto provider = std::make_unique<StaticProvider>();
+std::shared_ptr<StaticProvider> StaticProvider::load(QSettings &settings) {
+    auto provider = std::make_shared<StaticProvider>();
     // B6：按显式计数字段逐条读取。childKeys() 顺序未定义，键多时呈字典序
     // （"0","1","10","100","11"...），百项级列表会乱序呈现，不可用
     const int n = settings.value(QStringLiteral("itemCount"), 0).toInt();

@@ -26,7 +26,7 @@ class DirProvider : public PlaylistProvider {
 
     void saveSettings(QSettings &settings) const override;
 
-    static std::unique_ptr<DirProvider> load(QSettings &settings);
+    static std::shared_ptr<DirProvider> load(QSettings &settings);
 
   private:
     // 递归收集辅助：dir 内命中过滤器的路径追加至 out；不可读子目录记入 warnings 后跳过

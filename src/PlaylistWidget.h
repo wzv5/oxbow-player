@@ -78,7 +78,8 @@ class PlaylistWidget : public QTabWidget {
     void noteLocalPush(const QStringList &snapshot);
 
     // ——N9 提供者——
-    // 表头菜单"新建播放列表"：弹列表设置对话框后建 tab（不可修改的源经枚举填充）
+    // 表头菜单"新建播放列表"：弹列表设置对话框后建 tab；内容一律经首次激活的
+    // 异步枚举填充（N28：所有源同路，静态源不再同步填充）
     void createNewList();
     // 表头菜单"列表设置…"：存量列表改名/换提供者。非法参数报错留在对话框；
     // 合法后静默清空重建；仅改名则直接生效不清空。播放中 tab 换提供者时停止，
@@ -165,8 +166,6 @@ class PlaylistWidget : public QTabWidget {
     // 不含任何类型知识。不变式 I1：list 与 provider 成对创建，listAt 非空时
     // providerAt 恒非空（断言守候）
     bool isModifiableTab(int tabIndex) const;
-    // 同步填充（可修改的源路径）：enumerate 解包 → fillListFromEntries
-    void fillFromProvider(QListWidget *list);
     // GUI 线程填充：清空（行 + 实体容器）→ 逐条 makeItem → 应用非元数据排序规则
     // （Duration/ReleaseDate 且本表有支持者时跳过，由预读后的 applySort 执行）
     void fillListFromEntries(QListWidget *list, PlaylistEntity::List &&entities);
@@ -260,12 +259,14 @@ class PlaylistWidget : public QTabWidget {
     // 以 list 指针为键：不受 tab 增删导致的索引漂移影响
     QHash<const QListWidget *, TabMemory> m_memory;
     // N9：每 tab 提供者（list 创建即配静态默认，加载/设置时替换）。
-    // unique_ptr 自动回收；unordered_map 容纳不可拷贝值类型（改 QHash + shared_ptr 归 N28）
-    std::unordered_map<const QListWidget *, std::unique_ptr<PlaylistProvider>> m_providerOf;
+    // N28：shared_ptr 入 QHash——枚举线程 lambda 持有副本，换源/删 tab 后
+    // 在途提供者的销毁被自动延后到线程结束，无 use-after-free
+    QHash<const QListWidget *, std::shared_ptr<PlaylistProvider>> m_providerOf;
 
     // ——N19 per-tab 加载状态——
     struct TabLoadState {
-        bool entriesLoaded = false;   // 提供者枚举已执行（可修改的 tab 创建即置位）
+        bool entriesLoaded = false;   // 提供者枚举已执行（N28：创建/换源/恢复即
+                                      // false，首次激活后置位；默认 tab 恒 true）
         bool mediaInfoLoaded = false; // 当前排序键所需 MediaInfo 已全表读取
         QString loadError;            // 非空 = 上次枚举失败（占位行显示中）
     };

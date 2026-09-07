@@ -18,7 +18,7 @@ class StaticProvider : public PlaylistProvider {
 
     void saveSettings(QSettings &settings) const override;
 
-    static std::unique_ptr<StaticProvider> load(QSettings &settings);
+    static std::shared_ptr<StaticProvider> load(QSettings &settings);
 
   private:
     QStringList m_urls; // 持久化形态的 playUrl 有序表

@@ -11,7 +11,7 @@ void PlaylistProvider::setSortRule(int key, bool ascending) {
     m_sortAscending = ascending;
 }
 
-std::unique_ptr<PlaylistProvider> PlaylistProvider::load(QSettings &settings) {
+std::shared_ptr<PlaylistProvider> PlaylistProvider::load(QSettings &settings) {
     const QString kind = settings.value(QStringLiteral("provider")).toString();
     if (kind == QLatin1String("dir"))
         return DirProvider::load(settings);
