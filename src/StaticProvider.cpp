@@ -28,9 +28,7 @@ std::expected<PlaylistProvider::EntityList, QString> StaticProvider::enumerate()
     return entities;
 }
 
-bool StaticProvider::supportsRemove() const { return true; }
-
-bool StaticProvider::supportsSort() const { return true; }
+bool StaticProvider::supportsModify() const { return true; }
 
 void StaticProvider::saveSettings(QSettings &settings) const {
     // 静态列表不持久化排序键（顺序即添加顺序）

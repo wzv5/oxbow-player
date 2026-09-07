@@ -78,9 +78,7 @@ class PlaylistWidget : public QTabWidget {
     void noteLocalPush(const QStringList &snapshot);
 
     // ——N9 提供者——
-    // 动态提供者 tab 判定（内容来自枚举；静态为手工条目）
-    bool isDynamicTab(int tabIndex) const;
-    // 表头菜单"新建播放列表"：弹列表设置对话框后建 tab（动态则枚举填充）
+    // 表头菜单"新建播放列表"：弹列表设置对话框后建 tab（不可修改的源经枚举填充）
     void createNewList();
     // 表头菜单"列表设置…"：存量列表改名/换提供者。非法参数报错留在对话框；
     // 合法后静默清空重建；仅改名则直接生效不清空。播放中 tab 换提供者时停止，
@@ -163,7 +161,11 @@ class PlaylistWidget : public QTabWidget {
 
     // ——N9 内部辅助——
     PlaylistProvider *providerAt(int tabIndex) const;
-    // 同步填充（静态 tab 路径）：enumerate 解包 → fillListFromEntries
+    // N27：可修改 tab 判定——supportsModify() 的薄封装，唯一用途是收敛判空，
+    // 不含任何类型知识。不变式 I1：list 与 provider 成对创建，listAt 非空时
+    // providerAt 恒非空（断言守候）
+    bool isModifiableTab(int tabIndex) const;
+    // 同步填充（可修改的源路径）：enumerate 解包 → fillListFromEntries
     void fillFromProvider(QListWidget *list);
     // GUI 线程填充：清空（行 + 实体容器）→ 逐条 makeItem → 应用非元数据排序规则
     // （Duration/ReleaseDate 且本表有支持者时跳过，由预读后的 applySort 执行）
@@ -263,7 +265,7 @@ class PlaylistWidget : public QTabWidget {
 
     // ——N19 per-tab 加载状态——
     struct TabLoadState {
-        bool entriesLoaded = false;   // 提供者枚举已执行（静态 tab 创建即置位）
+        bool entriesLoaded = false;   // 提供者枚举已执行（可修改的 tab 创建即置位）
         bool mediaInfoLoaded = false; // 当前排序键所需 MediaInfo 已全表读取
         QString loadError;            // 非空 = 上次枚举失败（占位行显示中）
     };

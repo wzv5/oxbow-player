@@ -12,6 +12,8 @@ class QSettings;
 // 序列化（存什么、怎么存）完全由具体提供者决定——含各自的排序键读写
 class PlaylistProvider {
   public:
+    // N27：仅用于列表设置对话框的回显 / 构造与 INI 序列化，不再参与任何行为分支
+    // （行为一律由 supportsModify / supportsSort 能力位决定）
     enum class Type { Static, Dir };
 
     using EntityList = PlaylistEntity::List;
@@ -24,16 +26,19 @@ class PlaylistProvider {
     // 枚举条目（同步）：内容唯一来源。返回 expected——成功带实体有序表，
     // 失败带错误文案（空目录成功返回空表，与失败区分）
     virtual std::expected<EntityList, QString> enumerate() const = 0;
-    // 视图 → 提供者内容回传（只读引用）。基类默认实现忽略。
-    // 本篇 savePlaylists 仍按 Type::Static 分支回传；
-    // 回传条件收口（supportsRemove() || supportsSort() → supportsModify()）归 N27。
+    // 视图 → 提供者内容回传（只读引用）。基类默认实现忽略——不可修改的提供者
+    // 不参与回传。回传是内容落盘的唯一入口：savePlaylists 对可修改提供者逐个回传
+    // 后随即序列化，回传与落盘不得拆开（N27）
     // 不变式：实现方只许从实体提取标量（本轮即 playUrl），不得保存实体指针——
     // 实体归视图层，视图 refresh() / 重建后提供者持有的实例即成陈旧副本
     virtual void setItems(const EntityList &entities) { Q_UNUSED(entities); }
-    // 能力位：动态类内容以枚举为准，移除类操作整组禁用（失效清理走刷新）
-    virtual bool supportsRemove() const = 0;
-    // 能力位：m3u 类列表不支持排序（预留）
-    virtual bool supportsSort() const = 0;
+    // 能力位：是否支持修改（添加与删除）。不可修改的提供者内容以枚举为准，
+    // 视图侧整组禁用增删（失效清理走刷新）
+    virtual bool supportsModify() const = 0;
+    // 能力位：是否支持排序。默认随 supportsModify——允许修改即允许排序，反之不成立
+    // （目录表可排序而不可增删，须显式覆写 true；可修改而不可排序的 m3u 类
+    // 预留实现须显式覆写 false）
+    virtual bool supportsSort() const { return supportsModify(); }
 
     // ——INI 序列化：完全委托实现——写 provider 类型键、自身参数与排序键
     virtual void saveSettings(QSettings &settings) const = 0;

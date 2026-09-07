@@ -56,8 +56,9 @@ std::expected<PlaylistProvider::EntityList, QString> DirProvider::enumerate() co
     return entities;
 }
 
-bool DirProvider::supportsRemove() const { return false; }
+bool DirProvider::supportsModify() const { return false; }
 
+// 目录表不可增删，但可排序（规则随参数一并持久化）
 bool DirProvider::supportsSort() const { return true; }
 
 bool DirProvider::isValid() const { return !m_root.isEmpty() && QDir(m_root).exists(); }

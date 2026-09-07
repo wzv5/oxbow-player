@@ -3,7 +3,6 @@
 #include "PlaylistWidget.h"
 
 #include "Constants.h"
-#include "DirProvider.h"
 #include "ListSettingsDialog.h"
 #include "LoadingOverlay.h"
 #include "MpvController.h"
@@ -318,9 +317,9 @@ void PlaylistWidget::addFiles(const QStringList &files) {
     if (!list || files.isEmpty() || m_busy)
         return; // N19：忙时不接受手工增补（预读快照防污染）
 
-    // N9：动态 tab 内容来自枚举，忽略手工添加（拖放与菜单同守卫）。
+    // N9/N27：不可修改的 tab 内容来自枚举，忽略手工添加（拖放与菜单同守卫）。
     // 静态 tab 增删即回无序态：复位排序规则（保留方向）
-    if (isDynamicTab(currentIndex()))
+    if (!isModifiableTab(currentIndex()))
         return;
     if (auto *p = providerAt(currentIndex()))
         p->setSortRule(int(SortKey::None), p->sortAscending());
@@ -443,14 +442,17 @@ void PlaylistWidget::loadPlaylists() {
         // N9：提供者反序列化完全自治（静态回填条目、目录读参数与排序键），
         // 内容统一经 enumerate 取得
         std::unique_ptr<PlaylistProvider> provider = PlaylistProvider::load(settings);
+        // N27：能力位在移交容器前就地读取（此后只经 providerAt 查表）
+        const bool modifiable = provider && provider->supportsModify();
         settings.endGroup();
         addTab(list, name);
         // insert_or_assign：createList 已预置静态默认，此处必须覆盖
         m_providerOf.insert_or_assign(list, std::move(provider));
         if (mem.lastPos >= 0 || !mem.lastPath.isEmpty())
             m_memory[list] = mem;
-        if (m_providerOf[list]->type() == PlaylistProvider::Type::Dir) {
-            m_loadState[list].entriesLoaded = false; // N19：动态 tab 延迟到首次激活
+        // N27：不可修改的提供者内容以枚举为准，延迟到首次激活；其余同步填充
+        if (!modifiable) {
+            m_loadState[list].entriesLoaded = false; // N19：延迟到首次激活
         } else {
             fillFromProvider(list); // 静态取所持条目
             m_loadState[list].entriesLoaded = true;
@@ -479,9 +481,10 @@ void PlaylistWidget::savePlaylists() {
         auto *provider = providerAt(i);
         // N9：静态列表内容先回写提供者（内容跟提供者走），序列化统一走 saveSettings。
         // N26：回传实体集合（StaticProvider 从实体提取 playUrl 覆盖最小表示）；
-        // 本篇仍按类型分支下探，不依赖 RTTI；回传条件收口归 N27
-        if (provider->type() == PlaylistProvider::Type::Static)
-            static_cast<StaticProvider *>(provider)->setItems(entitiesOf(list));
+        // N27：回传条件收口为能力位，走基类虚调用——不可修改的提供者（目录）走空实现，
+        // 落盘内容恒为参数与排序键。回传与落盘是同一动作的两半，不得拆开
+        if (provider && provider->supportsModify())
+            provider->setItems(entitiesOf(list));
         const QString section = QStringLiteral("Playlist_%1").arg(savedIdx);
         settings.beginGroup(section);
         settings.setValue(QStringLiteral("name"), tabText(i));
@@ -576,9 +579,10 @@ int PlaylistWidget::indexOfName(const QString &name) const {
 void PlaylistWidget::onTabChanged(int index) {
     if (index < 0)
         return;
-    // N19：未加载的动态 tab 走首次激活链（选中/滚动在 finishLoad 收尾）
-    if (QListWidget *fresh = listAt(index);
-        fresh && !m_loadState[fresh].entriesLoaded && isDynamicTab(index)) {
+    // N19：未加载的 tab 走首次激活链（选中/滚动在 finishLoad 收尾）；
+    // N27：能否异步的判定交 N28，此处只看是否已枚举。依赖不变式——可修改的 tab
+    // 在新建 / 换源 / 会话恢复时同步填充并置位 entriesLoaded，不会落到此分支
+    if (QListWidget *fresh = listAt(index); fresh && !m_loadState[fresh].entriesLoaded) {
         startLoadAsync(fresh);
         return;
     }
@@ -740,12 +744,13 @@ PlaylistProvider *PlaylistWidget::providerAt(int tabIndex) const {
     return it == m_providerOf.end() ? nullptr : it->second.get();
 }
 
-bool PlaylistWidget::isDynamicTab(int tabIndex) const {
-    auto *p = providerAt(tabIndex);
-    return p && p->type() == PlaylistProvider::Type::Dir;
+bool PlaylistWidget::isModifiableTab(int tabIndex) const {
+    const auto *p = providerAt(tabIndex);
+    Q_ASSERT(listAt(tabIndex) == nullptr || p != nullptr); // I1：tab 与 provider 一一对应
+    return p != nullptr && p->supportsModify();
 }
 
-// 同步填充（静态 tab 路径）：enumerate 解包后走统一填充
+// 同步填充（可修改的源路径）：enumerate 解包后走统一填充
 void PlaylistWidget::fillFromProvider(QListWidget *list) {
     if (!list)
         return;
@@ -780,7 +785,7 @@ void PlaylistWidget::fillListFromEntries(QListWidget *list, PlaylistEntity::List
     sortListItems(list, key, it->second->sortAscending());
 }
 
-// N19：动态 tab 首次激活。N26：线程经裸指针调用 provider->enumerate()
+// N19：枚举类 tab 首次激活。N26：线程经裸指针调用 provider->enumerate()
 // （实体构造与 fileMeta 预热都在工作线程）。
 // 不变式：加载在途期间 GUI 线程不修改该提供者——目录源成员构造后只读，
 // 增删/换源/删 tab/保存均被 m_busy 拦截；N28 以 shared_ptr 形式化保证生命周期。
@@ -790,8 +795,8 @@ void PlaylistWidget::startLoadAsync(QListWidget *list) {
     if (!list)
         return;
     const auto it = m_providerOf.find(list);
-    if (it == m_providerOf.end() || it->second->type() != PlaylistProvider::Type::Dir)
-        return; // 防御：非目录源不走线程（调用方均已判定，此为兜底）
+    if (it == m_providerOf.end() || it->second->supportsModify())
+        return; // 防御：可修改的提供者同步填充即够，不走线程（调用方均已判定，此为兜底）
     PlaylistProvider *provider = it->second.get();
     clearPlaceholder(list); // 失败重试先清占位
     PlaylistWidget *rawSelf = this;
@@ -1290,10 +1295,10 @@ void PlaylistWidget::refreshCurrentTab() {
     QListWidget *list = listAt(currentIndex());
     if (!list || m_busy)
         return; // N19：忙时菜单已禁用，此为兜底
-    // N19：动态 tab 刷新＝异步重枚举；播放中 tab 的停止/恢复递延到收尾
+    // N19：不可修改的 tab 刷新＝异步重枚举；播放中 tab 的停止/恢复递延到收尾
     // （枚举与预读期间不断播，取消路径零副作用）。
     // N20：刷新只驱逐本表 key（静态/动态同规则），他表缓存不受影响
-    if (isDynamicTab(currentIndex())) {
+    if (!isModifiableTab(currentIndex())) {
         evictListKeys(list); // N20：条目只驱逐本表；flag 重置所有表
         TabLoadState &st = m_loadState[list];
         st.entriesLoaded = false;
@@ -1779,7 +1784,7 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
     QListWidget *list = listAt(currentIndex());
     const int tab = currentIndex();
     const bool isPlayingTab = (tab == m_playingTab);
-    const bool dynamic = isDynamicTab(tab);
+    const bool modifiable = isModifiableTab(tab);
 
     // 右键落点命中检测：条目级操作以命中的行为作用对象。
     // 注意 childAt 命中的是 QListWidget 的 viewport（孙级），需回溯一级
@@ -1882,12 +1887,12 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
     const int itemCount = hasList ? list->count() : 0;
     // N19：枚举失败占位态仅启用刷新与排序（排序只改持久化规则，不执行）
     const bool loadFailed = hasList && !m_loadState.value(list).loadError.isEmpty();
-    addAction->setEnabled(!dynamic && !loadFailed); // 动态 tab 内容来自枚举，禁手工添加
-    auto *menuProvider = providerAt(tab);           // 排序能力遵从提供者（单项目录亦可持久化规则）
+    addAction->setEnabled(modifiable && !loadFailed); // 不可修改的 tab 内容来自枚举，禁手工添加
+    auto *menuProvider = providerAt(tab); // 排序能力遵从提供者（单项目录亦可持久化规则）
     sortMenu->setEnabled(hasList && menuProvider && menuProvider->supportsSort());
-    refreshAction->setEnabled(dynamic || itemCount > 0); // 动态刷新不受空内容限制
-    // N9：动态 tab 移除子菜单整组禁用（失效清理走刷新）
-    removeMenu->setEnabled(hasList && !dynamic && !loadFailed);
+    refreshAction->setEnabled(!modifiable || itemCount > 0); // 枚举类刷新不受空内容限制
+    // N9：不可修改的 tab 移除子菜单整组禁用（失效清理走刷新）
+    removeMenu->setEnabled(hasList && modifiable && !loadFailed);
     removeSelAction->setEnabled(hasList && !list->selectedItems().isEmpty());
     clearAction->setEnabled(itemCount > 0);
 
@@ -1939,7 +1944,7 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
         copyPathToClipboard(targetUrl);
     } else if (chosen == propsAction) {
         showPropertiesDialog(*targetEntity);
-    } else if (chosen == removeSelAction && list && !dynamic) {
+    } else if (chosen == removeSelAction && list && modifiable) {
         QList<int> rows;
         for (QListWidgetItem *sel : list->selectedItems())
             rows.append(list->row(sel));
@@ -1951,7 +1956,7 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
         } else {
             executeRemoval(rows);
         }
-    } else if (chosen == clearAction && list && !dynamic) {
+    } else if (chosen == clearAction && list && modifiable) {
         QList<int> all;
         for (int i = 0; i < list->count(); ++i)
             all.append(i);
@@ -1959,9 +1964,9 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
             emit stopRequested(); // N25：先停（stop 不带 keep-playlist 即清空 mpv 列表），
                                   // 空列表推送被回刷忽略；随后 executeRemoval 本地清空
         executeRemoval(all);
-    } else if (chosen == removeInvalidAction && !dynamic) {
+    } else if (chosen == removeInvalidAction && modifiable) {
         removeInvalidItems();
-    } else if (chosen == removeDupAction && !dynamic) {
+    } else if (chosen == removeDupAction && modifiable) {
         removeDuplicateItems();
     } else if (chosen == ascAction || chosen == descAction) {
         // 切向即时重排：有生效规则立即按新方向执行；无规则仅记录方向；
@@ -2018,7 +2023,7 @@ void PlaylistWidget::removeTabAt(int tabIndex) {
 }
 
 // N19：忙时表头菜单已禁用，此为兜底
-// N9：新建播放列表——弹列表设置对话框，确定后建 tab；动态提供者经激活链异步填充
+// N9：新建播放列表——弹列表设置对话框，确定后建 tab；不可修改的提供者经激活链异步填充
 void PlaylistWidget::createNewList() {
     if (m_busy)
         return;
@@ -2042,17 +2047,17 @@ void PlaylistWidget::createNewList() {
     const QString name = dlg.listName();
 
     auto *list = createList();
-    // 新建必产出提供者；排序默认按类型施加（目录默认按修改时间）
-    m_providerOf.insert_or_assign(list, std::move(dlg.takeProvider().value()));
-    auto *p = m_providerOf[list].get();
-    const bool dynamic = p->type() == PlaylistProvider::Type::Dir;
-    p->setSortRule(dynamic ? int(SortKey::Modified) : int(SortKey::None), true);
+    // 新建必产出提供者；排序默认按能力位施加（不可修改的源默认按修改时间）
+    const auto ins = m_providerOf.insert_or_assign(list, std::move(dlg.takeProvider().value()));
+    auto *p = ins.first->second.get(); // 不经 operator[]：键缺失时会插入空 unique_ptr
+    const bool modifiable = p->supportsModify();
+    p->setSortRule(modifiable ? int(SortKey::None) : int(SortKey::Modified), true);
     addTab(list, name);
-    if (!dynamic) {
+    if (modifiable) {
         fillFromProvider(list); // 静态同步填充（恒成功）
         m_loadState[list].entriesLoaded = true;
     }
-    // N19：动态 tab 经切入首次激活链异步加载（修正旧 `isDynamicTab(count()-1)` 取错 tab）
+    // N19：枚举类 tab 经切入首次激活链异步加载（修正旧 `isDynamicTab(count()-1)` 取错 tab）
     setCurrentIndex(count() - 1);
     savePlaylists();
 }
@@ -2091,12 +2096,13 @@ void PlaylistWidget::openListSettings(int tabIndex) {
         m_playingTab = 0;     // N25：同步目标归位默认 tab（空列表推送由回刷忽略，无需悬空）
     }
 
-    m_providerOf[list] = std::move(*result);
+    // N27：同 insert_or_assign——不经 operator[]，键缺失时不静默插入空 unique_ptr
+    m_providerOf.insert_or_assign(list, std::move(*result));
 
     // 原记忆随源失效一并清除；排序规则重置为新提供者类型默认
     m_memory.remove(list);
     if (auto *np = providerAt(tabIndex))
-        np->setSortRule(isDynamicTab(tabIndex) ? int(SortKey::Modified) : int(SortKey::None), true);
+        np->setSortRule(np->supportsModify() ? int(SortKey::None) : int(SortKey::Modified), true);
 
     TabLoadState &st = m_loadState[list];
     st.entriesLoaded = false;
@@ -2104,8 +2110,8 @@ void PlaylistWidget::openListSettings(int tabIndex) {
     st.loadError.clear();
     list->clear();
     m_entities[list].clear(); // N26：实体所有权同步回收（行已清，防悬空 EntityRole）
-    if (isDynamicTab(tabIndex)) {
-        // N19：目录源走异步加载，完成后选中首项（不播放）
+    if (!isModifiableTab(tabIndex)) {
+        // N19：不可修改的源走异步加载，完成后选中首项（不播放）
         m_pendingLoad = PendingLoad{};
         m_pendingLoad.list = list;
         m_pendingLoad.selectFirst = true;
