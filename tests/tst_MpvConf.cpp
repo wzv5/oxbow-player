@@ -254,5 +254,8 @@ void TestMpvConf::loopModeDualKeyWrite() {
     QCOMPARE(c3->getGlobal("loop-playlist"), QStringLiteral("inf"));
 }
 
-QTEST_GUILESS_MAIN(TestMpvConf)
+// 多套件共用一个可执行文件（N26 起测试文件多于一个）：
+// main 集中在 tests/main.cpp，各文件只提供套件工厂
+QObject *createTestMpvConf() { return new TestMpvConf; }
+
 #include "tst_MpvConf.moc"

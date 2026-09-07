@@ -3,8 +3,7 @@
 #include "pch.h"
 
 #include "LoadingOverlay.h"
-#include "MediaInfoHelper.h"
-#include "PlaylistItem.h"
+#include "PlaylistEntity.h"
 #include "PlaylistProvider.h"
 
 class MpvController;
@@ -14,17 +13,17 @@ class MpvController;
 // 只有一个 tab 是"正在播放列表"（与 mpv 播放列表同步），初始为第一个 tab；
 // 双击任意 tab 中的条目会把该 tab 整个载入 mpv 并播放对应条目，同时该 tab 成为新的同步目标。
 //
-// N4 起条目只携带路径字符串；元数据存于全局仓 m_meta（路径 → PlaylistItem），
-// 由委托按路径查仓绘制。排序与清理对播放中 tab 统一走四步式：
+// N26 起条目为播放项实体：行 EntityRole 存实体指针（占位行为空），
+// 实体集合所有权仓 m_entities 以 list 指针为键（容器序恒等于行序）；
+// 文件级 / 媒体元数据全部归属实体（惰性求值 + 实体内缓存）。
+// 视图仅持有全局时长仓 m_duration（mpv 推送，键为规范化路径）。
+// 排序与清理对播放中 tab 统一走四步式：
 // 停止 → 本地变更 → playRequested 整表推送并从原文件恢复。
-//
-// N18：原 mpv 元数据回填（media-metadata / file-format / tracks / chapters）已从
-// 本类移除，对话框读源改走 MediaInfoHelper 缓存；duration 是唯一保留的 mpv 写入。
 class PlaylistWidget : public QTabWidget {
     Q_OBJECT
   public:
     // 条目数据角色约定
-    static constexpr int PathRole = Qt::UserRole;            // 文件路径字符串
+    static constexpr int EntityRole = Qt::UserRole;          // 实体指针（quintptr，占位行为空）
     static constexpr int PlayingRole = Qt::UserRole + 1;     // 正在播放标记（bool）
     static constexpr int PlaceholderRole = Qt::UserRole + 2; // N19 枚举失败占位行标记（bool）
 
@@ -151,7 +150,8 @@ class PlaylistWidget : public QTabWidget {
     };
 
     // 单个 tab 的播放记忆（默认 tab 仅进程内有效，持久化时跳过索引 0）。
-    // N9：lastPath 为记忆条目规范化路径，恢复时序号校验失败按其寻位
+    // N9/N26：lastPath 为记忆条目 key（normalizePathForMatch 归一形态，引用条目身份
+    // 而非某次字符串形态；旧 INI 读取时归一桥接），恢复时序号校验失败按其寻位
     struct TabMemory {
         int lastPos = -1;
         double lastTimePos = -1.0;
@@ -163,28 +163,32 @@ class PlaylistWidget : public QTabWidget {
 
     // ——N9 内部辅助——
     PlaylistProvider *providerAt(int tabIndex) const;
-    // 同步填充（静态 tab 路径）：enumerate → 解包 → fillListFromEntries
+    // 同步填充（静态 tab 路径）：enumerate 解包 → fillListFromEntries
     void fillFromProvider(QListWidget *list);
-    // GUI 线程填充：清空 → 逐条 materialize + makeItem → 应用非元数据排序规则
-    // （Duration/ReleaseDate 且 MediaInfo 可用时跳过，由预读后的 applySort 执行）
-    void fillListFromEntries(QListWidget *list, const QStringList &entries);
+    // GUI 线程填充：清空（行 + 实体容器）→ 逐条 makeItem → 应用非元数据排序规则
+    // （Duration/ReleaseDate 且本表有支持者时跳过，由预读后的 applySort 执行）
+    void fillListFromEntries(QListWidget *list, PlaylistEntity::List &&entities);
+    // 统一条目构造：显示名 / 图标 / tooltip 取自实体；EntityRole 存裸指针，
+    // 实体所有权随行同步 push 进所有权容器
+    QListWidgetItem *makeItem(QListWidget *list, PlaylistEntity::Ptr entity);
+    // 元数据回填后触发所有列表行重绘
+    void repaintAllLists();
+
     // ——N19 异步加载与忙时——
     void activateTab(int index); // 原 onTabChanged 体：选中记忆行/播放行滚动
     void startLoadAsync(QListWidget *list);
-    void finishLoad(QListWidget *list, const std::expected<QStringList, QString> &r);
+    void finishLoad(QListWidget *list, std::expected<PlaylistEntity::List, QString> r);
     void setBusy(bool on);
     void flushPendingTab();
     void setListsEnabled(bool on);
     void armOverlay(LoadingOverlay::Mode mode, int total);
     // ——N19 元数据预读——
     bool runMetaScan(QPointer<QListWidget> list, int total);
-    QStringList allPathsOf(QListWidget *list) const;
     void applySort(QListWidget *list, SortKey key, bool ascending, bool writeRule);
     // 预读公共骨架（不碰 m_busy，调用方负责 setBusy 包裹）：遮罩 + 循环 + 收尾重绘；
     // 成功置位 mediaInfoLoaded 并返回 true，取消/销毁返回 false
     bool runMetaPrescan(QListWidget *list);
-    // N20：按表精确驱逐——遍历该表非占位行，按仓键逐个删 m_meta/m_mediaInfo；flag 重置所有表
-    // （仓 duration 回填耦合共享条目，他表 flag 为 true 会导致时长列空而不重读）
+    // N20：按表精确驱逐——遍历该表非占位行，按实体 key 逐个删 m_duration；flag 重置所有表
     void evictListKeys(QListWidget *list);
     // 已加载 tab 切入重读判定：内容已载、无占位、标志失效、排序依赖元数据
     bool needsMetaRescan(int tabIndex) const;
@@ -197,18 +201,27 @@ class PlaylistWidget : public QTabWidget {
     // 条目重排核心（无四步式副作用）：排序/加载填充共用
     void sortListItems(QListWidget *list, SortKey key, bool ascending);
 
-    // 全局元数据仓：缺失键补建并计算文件系统字段（图标/大小/创建/修改时间）；
-    // path 约定为入口处已加工的显示路径，原样存入 item.path 供 UI/回传 mpv/持久化
-    PlaylistItem &materialize(const QString &path);
-    // 为 list 的全部条目补齐元数据（切 tab / 重建后调用）
-    void materializeList(QListWidget *list);
-    // 统一条目构造：显示文件名、图标取自仓、tooltip 完整路径
-    QListWidgetItem *makeItem(QListWidget *list, const QString &path);
-    // 元数据回填后触发所有列表行重绘
-    void repaintAllLists();
+    // ——N26 实体所有权——
+    // 实体集合访问：返回引用（QHash 值整表拷贝 O(n)，禁按值取）；
+    // 返回引用的生命周期不得跨越可能插入新表项的操作（QHash 重哈希搬移元素）
+    PlaylistEntity::List &entitiesOf(QListWidget *list);
+    // 行实体读取：占位行 / 无实体行返回 nullptr
+    static const PlaylistEntity *entityFromItem(const QListWidgetItem *item);
+    // 行实体的共享计数副本：跨嵌套事件循环（右键菜单 exec）持有，
+    // 防菜单期间回刷收编重建表致悬空；行无实体返回 nullptr
+    PlaylistEntity::Ptr entityPtrAt(QListWidget *list, int row) const;
+    // 按行序批量删除实体（rows 必须降序；须在删行前调用）。
+    // 单遍前缀计数定位各行容器下标后降序批量 erase，避免逐行 O(n·k) 重扫
+    void eraseEntitiesAt(QListWidget *list, const QList<int> &rows);
+    // N26：静态刷新——对本表实体逐个 refresh()（清缓存）后重绘；重排由调用方按规则执行
+    void refreshEntities(QListWidget *list);
+    // ——N26 元数据能力谓词（一对，同形）——遍历本表实体，任一支持即真；
+    // 空表 / 未加载表为假
+    bool anyEntitySupportsMediaMeta(const QListWidget *list) const;
+    bool anyEntitySupportsFileMeta(const QListWidget *list) const;
 
     // ——结构变更公共骨架——
-    // 三步法之第 1 步：抄录记忆行对应的路径；第 3 步：在新序列中找回并写回
+    // 三步法之第 1 步：抄录记忆行对应的 playUrl；第 3 步：在新序列中找回并写回
     QString captureMemoryPath(QListWidget *list) const;
     void restoreMemoryPath(QListWidget *list, const QString &captured, bool hadMemory);
 
@@ -227,21 +240,17 @@ class PlaylistWidget : public QTabWidget {
 
     // 右键菜单动作实现（第七节）
     void refreshCurrentTab();
-    void showPropertiesDialog(const QString &path);
+    void showPropertiesDialog(const PlaylistEntity &entity);
     void copyPathToClipboard(const QString &path);
 
     // 正在播放条目所在行（PlayingRole 命中处），无则 -1
     int playingRowOf(const QListWidget *list) const;
 
-    QHash<QString, PlaylistItem> m_meta;     // 全局元数据仓：路径 → 条目
-    QFileIconProvider m_iconProvider;        // 值语义：具体类无多态需求
+    // N26：实体所有权仓（序 == 行序）与全局时长仓（mpv 推送，键为规范化路径）
+    QHash<const QListWidget *, PlaylistEntity::List> m_entities;
+    QHash<QString, std::optional<double>> m_duration;
     QListWidget *m_menuTargetList = nullptr; // 右键命中的列表与行（空白处为 nullptr）
     int m_menuTargetRow = -1;
-    // N18：MediaInfo 缓存（键为 normalizePathForMatch 后的规范化路径），
-    // 仅服务按 Duration/ReleaseDate 排序与属性对话框惰性填充
-    QHash<QString, MediaInfoHelper::Data> m_mediaInfo;
-    // N18：MediaInfo 缓存惰性查询；dll 不可用返回 nullptr；命中即返回，未命中同步解析一次入缓存
-    const MediaInfoHelper::Data *mediaInfoOf(const QString &path);
 
     int m_playingTab = 0; // N25：恒 >= 0（默认 0）；同步目标失效时归位 0，不再悬空
     QString m_configFile;
@@ -249,7 +258,7 @@ class PlaylistWidget : public QTabWidget {
     // 以 list 指针为键：不受 tab 增删导致的索引漂移影响
     QHash<const QListWidget *, TabMemory> m_memory;
     // N9：每 tab 提供者（list 创建即配静态默认，加载/设置时替换）。
-    // unique_ptr 自动回收；unordered_map 容纳不可拷贝值类型
+    // unique_ptr 自动回收；unordered_map 容纳不可拷贝值类型（改 QHash + shared_ptr 归 N28）
     std::unordered_map<const QListWidget *, std::unique_ptr<PlaylistProvider>> m_providerOf;
 
     // ——N19 per-tab 加载状态——
@@ -277,7 +286,6 @@ class PlaylistWidget : public QTabWidget {
     // ——N19 预读状态——
     bool m_metaCancel = false; // 取消按钮已点，下一个文件边界生效
     int m_scanDone = 0;
-    bool m_scanSuppressRepaint = false; // 预读期间抑制 mediaInfoOf 逐条重绘
     // ——N19 收尾挂起（refresh 播放恢复 / 设置页首选项 / 保存）——
     struct PendingLoad {
         QPointer<QListWidget> list;

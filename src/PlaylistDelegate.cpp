@@ -2,7 +2,7 @@
 
 #include "PlaylistDelegate.h"
 
-#include "PlaylistItem.h"
+#include "PlaylistEntity.h"
 #include "Util.h"
 
 namespace {
@@ -26,12 +26,15 @@ QString formatDuration(double seconds) {
 }
 } // namespace
 
-PlaylistDelegate::PlaylistDelegate(const QHash<QString, PlaylistItem> *meta, QObject *parent)
-    : QStyledItemDelegate(parent), m_meta(meta) {}
+PlaylistDelegate::PlaylistDelegate(const QHash<QString, std::optional<double>> *duration,
+                                   QObject *parent)
+    : QStyledItemDelegate(parent), m_duration(duration) {}
 
 void PlaylistDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
                              const QModelIndex &index) const {
-    const QString path = index.data(Qt::UserRole).toString();
+    // 占位行无实体（EntityRole 为空）；实体指针经 quintptr 往返
+    const auto *entity =
+        reinterpret_cast<const PlaylistEntity *>(index.data(Qt::UserRole).value<quintptr>());
     const bool playing = index.data(Qt::UserRole + 1).toBool();
 
     painter->save();
@@ -70,19 +73,31 @@ void PlaylistDelegate::paint(QPainter *painter, const QStyleOptionViewItem &opti
                       Qt::AlignVCenter | Qt::AlignRight, prefix);
     x += prefixW + kItemPadding;
 
-    // 时长区：已求值时占据右侧固定宽，未求值时不存在（文件名占满整行）
+    // 时长区：已求值时占据右侧固定宽，未求值时不存在（文件名占满整行）。
+    // 两级取值：①mpv 推送时长仓（按实体 key 查）；②实体已缓存的媒体元数据
+    // （兜底，绝不触发求值——绘制路径禁止同步解析）
     const int rightEdge = option.rect.right() - kMarginH;
     int durationW = 0;
-    if (m_meta) {
-        const auto it = m_meta->constFind(Util::normalizePathForMatch(path));
-        if (it != m_meta->constEnd() && it->duration.has_value()) {
-            const QString dur = formatDuration(it->duration.value());
-            // 矩形右对齐绘制：值列与右缘保留一个键距的呼吸空隙
-            const int adv = fm.horizontalAdvance(dur);
-            durationW = adv + kItemPadding;
-            painter->drawText(
-                QRect(rightEdge - durationW, option.rect.top(), adv, option.rect.height()),
-                Qt::AlignVCenter | Qt::AlignRight, dur);
+    if (entity) {
+        std::optional<double> seconds;
+        if (m_duration) {
+            const auto it = m_duration->constFind(entity->key());
+            if (it != m_duration->constEnd())
+                seconds = it.value();
+        }
+        if (!seconds.has_value())
+            if (const auto *mi = entity->cachedMediaMeta())
+                seconds = mi->duration;
+        if (seconds.has_value()) {
+            const QString dur = formatDuration(*seconds);
+            if (!dur.isEmpty()) {
+                // 矩形右对齐绘制：值列与右缘保留一个键距的呼吸空隙
+                const int adv = fm.horizontalAdvance(dur);
+                durationW = adv + kItemPadding;
+                painter->drawText(
+                    QRect(rightEdge - durationW, option.rect.top(), adv, option.rect.height()),
+                    Qt::AlignVCenter | Qt::AlignRight, dur);
+            }
         }
     }
 

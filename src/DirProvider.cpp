@@ -2,7 +2,6 @@
 
 #include "DirProvider.h"
 
-#include "PlaylistWidget.h"
 #include "Util.h"
 
 namespace {
@@ -28,27 +27,33 @@ QString DirProvider::describe() const {
     return QObject::tr("Local directory: %1%2").arg(m_root, suffix);
 }
 
-std::expected<QStringList, QString> DirProvider::enumerate() const {
-    return enumerateDir(m_root, m_recursive, m_extensions);
-}
-
-std::expected<QStringList, QString>
-DirProvider::enumerateDir(const QString &root, bool recursive, const QStringList &extensions) {
-    if (root.isEmpty())
+// 枚举并造实体：成功带实体有序表（预热 fileMeta——异步路径在工作线程、
+// 同步填充在 GUI 线程执行同一惰性入口），失败带错误文案；
+// root 不存在/不可读为全失败，递归中个别子目录不可读为部分成功 + warning
+// （error 非空即视为有错，由调用方走失败占位处理）
+std::expected<PlaylistProvider::EntityList, QString> DirProvider::enumerate() const {
+    if (m_root.isEmpty())
         return std::unexpected(QObject::tr("No directory bound."));
-    const QDir rootDir(root);
+    const QDir rootDir(m_root);
     if (!rootDir.exists())
-        return std::unexpected(QObject::tr("Directory does not exist: %1").arg(root));
+        return std::unexpected(QObject::tr("Directory does not exist: %1").arg(m_root));
     if (!rootDir.isReadable())
-        return std::unexpected(QObject::tr("Directory is not readable: %1").arg(root));
+        return std::unexpected(QObject::tr("Directory is not readable: %1").arg(m_root));
     // 扩展名空表＝不过滤；过滤器一次构造逐层复用
     QStringList out;
     QStringList warnings;
-    collect(rootDir, extensions.isEmpty() ? QStringList() : toNameFilters(extensions), recursive,
-            out, warnings);
+    collect(rootDir, m_extensions.isEmpty() ? QStringList() : toNameFilters(m_extensions),
+            m_recursive, out, warnings);
     if (!warnings.isEmpty())
         return std::unexpected(warnings.join(QStringLiteral("\n")));
-    return out;
+    EntityList entities;
+    entities.reserve(out.size());
+    for (const QString &path : out) {
+        auto entity = PlaylistEntity::fromPlayUrl(path);
+        entity->fileMeta(); // 预热（QFileInfo 一次 stat，线程安全）
+        entities.push_back(std::move(entity));
+    }
+    return entities;
 }
 
 bool DirProvider::supportsRemove() const { return false; }
@@ -78,7 +83,7 @@ std::unique_ptr<DirProvider> DirProvider::load(QSettings &settings) {
 }
 
 void DirProvider::collect(const QDir &dir, const QStringList &filters, bool recursive,
-                            QStringList &out, QStringList &warnings) {
+                          QStringList &out, QStringList &warnings) {
     // 文件层：命中扩展名的条目规范化后追加
     const QFileInfoList files =
         dir.entryInfoList(filters, QDir::Files | QDir::Readable, QDir::NoSort);

@@ -1,0 +1,27 @@
+#pragma once
+
+#include "pch.h"
+
+#include "PlaylistEntity.h"
+
+// 本地文件实体（N26）：元数据全部就地求值——QFileInfo 一次 stat 取文件级字段，
+// MediaInfoHelper 同步解析媒体属性，QFileIconProvider 取系统图标。
+// 把 MediaInfo 依赖关在实体内部（视图层不再认识该 dll）：
+// supportsMediaMeta() 返回 dll 可用性，行为与重构前全局判定完全一致。
+class LocalFileEntity : public PlaylistEntity {
+  public:
+    explicit LocalFileEntity(QString playUrl) : PlaylistEntity(std::move(playUrl)) {}
+
+    Ptr clone() const override { return std::make_shared<LocalFileEntity>(*this); }
+
+    bool isLocalFile() const override { return true; }
+    bool exists() const override { return QFileInfo::exists(playUrl()); }
+    // 文件不存在属"值未知"（求值结果三字段全空），非能力缺失
+    bool supportsFileMeta() const override { return true; }
+    bool supportsMediaMeta() const override { return MediaInfoHelper::available(); }
+
+  protected:
+    FileMeta computeFileMeta() const override;
+    MediaMeta computeMediaMeta() const override;
+    QIcon computeIcon() const override;
+};

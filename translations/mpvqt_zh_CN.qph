@@ -1,0 +1,685 @@
+<!DOCTYPE QPH>
+<QPH language="zh_CN" sourcelanguage="en_US">
+<phrase>
+    <source>&amp;Open File…</source>
+    <target>打开文件(&amp;O)…</target>
+</phrase>
+<phrase>
+    <source>&amp;Settings</source>
+    <target>设置(&amp;S)</target>
+</phrase>
+<phrase>
+    <source>&amp;Quit</source>
+    <target>退出(&amp;Q)</target>
+</phrase>
+<phrase>
+    <source>&amp;Play/Pause</source>
+    <target>播放/暂停(&amp;P)</target>
+</phrase>
+<phrase>
+    <source>&amp;Stop</source>
+    <target>停止(&amp;S)</target>
+</phrase>
+<phrase>
+    <source>P&amp;revious File</source>
+    <target>上一个文件(&amp;R)</target>
+</phrase>
+<phrase>
+    <source>&amp;Next File</source>
+    <target>下一个文件(&amp;N)</target>
+</phrase>
+<phrase>
+    <source>Volume &amp;Up</source>
+    <target>音量增大(&amp;U)</target>
+</phrase>
+<phrase>
+    <source>Volume &amp;Down</source>
+    <target>音量减小(&amp;D)</target>
+</phrase>
+<phrase>
+    <source>&amp;Speed Up</source>
+    <target>增加速度(&amp;C)</target>
+</phrase>
+<phrase>
+    <source>Speed Down</source>
+    <target>减小速度(&amp;X)</target>
+</phrase>
+<phrase>
+    <source>Reset Speed</source>
+    <target>重置速度(&amp;Z)</target>
+</phrase>
+<phrase>
+    <source>P&amp;laylist</source>
+    <target>播放列表(&amp;L)</target>
+</phrase>
+<phrase>
+    <source>&amp;Navigator</source>
+    <target>导航器(&amp;N)</target>
+</phrase>
+<phrase>
+    <source>&amp;Fullscreen</source>
+    <target>全屏(&amp;F)</target>
+</phrase>
+<phrase>
+    <source>&amp;About</source>
+    <target>关于(&amp;A)</target>
+</phrase>
+<phrase>
+    <source>Add &amp;Bookmark</source>
+    <target>添加书签(&amp;P)</target>
+</phrase>
+<phrase>
+    <source>Bookmark &amp;Editor…</source>
+    <target>书签编辑器(&amp;E)…</target>
+</phrase>
+<phrase>
+    <source>Bookmark Editor</source>
+    <target>书签编辑器</target>
+</phrase>
+<phrase>
+    <source>Jump</source>
+    <target>跳转</target>
+</phrase>
+<phrase>
+    <source>Remove Selected</source>
+    <target>移除选中</target>
+</phrase>
+<phrase>
+    <source>Remove Invalid</source>
+    <target>移除失效项</target>
+</phrase>
+<phrase>
+    <source>Clear</source>
+    <target>清空</target>
+</phrase>
+<phrase>
+    <source>Time</source>
+    <target>时间</target>
+</phrase>
+<phrase>
+    <source>Title</source>
+    <target>标题</target>
+</phrase>
+<phrase>
+    <source>Apply</source>
+    <target>应用</target>
+</phrase>
+<phrase>
+    <source>Invalid Time Format</source>
+    <target>时间格式错误</target>
+</phrase>
+<phrase>
+    <source>Time must be hh:mm:ss.zzz (e.g. 00:01:02.345); minutes and seconds must be less than 60, milliseconds exactly three digits.</source>
+    <target>时间须为 hh:mm:ss.zzz（如 00:01:02.345），分秒小于 60，毫秒三位。</target>
+</phrase>
+<phrase>
+    <source>Empty Title</source>
+    <target>标题为空</target>
+</phrase>
+<phrase>
+    <source>Bookmark title cannot be empty.</source>
+    <target>书签标题不可为空。</target>
+</phrase>
+<phrase>
+    <source>Title Contains Invalid Characters</source>
+    <target>标题含非法字符</target>
+</phrase>
+<phrase>
+    <source>Title must not contain &quot;&amp;&quot; (conflicts with chapter menu mnemonics).</source>
+    <target>标题不可包含字符 &amp;（会与章节菜单助记符冲突）。</target>
+</phrase>
+<phrase>
+    <source>Confirm</source>
+    <target>确认</target>
+</phrase>
+<phrase>
+    <source>Clear all bookmarks?</source>
+    <target>确定清空所有书签？</target>
+</phrase>
+<phrase>
+    <source>List Settings</source>
+    <target>列表设置</target>
+</phrase>
+<phrase>
+    <source>List Name</source>
+    <target>列表名称</target>
+</phrase>
+<phrase>
+    <source>List Provider</source>
+    <target>列表提供者</target>
+</phrase>
+<phrase>
+    <source>Local Static List</source>
+    <target>本地静态列表</target>
+</phrase>
+<phrase>
+    <source>Local Directory</source>
+    <target>本地目录</target>
+</phrase>
+<phrase>
+    <source>Browse…</source>
+    <target>浏览…</target>
+</phrase>
+<phrase>
+    <source>Include Subdirectories</source>
+    <target>包含子目录</target>
+</phrase>
+<phrase>
+    <source>Reset to default extension list</source>
+    <target>恢复默认扩展名清单</target>
+</phrase>
+<phrase>
+    <source>Media extensions (space-separated; leave empty for no filter):</source>
+    <target>媒体扩展名（空格分隔，留空不过滤）：</target>
+</phrase>
+<phrase>
+    <source>Select Directory</source>
+    <target>选择目录</target>
+</phrase>
+<phrase>
+    <source>List name cannot be empty.</source>
+    <target>列表名称不能为空。</target>
+</phrase>
+<phrase>
+    <source>Default</source>
+    <target>默认</target>
+</phrase>
+<phrase>
+    <source>Cannot use the name of the default list.</source>
+    <target>不能使用默认列表的名称。</target>
+</phrase>
+<phrase>
+    <source>This name is already used by another list.</source>
+    <target>该名称已被其他列表使用。</target>
+</phrase>
+<phrase>
+    <source>Please select a bound directory.</source>
+    <target>请选择绑定目录。</target>
+</phrase>
+<phrase>
+    <source>Local directory provider does not support network or stream paths.</source>
+    <target>本地目录提供者不支持网络/流路径。</target>
+</phrase>
+<phrase>
+    <source>Directory does not exist: %1</source>
+    <target>目录不存在：%1</target>
+</phrase>
+<phrase>
+    <source>Cancel</source>
+    <target>取消</target>
+</phrase>
+<phrase>
+    <source>Loading metadata</source>
+    <target>正在读取元数据</target>
+</phrase>
+<phrase>
+    <source>Loading</source>
+    <target>正在加载</target>
+</phrase>
+<phrase>
+    <source>Volume</source>
+    <target>音量</target>
+</phrase>
+<phrase>
+    <source>Play/Pause</source>
+    <target>播放/暂停</target>
+</phrase>
+<phrase>
+    <source>Stop</source>
+    <target>停止</target>
+</phrase>
+<phrase>
+    <source>Previous File</source>
+    <target>上一个文件</target>
+</phrase>
+<phrase>
+    <source>Next File</source>
+    <target>下一个文件</target>
+</phrase>
+<phrase>
+    <source>Switch Stream</source>
+    <target>切换流</target>
+</phrase>
+<phrase>
+    <source>Settings</source>
+    <target>设置</target>
+</phrase>
+<phrase>
+    <source>Show/Hide Playlist</source>
+    <target>显示/隐藏播放列表</target>
+</phrase>
+<phrase>
+    <source>&amp;File</source>
+    <target>文件(&amp;F)</target>
+</phrase>
+<phrase>
+    <source>&amp;Play</source>
+    <target>播放(&amp;P)</target>
+</phrase>
+<phrase>
+    <source>Video</source>
+    <target>视频流</target>
+</phrase>
+<phrase>
+    <source>Audio</source>
+    <target>音频流</target>
+</phrase>
+<phrase>
+    <source>Subtitle</source>
+    <target>字幕流</target>
+</phrase>
+<phrase>
+    <source>&amp;Chapter</source>
+    <target>章节(&amp;C)</target>
+</phrase>
+<phrase>
+    <source>&amp;View</source>
+    <target>视图(&amp;V)</target>
+</phrase>
+<phrase>
+    <source>&amp;Help</source>
+    <target>帮助(&amp;H)</target>
+</phrase>
+<phrase>
+    <source>Pause</source>
+    <target>暂停</target>
+</phrase>
+<phrase>
+    <source>Play</source>
+    <target>播放</target>
+</phrase>
+<phrase>
+    <source>Unknown File</source>
+    <target>未知文件</target>
+</phrase>
+<phrase>
+    <source>Open File</source>
+    <target>打开文件</target>
+</phrase>
+<phrase>
+    <source>Media files (%1);;All files (*)</source>
+    <target>媒体文件 (%1);;所有文件 (*)</target>
+</phrase>
+<phrase>
+    <source>Seek: %1</source>
+    <target>进度跳转: %1</target>
+</phrase>
+<phrase>
+    <source>Volume: %1%</source>
+    <target>音量: %1%</target>
+</phrase>
+<phrase>
+    <source>+%1s</source>
+    <target>+%1秒</target>
+</phrase>
+<phrase>
+    <source>%1s</source>
+    <target>%1秒</target>
+</phrase>
+<phrase>
+    <source>Seek: %1 / %2</source>
+    <target>进度跳转: %1 / %2</target>
+</phrase>
+<phrase>
+    <source>Speed: %1x</source>
+    <target>播放速度: %1倍</target>
+</phrase>
+<phrase>
+    <source>Speed: 1x</source>
+    <target>播放速度: 1倍</target>
+</phrase>
+<phrase>
+    <source>About %1</source>
+    <target>关于 %1</target>
+</phrase>
+<phrase>
+    <source>%1: a Qt-based player GUI loaded as an mpv C plugin.
+Video rendering is performed by mpv; this plugin only provides the graphical interface.</source>
+    <target>%1：以 mpv C 插件形式加载的 Qt 播放器界面。
+视频渲染由 mpv 完成，本插件仅提供图形界面。</target>
+</phrase>
+<phrase>
+    <source>None</source>
+    <target>无</target>
+</phrase>
+<phrase>
+    <source>Video: </source>
+    <target>视频流: </target>
+</phrase>
+<phrase>
+    <source>Audio: </source>
+    <target>音频流: </target>
+</phrase>
+<phrase>
+    <source>Subtitle: </source>
+    <target>字幕流: </target>
+</phrase>
+<phrase>
+    <source>Subtitle: None</source>
+    <target>字幕流: 无</target>
+</phrase>
+<phrase>
+    <source>Bookmark %1</source>
+    <target>书签 %1</target>
+</phrase>
+<phrase>
+    <source>Bookmark 1</source>
+    <target>书签 1</target>
+</phrase>
+<phrase>
+    <source>Bookmark added: [%1] %2</source>
+    <target>已添加书签: [%1] %2</target>
+</phrase>
+<phrase>
+    <source>No video</source>
+    <target>无视频</target>
+</phrase>
+<phrase>
+    <source>Navigator</source>
+    <target>导航器</target>
+</phrase>
+<phrase>
+    <source>Native size: 1:1 at source resolution, centered; parts outside the window are clipped.</source>
+    <target>原始尺寸：按源分辨率 1:1 显示并居中，超出窗口部分被裁剪</target>
+</phrase>
+<phrase>
+    <source>Reset view: restore window-filling zoom (mpv default).</source>
+    <target>复位视图：恢复填充窗口（mpv 默认缩放）</target>
+</phrase>
+<phrase>
+    <source>Default</source>
+    <target>默认</target>
+</phrase>
+<phrase>
+    <source>&lt;Load failed&gt;</source>
+    <target>&lt;加载失败&gt;</target>
+</phrase>
+<phrase>
+    <source>Properties</source>
+    <target>属性</target>
+</phrase>
+<phrase>
+    <source>File Path</source>
+    <target>文件路径</target>
+</phrase>
+<phrase>
+    <source>Format</source>
+    <target>文件格式</target>
+</phrase>
+<phrase>
+    <source>File Size</source>
+    <target>文件大小</target>
+</phrase>
+<phrase>
+    <source>Created</source>
+    <target>创建时间</target>
+</phrase>
+<phrase>
+    <source>Modified</source>
+    <target>修改时间</target>
+</phrase>
+<phrase>
+    <source>Duration</source>
+    <target>总时长</target>
+</phrase>
+<phrase>
+    <source>Yes</source>
+    <target>是</target>
+</phrase>
+<phrase>
+    <source>Title</source>
+    <target>标题</target>
+</phrase>
+<phrase>
+    <source>Language</source>
+    <target>语言</target>
+</phrase>
+<phrase>
+    <source>Codec</source>
+    <target>编码</target>
+</phrase>
+<phrase>
+    <source>Resolution</source>
+    <target>分辨率</target>
+</phrase>
+<phrase>
+    <source>Frame Rate</source>
+    <target>帧率</target>
+</phrase>
+<phrase>
+    <source>Bitrate</source>
+    <target>码率</target>
+</phrase>
+<phrase>
+    <source>Size</source>
+    <target>大小</target>
+</phrase>
+<phrase>
+    <source>Channels</source>
+    <target>通道数</target>
+</phrase>
+<phrase>
+    <source>Sample Rate</source>
+    <target>采样率</target>
+</phrase>
+<phrase>
+    <source>Album</source>
+    <target>专辑</target>
+</phrase>
+<phrase>
+    <source>Author</source>
+    <target>作者</target>
+</phrase>
+<phrase>
+    <source>Released</source>
+    <target>发行时间</target>
+</phrase>
+<phrase>
+    <source>General</source>
+    <target>常规</target>
+</phrase>
+<phrase>
+    <source>Video #%1</source>
+    <target>视频 #%1</target>
+</phrase>
+<phrase>
+    <source>Audio #%1</source>
+    <target>音频 #%1</target>
+</phrase>
+<phrase>
+    <source>Subtitle #%1</source>
+    <target>字幕 #%1</target>
+</phrase>
+<phrase>
+    <source>Tags</source>
+    <target>标签</target>
+</phrase>
+<phrase>
+    <source>Chapters</source>
+    <target>章节</target>
+</phrase>
+<phrase>
+    <source>New Playlist</source>
+    <target>新建播放列表</target>
+</phrase>
+<phrase>
+    <source>Delete Current List</source>
+    <target>删除当前列表</target>
+</phrase>
+<phrase>
+    <source>List Settings…</source>
+    <target>列表设置…</target>
+</phrase>
+<phrase>
+    <source>Add Files…</source>
+    <target>添加文件…</target>
+</phrase>
+<phrase>
+    <source>Sort</source>
+    <target>排序</target>
+</phrase>
+<phrase>
+    <source>File Name</source>
+    <target>文件名</target>
+</phrase>
+<phrase>
+    <source>File Name (Numeric)</source>
+    <target>文件名（数字化）</target>
+</phrase>
+<phrase>
+    <source>Extension</source>
+    <target>扩展名</target>
+</phrase>
+<phrase>
+    <source>Ascending</source>
+    <target>正序</target>
+</phrase>
+<phrase>
+    <source>Descending</source>
+    <target>反序</target>
+</phrase>
+<phrase>
+    <source>Remove</source>
+    <target>移除</target>
+</phrase>
+<phrase>
+    <source>Remove Selected</source>
+    <target>移除选中</target>
+</phrase>
+<phrase>
+    <source>Clear Current List</source>
+    <target>清空当前列表</target>
+</phrase>
+<phrase>
+    <source>Remove Invalid</source>
+    <target>移除失效项</target>
+</phrase>
+<phrase>
+    <source>Remove Duplicates</source>
+    <target>移除重复项</target>
+</phrase>
+<phrase>
+    <source>Refresh</source>
+    <target>刷新</target>
+</phrase>
+<phrase>
+    <source>Open File Location</source>
+    <target>打开文件位置</target>
+</phrase>
+<phrase>
+    <source>Copy File Path</source>
+    <target>复制文件路径</target>
+</phrase>
+<phrase>
+    <source>Add Files</source>
+    <target>添加文件</target>
+</phrase>
+<phrase>
+    <source>Media files (%1);;All files (*)</source>
+    <target>媒体文件 (%1);;所有文件 (*)</target>
+</phrase>
+<phrase>
+    <source>Playlist </source>
+    <target>播放列表</target>
+</phrase>
+<phrase>
+    <source>Playlist %1</source>
+    <target>播放列表 %1</target>
+</phrase>
+<phrase>
+    <source> (with subdirectories)</source>
+    <target>（含子目录）</target>
+</phrase>
+<phrase>
+    <source>Local directory: %1%2</source>
+    <target>本地目录：%1%2</target>
+</phrase>
+<phrase>
+    <source>No directory bound.</source>
+    <target>没有绑定目录。</target>
+</phrase>
+<phrase>
+    <source>Directory does not exist: %1</source>
+    <target>目录不存在：%1</target>
+</phrase>
+<phrase>
+    <source>Directory is not readable: %1</source>
+    <target>目录不可读：%1</target>
+</phrase>
+<phrase>
+    <source>Subdirectory is not readable, skipped: %1</source>
+    <target>子目录不可读，跳过：%1</target>
+</phrase>
+<phrase>
+    <source>Local static list</source>
+    <target>本地静态列表</target>
+</phrase>
+<phrase>
+    <source>Auto</source>
+    <target>自动</target>
+</phrase>
+<phrase>
+    <source>Custom (do not override)</source>
+    <target>自定义（不干涉）</target>
+</phrase>
+<phrase>
+    <source>No Loop</source>
+    <target>不循环</target>
+</phrase>
+<phrase>
+    <source>Loop One</source>
+    <target>单个循环</target>
+</phrase>
+<phrase>
+    <source>Loop Playlist</source>
+    <target>列表循环</target>
+</phrase>
+<phrase>
+    <source>Basic</source>
+    <target>基础</target>
+</phrase>
+<phrase>
+    <source>Language</source>
+    <target>语言</target>
+</phrase>
+<phrase>
+    <source>Wheel Step</source>
+    <target>滚轮步长</target>
+</phrase>
+<phrase>
+    <source>Arrow Key Step</source>
+    <target>方向键步长</target>
+</phrase>
+<phrase>
+    <source>Playback</source>
+    <target>播放</target>
+</phrase>
+<phrase>
+    <source>Max Volume</source>
+    <target>音量上限</target>
+</phrase>
+<phrase>
+    <source>Loop Playback</source>
+    <target>循环播放</target>
+</phrase>
+<phrase>
+    <source>Video</source>
+    <target>视频</target>
+</phrase>
+<phrase>
+    <source>Hardware Decoding</source>
+    <target>硬件解码</target>
+</phrase>
+<phrase>
+    <source>Audio</source>
+    <target>音频</target>
+</phrase>
+<phrase>
+    <source>Audio Filters</source>
+    <target>音频滤镜</target>
+</phrase>
+<phrase>
+    <source>Settings</source>
+    <target>设置</target>
+</phrase>
+</QPH>

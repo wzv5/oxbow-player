@@ -104,6 +104,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #ifdef Q_OS_WIN
 #include <dwmapi.h>

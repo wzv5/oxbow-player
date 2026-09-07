@@ -42,7 +42,10 @@ add_library(mpvqtcore MODULE
     src/NavigatorPanel.h
     src/PlaylistDelegate.cpp
     src/PlaylistDelegate.h
-    src/PlaylistItem.h
+    src/PlaylistEntity.cpp
+    src/PlaylistEntity.h
+    src/LocalFileEntity.cpp
+    src/LocalFileEntity.h
     src/PlaylistProvider.cpp
     src/PlaylistProvider.h
     src/ListSettingsDialog.cpp
@@ -147,9 +150,19 @@ if(MPVQT_BUILD_TESTS)
     find_package(Qt6 REQUIRED COMPONENTS Test)
     enable_testing()
     add_executable(mpvqt_tests
+        tests/main.cpp
         tests/tst_MpvConf.cpp
+        tests/tst_PlaylistEntity.cpp
         src/MpvConf.cpp
         src/MpvConf.h
+        src/PlaylistEntity.cpp
+        src/PlaylistEntity.h
+        src/LocalFileEntity.cpp
+        src/LocalFileEntity.h
+        src/MediaInfoHelper.cpp
+        src/MediaInfoHelper.h
+        src/Util.cpp
+        src/Util.h
     )
     target_include_directories(mpvqt_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(mpvqt_tests PRIVATE Qt6::Widgets Qt6::Test)
