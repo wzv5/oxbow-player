@@ -1,5 +1,5 @@
 <!DOCTYPE QPH>
-<QPH language="zh_CN" sourcelanguage="en_US">
+<QPH sourcelanguage="en_US" language="zh_CN">
 <phrase>
     <source>&amp;Open File…</source>
     <target>打开文件(&amp;O)…</target>
@@ -681,5 +681,9 @@ Video rendering is performed by mpv; this plugin only provides the graphical int
 <phrase>
     <source>Settings</source>
     <target>设置</target>
+</phrase>
+<phrase>
+    <source>Auto</source>
+    <target>自动</target>
 </phrase>
 </QPH>
