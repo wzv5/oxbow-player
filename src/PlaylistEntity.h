@@ -16,7 +16,13 @@ struct FileMeta {
 // 能力位与静态空回落（两类元数据同形）：fileMeta() / mediaMeta() 首行各判自身能力位，
 // 为假则直接返回静态空值，永不调用对应 compute*()；
 // cachedFileMeta() / cachedMediaMeta() 对此类实体恒返回 nullptr。
+class PlaylistProvider; // 前向声明：实体头不依赖提供者头
+
 class PlaylistEntity {
+    // N29 注入口的唯一授权对象。友元不继承：派生提供者不可直接访问，
+    // 经 PlaylistProvider 的 protected 静态转发（访问发生在基类成员函数体内）写入
+    friend class PlaylistProvider;
+
   public:
     using Ptr = std::shared_ptr<PlaylistEntity>;
     using List = std::vector<Ptr>;
@@ -80,6 +86,14 @@ class PlaylistEntity {
         m_title = std::move(title);
         m_titleSet = true;
     }
+
+    // ——N29 元数据注入口（写入外部已取得的元数据，不触发求值）——
+    // 写缓存 + 视同已求值：随后 fileMeta() / mediaMeta() 返回注入值，
+    // cachedFileMeta() / cachedMediaMeta() 非空，预读骨架对该行命中跳过。
+    // supports*Meta() 为假时忽略（缓存不落值，与惰性求值的静态空回落同形）。
+    // 仅 PlaylistProvider 经友元可及；视图层与具体提供者直接调用编译失败
+    void setFileMeta(const FileMeta &meta);
+    void setMediaMeta(const MediaMeta &meta);
 
     virtual FileMeta computeFileMeta() const = 0;
     virtual MediaMeta computeMediaMeta() const = 0;

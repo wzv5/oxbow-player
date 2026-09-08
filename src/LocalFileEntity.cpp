@@ -4,10 +4,10 @@
 
 #include "MediaInfoHelper.h"
 
-// 不存在或不可读：三字段全空（"值未知"），不抛错
-FileMeta LocalFileEntity::computeFileMeta() const {
+// 不存在或不可读：三字段全空（"值未知"），不抛错。
+// N29：口径抽为静态 fileMetaFrom，惰性求值与提供者注入共用一份
+FileMeta LocalFileEntity::fileMetaFrom(const QFileInfo &fi) {
     FileMeta meta;
-    const QFileInfo fi(playUrl());
     if (!fi.exists() || !fi.isReadable())
         return meta;
     meta.size = qMax<qint64>(0, fi.size());
@@ -15,6 +15,8 @@ FileMeta LocalFileEntity::computeFileMeta() const {
     meta.modified = fi.lastModified();
     return meta;
 }
+
+FileMeta LocalFileEntity::computeFileMeta() const { return fileMetaFrom(QFileInfo(playUrl())); }
 
 // MediaInfoHelper::parse 打开失败返回默认 Data（字段皆空/0），
 // 失败结果同样入实体缓存，防同一坏文件反复解析

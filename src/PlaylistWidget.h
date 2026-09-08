@@ -148,6 +148,9 @@ class PlaylistWidget : public QTabWidget {
         ReleaseDate,
     };
 
+    // N29：预读元数据类别（排序键经 metaCategoryOf 映射；None = 该键不依赖元数据）
+    enum class MetaCategory { None, File, Media };
+
     // 单个 tab 的播放记忆（默认 tab 仅进程内有效，持久化时跳过索引 0）。
     // N9/N26：lastPath 为记忆条目 key（normalizePathForMatch 归一形态，引用条目身份
     // 而非某次字符串形态；旧 INI 读取时归一桥接），恢复时序号校验失败按其寻位
@@ -183,12 +186,15 @@ class PlaylistWidget : public QTabWidget {
     void flushPendingTab();
     void setListsEnabled(bool on);
     void armOverlay(LoadingOverlay::Mode mode, int total);
-    // ——N19 元数据预读——
-    bool runMetaScan(QPointer<QListWidget> list, int total);
+    // ——N19 元数据预读（N29 起参数化类别）——
+    bool runMetaScan(QPointer<QListWidget> list, int total, MetaCategory cat);
     void applySort(QListWidget *list, SortKey key, bool ascending, bool writeRule);
     // 预读公共骨架（不碰 m_busy，调用方负责 setBusy 包裹）：遮罩 + 循环 + 收尾重绘；
-    // 成功置位 mediaInfoLoaded 并返回 true，取消/销毁返回 false
-    bool runMetaPrescan(QListWidget *list);
+    // 成功置位对应类别标志并返回 true，取消/销毁返回 false
+    bool runMetaPrescan(QListWidget *list, MetaCategory cat);
+    // N29：对应类别"本表已全表读取完成"标志的读写收敛点（两位同形）
+    bool metaLoadedOf(const QListWidget *list, MetaCategory cat) const;
+    void setMetaLoadedOf(QListWidget *list, MetaCategory cat, bool on);
     // N20：按表精确驱逐——遍历该表非占位行，按实体 key 逐个删 m_duration；flag 重置所有表
     void evictListKeys(QListWidget *list);
     // 已加载 tab 切入重读判定：内容已载、无占位、标志失效、排序依赖元数据
@@ -220,6 +226,17 @@ class PlaylistWidget : public QTabWidget {
     // 空表 / 未加载表为假
     bool anyEntitySupportsMediaMeta(const QListWidget *list) const;
     bool anyEntitySupportsFileMeta(const QListWidget *list) const;
+
+    // N29：排序键 → 预读元数据类别的唯一映射（各判定点共用，防散写漂移）：
+    // Created/Modified/FileSize → File；Duration/ReleaseDate → Media；其余 → None
+    static MetaCategory metaCategoryOf(SortKey key);
+    // N29：预读判定内核（各判定点共用）——该表该排序键仍需预读的类别，
+    // 无需预读返回 None（类别 None、支持者缺失、对应标志已置均视为无需）。
+    // 只含"类别 / 支持者 / 标志位"三要素，busy / entriesLoaded / 占位等
+    // 外围条件由调用方自判；共用即保证"填充跳过直排"与"收尾补排"等各点一致
+    MetaCategory pendingMetaCategory(const QListWidget *list, SortKey key) const;
+    // N29：对应类别支持者谓词（收敛按类别选支持者谓词的三元散写）
+    bool anyEntitySupports(const QListWidget *list, MetaCategory cat) const;
 
     // ——结构变更公共骨架——
     // 三步法之第 1 步：抄录记忆行对应的 playUrl；第 3 步：在新序列中找回并写回
@@ -267,7 +284,9 @@ class PlaylistWidget : public QTabWidget {
     struct TabLoadState {
         bool entriesLoaded = false;   // 提供者枚举已执行（N28：创建/换源/恢复即
                                       // false，首次激活后置位；默认 tab 恒 true）
-        bool mediaInfoLoaded = false; // 当前排序键所需 MediaInfo 已全表读取
+        bool mediaMetaLoaded = false; // 本表 mediaMeta 已全表读取完成
+                                      // （N29 更名自 mediaInfoLoaded）
+        bool fileMetaLoaded = false;  // 本表 fileMeta 已全表读取完成（N29）
         QString loadError;            // 非空 = 上次枚举失败（占位行显示中）
     };
     QHash<const QListWidget *, TabLoadState> m_loadState;

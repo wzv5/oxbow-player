@@ -94,6 +94,20 @@ void PlaylistEntity::refresh() {
     m_icon.reset();
 }
 
+// ——N29 注入口：写入即视为已求值；不支持者忽略（缓存恒空，与惰性回落同形）——
+
+void PlaylistEntity::setFileMeta(const FileMeta &meta) {
+    if (!supportsFileMeta())
+        return;
+    m_fileMeta = meta;
+}
+
+void PlaylistEntity::setMediaMeta(const MediaMeta &meta) {
+    if (!supportsMediaMeta())
+        return;
+    m_mediaMeta = meta;
+}
+
 // ——兜底实体——
 
 // 通用文件图标（与重构前网络路径表现一致）；仅 GUI 线程调用。

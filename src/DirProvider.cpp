@@ -2,7 +2,7 @@
 
 #include "DirProvider.h"
 
-#include "Util.h"
+#include "LocalFileEntity.h"
 
 namespace {
 // 扩展名 → QDir 名称过滤器（*.mp4 形态）
@@ -27,8 +27,9 @@ QString DirProvider::describe() const {
     return QObject::tr("Local directory: %1%2").arg(m_root, suffix);
 }
 
-// 枚举并造实体：成功带实体有序表（预热 fileMeta——异步路径在工作线程、
-// 同步填充在 GUI 线程执行同一惰性入口），失败带错误文案；
+// 枚举并造实体：成功带实体有序表，失败带错误文案；
+// N29 起不预热：collect 产 QFileInfoList（枚举一次 stat 顺手取得），遍历中经
+// 注入口把文件元数据零成本注入实体（口径与惰性求值共用 fileMetaFrom）。
 // root 不存在/不可读为全失败，递归中个别子目录不可读为部分成功 + warning
 // （error 非空即视为有错，由调用方走失败占位处理）
 std::expected<PlaylistProvider::EntityList, QString> DirProvider::enumerate() const {
@@ -40,17 +41,19 @@ std::expected<PlaylistProvider::EntityList, QString> DirProvider::enumerate() co
     if (!rootDir.isReadable())
         return std::unexpected(QObject::tr("Directory is not readable: %1").arg(m_root));
     // 扩展名空表＝不过滤；过滤器一次构造逐层复用
-    QStringList out;
+    QFileInfoList infos;
     QStringList warnings;
     collect(rootDir, m_extensions.isEmpty() ? QStringList() : toNameFilters(m_extensions),
-            m_recursive, out, warnings);
+            m_recursive, infos, warnings);
     if (!warnings.isEmpty())
         return std::unexpected(warnings.join(QStringLiteral("\n")));
     EntityList entities;
-    entities.reserve(out.size());
-    for (const QString &path : out) {
-        auto entity = PlaylistEntity::fromPlayUrl(path);
-        entity->fileMeta(); // 预热（QFileInfo 一次 stat，线程安全）
+    entities.reserve(infos.size());
+    for (const QFileInfo &fi : infos) {
+        // 路径加工（绝对化 + 原生分隔符，B15）统一由 fromPlayUrl 内的
+        // resolveLocalPath 出口负责，此处不再预处理
+        auto entity = PlaylistEntity::fromPlayUrl(fi.absoluteFilePath());
+        injectFileMeta(*entity, LocalFileEntity::fileMetaFrom(fi)); // 零成本注入
         entities.push_back(std::move(entity));
     }
     return entities;
@@ -84,13 +87,13 @@ std::shared_ptr<DirProvider> DirProvider::load(QSettings &settings) {
 }
 
 void DirProvider::collect(const QDir &dir, const QStringList &filters, bool recursive,
-                          QStringList &out, QStringList &warnings) {
-    // 文件层：命中扩展名的条目规范化后追加
+                          QFileInfoList &out, QStringList &warnings) {
+    // 文件层：命中扩展名的条目信息追加（N29：整个 QFileInfo 留给注入，
+    // 路径加工统一在 fromPlayUrl 的 resolveLocalPath 出口做）
     const QFileInfoList files =
         dir.entryInfoList(filters, QDir::Files | QDir::Readable, QDir::NoSort);
     for (const QFileInfo &fi : files)
-        // Qt 来源（目录枚举）：拿到即转原生分隔符（B15），不做小写/cleanPath
-        out << Util::nativePath(fi.absoluteFilePath());
+        out << fi;
     if (!recursive)
         return;
     // 目录层：先序深入子目录（平铺语义，次序无关紧要——视图层统一重排）；

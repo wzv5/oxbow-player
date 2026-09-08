@@ -286,7 +286,8 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
     const int prevRow = def->currentRow();
     def->clear();
     m_entities[def].clear();                  // 同步点：收编重建＝先清容器再随建行 push_back
-    m_loadState[def].mediaInfoLoaded = false; // N19：条目集合已变，已读元数据不可信
+    m_loadState[def].mediaMetaLoaded = false; // N29：条目集合已变，两类已读元数据一并失效
+    m_loadState[def].fileMetaLoaded = false;
 
     QListWidgetItem *newCurrent = nullptr;
     for (int i = 0; i < pushed.size(); ++i) {
@@ -322,7 +323,8 @@ void PlaylistWidget::addFiles(const QStringList &files) {
         return;
     if (auto *p = providerAt(currentIndex()))
         p->setSortRule(int(SortKey::None), p->sortAscending());
-    m_loadState[list].mediaInfoLoaded = false; // N19：条目集合变化，已读元数据不可信
+    m_loadState[list].mediaMetaLoaded = false; // N29：条目集合变化，两类已读元数据一并失效
+    m_loadState[list].fileMetaLoaded = false;
 
     // N25：本地先行——播放中 tab 也立即插行（回刷只会把"本地未改"的差异搬去默认 tab），
     // 插入后本地序列即等于 mpv 追加后的序列，回刷恒一致而静默
@@ -357,7 +359,9 @@ void PlaylistWidget::setDefaultTabFiles(const QStringList &files) {
         return;
     m_memory.remove(list);
     list->clear();
-    m_entities[list].clear(); // 同步点：重建＝先清容器再随建行 push_back
+    m_entities[list].clear();                  // 同步点：重建＝先清容器再随建行 push_back
+    m_loadState[list].mediaMetaLoaded = false; // N29：条目集合变化，两类已读元数据一并失效
+    m_loadState[list].fileMetaLoaded = false;
     for (const QString &file : files)
         makeItem(list, PlaylistEntity::fromPlayUrl(file));
 }
@@ -596,28 +600,32 @@ void PlaylistWidget::onTabChanged(int index) {
     activateTab(index);
 }
 
+// N29：已加载 tab 切入重读判定——外围条件自判，类别/支持者/标志位三要素
+// 经共用内核（与填充跳过、首载收尾同一判据，防多点位漂移）
 bool PlaylistWidget::needsMetaRescan(int tabIndex) const {
     if (m_busy)
         return false;
     const QListWidget *list = listAt(tabIndex);
-    const TabLoadState st = m_loadState.value(list);
-    if (!list || !st.entriesLoaded || st.mediaInfoLoaded || !st.loadError.isEmpty())
-        return false; // 占位 tab（loadError 非空）走失败重试，不走预读
-    // N26：全表无媒体属性支持者 → 切入不预读（取代 dll 全局可用性判定）
-    if (!anyEntitySupportsMediaMeta(list))
+    if (!list)
         return false;
+    const auto lit = m_loadState.constFind(list); // 只读引用，免整结构体拷贝
+    if (lit == m_loadState.end() || !lit->entriesLoaded || !lit->loadError.isEmpty())
+        return false; // 占位 tab（loadError 非空）走失败重试，不走预读
     const PlaylistProvider *p = providerAt(tabIndex);
     if (!p)
         return false;
-    const int k = p->sortKey();
-    return k == int(SortKey::Duration) || k == int(SortKey::ReleaseDate);
+    return pendingMetaCategory(list, SortKey(p->sortKey())) != MetaCategory::None;
 }
 
 void PlaylistWidget::reactivateRescan(QListWidget *list, int tabIndex) {
     if (!list)
         return;
+    // 调用方已过 needsMetaRescan，类别必非 None；防御缺提供者时置 None 不预读
+    MetaCategory cat = MetaCategory::None;
+    if (const PlaylistProvider *p = providerAt(tabIndex))
+        cat = metaCategoryOf(SortKey(p->sortKey()));
     setBusy(true);
-    const bool ok = runMetaPrescan(list);
+    const bool ok = runMetaPrescan(list, cat);
     if (ok) {
         if (const PlaylistProvider *p = providerAt(tabIndex))
             applySort(list, SortKey(p->sortKey()), p->sortAscending(), false);
@@ -751,9 +759,9 @@ bool PlaylistWidget::isModifiableTab(int tabIndex) const {
     return p != nullptr && p->supportsModify();
 }
 
-// N19/N26：GUI 线程填充——清空（行 + 实体容器）→ 逐条 makeItem → 应用排序规则。
-// 元数据键（Duration/ReleaseDate）且本表有支持者时跳过重排，由预读后的
-// applySort 执行（否则比较器会在此全表同步解析）
+// N19/N26/N29：GUI 线程填充——清空（行 + 实体容器）→ 逐条 makeItem → 应用排序规则。
+// None（添加顺序）不排；元数据键若将由预读链收尾排序则跳过直排（判定与 finishLoad
+// 共用内核，保证两侧一致；文件名/扩展名等非元数据键照常在此直排）
 void PlaylistWidget::fillListFromEntries(QListWidget *list, PlaylistEntity::List &&entities) {
     if (!list)
         return;
@@ -766,15 +774,14 @@ void PlaylistWidget::fillListFromEntries(QListWidget *list, PlaylistEntity::List
         return;
     const auto key = SortKey(it.value()->sortKey());
     if (key == SortKey::None)
-        return;
-    if ((key == SortKey::Duration || key == SortKey::ReleaseDate) &&
-        anyEntitySupportsMediaMeta(list))
+        return; // 添加顺序，不排
+    if (pendingMetaCategory(list, key) != MetaCategory::None)
         return; // 预读链收尾排序
     sortListItems(list, key, it.value()->sortAscending());
 }
 
-// N19/N26/N28：所有 tab 首次激活统一走本函数异步枚举。线程经 shared_ptr 调用
-// provider->enumerate()（实体构造与 fileMeta 预热都在工作线程）——换源/删 tab 后
+// N19/N26/N28/N29：所有 tab 首次激活统一走本函数异步枚举。线程经 shared_ptr 调用
+// provider->enumerate()（实体构造与提供者侧元数据注入都在工作线程）——换源/删 tab 后
 // 旧提供者的销毁被自动延后到线程结束，无 use-after-free。
 // 不变式：加载在途期间 GUI 线程不修改该提供者的可变状态——目录源成员构造后只读，
 // 增删/换源/删 tab 均被 m_busy 拦截；静态源的 setItems/setSortRule 经 savePlaylists
@@ -798,7 +805,7 @@ void PlaylistWidget::startLoadAsync(QListWidget *list) {
     armOverlay(LoadingOverlay::Mode::Loading, 0);
     auto *thread = QThread::create([rawSelf, rawList, provider, gen, alive] {
         std::expected<PlaylistEntity::List, QString> r =
-            provider->enumerate(); // 工作线程：实体构造 + 预热仅此一步
+            provider->enumerate(); // 工作线程：实体构造 + 元数据注入仅此一步
         if (!alive->load())
             return; // 析构已开始，不触碰任何成员
         QMetaObject::invokeMethod(
@@ -875,10 +882,9 @@ void PlaylistWidget::finishLoad(QListWidget *list, std::expected<PlaylistEntity:
     if (tab >= 0) {
         if (const auto *p = providerAt(tab)) {
             const auto key = SortKey(p->sortKey());
-            const bool needScan = anyEntitySupportsMediaMeta(list) && !st.mediaInfoLoaded &&
-                                  (key == SortKey::Duration || key == SortKey::ReleaseDate);
-            if (needScan) {
-                const bool ok = runMetaPrescan(list);
+            const auto cat = pendingMetaCategory(list, key);
+            if (cat != MetaCategory::None) {
+                const bool ok = runMetaPrescan(list, cat);
                 if (genAtEntry != m_loadGen) {
                     // 预读期间同 tab 被回刷重建：行已是权威内容，收尾直接丢弃
                     m_loadingList = nullptr;
@@ -1054,11 +1060,12 @@ void PlaylistWidget::sortCurrent(SortKey key, bool ascending) {
         return;
 
     // N19：元数据键走预读流程——先全表预读再排序，取消则规则不写、一切不动。
-    // N26：本表无支持者时退化为直排（与菜单禁用一致）
-    if ((key == SortKey::Duration || key == SortKey::ReleaseDate) &&
-        anyEntitySupportsMediaMeta(list)) {
+    // N26：本表无支持者时退化为直排（与菜单禁用一致）；
+    // N29：经共用内核判定——对应标志已置（缓存齐全）则免预读直排，两类同形
+    const auto cat = pendingMetaCategory(list, key);
+    if (cat != MetaCategory::None) {
         setBusy(true); // 忙时即重入守卫（预读期菜单/tab 栏已冻结）
-        const bool ok = runMetaPrescan(list);
+        const bool ok = runMetaPrescan(list, cat);
         if (!ok) {
             setBusy(false); // 取消：恢复启用、隐藏遮罩、一切不动
             return;
@@ -1071,16 +1078,18 @@ void PlaylistWidget::sortCurrent(SortKey key, bool ascending) {
     applySort(list, key, ascending, true);
 }
 
-// N19：预读公共骨架（不碰 m_busy，调用方负责 setBusy 包裹）
-bool PlaylistWidget::runMetaPrescan(QListWidget *list) {
-    if (!list)
+// N19/N29：预读公共骨架（不碰 m_busy，调用方负责 setBusy 包裹）：遮罩 + 循环 +
+// 收尾重绘；成功置位对应类别标志并返回 true，取消/销毁返回 false。
+// None 无骨架语义：入口挡掉，Release 下也不得落入任一类别分支
+bool PlaylistWidget::runMetaPrescan(QListWidget *list, MetaCategory cat) {
+    if (!list || cat == MetaCategory::None)
         return false;
     armOverlay(LoadingOverlay::Mode::MetaScan, list->count());
     m_metaCancel = false;
-    const bool ok = runMetaScan(list, list->count());
+    const bool ok = runMetaScan(list, list->count(), cat);
     repaintAllLists();
     if (ok)
-        m_loadState[list].mediaInfoLoaded = true;
+        setMetaLoadedOf(list, cat, true);
     return ok;
 }
 
@@ -1131,10 +1140,12 @@ void PlaylistWidget::applySort(QListWidget *list, SortKey key, bool ascending, b
     restoreMemoryPath(list, captured, hadMemory);
 }
 
-// N19/N26：主线程元数据预读循环。total = 条目总数；返回 false = 用户取消或销毁。
-// 进度按已处理行数计数——不支持媒体属性的实体永不产生缓存，
-// 按缓存命中计数会使进度条永不达 100% 并可致预读卡死
-bool PlaylistWidget::runMetaScan(QPointer<QListWidget> list, int total) {
+// N19/N26/N29：主线程元数据预读循环。total = 条目总数；返回 false = 用户取消或销毁。
+// 进度按已处理行数计数——不支持对应类别元数据的实体永不产生缓存，
+// 按缓存命中计数会使进度条永不达 100% 并可致预读卡死。
+// 循环体按类别取缓存判命中、按类别求值；遮罩/节流/取消检查两类共用
+bool PlaylistWidget::runMetaScan(QPointer<QListWidget> list, int total, MetaCategory cat) {
+    Q_ASSERT(cat != MetaCategory::None); // 调用方经 metaCategoryOf 保证
     QPointer<PlaylistWidget> self(this);
     // 快照：持有共享计数，循环期间行重建不影响；实体归属容器可能被回刷替换，
     // 快照保证被解析实体存活到本次循环结束
@@ -1151,8 +1162,12 @@ bool PlaylistWidget::runMetaScan(QPointer<QListWidget> list, int total) {
     for (const auto &entity : snapshot) {
         if (!self || !list)
             return false;
-        const bool hit = entity->cachedMediaMeta() != nullptr;
-        entity->mediaMeta(); // 未命中即同步解析一次入实体缓存（含失败防重解析）
+        const bool hit = cat == MetaCategory::File ? entity->cachedFileMeta() != nullptr
+                                                   : entity->cachedMediaMeta() != nullptr;
+        if (cat == MetaCategory::File)
+            entity->fileMeta(); // 未命中即同步求值一次入实体缓存（含"值未知"入缓存）
+        else
+            entity->mediaMeta(); // 未命中即同步解析一次入实体缓存（含失败防重解析）
         ++m_scanDone;
         if (hit)
             continue; // 命中零成本，不进入节流/取消检查
@@ -1178,7 +1193,8 @@ void PlaylistWidget::executeRemoval(const QList<int> &rows) {
     if (!list || rows.isEmpty() || tab < 0 || m_busy)
         return; // N19：忙时菜单已禁用，此为兜底
 
-    m_loadState[list].mediaInfoLoaded = false; // N19：条目集合变化
+    m_loadState[list].mediaMetaLoaded = false; // N29：条目集合变化，两类已读元数据一并失效
+    m_loadState[list].fileMetaLoaded = false;
     const bool playingTab = (tab == m_playingTab);
     const bool hadMemory = m_memory.contains(list) && m_memory.value(list).lastPos >= 0;
     const QString captured = captureMemoryPath(list);
@@ -1225,7 +1241,8 @@ void PlaylistWidget::removeRowsLocal(QListWidget *list, const QList<int> &rows) 
     if (!list || rows.isEmpty())
         return;
     const int tab = indexOf(list);
-    m_loadState[list].mediaInfoLoaded = false; // N19：条目集合变化
+    m_loadState[list].mediaMetaLoaded = false; // N29：条目集合变化，两类已读元数据一并失效
+    m_loadState[list].fileMetaLoaded = false;
     const bool hadMemory = m_memory.contains(list) && m_memory.value(list).lastPos >= 0;
     const QString captured = captureMemoryPath(list);
 
@@ -1314,8 +1331,10 @@ void PlaylistWidget::refreshCurrentTab() {
     if (const PlaylistProvider *p = providerAt(currentIndex())) {
         const auto key = SortKey(p->sortKey());
         if (key != SortKey::None) {
-            if ((key == SortKey::Duration || key == SortKey::ReleaseDate) &&
-                anyEntitySupportsMediaMeta(list)) {
+            // N29：刷新场景维持 Media 类限定——File 类刷新收尾的既有直排行为不变，
+            // 归 N30 收编，不在本篇改写
+            if (metaCategoryOf(key) == MetaCategory::Media &&
+                anyEntitySupports(list, MetaCategory::Media)) {
                 // 元数据键自动重读+重排（可取消，取消则时长列空、规则保留）
                 if (needsMetaRescan(currentIndex()))
                     reactivateRescan(list, currentIndex());
@@ -1365,8 +1384,10 @@ void PlaylistWidget::evictListKeys(QListWidget *list) {
         if (const PlaylistEntity *entity = entityFromItem(item))
             m_duration.remove(entity->key());
     }
-    for (auto it = m_loadState.begin(); it != m_loadState.end(); ++it)
-        it.value().mediaInfoLoaded = false;
+    for (auto it = m_loadState.begin(); it != m_loadState.end(); ++it) {
+        it.value().mediaMetaLoaded = false; // N29：两类标志位对称复位
+        it.value().fileMetaLoaded = false;
+    }
 }
 
 // ——N26 元数据能力谓词（一对，同形）：遍历本表实体，任一支持即真；
@@ -1396,6 +1417,61 @@ bool PlaylistWidget::anyEntitySupportsFileMeta(const QListWidget *list) const {
             return true;
     }
     return false;
+}
+
+// ——N29 类别映射与判定收敛点——
+
+// 排序键 → 预读元数据类别的唯一映射
+PlaylistWidget::MetaCategory PlaylistWidget::metaCategoryOf(SortKey key) {
+    switch (key) {
+    case SortKey::Created:
+    case SortKey::Modified:
+    case SortKey::FileSize:
+        return MetaCategory::File;
+    case SortKey::Duration:
+    case SortKey::ReleaseDate:
+        return MetaCategory::Media;
+    case SortKey::None:
+    case SortKey::FileName:
+    case SortKey::FileNameNumeric:
+    case SortKey::Extension:
+        return MetaCategory::None;
+    }
+    return MetaCategory::None;
+}
+
+// 对应类别支持者谓词：Media / File 各取其一（None 由调用方上游挡掉）
+bool PlaylistWidget::anyEntitySupports(const QListWidget *list, MetaCategory cat) const {
+    return cat == MetaCategory::Media ? anyEntitySupportsMediaMeta(list)
+                                      : anyEntitySupportsFileMeta(list);
+}
+
+// 切入重读判定内核：该表该排序键仍需预读的类别（无需预读返回 None）。
+// 注意只含"类别 / 支持者 / 标志位"三要素，busy / entriesLoaded / 占位等
+// 外围条件由调用方自判
+PlaylistWidget::MetaCategory PlaylistWidget::pendingMetaCategory(const QListWidget *list,
+                                                                 SortKey key) const {
+    const auto cat = metaCategoryOf(key);
+    if (cat == MetaCategory::None)
+        return MetaCategory::None;
+    if (!anyEntitySupports(list, cat))
+        return MetaCategory::None;
+    return metaLoadedOf(list, cat) ? MetaCategory::None : cat;
+}
+
+bool PlaylistWidget::metaLoadedOf(const QListWidget *list, MetaCategory cat) const {
+    const auto it = m_loadState.constFind(list); // 只读引用，免整结构体拷贝
+    if (it == m_loadState.end())
+        return false;
+    return cat == MetaCategory::File ? it->fileMetaLoaded : it->mediaMetaLoaded;
+}
+
+void PlaylistWidget::setMetaLoadedOf(QListWidget *list, MetaCategory cat, bool on) {
+    TabLoadState &st = m_loadState[list];
+    if (cat == MetaCategory::File)
+        st.fileMetaLoaded = on;
+    else
+        st.mediaMetaLoaded = on;
 }
 
 // ——N19 忙时与遮罩——
@@ -2101,7 +2177,8 @@ void PlaylistWidget::openListSettings(int tabIndex) {
 
     TabLoadState &st = m_loadState[list];
     st.entriesLoaded = false;
-    st.mediaInfoLoaded = false;
+    st.mediaMetaLoaded = false; // N29：换源两类标志一并复位
+    st.fileMetaLoaded = false;
     st.loadError.clear();
     list->clear();
     m_entities[list].clear(); // N26：实体所有权同步回收（行已清，防悬空 EntityRole）

@@ -20,6 +20,10 @@ class LocalFileEntity : public PlaylistEntity {
     bool supportsFileMeta() const override { return true; }
     bool supportsMediaMeta() const override { return MediaInfoHelper::available(); }
 
+    // N29：fileMeta 求值口径的唯一载体——惰性求值与提供者注入共用一份，防两处漂移
+    // （"不存在 / 不可读 → 三字段全空"、"size 取 qMax(0, …)"）
+    static FileMeta fileMetaFrom(const QFileInfo &fi);
+
   protected:
     FileMeta computeFileMeta() const override;
     MediaMeta computeMediaMeta() const override;

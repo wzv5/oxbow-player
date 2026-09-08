@@ -16,15 +16,12 @@ void StaticProvider::setItems(const EntityList &entities) {
     m_urls = std::move(urls);
 }
 
-// 现场造实体并预热文件元数据后移交视图（静态列表永成功）
+// 现场造实体后移交视图（静态列表永成功）；N29 起不预热元数据，按需经预读骨架供给
 std::expected<PlaylistProvider::EntityList, QString> StaticProvider::enumerate() const {
     EntityList entities;
     entities.reserve(m_urls.size());
-    for (const QString &url : m_urls) {
-        auto entity = PlaylistEntity::fromPlayUrl(url);
-        entity->fileMeta(); // 预热（同步填充路径在 GUI 线程执行同一惰性入口）
-        entities.push_back(std::move(entity));
-    }
+    for (const QString &url : m_urls)
+        entities.push_back(PlaylistEntity::fromPlayUrl(url));
     return entities;
 }
 

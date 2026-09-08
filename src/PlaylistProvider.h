@@ -8,7 +8,8 @@ class QSettings;
 
 // 播放列表提供者抽象接口（N9）：条目来源策略与列表视图解耦。
 // N26 起以播放项实体为交换媒介：enumerate 返回实体有序表（所有权一次性移交视图，
-// 实体在提供者侧现场构造并预热文件元数据）；视图层据此建行并施加排序规则；
+// 实体在提供者侧现场构造，遍历中顺手已持有的元数据可经注入口主动注入）；
+// 视图层据此建行并施加排序规则；
 // 序列化（存什么、怎么存）完全由具体提供者决定——含各自的排序键读写
 class PlaylistProvider {
   public:
@@ -60,4 +61,14 @@ class PlaylistProvider {
   private:
     int m_sortKey = 0; // 0 = None
     bool m_sortAscending = true;
+
+  protected:
+    // ——N29 元数据注入口（唯一授权通道）——
+    // 实体的 setFileMeta / setMediaMeta 为 protected 且仅友元（本类）可及；
+    // 友元不继承，具体提供者经此静态转发写入——访问发生在本类成员函数体内，
+    // 友元在此生效。新增提供者无需改实体头文件，只调转发函数
+    static void injectFileMeta(PlaylistEntity &e, const FileMeta &m) { e.setFileMeta(m); }
+    static void injectMediaMeta(PlaylistEntity &e, const PlaylistEntity::MediaMeta &m) {
+        e.setMediaMeta(m);
+    }
 };
