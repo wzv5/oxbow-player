@@ -910,11 +910,16 @@ void PlaylistWidget::restorePlayingState(QListWidget *list, int tab) {
     }
     clearPlayingMarks(list); // 先全清，再按定位结果单点重建
     if (target < 0) {
-        // N30：定位失败（停止态 / 正播项已不在本表）不置标记，但选中仍需归属。
+        // N30：定位失败（停止态 / 正播项已不在本表）不置标记，但选中仍需归属——
         // restoreViewState 对播放表刻意不设选中（免与归位重复滚动），此处是它唯一的
-        // 补偿点，否则播放表首次激活后选中为空、不滚动
-        if (tab == currentIndex())
-            activateTab(tab);
+        // 补偿点。不可交 activateTab：其播放表分支只滚标记行不改选，而停止态标记
+        // 已清，故在此按记忆行直接设选并滚动，停止态刷新后仍可见上次播放项
+        if (tab == currentIndex()) {
+            if (const int row = resolveResumeRow(tab); row >= 0 && row < list->count()) {
+                list->setCurrentRow(row);
+                list->scrollToItem(list->item(row), QListWidget::PositionAtCenter);
+            }
+        }
         return;
     }
     QListWidgetItem *item = list->item(target);
