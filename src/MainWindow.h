@@ -46,8 +46,11 @@ class MainWindow : public QMainWindow {
     // N6：速度控制（读改写 speed 属性，钳制 0.25~8）
     void changeSpeed(double delta);
     void resetSpeed();
-    // 统一播放入口：整表载入 → 跳转 index → seekTo>0 时经挂起机制恢复进度
-    void onPlayRequested(const QStringList &files, int index, double seekTo);
+    // 统一播放入口：整表载入 → 跳转 index → seekTo>0 时经挂起机制恢复进度。
+    // N30：keepPaused 为真时载入后保持暂停（四步式在 stop 前读到的 pause 状态），
+    // 使暂停态下的刷新 / 排序 / 移除无效项不误起播
+    void onPlayRequested(const QStringList &files, int index, double seekTo,
+                         bool keepPaused = false);
     void onFilesAdded(const QStringList &files);
     void onRemoveRequested(QList<int> rows);
     void onClearRequested();

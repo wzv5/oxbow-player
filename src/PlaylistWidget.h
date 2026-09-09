@@ -17,8 +17,10 @@ class MpvController;
 // 实体集合所有权仓 m_entities 以 list 指针为键（容器序恒等于行序）；
 // 文件级 / 媒体元数据全部归属实体（惰性求值 + 实体内缓存）。
 // 视图仅持有全局时长仓 m_duration（mpv 推送，键为规范化路径）。
-// 排序与清理对播放中 tab 统一走四步式：
-// 停止 → 本地变更 → playRequested 整表推送并从原文件恢复。
+// 排序与清理对播放中 tab 统一走四步式（N30 收敛为 runFourStep 唯一入口）：
+// 停止 → 本地变更 → playRequested 整表推送并从续播记忆恢复（暂停态自动保持）。
+// N30 刷新语义：静态与动态同路（回推后重枚举），行级换入不重建行，
+// 排序后比对旧序列——一致静默、末尾追加、不一致走四步式。
 class PlaylistWidget : public QTabWidget {
     Q_OBJECT
   public:
@@ -30,7 +32,7 @@ class PlaylistWidget : public QTabWidget {
     explicit PlaylistWidget(const QString &configFile = QString(), QWidget *parent = nullptr);
     ~PlaylistWidget() override; // N19：在途枚举线程 wait(2000) 收尾
 
-    // 注入控制器（弱引用）：四步式停止前读取 time-pos 用于进度恢复
+    // 注入控制器（弱引用）：N30 起四步式在停止前读 pause、归位读 path / idle-active
     void attachController(MpvController *mpv) { m_mpv = mpv; }
 
     // N25：mpv 播放列表回刷。本地在途回显 → 空列表忽略 → 与"正在播放"tab 逐行一致即静默
@@ -103,8 +105,9 @@ class PlaylistWidget : public QTabWidget {
 
   signals:
     // 请求整表载入并播放 files 中第 index 个；seekTo > 0 时就绪后恢复到该进度
-    // （N4 四步式的进度恢复与此同一通道；发出前已将 tab 标记为正在播放列表）
-    void playRequested(const QStringList &files, int index, double seekTo);
+    // （N4 四步式的进度恢复与此同一通道；发出前已将 tab 标记为正在播放列表）。
+    // N30：keepPaused 为真时载入后保持暂停（四步式在 stop 前读到的 pause 状态）
+    void playRequested(const QStringList &files, int index, double seekTo, bool keepPaused = false);
     // 当前 tab 收到新文件（菜单添加或拖放）
     void filesAdded(const QStringList &files);
     // "正在播放"tab 请求移除指定行 / 清空（需同步到 mpv 播放列表，由 MainWindow 执行；
@@ -151,6 +154,15 @@ class PlaylistWidget : public QTabWidget {
     // N29：预读元数据类别（排序键经 metaCategoryOf 映射；None = 该键不依赖元数据）
     enum class MetaCategory { None, File, Media };
 
+    // N30：rescanAndSort 的收尾结果
+    enum class RescanResult { Ok, Cancelled, Stale };
+    // N30：换入前的视图快照（换入后行号语义失效，按记忆行 key 复原）
+    struct ViewSnapshot {
+        QString memoryPath;
+        bool hadMemory = false;
+        bool selectFirst = false;
+    };
+
     // 单个 tab 的播放记忆（默认 tab 仅进程内有效，持久化时跳过索引 0）。
     // N9/N26：lastPath 为记忆条目 key（normalizePathForMatch 归一形态，引用条目身份
     // 而非某次字符串形态；旧 INI 读取时归一桥接），恢复时序号校验失败按其寻位
@@ -169,14 +181,36 @@ class PlaylistWidget : public QTabWidget {
     // 不含任何类型知识。不变式 I1：list 与 provider 成对创建，listAt 非空时
     // providerAt 恒非空（断言守候）
     bool isModifiableTab(int tabIndex) const;
-    // GUI 线程填充：清空（行 + 实体容器）→ 逐条 makeItem → 应用非元数据排序规则
-    // （Duration/ReleaseDate 且本表有支持者时跳过，由预读后的 applySort 执行）
-    void fillListFromEntries(QListWidget *list, PlaylistEntity::List &&entities);
+    // N30：行级换入——前 min(旧行数, 新实体数) 行逐行换绑实体（行对象复用，
+    // 保住 PlayingRole 与选中 / 滚动连续），多出的经 makeItem 追加，多余的删尾部行。
+    // 不 clear、不销毁行对象；旧实体连同全部缓存一并丢弃（换绑即换新）
+    void applyEntitiesToRows(QListWidget *list, PlaylistEntity::List &&entities);
     // 统一条目构造：显示名 / 图标 / tooltip 取自实体；EntityRole 存裸指针，
     // 实体所有权随行同步 push 进所有权容器
     QListWidgetItem *makeItem(QListWidget *list, PlaylistEntity::Ptr entity);
+    // 行与实体的角色绑定（建行与换绑共用）：显示名 / 图标 / tooltip / EntityRole
+    static void setItemEntity(QListWidgetItem *item, const PlaylistEntity::Ptr &entity);
     // 元数据回填后触发所有列表行重绘
     void repaintAllLists();
+
+    // ——N30 统一收尾三单元（首载 / 刷新 / 切入重读共用）——
+    // 按需元数据 + 排序（规则一律不写，仅手动排序链写）；
+    // Cancelled = 用户取消（顺序不动）；Stale = 预读期间本表被回刷重建（gen 非空时才判定）
+    RescanResult rescanAndSort(QListWidget *list, int tab, const quint64 *gen = nullptr);
+    // 记忆修正 + 选中与滚动，幂等。selectFirst 时只选中首项（换源场景无记忆可复）；
+    // 播放表不在此滚动——滚动与选中由归位一次性完成
+    void restoreViewState(QListWidget *list, int tab, const ViewSnapshot &snap);
+    // 播放态归位：按 mpv 现状重建本表 PlayingRole 与选中，是标记的唯一权威出口
+    void restorePlayingState(QListWidget *list, int tab);
+    // N30：清除本表全部 PlayingRole（四步式第 3 步与枚举失败路径共用——
+    // 二者都已下发 stop，属性查询读到的是发起前的旧值，不可按归位判断）
+    static void clearPlayingMarks(QListWidget *list);
+    // ——四步式唯一入口（刷新 / 切入的"其它"分支、applySort、executeRemoval 共用）——
+    // mutate = 停止之后、重推之前的结构变更（重排 / 删行）；空则表示调用前已排好
+    void runFourStep(QListWidget *list, int tab, const std::function<void()> &mutate);
+    // N30：刷新收尾的播放同步——排序后逐行比对旧 key 序列，静默 / 末尾追加 / 四步式三选一；
+    // 返回是否走了四步式。非播放表与守卫不通过时一律只做视图更新
+    bool syncAfterRefresh(QListWidget *list, int tab, const QStringList &oldKeys);
 
     // ——N19 异步加载与忙时——
     void activateTab(int index); // 原 onTabChanged 体：选中记忆行/播放行滚动
@@ -220,8 +254,6 @@ class PlaylistWidget : public QTabWidget {
     // 按行序批量删除实体（rows 必须降序；须在删行前调用）。
     // 单遍前缀计数定位各行容器下标后降序批量 erase，避免逐行 O(n·k) 重扫
     void eraseEntitiesAt(QListWidget *list, const QList<int> &rows);
-    // N26：静态刷新——对本表实体逐个 refresh()（清缓存）后重绘；重排由调用方按规则执行
-    void refreshEntities(QListWidget *list);
     // ——N26 元数据能力谓词（一对，同形）——遍历本表实体，任一支持即真；
     // 空表 / 未加载表为假
     bool anyEntitySupportsMediaMeta(const QListWidget *list) const;
@@ -242,6 +274,10 @@ class PlaylistWidget : public QTabWidget {
     // 三步法之第 1 步：抄录记忆行对应的 playUrl；第 3 步：在新序列中找回并写回
     QString captureMemoryPath(QListWidget *list) const;
     void restoreMemoryPath(QListWidget *list, const QString &captured, bool hadMemory);
+    // N30：回刷收编后的记忆重建。内容被整体替换，旧记忆的行号与路径一并失效，
+    // 但 mpv 仍在播新表里的某一项——按正播行重建记忆（定位不到才作废），
+    // 使随后的四步式（排序 / 移除）始终有续播目标，无需任何兜底
+    void rebuildMemoryAfterAdopt(QListWidget *list, int playingRow);
 
     // 排序执行：非播放 tab 直接重排；播放 tab 走四步式
     void sortCurrent(SortKey key, bool ascending);
@@ -282,8 +318,9 @@ class PlaylistWidget : public QTabWidget {
 
     // ——N19 per-tab 加载状态——
     struct TabLoadState {
-        bool entriesLoaded = false;   // 提供者枚举已执行（N28：创建/换源/恢复即
-                                      // false，首次激活后置位；默认 tab 恒 true）
+        bool entriesLoaded = false;   // 内容已就位（N28：创建/换源/恢复即 false，
+                                      // 首次激活后置位；N30：默认 tab 由直写路径
+                                      // 维护，恒 true，刷新则显式置 false 后重枚举）
         bool mediaMetaLoaded = false; // 本表 mediaMeta 已全表读取完成
                                       // （N29 更名自 mediaInfoLoaded）
         bool fileMetaLoaded = false;  // 本表 fileMeta 已全表读取完成（N29）
@@ -308,12 +345,11 @@ class PlaylistWidget : public QTabWidget {
     // ——N19 预读状态——
     bool m_metaCancel = false; // 取消按钮已点，下一个文件边界生效
     int m_scanDone = 0;
-    // ——N19 收尾挂起（refresh 播放恢复 / 设置页首选项 / 保存）——
+    // ——N19 收尾挂起——只表达"这一批要做什么"，不携带任何数据
     struct PendingLoad {
         QPointer<QListWidget> list;
         bool selectFirst = false; // 完成后选中首项（列表设置换源）
-        QString resumePath;       // 非空 = 动态刷新播放中 tab，收尾递延 stop→续播
-        bool saveAfter = false;   // 完成后 savePlaylists（动态刷新非播放非默认 tab）
+        bool refresh = false;     // 刷新批次：收尾需比对与播放同步
     };
     PendingLoad m_pendingLoad;
     // ——N25 本地在途回显——

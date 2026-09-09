@@ -1577,7 +1577,8 @@ void MainWindow::mousePressEvent(QMouseEvent *event) {
     QMainWindow::mousePressEvent(event);
 }
 
-void MainWindow::onPlayRequested(const QStringList &files, int index, double seekTo) {
+void MainWindow::onPlayRequested(const QStringList &files, int index, double seekTo,
+                                 bool keepPaused) {
     // 统一播放入口（N4 合并）：整表载入 → 跳转 index → 挂起恢复进度。
     m_pendingSeekRow = -1; // 丢弃未执行的挂起 seek
     m_pendingSeekTime = -1.0;
@@ -1601,10 +1602,12 @@ void MainWindow::onPlayRequested(const QStringList &files, int index, double see
         m_pendingSeekTime = seekTo;
     }
     m_controller->setProperty(QStringLiteral("playlist-pos"), index);
-    // pause 状态在文件切换后仍然保持，双击播放时显式恢复播放
-    m_controller->setProperty(QStringLiteral("pause"), false);
-    // pause 原本就是 no 时 mpv 不会再推送属性变化，图标需手动更新（同 playAt）
-    m_playButton->setIcon(style()->standardIcon(QStyle::SP_MediaPause));
+    // N30：pause 状态在文件切换后仍然保持——双击播放时显式恢复播放（keepPaused 为假）；
+    // 四步式在暂停态下重推则写入 pause=yes 保持暂停。
+    // 同值写入不触发属性变化推送，故无多余 pauseChanged / OSD，图标需手动更新（同 playAt）
+    m_controller->setProperty(QStringLiteral("pause"), keepPaused);
+    m_playButton->setIcon(
+        style()->standardIcon(keepPaused ? QStyle::SP_MediaPlay : QStyle::SP_MediaPause));
 }
 
 void MainWindow::onRemoveRequested(QList<int> rows) {
