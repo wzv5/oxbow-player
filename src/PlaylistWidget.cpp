@@ -288,6 +288,17 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
     if (def == m_loadingList)
         ++m_loadGen; // N30：默认 tab 亦会异步刷新，收编重建须作废在途批次（由丢弃路径复位忙时）
 
+    // N31：清前快照收编源实体，建 playUrl → 源实体索引（constFind 拷贝只延长源寿命，
+    // 自覆盖情形清表后克隆仍可用）。同 playUrl 取首个；首个未解析而重复项已解析时
+    // 复用落空无正确性代价（缺失元数据按需链自补）
+    QHash<QString, PlaylistEntity::Ptr> reuse;
+    if (const auto it = m_entities.constFind(list); it != m_entities.end()) {
+        for (const auto &src : it.value()) {
+            if (src && !reuse.contains(src->playUrl()))
+                reuse.insert(src->playUrl(), src);
+        }
+    }
+
     // 记录收编前的选中行（单选）：推送无 current 项（如停止态外部编辑）时
     // 整表替换会把界面选中清空（仅显示问题），沿用旧重建语义恢复
     const int prevRow = def->currentRow();
@@ -298,13 +309,23 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
 
     QListWidgetItem *newCurrent = nullptr;
     for (int i = 0; i < pushed.size(); ++i) {
-        // 经工厂造实体（网络路径落 UnknownEntity）；复用已有实体的克隆方案归 N31
-        QListWidgetItem *item = makeItem(def, PlaylistEntity::fromPlayUrl(pushed.at(i)));
+        // N31：命中索引复用源实体克隆（携带已解析缓存，playUrl 与回显串逐字节相等，
+        // 不破静默不变式）；未命中经工厂新建（网络路径落 UnknownEntity）
+        const auto rit = reuse.constFind(pushed.at(i));
+        PlaylistEntity::Ptr entity = rit != reuse.constEnd()
+                                         ? rit.value()->clone()
+                                         : PlaylistEntity::fromPlayUrl(pushed.at(i));
+        QListWidgetItem *item = makeItem(def, std::move(entity));
         if (current.at(i)) {
             item->setData(PlayingRole, true);
             newCurrent = item;
         }
     }
+    // N31：收编内容序 == mpv 会话序，随收编复位默认 tab 排序规则为无序（保留方向，
+    // 与 addFiles 同一形状）；否则存量元数据规则会让下次切入经 reactivateRescan
+    // 重排并四步式重推，吃掉推送序
+    if (auto *p = providerAt(0))
+        p->setSortRule(int(SortKey::None), p->sortAscending());
     if (newCurrent) {
         def->setCurrentItem(newCurrent);
         // 跟随滚动（N4）：正播项变动时最小位移滚入可见范围
@@ -387,6 +408,11 @@ void PlaylistWidget::setDefaultTabFiles(const QStringList &files) {
     m_loadState[list].fileMetaLoaded = false;
     for (const QString &file : files)
         makeItem(list, PlaylistEntity::fromPlayUrl(file));
+    // N31：内容序 == 打开顺序，随直写复位排序规则为无序（保留方向）——否则存量
+    // 元数据规则会在下次切入默认 tab 时经 reactivateRescan 重排，吃掉刚打开的顺序。
+    // 静态源 enumerate 不读排序键，与被作废的在途枚举批次无实际竞争
+    if (auto *p = providerAt(0))
+        p->setSortRule(int(SortKey::None), p->sortAscending());
 }
 
 void PlaylistWidget::repaintAllLists() {
