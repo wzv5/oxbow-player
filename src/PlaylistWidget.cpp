@@ -5,6 +5,7 @@
 #include "Constants.h"
 #include "ListSettingsDialog.h"
 #include "LoadingOverlay.h"
+#include "MediaInfoHelper.h"
 #include "MpvController.h"
 #include "PlaylistDelegate.h"
 #include "StaticProvider.h"
@@ -29,24 +30,26 @@ PlaylistWidget::PlaylistWidget(const QString &configFile, QWidget *parent)
     m_overlayTimer.setSingleShot(true);
     connect(&m_overlayTimer, &QTimer::timeout, this,
             [this] { m_overlay->begin(m_overlayMode, m_overlayTotal); });
-    connect(m_overlay, &LoadingOverlay::cancelRequested, this, [this] { m_metaCancel = true; });
+    // N32：取消请求经转发 lambda 落到当前槽位的 future（信号只连一次，future 随任务更换，
+    // 不能直连）；转发前判本批次"是否可取消"——枚举批次不可取消，且遮罩在 Loading 模式下
+    // 没有取消按钮，双重保证
+    connect(m_overlay, &LoadingOverlay::cancelRequested, this, [this] {
+        if (m_job.cancelable && m_job.future.isValid())
+            m_job.future.cancel();
+    });
 }
 
-// N19：在途枚举线程收尾。先置存活旗（工作线程检查后不再投递收尾），再 wait。
-// wait(2000) 不能省，三个原因：
-// ① QThread 析构约束：线程在跑时析构 QThread 对象即 std::terminate，必须先收线程；
-// ② 正常路径保险：枚举毫秒级完成，wait 对已结束线程立即返回——保证收尾
-//    invokeMethod(rawSelf) 不落在已析构对象上（alive 旗检查与 invokeMethod 之间存在
-//    TOCTOU 窗口，context 悬空即 UAF）；
-// ③ 异常兜底：线程卡死（如目录枚举断开的网络盘）时 2 秒上限防析构被无限期卡住；
-//    超时放弃后的残余窗口（同②）属"线程卡死＋进程退出"异常态，接受。
-// N28：线程 lambda 持有提供者 shared_ptr，在途提供者随线程结束自然销毁，析构无需
-// （也不能）干预其生命周期——成员容器析构不再影响线程（N26 泄漏 hack 已删）。
-// 预读为主线程循环，随析构自然终止
+// N32：析构不再等待。任务体只捕获入参副本（提供者 shared_ptr / 实体快照），不持 this；
+// watcher 以本对象为 parent 与接收者上下文，析构即断线，投递不到已析构对象——
+// 原 wait(2000) 的三个理由（QThread 析构约束、alive 旗 → invokeMethod 的 TOCTOU 窗口、
+// 线程卡死兜底）随之消灭。此处只做一次非阻塞收尾：作废并 cancel 在途任务，尽快释放
+// IO / MediaInfo 句柄、停止无谓计算，不为安全（cancel 尽力而为——卡在单条调用内时
+// 最坏延后一条）。
+// m_pendingTab 必须先清零：abandonJob 内的 setBusy(false) 会 flushPendingTab，
+// 那会在析构中途经 onTabChanged 再起一个新任务
 PlaylistWidget::~PlaylistWidget() {
-    *m_alive = false;
-    if (m_loadThread && m_loadThread->isRunning())
-        m_loadThread->wait(2000);
+    m_pendingTab = -1;
+    abandonJob();
 }
 
 QListWidget *PlaylistWidget::createList() {
@@ -285,8 +288,11 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
     QListWidget *def = listAt(0);
     if (!def)
         return;
-    if (def == m_loadingList)
-        ++m_loadGen; // N30：默认 tab 亦会异步刷新，收编重建须作废在途批次（由丢弃路径复位忙时）
+    // N32：默认 tab 亦会异步刷新，收编重建即作废在途批次（cancel + 递增代际 + 清槽位 +
+    // 复位忙时与遮罩由 abandonJob 一次完成）。仅当在途批次的目标表正是本表才作废——
+    // 否则会误杀他表的在途批次
+    if (m_job.target == def)
+        abandonJob();
 
     // N31：清前快照收编源实体，建 playUrl → 源实体索引（constFind 拷贝只延长源寿命，
     // 自覆盖情形清表后克隆仍可用）。同 playUrl 取首个；首个未解析而重复项已解析时
@@ -389,12 +395,10 @@ void PlaylistWidget::setDefaultTabFiles(const QStringList &files) {
     if (!list || files.isEmpty())
         return;
     // N30：主菜单"打开文件"与书签跳转不受 m_busy 限制，此时可能有本表的刷新批次在途。
-    // 不作废则 finishLoad 到达后用回推的旧内容整表覆盖，视图回到旧内容而 mpv 在播新文件
-    if (m_loadingList == list) { // 与 removeTabAt 同形
-        ++m_loadGen;
-        m_loadingList = nullptr;
-        setBusy(false);
-    }
+    // 不作废则枚举收尾到达后用回推的旧内容整表覆盖，视图回到旧内容而 mpv 在播新文件。
+    // N32：统一走 abandonJob（仅当在途批次的目标表即本表）
+    if (m_job.target == list)
+        abandonJob();
     if (m_pendingLoad.list == list)
         m_pendingLoad = PendingLoad{};
     // 内容由本函数直写即已就位：不置回会让下次切入默认 tab 误触发一次枚举，
@@ -669,7 +673,7 @@ int PlaylistWidget::indexOfName(const QString &name) const {
 void PlaylistWidget::onTabChanged(int index) {
     if (index < 0)
         return;
-    // N19：未加载的 tab 走首次激活链（选中/滚动在 finishLoad 收尾）。
+    // N19：未加载的 tab 走首次激活链（选中/滚动在枚举续作收尾）。
     // N28：所有 tab 创建 / 换源 / 会话恢复时 entriesLoaded 均为 false，
     // 内容统一在此经异步枚举填充；N30：默认 tab 内容由两条直写路径维护，该标志
     // 恒为"已就位"，故不在此发起枚举（其刷新经 refreshCurrentTab 显式发起）
@@ -703,35 +707,18 @@ bool PlaylistWidget::needsMetaRescan(int tabIndex) const {
     return pendingMetaCategory(list, SortKey(p->sortKey())) != MetaCategory::None;
 }
 
-// N30：与刷新共用同一套"比对 → 三分支"，差别只在"不换入"——预读并重排后顺序未变
-// 即静默（不再 stop + 重推，播放不中断）、已变则四步式。切入是同步路径，不传 generation
+// N30/N32：切入已加载 tab 的重读——与刷新共用同一套"比对 → 三分支"，差别只在"不换入"。
+// N32 起为薄壳：只组装意图上下文（旧值采集挪进推进函数，见 advanceTab），
+// 预读在任务槽内异步跑，不再有"同步路径不传 generation"这条分支
 void PlaylistWidget::reactivateRescan(QListWidget *list, int tabIndex) {
     if (!list)
         return;
-    setBusy(true);          // runMetaPrescan 不碰 m_busy，包裹由调用方负责
-    clearPlaceholder(list); // 与 finishLoad 对称：占位行不参与比对，也不进实体序列
-    QStringList oldKeys;
-    for (int i = 0; i < list->count(); ++i) {
-        if (isPlaceholderRow(list->item(i)))
-            continue;
-        if (const PlaylistEntity *e = entityFromItem(list->item(i)))
-            oldKeys << e->key();
-    }
-    ViewSnapshot snap;
-    snap.memoryPath = captureMemoryPath(list);
-    snap.hadMemory = m_memory.contains(list) && m_memory.value(list).lastPos >= 0;
-
-    bool fourStep = false;
-    if (rescanAndSort(list, tabIndex, nullptr) == RescanResult::Ok) {
-        restoreViewState(list, tabIndex, snap);
-        if (tabIndex == m_playingTab)
-            fourStep = syncAfterRefresh(list, tabIndex, oldKeys);
-    } else {
-        restoreViewState(list, tabIndex, snap); // 取消：顺序不动、不做播放同步
-    }
-    if (!fourStep)
-        restorePlayingState(list, tabIndex);
-    setBusy(false);
+    clearPlaceholder(list); // 与枚举收尾对称：占位行不参与比对，也不进实体序列
+    JobContext ctx;
+    ctx.intent = Intent::Reactivate;
+    ctx.list = list;
+    ctx.tab = tabIndex;
+    advanceTab(ctx, false);
 }
 
 // N19：原 onTabChanged 体。切入正在播放的列表：居中滚动到正播项。
@@ -879,24 +866,31 @@ void PlaylistWidget::applyEntitiesToRows(QListWidget *list, PlaylistEntity::List
     owned.resize(n);              // 容器序恒等于行序
 }
 
-// N30：按需元数据 + 排序（首载 / 刷新 / 切入重读的收尾共用）。
-// 规则一律不写——随提供者持久化，本次只是按既有规则重排，仅手动排序链 sortCurrent 写。
-// gen 非空＝异步批次：预读期间本表被回刷重建（generation 失配）即整批丢弃
-PlaylistWidget::RescanResult PlaylistWidget::rescanAndSort(QListWidget *list, int tab,
-                                                           const quint64 *gen) {
-    const auto *p = providerAt(tab);
-    const auto key = p ? SortKey(p->sortKey()) : SortKey::None;
-    const bool asc = p ? p->sortAscending() : true;
-    if (const auto cat = pendingMetaCategory(list, key); cat != MetaCategory::None) {
-        const bool ok = runMetaPrescan(list, cat);
-        if (gen && *gen != m_loadGen)
-            return RescanResult::Stale; // 整批丢弃：不做记忆复位、不恢复播放
-        if (!ok)
-            return RescanResult::Cancelled; // 取消：顺序不动
+// ——N32 上下文采集（一律到"用到它的那一步之前一刻"才采）——
+
+// 行序 key 序列（比对用；占位行跳过）
+QStringList PlaylistWidget::keysOf(const QListWidget *list) const {
+    QStringList keys;
+    if (!list)
+        return keys;
+    for (int i = 0; i < list->count(); ++i) {
+        if (isPlaceholderRow(list->item(i)))
+            continue;
+        if (const PlaylistEntity *e = entityFromItem(list->item(i)))
+            keys << e->key();
     }
-    if (key != SortKey::None)
-        sortListItems(list, key, asc);
-    return RescanResult::Ok;
+    return keys;
+}
+
+// 换入前的视图快照（换入后行号语义失效，按记忆行 key 复原）
+PlaylistWidget::ViewSnapshot PlaylistWidget::captureViewSnapshot(QListWidget *list) const {
+    ViewSnapshot snap;
+    if (!list)
+        return snap;
+    const bool hadRows = list->count() > 0;
+    snap.memoryPath = hadRows ? captureMemoryPath(list) : QString{};
+    snap.hadMemory = hadRows && m_memory.contains(list) && m_memory.value(list).lastPos >= 0;
+    return snap;
 }
 
 // N30：记忆修正 + 选中与滚动，幂等（行是否换过都可调用）。
@@ -979,61 +973,99 @@ void PlaylistWidget::runFourStep(QListWidget *list, int tab, const std::function
     // idx < 0：记忆条目已在本次变更中消失，保持停止，标记保持清除态
 }
 
-// N19/N26/N28/N29：所有 tab 首次激活统一走本函数异步枚举。线程经 shared_ptr 调用
-// provider->enumerate()（实体构造与提供者侧元数据注入都在工作线程）——换源/删 tab 后
-// 旧提供者的销毁被自动延后到线程结束，无 use-after-free。
-// 不变式：加载在途期间 GUI 线程不修改该提供者的可变状态——目录源成员构造后只读，
+// ——N32 任务槽（枚举与预读共用，全插件仅一份）——
+
+// 唯一出口（六步，顺序不可交换）。投递的收尾不外乎"取判定 → 校验身份 → 腾槽 → 续作 →
+// 条件复位"这一条链：任务体只算不写，一切落到视图的动作都在续作里发生。
+// 忙时与遮罩的复位只在此处（另一处是 abandonJob 的显式作废），且必须晚于续作——
+// 续作起的下一轮任务会重新置忙与起遮罩，先复位会取消它的忙时与遮罩并清掉它的槽位
+void PlaylistWidget::runJob(const JobContext &ctx, LoadingOverlay::Mode mode, int total,
+                            bool cancelable, std::function<void(QPromise<void> &)> body,
+                            std::function<void(JobVerdict)> cont) {
+    Q_ASSERT(!m_job.active()); // 单飞行：全插件同一时刻至多一个在途任务
+    setBusy(true);
+    armOverlay(mode, total);
+
+    m_job.token = ++m_token; // 代际前进（读旧批次的一律失配）
+    m_job.target = ctx.list;
+    m_job.cancelable = cancelable;
+    auto *watcher = new QFutureWatcher<void>(this); // parent = 本对象：析构即断线
+    m_job.watcher = watcher;
+
+    // 收尾体：幂等（靠身份判定），供 finished 信号与"起跑即结束"两条路径共用。
+    // 身份 = 本 watcher 仍是当前槽位项 + 代际未变；两者任一失配即"批次已作废，什么都不碰"
+    const quint64 jobToken = m_job.token;
+    auto finish = [this, watcher, jobToken, ctx, cont = std::move(cont)] {
+        if (m_job.watcher != watcher || m_job.token != jobToken) {
+            watcher->deleteLater(); // 早退不得漏销 watcher
+            return;
+        }
+        const JobVerdict verdict = watcher->isCanceled() ? JobVerdict::Cancelled : JobVerdict::Ok;
+        // ③ 腾出槽位（future 复位为默认构造，避免槽里留一个已完成的 future）
+        m_job.future = QFuture<void>();
+        m_job.target = nullptr;
+        m_job.watcher = nullptr;
+        watcher->deleteLater();
+        // ④ 续作（可能起下一轮任务并占用槽位）
+        cont(verdict);
+        // ⑤ 槽位仍空才复位——setBusy(false) 内含 flushPendingTab，必为最后一步
+        if (!m_job.active())
+            setBusy(false);
+    };
+    // 只接 finished 一个信号：Qt 侧语义为取消后 future 亦以 finished 收尾
+    // （RunFunctionTaskBase::run() 取消时走 reportFinished()；启动前取消则不执行任务体），
+    // 取消与否由 isCanceled() 判定，无需 canceled / finished 双信号幂等
+    connect(watcher, &QFutureWatcher<void>::finished, this, finish);
+    // 进度：任务内按时间节流 setProgressValue，这里直连遮罩（total 由入参捕获，
+    // progressValueChanged 只给值）
+    connect(watcher, &QFutureWatcher<void>::progressValueChanged, this,
+            [this, total](int value) { m_overlay->setProgress(value, total); });
+
+    m_job.future = QtConcurrent::run([body = std::move(body)](QPromise<void> &promise) {
+        body(promise); // 任务体：只捕获入参副本，绝不捕获 this / widget / 成员指针
+    });
+    watcher->setFuture(m_job.future);
+    // 防御：任务可能在 setFuture 之前就跑完（池线程空闲 + 任务极短），此时 Qt 是否补发
+    // finished 不在文档保证之内——本轮不依赖该语义，起跑后立刻补判一次；递延到事件循环
+    // 以免在发起栈内同步跑续作。两条路径都走 finish，由槽位身份判定兜住重复
+    if (m_job.future.isFinished())
+        QMetaObject::invokeMethod(this, finish, Qt::QueuedConnection);
+}
+
+// N19/N26/N28/N29/N32：所有 tab 首次激活 / 刷新 / 换源统一走本函数异步枚举。
+// 任务体经 shared_ptr 调用 provider->enumerate()（实体构造与提供者侧元数据注入都在
+// 工作线程）——换源/删 tab 后旧提供者的销毁被自动延后到任务结束，无 use-after-free。
+// 不变式：在途期间 GUI 线程不修改该提供者的可变状态——目录源成员构造后只读，
 // 增删/换源/删 tab 均被 m_busy 拦截；静态源的 setItems/setSortRule 经 savePlaylists
-// 的回传守卫（未加载表不回传）被跳过，不可能与工作线程的 enumerate() 并发。
-// 跨线程只带 shared_ptr + 共享存活旗：QPointer（含其拷贝）在工作线程读写是数据竞争，
-// 有效性一律由 GUI 收尾按 m_loadingList（仅 GUI 线程读写）+ m_loadGen 判定
+// 的回传守卫（未加载表不回传）被跳过，不可能与任务线程的 enumerate() 并发。
+// 跨线程只带 shared_ptr 与实体快照：QPointer 禁止在任务线程读写，有效性由任务槽判定
 void PlaylistWidget::startLoadAsync(QListWidget *list) {
     if (!list)
         return;
     const auto it = m_providerOf.find(list);
     if (it == m_providerOf.end())
         return;                 // 防御：提供者缺失不加载
-    auto provider = it.value(); // 线程持有 shared_ptr 副本：枚举期间提供者恒存活
-    clearPlaceholder(list);     // 失败重试先清占位
-    PlaylistWidget *rawSelf = this;
-    QListWidget *rawList = list;
-    auto alive = m_alive;
-    const quint64 gen = ++m_loadGen;
-    m_loadingList = list;
-    setBusy(true);
-    armOverlay(LoadingOverlay::Mode::Loading, 0);
-    auto *thread = QThread::create([rawSelf, rawList, provider, gen, alive] {
-        std::expected<PlaylistEntity::List, QString> r =
-            provider->enumerate(); // 工作线程：实体构造 + 元数据注入仅此一步
-        if (!alive->load())
-            return; // 析构已开始，不触碰任何成员
-        QMetaObject::invokeMethod(
-            rawSelf,
-            [rawSelf, rawList, r = std::move(r), gen] {
-                // 上下文机制：rawSelf 若在投递前销毁，本调用被 Qt 丢弃；
-                // 旧批次或目标已换（删 tab/同 tab 回刷重建）即弃
-                if (gen != rawSelf->m_loadGen || rawSelf->m_loadingList != rawList) {
-                    // N30：丢弃路径必须复位忙时，否则 m_busy 永久为真
-                    // （列表与 tab 栏全部禁用）。仅复位本批次，不惊动他表
-                    if (rawSelf->m_loadingList == rawList) {
-                        rawSelf->m_loadingList = nullptr;
-                        rawSelf->setBusy(false);
-                    }
-                    if (rawSelf->m_pendingLoad.list == rawList)
-                        rawSelf->m_pendingLoad = PendingLoad{};
-                    return;
-                }
-                rawSelf->finishLoad(rawList, std::move(r));
-            },
-            Qt::QueuedConnection);
-    });
-    connect(thread, &QThread::finished, thread, &QObject::deleteLater);
-    connect(thread, &QThread::finished, this, [this, thread] {
-        if (m_loadThread == thread)
-            m_loadThread = nullptr;
-    });
-    m_loadThread = thread;
-    thread->start();
+    auto provider = it.value(); // 任务持有 shared_ptr 副本：枚举期间提供者恒存活
+
+    // 意图在发起处定死并按值随任务走（异步边界不靠成员承载）。m_pendingLoad 只作
+    // 发起期意图来源：一次性消费 + 清空，失配残留一并清掉，杜绝污染后续首载
+    const PendingLoad pend = (m_pendingLoad.list == list) ? m_pendingLoad : PendingLoad{};
+    m_pendingLoad = PendingLoad{};
+
+    clearPlaceholder(list); // 失败重试先清占位
+    JobContext ctx;
+    ctx.intent = pend.refresh ? Intent::Refresh
+                              : (pend.selectFirst ? Intent::SwitchSource : Intent::InitialLoad);
+    ctx.list = list;
+    ctx.tab = indexOf(list);
+
+    auto result = std::make_shared<std::expected<PlaylistEntity::List, QString>>();
+    runJob(
+        ctx, LoadingOverlay::Mode::Loading, 0, /*cancelable=*/false,
+        [provider, result](QPromise<void> &) {
+            *result = provider->enumerate(); // 工作线程：实体构造 + 元数据注入仅此一步
+        },
+        [this, ctx, result](JobVerdict v) { onLoadFinished(ctx, *result, v); });
 }
 
 // N30：刷新收尾的播放同步——排序后逐行比对旧 key 序列，三分支选一。
@@ -1083,23 +1115,15 @@ bool PlaylistWidget::syncAfterRefresh(QListWidget *list, int tab, const QStringL
     return true;
 }
 
-// N19/N30：异步收尾（GUI 线程）——首载与刷新共用的收尾：
-// 换入 → rescanAndSort → 比对 → restoreViewState → 播放同步 → 归位；
-// 失败占位并保持 entriesLoaded=false（下次切入重试）
-void PlaylistWidget::finishLoad(QListWidget *list, std::expected<PlaylistEntity::List, QString> r) {
-    // m_loadingList 刻意保留到各出口：预读期的 processEvents 可能派发同 tab 回刷重建，
-    // 届时 setPlaylist 递增 generation，此处二次校验才能发现（入口处已由调用方验过一次）
-    PendingLoad pend;
-    if (m_pendingLoad.list == list) {
-        pend = m_pendingLoad;
-        m_pendingLoad = PendingLoad{};
-    }
-    const quint64 genAtEntry = m_loadGen;
-    if (!list) {
-        m_loadingList = nullptr;
-        setBusy(false);
+// N32：枚举续作（GUI 线程，唯一出口的续作步之内）——换入 → 推进函数。
+// 枚举失败与元数据缺失是两回事：占位 / 停播 / 同步目标归位仍是枚举专属，故失败分支
+// 不进推进函数；成功分支的后半段（换入之后）一律交 advanceTab。
+// 判定的来源：本批次已作废（Discarded）即行未换入、什么都不碰，忙时由唯一出口复位
+void PlaylistWidget::onLoadFinished(const JobContext &ctx,
+                                    std::expected<PlaylistEntity::List, QString> &r, JobVerdict v) {
+    QListWidget *list = ctx.list;
+    if (!list || v == JobVerdict::Discarded)
         return;
-    }
     clearPlaceholder(list);
     if (!r.has_value()) {
         m_loadState[list].loadError = r.error();
@@ -1113,66 +1137,216 @@ void PlaylistWidget::finishLoad(QListWidget *list, std::expected<PlaylistEntity:
             m_playingTab = 0; // 同步目标归位默认 tab（恒 >= 0，不悬空）
         }
         clearPlayingMarks(list); // N30：旧行保留而 stop 已入队，标记须显式清除（不可按归位判断）
-        m_loadingList = nullptr;
-        emit contentsChanged(); // 占位行计入行数，导航启停需刷新
-        setBusy(false);
+        emit contentsChanged();  // 占位行计入行数，导航启停需刷新
+        return;                  // 忙时与遮罩由唯一出口第 ⑤ 步复位（本续作未起新任务）
+    }
+    if (v == JobVerdict::Cancelled) { // 枚举批次不可取消，此为 abandonJob 之外的防御路径
+        finishCanceled(ctx);
         return;
     }
     TabLoadState &st = m_loadState[list];
     st.loadError.clear();
     st.entriesLoaded = true;
-    const int tab = indexOf(list);
 
-    // 换入前就地抄旧行 key 序列（供比对）与记忆（供视图恢复；首载空表跳过，
-    // 防 INI 记忆被空快照误清）
-    QStringList oldKeys;
-    if (pend.refresh) {
-        for (int i = 0; i < list->count(); ++i) {
-            if (isPlaceholderRow(list->item(i)))
-                continue;
-            if (const PlaylistEntity *e = entityFromItem(list->item(i)))
-                oldKeys << e->key();
+    // 换入前一刻才采集（§4.3）：在途期间 mpv 事件仍经 recordPlayback 推进本表记忆，
+    // 发起时快照会丢掉这段进度。oldKeys 仅刷新批次需要（供比对；其余意图无旧内容可比）
+    JobContext out = ctx;
+    if (ctx.intent == Intent::Refresh)
+        out.oldKeys = keysOf(list);
+    out.snap = captureViewSnapshot(list);
+    out.snap.selectFirst = (ctx.intent == Intent::SwitchSource);
+    applyEntitiesToRows(list, std::move(r.value()));
+    advanceTab(out, false);
+}
+
+// N32 推进函数（业务状态机，唯一入口）：判"还要不要预读"——要就起预读任务并让自己
+// 作为其续作（预读成功后置"本表该类已读"标志，再次进入必然落到收尾步，天然终止）；
+// 不要就做收尾。fromMetaScan 为真表示本轮预读已跑过，绝不再入预读分支——取消/失配时
+// "已读"标志未置位，若再判一次会立刻重起一轮，用户刚取消又被弹回遮罩。
+// 收尾顺序照搬现状：排序 → 视图恢复 → 比对与播放同步（含落盘）→ 播放态归位 → contentsChanged
+void PlaylistWidget::advanceTab(JobContext ctx, bool fromMetaScan) {
+    QListWidget *list = ctx.list;
+    if (!list)
+        return;
+    const int tab = indexOf(list);
+    if (tab < 0)
+        return;
+    const auto *p = providerAt(tab);
+    // 判类别不得读提供者的排序键：Sort 意图的规则写点在收尾步，取消即不写，
+    // 而"先写规则才能判类别"会让取消也落盘
+    const bool isSort = (ctx.intent == Intent::Sort);
+    const SortKey key = isSort ? ctx.sortKey : (p ? SortKey(p->sortKey()) : SortKey::None);
+    const bool asc = isSort ? ctx.ascending : (p ? p->sortAscending() : true);
+
+    if (!fromMetaScan) {
+        const MetaCategory cat = pendingMetaCategory(list, key);
+        if (cat != MetaCategory::None) {
+            ctx.tab = tab;
+            startMetaScan(std::move(ctx), cat); // 续作 = 自己（fromMetaScan=true 再入）
+            return;
         }
     }
-    const bool hadRows = list->count() > 0;
-    ViewSnapshot snap;
-    snap.memoryPath = hadRows ? captureMemoryPath(list) : QString{};
-    snap.hadMemory = hadRows && m_memory.contains(list) && m_memory.value(list).lastPos >= 0;
-    snap.selectFirst = pend.selectFirst;
-    applyEntitiesToRows(list, std::move(r.value()));
 
-    // finishLoad 恒为异步批次，一律传 generation 判定 Stale；切入重读是同步路径不传
-    const auto res = rescanAndSort(list, tab, &genAtEntry);
-    if (res == RescanResult::Stale) { // 整批丢弃：行已是权威内容，不恢复记忆
-        m_loadingList = nullptr;
-        emit contentsChanged();
-        restorePlayingState(list, tab); // 换入已发生，标记须由此出口给确定归属
-        setBusy(false);
-        return;
+    // 不换入类（Reactivate）的旧值到此才采集：异步后预读窗口变长，挪到续作内更准；
+    // 判定不受影响——restoreMemoryPath 按 key 重新定位，四步式的续播定位同理
+    if (ctx.intent == Intent::Reactivate) {
+        ctx.snap = captureViewSnapshot(list);
+        ctx.oldKeys = keysOf(list);
     }
-    if (res == RescanResult::Cancelled) { // 取消：顺序不动、不做播放同步
-        restoreViewState(list, tab, snap);
-        m_loadingList = nullptr;
+
+    if (isSort) {
+        // 排序规则写点只此一处（且取消即不写）；applySort 内部自带播放表的四步式
+        applySort(list, key, asc, /*writeRule=*/true);
         emit contentsChanged();
-        restorePlayingState(list, tab);
-        setBusy(false);
         return;
     }
 
-    restoreViewState(list, tab, snap);
+    if (key != SortKey::None)
+        sortListItems(list, key, asc);
+    restoreViewState(list, tab, ctx.snap);
+
     bool fourStep = false;
-    if (pend.refresh) {
+    if (ctx.intent == Intent::Refresh) {
         if (tab > 0 && tab != m_playingTab)
             savePlaylists(); // 非播放非默认 tab 落盘（播放中 tab 不落盘为既有语义）
         else if (tab == m_playingTab)
-            fourStep = syncAfterRefresh(list, tab, oldKeys);
+            fourStep = syncAfterRefresh(list, tab, ctx.oldKeys);
+    } else if (ctx.intent == Intent::Reactivate) {
+        if (tab == m_playingTab)
+            fourStep = syncAfterRefresh(list, tab, ctx.oldKeys);
     }
     if (!fourStep)
         restorePlayingState(list, tab);
+    emit contentsChanged(); // 末位补发一次（该信号契约幂等，接收方只刷新导航启停）
+}
 
-    m_loadingList = nullptr;
-    emit contentsChanged(); // 条目数已变，刷新导航启停（A16）
-    setBusy(false);
+// N32：预读发起。任务体只算不写（经实体求值转发取回值），结果按快照实体成批交出；
+// 续作把批次注入快照实体——这是实体缓存的唯一写点，故缓存（含绘制路径读的）只在 GUI 线程写。
+// 快照天然正确：活动容器的行序会被换源 / 删行 / 排序改变，而快照注入按实体而非行号
+void PlaylistWidget::startMetaScan(JobContext ctx, MetaCategory cat) {
+    QListWidget *list = ctx.list;
+    if (!list || cat == MetaCategory::None)
+        return;
+    // MediaInfo 进线程池的前提①：显式预载一次（shim 的模块加载惰性且无锁）。
+    // 此调用必在 GUI 线程、必在起任务之前——此后任务线程对 shim 只剩只读
+    if (cat == MetaCategory::Media)
+        MediaInfoHelper::available();
+
+    auto pending = std::make_shared<PlaylistEntity::List>(); // 待求值者（共享计数快照）
+    int baseline = 0; // 已求值 / 不支持者：无需计算，但计入进度分母（现状口径）
+    if (const auto it = m_entities.constFind(list); it != m_entities.end()) {
+        for (const auto &entity : it.value()) {
+            // 能力位为假的类别不进求值；已求值者（含"值未知"入缓存）也不重算——
+            // 缓存判定必须在 GUI 线程做：任务只算不写，读缓存会与 GUI 侧写入构成数据竞争
+            const bool supported = cat == MetaCategory::File ? entity->supportsFileMeta()
+                                                             : entity->supportsMediaMeta();
+            const bool cached = cat == MetaCategory::File ? entity->cachedFileMeta() != nullptr
+                                                          : entity->cachedMediaMeta() != nullptr;
+            if (!supported || cached) {
+                ++baseline;
+                continue;
+            }
+            pending->push_back(entity);
+        }
+    }
+    const int total = baseline + int(pending->size()); // 分母恒为条目总数（含命中与不支持者）
+    auto result = std::make_shared<MetaResult>();
+    result->cat = cat;
+
+    runJob(
+        ctx, LoadingOverlay::Mode::MetaScan, total, /*cancelable=*/true,
+        [pending, result, cat, baseline, total](QPromise<void> &promise) {
+            promise.setProgressRange(0, total);
+            promise.setProgressValue(baseline);
+            QElapsedTimer throttle;
+            throttle.start();
+            int done = baseline;
+            for (const auto &entity : *pending) {
+                // 每条边界轮询取消：QtConcurrent 只在任务启动时查一次，轮询是唯一判据
+                // （QPromise<void> 不调 addResult，没有"返回 false"这层判据）
+                if (promise.isCanceled())
+                    break;
+                if (cat == MetaCategory::File) {
+                    result->entities.push_back(entity);
+                    result->fileMeta.push_back(entity->evalFileMeta());
+                } else {
+                    result->entities.push_back(entity);
+                    result->mediaMeta.push_back(entity->evalMediaMeta());
+                }
+                ++done;
+                // 进度按时间节流（不是"每 N 条"）：各条目耗时量级差异极大——本地文件
+                // 毫秒级，MediaInfo / 远端请求可能每条数秒，条数节流会让界面几十秒
+                // 不刷新状态，看起来像卡死。单条求值本身不可中断，该条耗时期间进度不动
+                if (throttle.elapsed() >= 50) {
+                    throttle.restart();
+                    promise.setProgressValue(done);
+                }
+            }
+            if (!promise.isCanceled())
+                promise.setProgressValue(total); // 循环末尾补一次
+        },
+        [this, ctx, result](JobVerdict v) { onMetaScanFinished(ctx, result, v); });
+}
+
+// N32：预读续作——注入批次（唯一的写点）→ 置"本表该类已读"标志 → 重绘 → 收尾。
+// 取消也注入：已算出的值不丢，下次预读从缓存命中处续跑（N19 §3.3 的缓存保留语义），
+// 只是不置已读标志（切入时会重新预读，但全程命中缓存）、不排序、不写规则
+void PlaylistWidget::onMetaScanFinished(JobContext ctx, const std::shared_ptr<MetaResult> &r,
+                                        JobVerdict v) {
+    QListWidget *list = ctx.list;
+    if (!list || v == JobVerdict::Discarded)
+        return; // 批次已作废：不注入、不排序、不动记忆
+    const size_t n = r->entities.size();
+    for (size_t i = 0; i < n; ++i) {
+        if (r->cat == MetaCategory::File)
+            r->entities[i]->setFileMeta(r->fileMeta[i]); // 友元授权：视图层唯一的写入口
+        else
+            r->entities[i]->setMediaMeta(r->mediaMeta[i]);
+    }
+    repaintAllLists(); // 批次落地后统一重绘一次（成功与取消同此一次）
+    if (v == JobVerdict::Cancelled) {
+        finishCanceled(ctx);
+        return;
+    }
+    setMetaLoadedOf(list, r->cat, true);
+    advanceTab(std::move(ctx), /*fromMetaScan=*/true);
+}
+
+// N32：取消收尾——按意图分支，不可一刀切。枚举 / 刷新 / 重读侧有 ViewSnapshot
+// （行已换入或记忆待修正）→ 做视图恢复再归位；Sort 侧无快照 → 一律不动：
+// 给 Sort 补一次视图恢复会经 restoreViewState 的 tab == currentIndex() &&
+// tab != m_playingTab 分支调 activateTab，产生重新选中与滚动的可见副作用
+void PlaylistWidget::finishCanceled(const JobContext &ctx) {
+    QListWidget *list = ctx.list;
+    if (!list || ctx.intent == Intent::Sort)
+        return;
+    const int tab = indexOf(list);
+    if (tab < 0)
+        return;
+    // Reactivate 的采集点在排序前一刻，取消时尚未采集——此刻补采（在途期间本表被
+    // m_busy 冻结，与"发起时采集"等价），否则记忆修正与选中跟随会整体落空
+    ViewSnapshot snap = ctx.snap;
+    if (ctx.intent == Intent::Reactivate)
+        snap = captureViewSnapshot(list);
+    restoreViewState(list, tab, snap);
+    restorePlayingState(list, tab);
+    emit contentsChanged(); // 末位补发一次
+}
+
+// N32：外部作废统一入口（内容被外部替换 / 重建的三处由此收口）。
+// 顺序不可交换：先 cancel 在途任务（尽力取消，落到 future 上）→ 递增代际 → 清槽位
+// （含目标表，future 复位为默认构造）→ 复位忙时与遮罩。cancel 不得晚于清槽位，
+// 否则"尽力取消"落空。被作废批次随后的 finished 投递按身份校验早退，什么都不碰
+void PlaylistWidget::abandonJob() {
+    if (m_job.future.isValid())
+        m_job.future.cancel();
+    ++m_token;
+    m_job.target = nullptr;
+    m_job.future = QFuture<void>();
+    m_job.watcher = nullptr; // watcher 的 finished 路径自会销它（早退分支同样 deleteLater）
+    m_pendingLoad = PendingLoad{};
+    if (m_busy)
+        setBusy(false);
 }
 
 // 条目重排核心：行指针摘除 → 稳定排序 → 回填；实体容器按同一 order 重排。
@@ -1277,6 +1451,9 @@ void PlaylistWidget::sortListItems(QListWidget *list, SortKey key, bool ascendin
 
 // ——排序（N4 第五节）——
 
+// N32：手动排序链——只组装意图上下文（含判类别与写规则共用的 key/asc，不预写规则），
+// 预读与收尾一律由推进函数负责。取消由 finishCanceled 按意图分支处理：Sort 侧无快照，
+// 一律不动（顺序不动、规则不落盘）
 void PlaylistWidget::sortCurrent(SortKey key, bool ascending) {
     QListWidget *list = listAt(currentIndex());
     const int tab = currentIndex();
@@ -1286,38 +1463,13 @@ void PlaylistWidget::sortCurrent(SortKey key, bool ascending) {
     if (!m_loadState[list].entriesLoaded)
         return;
 
-    // N19：元数据键走预读流程——先全表预读再排序，取消则规则不写、一切不动。
-    // N26：本表无支持者时退化为直排（与菜单禁用一致）；
-    // N29：经共用内核判定——对应标志已置（缓存齐全）则免预读直排，两类同形
-    const auto cat = pendingMetaCategory(list, key);
-    if (cat != MetaCategory::None) {
-        setBusy(true); // 忙时即重入守卫（预读期菜单/tab 栏已冻结）
-        const bool ok = runMetaPrescan(list, cat);
-        if (!ok) {
-            setBusy(false); // 取消：恢复启用、隐藏遮罩、一切不动
-            return;
-        }
-        applySort(list, key, ascending, true);
-        setBusy(false);
-        return;
-    }
-
-    applySort(list, key, ascending, true);
-}
-
-// N19/N29：预读公共骨架（不碰 m_busy，调用方负责 setBusy 包裹）：遮罩 + 循环 +
-// 收尾重绘；成功置位对应类别标志并返回 true，取消/销毁返回 false。
-// None 无骨架语义：入口挡掉，Release 下也不得落入任一类别分支
-bool PlaylistWidget::runMetaPrescan(QListWidget *list, MetaCategory cat) {
-    if (!list || cat == MetaCategory::None)
-        return false;
-    armOverlay(LoadingOverlay::Mode::MetaScan, list->count());
-    m_metaCancel = false;
-    const bool ok = runMetaScan(list, list->count(), cat);
-    repaintAllLists();
-    if (ok)
-        setMetaLoadedOf(list, cat, true);
-    return ok;
+    JobContext ctx;
+    ctx.intent = Intent::Sort;
+    ctx.list = list;
+    ctx.tab = tab;
+    ctx.sortKey = key;
+    ctx.ascending = ascending;
+    advanceTab(ctx, false);
 }
 
 // N19：排序执行体（无预读）——规则落位 + 非播放直排 / 播放四步式
@@ -1344,51 +1496,6 @@ void PlaylistWidget::applySort(QListWidget *list, SortKey key, bool ascending, b
         sortListItems(list, key, ascending);
 
     restoreMemoryPath(list, captured, hadMemory);
-}
-
-// N19/N26/N29：主线程元数据预读循环。total = 条目总数；返回 false = 用户取消或销毁。
-// 进度按已处理行数计数——不支持对应类别元数据的实体永不产生缓存，
-// 按缓存命中计数会使进度条永不达 100% 并可致预读卡死。
-// 循环体按类别取缓存判命中、按类别求值；遮罩/节流/取消检查两类共用
-bool PlaylistWidget::runMetaScan(QPointer<QListWidget> list, int total, MetaCategory cat) {
-    Q_ASSERT(cat != MetaCategory::None); // 调用方经 metaCategoryOf 保证
-    QPointer<PlaylistWidget> self(this);
-    // 快照：持有共享计数，循环期间行重建不影响；实体归属容器可能被回刷替换，
-    // 快照保证被解析实体存活到本次循环结束
-    PlaylistEntity::List snapshot;
-    if (list) {
-        const auto it = m_entities.constFind(list);
-        if (it != m_entities.end())
-            snapshot = it.value();
-    }
-    m_scanDone = 0;
-    m_overlay->setProgress(0, total);
-    QElapsedTimer throttle;
-    throttle.start();
-    for (const auto &entity : snapshot) {
-        if (!self || !list)
-            return false;
-        const bool hit = cat == MetaCategory::File ? entity->cachedFileMeta() != nullptr
-                                                   : entity->cachedMediaMeta() != nullptr;
-        if (cat == MetaCategory::File)
-            entity->fileMeta(); // 未命中即同步求值一次入实体缓存（含"值未知"入缓存）
-        else
-            entity->mediaMeta(); // 未命中即同步解析一次入实体缓存（含失败防重解析）
-        ++m_scanDone;
-        if (hit)
-            continue; // 命中零成本，不进入节流/取消检查
-        if (throttle.elapsed() < 50)
-            continue; // 节流：每 ~50ms 刷新一次进度
-        throttle.restart();
-        m_overlay->setProgress(m_scanDone, total);
-        QCoreApplication::processEvents(); // 驱动遮罩重绘、进度、取消按钮、延迟定时器
-        if (m_metaCancel)
-            return false;
-    }
-    m_overlay->setProgress(total, total);
-    if (!self || !list || m_metaCancel)
-        return false;
-    return true;
 }
 
 // ——清理操作（N4 第六节）——
@@ -1512,7 +1619,7 @@ void PlaylistWidget::refreshCurrentTab() {
     st.loadError.clear();
     // ③ 驱逐：N20 条目只驱逐本表；flag 重置所有表
     evictListKeys(list);
-    // ④ 登记 + ⑤ 发起（收尾见 finishLoad）
+    // ④ 登记意图 + ⑤ 发起（收尾见 onLoadFinished：换入 → 推进函数）
     m_pendingLoad = PendingLoad{};
     m_pendingLoad.list = list;
     m_pendingLoad.refresh = true;
@@ -2221,17 +2328,16 @@ void PlaylistWidget::removeTabAt(int tabIndex) {
     }
     if (QListWidget *closing = listAt(idx)) {
         // N28：shared_ptr 引用计数回收（含排序规则）；若旧提供者在途，
-        // 线程 lambda 仍持副本，销毁自动延后到枚举线程结束
+        // 任务 lambda 仍持副本，销毁自动延后到枚举任务结束
+        // N32：在途批次一并作废，统一走 abandonJob（仅当目标表即本表）
+        if (m_job.target == closing)
+            abandonJob();
         m_providerOf.remove(closing);
         m_entities.remove(closing); // N26：实体所有权随 tab 一并回收
         m_memory.remove(closing);
         m_loadState.remove(closing); // N19：清理加载状态（含 loadError）
         if (m_pendingLoad.list == closing)
             m_pendingLoad = PendingLoad{};
-        if (m_loadingList == closing) {
-            m_loadingList = nullptr;
-            ++m_loadGen; // 在途收尾按 generation 丢弃
-        }
     }
     if (m_playingTab > idx)
         --m_playingTab;

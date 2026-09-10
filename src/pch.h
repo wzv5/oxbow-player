@@ -33,6 +33,8 @@
 #include <QFontDatabase>
 #include <QFontMetrics>
 #include <QFormLayout>
+#include <QFuture>
+#include <QFutureWatcher>
 #include <QHBoxLayout>
 #include <QHash>
 #include <QHelpEvent>
@@ -91,6 +93,7 @@
 #include <QVBoxLayout>
 #include <QVariantList>
 #include <QVariantMap>
+#include <QtConcurrent/QtConcurrentRun>
 #include <QtGlobal>
 
 #include <algorithm>

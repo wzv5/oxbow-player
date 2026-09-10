@@ -81,6 +81,20 @@ const PlaylistEntity::MediaMeta *PlaylistEntity::cachedMediaMeta() const {
     return m_mediaMeta.has_value() ? &*m_mediaMeta : nullptr;
 }
 
+// ——N32 求值转发：与惰性入口同口径（能力位首判 + compute*），但不落缓存——
+// 任务线程只算不写；值由 GUI 续作经注入口 setFileMeta / setMediaMeta 写回
+FileMeta PlaylistEntity::evalFileMeta() const {
+    if (!supportsFileMeta())
+        return {};
+    return computeFileMeta();
+}
+
+PlaylistEntity::MediaMeta PlaylistEntity::evalMediaMeta() const {
+    if (!supportsMediaMeta())
+        return {};
+    return computeMediaMeta();
+}
+
 const QIcon &PlaylistEntity::icon() const {
     if (!m_icon.has_value())
         m_icon = computeIcon();

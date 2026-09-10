@@ -21,6 +21,10 @@ class MpvController;
 // 停止 → 本地变更 → playRequested 整表推送并从续播记忆恢复（暂停态自动保持）。
 // N30 刷新语义：静态与动态同路（回推后重枚举），行级换入不重建行，
 // 排序后比对旧序列——一致静默、末尾追加、不一致走四步式。
+// N32 异步语义：枚举与元数据预读统一到 QtConcurrent（QPromise + QFutureWatcher），
+// 全插件同一时刻至多一个在途任务——枚举与预读共用一份任务槽、一个推进函数
+// （advanceTab）、一处"腾槽 → 续作 → 条件复位忙时"的唯一出口；任务只捕获入参副本，
+// 不持有宿主对象，故析构无需等待。
 class PlaylistWidget : public QTabWidget {
     Q_OBJECT
   public:
@@ -30,7 +34,7 @@ class PlaylistWidget : public QTabWidget {
     static constexpr int PlaceholderRole = Qt::UserRole + 2; // N19 枚举失败占位行标记（bool）
 
     explicit PlaylistWidget(const QString &configFile = QString(), QWidget *parent = nullptr);
-    ~PlaylistWidget() override; // N19：在途枚举线程 wait(2000) 收尾
+    ~PlaylistWidget() override; // N32：非阻塞收尾——作废并取消在途任务后立即返回（不再等待）
 
     // 注入控制器（弱引用）：N30 起四步式在停止前读 pause、归位读 path / idle-active
     void attachController(MpvController *mpv) { m_mpv = mpv; }
@@ -154,13 +158,47 @@ class PlaylistWidget : public QTabWidget {
     // N29：预读元数据类别（排序键经 metaCategoryOf 映射；None = 该键不依赖元数据）
     enum class MetaCategory { None, File, Media };
 
-    // N30：rescanAndSort 的收尾结果
-    enum class RescanResult { Ok, Cancelled, Stale };
     // N30：换入前的视图快照（换入后行号语义失效，按记忆行 key 复原）
     struct ViewSnapshot {
         QString memoryPath;
         bool hadMemory = false;
         bool selectFirst = false;
+    };
+
+    // ——N32 单任务槽：意图 / 判定 / 上下文 / 结果 / 槽位——
+    // 意图枚举取代原 pend.refresh / pend.selectFirst 两个布尔：在发起处定死并按值随任务走
+    enum class Intent { InitialLoad, SwitchSource, Refresh, Reactivate, Sort };
+    // 唯一出口的判定。Discarded = 批次已作废（watcher 已非当前槽位项，什么都不碰）；
+    // Cancelled = 用户取消；Ok = 正常。原 RescanResult 的 Ok/Cancelled/Stale 三态
+    // 由"身份校验 + 二态"承载
+    enum class JobVerdict { Discarded, Cancelled, Ok };
+    // 一次任务的全部输入。oldKeys / ViewSnapshot 一律不在发起时采集——在途期 mpv 事件
+    // 仍经 recordPlayback 推进本表记忆（无忙时守卫），发起时快照会丢掉这段进度；
+    // 由续作在"用到它的那一步之前一刻"填入（换入类在换入前，不换入类在排序前）
+    struct JobContext {
+        Intent intent = Intent::InitialLoad;
+        QPointer<QListWidget> list;
+        int tab = -1;
+        SortKey sortKey = SortKey::None; // 仅 Sort 用：判类别与写规则都读它，不读提供者
+        bool ascending = true;
+        QStringList oldKeys; // 换入类由枚举续作在换入前采集
+        ViewSnapshot snap;   // 同上；Reactivate 由预读续作在排序前采集
+    };
+    // 预读任务的结果对象：槽位只存 QFuture<void>，异构结果由它携带（类型擦除的落点）
+    struct MetaResult {
+        MetaCategory cat = MetaCategory::None;
+        PlaylistEntity::List entities;                    // 已算出的快照实体（下标对齐）
+        std::vector<FileMeta> fileMeta;                   // cat == File 时有效
+        std::vector<PlaylistEntity::MediaMeta> mediaMeta; // cat == Media 时有效
+    };
+    // 任务槽（全插件仅一份）：全插件同一时刻至多一个在途任务，故只需一份状态与一处出口
+    struct JobSlot {
+        quint64 token = 0;            // 单调代际（并入原 m_loadGen）
+        QPointer<QListWidget> target; // 目标表（仅 GUI 线程读写）
+        bool cancelable = false;      // 枚举批次不可取消（遮罩在 Loading 模式亦无取消按钮）
+        QFuture<void> future;         // 在途任务；正常出口与 abandonJob 均复位为默认构造
+        QFutureWatcher<void> *watcher = nullptr;
+        bool active() const { return watcher != nullptr; }
     };
 
     // 单个 tab 的播放记忆（默认 tab 仅进程内有效，持久化时跳过索引 0）。
@@ -194,9 +232,6 @@ class PlaylistWidget : public QTabWidget {
     void repaintAllLists();
 
     // ——N30 统一收尾三单元（首载 / 刷新 / 切入重读共用）——
-    // 按需元数据 + 排序（规则一律不写，仅手动排序链写）；
-    // Cancelled = 用户取消（顺序不动）；Stale = 预读期间本表被回刷重建（gen 非空时才判定）
-    RescanResult rescanAndSort(QListWidget *list, int tab, const quint64 *gen = nullptr);
     // 记忆修正 + 选中与滚动，幂等。selectFirst 时只选中首项（换源场景无记忆可复）；
     // 播放表不在此滚动——滚动与选中由归位一次性完成
     void restoreViewState(QListWidget *list, int tab, const ViewSnapshot &snap);
@@ -212,20 +247,42 @@ class PlaylistWidget : public QTabWidget {
     // 返回是否走了四步式。非播放表与守卫不通过时一律只做视图更新
     bool syncAfterRefresh(QListWidget *list, int tab, const QStringList &oldKeys);
 
-    // ——N19 异步加载与忙时——
+    // ——N19 异步加载与忙时（N32：统一到 QtConcurrent + 单任务槽）——
     void activateTab(int index); // 原 onTabChanged 体：选中记忆行/播放行滚动
+    // 唯一出口（六步、顺序不可交换）：① 取判定；② 身份校验——本 watcher 已非当前槽位项
+    // 即什么都不碰；③ 腾出槽位并销 watcher；④ 调续作（可能起下一轮任务并占用槽位）；
+    // ⑤ 槽位仍空才隐藏遮罩 + setBusy(false)。忙时与遮罩的复位只此一处（另一处是
+    // abandonJob 的显式作废），且必须晚于续作
+    void runJob(const JobContext &ctx, LoadingOverlay::Mode mode, int total, bool cancelable,
+                std::function<void(QPromise<void> &)> body, std::function<void(JobVerdict)> cont);
+    // 枚举发起（意图由发起处经 m_pendingLoad 定死）：清占位、递增代际、记目标表、置忙、起遮罩
     void startLoadAsync(QListWidget *list);
-    void finishLoad(QListWidget *list, std::expected<PlaylistEntity::List, QString> r);
+    // 枚举续作：失败分支就地收尾；成功则换入 → 推进函数（结果按移动语义换入，故非 const）
+    void onLoadFinished(const JobContext &ctx, std::expected<PlaylistEntity::List, QString> &r,
+                        JobVerdict v);
+    // N32 推进函数（业务状态机，唯一入口）：要预读就起预读任务并让自己作为其续作
+    // （fromMetaScan 为真时不再入内，自然终止）；否则做收尾。
+    // 预读触发点由原三处（枚举收尾 / 切入重读 / 手动排序）收敛为这一处
+    void advanceTab(JobContext ctx, bool fromMetaScan);
+    // 预读发起：快照装配 + 可取消任务 + "只算不写"任务体 + 注入续作
+    void startMetaScan(JobContext ctx, MetaCategory cat);
+    // 预读续作：注入批次（唯一的写点；取消也注入，保持 N19 的缓存保留语义）→ 置已读标志
+    // → 重绘 → 正常则回推进函数收尾，取消则按意图分支收尾
+    void onMetaScanFinished(JobContext ctx, const std::shared_ptr<MetaResult> &r, JobVerdict v);
+    // 取消收尾：枚举/刷新/重读侧有快照 → 视图恢复 + 播放态归位；Sort 侧无快照 → 一律不动
+    void finishCanceled(const JobContext &ctx);
+    // N32 外部作废统一入口：先 cancel 在途任务 → 递增代际 → 清槽位 → 复位忙时与遮罩
+    void abandonJob();
     void setBusy(bool on);
     void flushPendingTab();
     void setListsEnabled(bool on);
     void armOverlay(LoadingOverlay::Mode mode, int total);
-    // ——N19 元数据预读（N29 起参数化类别）——
-    bool runMetaScan(QPointer<QListWidget> list, int total, MetaCategory cat);
+    // ——N32 上下文采集（到用到处才采）——
+    // 行序 key 序列（比对用；占位行跳过）
+    QStringList keysOf(const QListWidget *list) const;
+    // 视图快照：记忆行 key + 有无记忆（换入前一刻 / 不换入类的排序前一刻调用）
+    ViewSnapshot captureViewSnapshot(QListWidget *list) const;
     void applySort(QListWidget *list, SortKey key, bool ascending, bool writeRule);
-    // 预读公共骨架（不碰 m_busy，调用方负责 setBusy 包裹）：遮罩 + 循环 + 收尾重绘；
-    // 成功置位对应类别标志并返回 true，取消/销毁返回 false
-    bool runMetaPrescan(QListWidget *list, MetaCategory cat);
     // N29：对应类别"本表已全表读取完成"标志的读写收敛点（两位同形）
     bool metaLoadedOf(const QListWidget *list, MetaCategory cat) const;
     void setMetaLoadedOf(QListWidget *list, MetaCategory cat, bool on);
@@ -233,7 +290,8 @@ class PlaylistWidget : public QTabWidget {
     void evictListKeys(QListWidget *list);
     // 已加载 tab 切入重读判定：内容已载、无占位、标志失效、排序依赖元数据
     bool needsMetaRescan(int tabIndex) const;
-    // 已加载 tab 切入即重读：预读 → 排序 → 选中跟随（忙时包裹）
+    // 已加载 tab 切入即重读：置意图后交给推进函数（预读 → 排序 → 选中跟随）；
+    // N32 起不再是同步函数——预读已在任务槽内异步跑
     void reactivateRescan(QListWidget *list, int tabIndex);
     // ——N19 失败占位——
     static bool isPlaceholderRow(const QListWidgetItem *item);
@@ -328,24 +386,16 @@ class PlaylistWidget : public QTabWidget {
     };
     QHash<const QListWidget *, TabLoadState> m_loadState;
 
-    // ——N19 忙时与单飞行——
-    bool m_busy = false;             // 加载在途或预读中：tab 栏 + 列表 + 右键菜单冻结
-    int m_pendingTab = -1;           // 忙时排队的程序化切 tab（last-wins）
-    QThread *m_loadThread = nullptr; // 在途枚举线程（禁切 tab 后同时最多一个）
-    QPointer<QListWidget>
-        m_loadingList;     // 在途加载的目标 tab（仅 GUI 线程读写；回刷同 tab 才递增 generation）
-    quint64 m_loadGen = 0; // 单调 generation：旧批次收尾与同 tab 回刷重建时失配丢弃
-    // N19：跨线程存活旗（堆上共享，工作线程只读此旗；QPointer 禁止在工作线程读写）。
-    // 析构先置 false 再 wait；收尾调用经 invokeMethod 上下文机制双保险
-    std::shared_ptr<std::atomic<bool>> m_alive = std::make_shared<std::atomic<bool>>(true);
+    // ——N19 忙时与单飞行（N32：枚举与预读共用一个任务槽）——
+    JobSlot m_job;         // 当前在途任务（枚举 / 预读同一槽位，全插件同一时刻至多一个）
+    quint64 m_token = 0;   // 代际计数器；唯一递增点：runJob 起任务、abandonJob 作废
+    bool m_busy = false;   // 加载在途或预读中：tab 栏 + 列表 + 右键菜单冻结
+    int m_pendingTab = -1; // 忙时排队的程序化切 tab（last-wins）
     LoadingOverlay *m_overlay = nullptr;
     LoadingOverlay::Mode m_overlayMode = LoadingOverlay::Mode::Loading;
     int m_overlayTotal = 0;
     QTimer m_overlayTimer; // 遮罩 300ms 延迟显示（可取消）
-    // ——N19 预读状态——
-    bool m_metaCancel = false; // 取消按钮已点，下一个文件边界生效
-    int m_scanDone = 0;
-    // ——N19 收尾挂起——只表达"这一批要做什么"，不携带任何数据
+    // ——N19 收尾挂起（N32：只作发起期意图来源；任务的一切上下文随 JobContext 按值走）——
     struct PendingLoad {
         QPointer<QListWidget> list;
         bool selectFirst = false; // 完成后选中首项（列表设置换源）

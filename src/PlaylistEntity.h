@@ -17,11 +17,15 @@ struct FileMeta {
 // 为假则直接返回静态空值，永不调用对应 compute*()；
 // cachedFileMeta() / cachedMediaMeta() 对此类实体恒返回 nullptr。
 class PlaylistProvider; // 前向声明：实体头不依赖提供者头
+class PlaylistWidget;   // N32：预读结果注入的第二个授权对象（见 setFileMeta 注）
 
 class PlaylistEntity {
     // N29 注入口的唯一授权对象。友元不继承：派生提供者不可直接访问，
     // 经 PlaylistProvider 的 protected 静态转发（访问发生在基类成员函数体内）写入
     friend class PlaylistProvider;
+    // N32：预读改异步后，经求值转发取回的值由 GUI 续作写回（唯一的写点），
+    // 故视图层同样需要注入口；仅此二类可写，其余仍不可及
+    friend class PlaylistWidget;
 
   public:
     using Ptr = std::shared_ptr<PlaylistEntity>;
@@ -66,6 +70,12 @@ class PlaylistEntity {
     cachedMediaMeta() const;   // 只读：未解析（或不支持）返回 nullptr；绘制路径专用，绝不触发求值
     const QIcon &icon() const; // 惰性 computeIcon()；仅 GUI 线程
     void refresh();            // 清空全部缓存（fileMeta / mediaMeta / icon）
+
+    // ——N32 求值转发（public，纯计算不落缓存，可在任意线程调用）——
+    // 语义与惰性入口一致（能力位首判 → 静态空回落 / compute*），唯一差别是不写缓存：
+    // 预读任务线程经此取回值，由 GUI 续作经注入口写回——实体缓存因此只在 GUI 线程写
+    FileMeta evalFileMeta() const;
+    MediaMeta evalMediaMeta() const;
 
     // ——能力位（取代字符串前缀猜测）——
     virtual bool isLocalFile() const = 0;

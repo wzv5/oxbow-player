@@ -12,7 +12,7 @@ if(MPVQT_STATICQT)
     set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreaded)
 endif()
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets LinguistTools)
+find_package(Qt6 REQUIRED COMPONENTS Widgets LinguistTools Concurrent)
 
 # ---------------------------------------------------------------------------
 # 目标 1：加载壳 main.dll（纯 Win32，无 Qt 依赖）
@@ -88,7 +88,7 @@ if(MPVQT_STATICQT)
     target_compile_definitions(mpvqtcore PRIVATE MPVQT_STATICQT)
 endif()
 
-target_link_libraries(mpvqtcore PRIVATE Qt6::Widgets)
+target_link_libraries(mpvqtcore PRIVATE Qt6::Widgets Qt6::Concurrent)
 # A19：全屏期 DWM 圆角裁切抑制（仅 Windows；dwmapi 为 Vista 起系统组件）
 if(WIN32)
     target_link_libraries(mpvqtcore PRIVATE dwmapi)
