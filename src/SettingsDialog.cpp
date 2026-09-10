@@ -35,17 +35,19 @@ struct IntRange {
 };
 
 struct SettingItem {
-    const char *label = nullptr; // 未翻译原文（英文），构建控件时经 tr() 翻译
-    WidgetKind widget;           // 控件类型（必填：无默认值，漏写编译报错）
-    QString iniKey;              // 后端互斥（恰好一个非空）：非空 ⇒ 插件选项（mpv-qt.ini）
-    QStringList mpvKeys;         // 非空 ⇒ mpv 选项（本项管辖的全部 key，含复合项）
-    ChoiceProvider choices; // Combo 必填；EditableCombo = 快选预设；SpinBox/CheckBox/LineEdit 忽略
-    QVariant fallback;      // 后端不可读 / 未命中 / 依赖禁用时的兜底值
-    IntRange range;         // SpinBox 专用
+    const char *label = nullptr;       // 未翻译原文（英文），构建控件时经 tr() 翻译
+    WidgetKind widget;                 // 控件类型（必填：无默认值，漏写编译报错）
+    QString iniKey;                    // 后端互斥（恰好一个非空）：非空 ⇒ 插件选项（mpv-qt.ini）
+    QStringList mpvKeys;               // 非空 ⇒ mpv 选项（本项管辖的全部 key，含复合项）
+    ChoiceProvider choices;            // Combo 必填；EditableCombo = 快选预设；mpv CheckBox
+                                       // = 两态映射（N33 §2.1）；SpinBox/LineEdit 忽略
+    QVariant fallback;                 // 后端不可读 / 未命中 / 依赖禁用时的兜底值
+    IntRange range;                    // SpinBox 专用
     const char *note = nullptr;        // 可选备注（空 = 不显示），灰色小字显示在控件下方
     QString id;                        // 可选：联动主控项标识（仅 CheckBox 主控需要）
     QString dependsOn;                 // 可选：指向某 CheckBox 项 id（单层依赖，禁用不回填）
-    MpvType mpvType = MpvType::String; // mpv 属性类型提示（默认 String；INI 后端忽略）
+    MpvType mpvType = MpvType::String; // mpv 属性类型提示（默认 String；INI 后端忽略；
+                                       // 带 choices 的 CheckBox 固定 String）
 };
 
 struct SettingCategory {
@@ -278,6 +280,57 @@ const QList<SettingCategory> &settingCatalog() {
 //    .mpvKeys = {"volume-step"}, .fallback = 5,
 //    .range = {1, 10}, .dependsOn = "customSteps"},
 
+// 两态映射自检（N33 §2.1）：带 choices 的 CheckBox 表达单个 mpv key 的 bool → 文本
+// 映射。赋值文本强制非空，与"读回为空即未命中"的回填闭环配套——空串不可能是任何
+// 一项的合法赋值，故两种情形无需区分。
+void validateTwoStateCheckBox(const SettingItem &item, int ci, int ii) {
+    const auto choices = item.choices ? item.choices() : QList<SettingChoice>{};
+    if (item.mpvType != MpvType::String)
+        qWarning("SettingsDialog: two-state CheckBox item [%d/%d] must declare "
+                 "MpvType::String",
+                 ci, ii);
+    if (item.mpvKeys.size() != 1)
+        qWarning("SettingsDialog: two-state CheckBox item [%d/%d] must govern exactly one "
+                 "key",
+                 ci, ii);
+    if (item.fallback.typeId() != QMetaType::Bool)
+        qWarning("SettingsDialog: two-state CheckBox item [%d/%d] fallback must be bool", ci, ii);
+    if (choices.size() != 2) {
+        qWarning("SettingsDialog: two-state CheckBox item [%d/%d] needs exactly two "
+                 "choices, got %d",
+                 ci, ii, int(choices.size()));
+        return; // 后续检查依赖"恰两项"
+    }
+    const bool v0 = choices[0].value.toBool();
+    const bool v1 = choices[1].value.toBool();
+    if (choices[0].value.typeId() != QMetaType::Bool ||
+        choices[1].value.typeId() != QMetaType::Bool || v0 == v1)
+        qWarning("SettingsDialog: two-state CheckBox item [%d/%d] choices must carry one "
+                 "true and one false bool value",
+                 ci, ii);
+    QString texts[2];
+    for (int k = 0; k < 2; ++k) {
+        const QMap<QString, QString> &a = choices[k].mpvAssignments;
+        const bool shapeOk =
+            a.size() == 1 && item.mpvKeys.size() == 1 && a.firstKey() == item.mpvKeys[0];
+        if (!shapeOk) {
+            qWarning("SettingsDialog: two-state CheckBox item [%d/%d] choice %d must "
+                     "assign the single governed key",
+                     ci, ii, k);
+            continue;
+        }
+        texts[k] = a.first();
+        if (texts[k].isEmpty())
+            qWarning("SettingsDialog: two-state CheckBox item [%d/%d] choice %d assigns "
+                     "empty text",
+                     ci, ii, k);
+    }
+    if (!texts[0].isEmpty() && texts[0] == texts[1])
+        qWarning("SettingsDialog: two-state CheckBox item [%d/%d] choices must assign "
+                 "distinct texts",
+                 ci, ii);
+}
+
 // 目录自检（构造期一次，仅 qWarning 不中断；R4 §4.3.6）
 void validateCatalog() {
     const auto &catalog = settingCatalog();
@@ -296,10 +349,15 @@ void validateCatalog() {
                 qWarning("SettingsDialog: Combo item [%d/%d] missing choices provider", ci, ii);
             if (hasMpv) {
                 // mpvType 与控件语义配套检查
-                if (item.widget == WidgetKind::CheckBox && item.mpvType != MpvType::Flag)
-                    qWarning("SettingsDialog: mpv CheckBox item [%d/%d] must declare "
-                             "MpvType::Flag",
-                             ci, ii);
+                if (item.widget == WidgetKind::CheckBox) {
+                    // 有 choices 走两态映射（N33 §2.1）；无 choices 仍要求 Flag
+                    if (item.choices)
+                        validateTwoStateCheckBox(item, ci, ii);
+                    else if (item.mpvType != MpvType::Flag)
+                        qWarning("SettingsDialog: mpv CheckBox item [%d/%d] must declare "
+                                 "MpvType::Flag when it carries no choices",
+                                 ci, ii);
+                }
                 if (item.widget == WidgetKind::SpinBox && item.mpvType != MpvType::Int &&
                     item.mpvType != MpvType::Double)
                     qWarning("SettingsDialog: mpv SpinBox item [%d/%d] must declare "
@@ -342,6 +400,12 @@ void validateCatalog() {
                         }
                 }
             }
+            // 两态映射仅属 mpv 后端：项级校验必须在 hasMpv 分支之外，
+            // 否则 INI 项触达不到
+            if (item.widget == WidgetKind::CheckBox && item.choices && !hasMpv)
+                qWarning("SettingsDialog: INI CheckBox item [%d/%d] must not carry "
+                         "choices",
+                         ci, ii);
             if (item.widget == WidgetKind::SpinBox) {
                 const int f = item.fallback.toInt();
                 if (f < item.range.min || f > item.range.max)
@@ -574,6 +638,14 @@ void SettingsDialog::fillItemFromBackend(const SettingItem *item) {
                 idx = combo->findData(raw);
             combo->setCurrentIndex(idx >= 0 ? idx : 0); // 仍 miss → 第 0 项
             m_pending[item] = combo->currentData();
+        } else if (item->widget == WidgetKind::SpinBox) {
+            // 整数项：缺失或不可解析均落 fallback；setValue 自动钳制 [min,max]，
+            // 钳制只作用于控件与内存，INI 中的越界旧值不回写
+            auto *spin = static_cast<QSpinBox *>(w);
+            bool ok = false;
+            const int v = ini.value(item->iniKey, item->fallback).toInt(&ok);
+            spin->setValue(ok ? v : item->fallback.toInt());
+            m_pending[item] = spin->value();
         } else if (item->widget == WidgetKind::LineEdit) {
             auto *edit = static_cast<QLineEdit *>(w);
             const QString v = ini.value(item->iniKey, item->fallback).toString();
@@ -666,11 +738,25 @@ void SettingsDialog::fillItemFromBackend(const SettingItem *item) {
             break;
         }
         case WidgetKind::CheckBox: {
-            // mpvType 必为 Flag（目录自检保证）：读回规范化即 "yes"/"no"
             bool v = item->fallback.toBool();
-            QString raw;
-            if (readCanonicalMpvValue(m_controller, item->mpvKeys[0], item->mpvType, raw))
-                v = (raw == QLatin1String("yes"));
+            if (item->choices) {
+                // 两态映射（N33 §2.1）：mpvType 必为 String，读回文本与两项赋值逐一
+                // 精确比对，命中取该选项的逻辑值；读回为空或均不相等落 fallback
+                QString raw;
+                readCanonicalMpvValue(m_controller, item->mpvKeys[0], item->mpvType, raw);
+                const auto choices = item->choices();
+                for (const auto &c : choices) {
+                    if (!raw.isEmpty() && c.mpvAssignments.value(item->mpvKeys[0]) == raw) {
+                        v = c.value.toBool();
+                        break;
+                    }
+                }
+            } else {
+                // mpvType 必为 Flag（目录自检保证）：读回规范化即 "yes"/"no"
+                QString raw;
+                if (readCanonicalMpvValue(m_controller, item->mpvKeys[0], item->mpvType, raw))
+                    v = (raw == QLatin1String("yes"));
+            }
             static_cast<QCheckBox *>(w)->setChecked(v);
             m_pending[item] = v;
             break;
@@ -851,9 +937,27 @@ bool SettingsDialog::applyAll() {
                     mpvConfDirty = true;
                 }
             }
+        } else if (!item->mpvKeys.isEmpty() && item->widget == WidgetKind::CheckBox &&
+                   item->choices) {
+            // === mpv CheckBox 两态映射（N33 §2.1）：勾选态反查选项，写其赋值全集；
+            // 字符串下发（flag 属性由 mpv 自行解析文本），conf 写 authored 字符串 ===
+            const bool on = val.toBool();
+            const auto choices = item->choices();
+            for (const auto &c : choices) {
+                if (c.value.toBool() != on)
+                    continue;
+                for (auto a = c.mpvAssignments.cbegin(); a != c.mpvAssignments.cend(); ++a) {
+                    m_controller->setProperty(a.key(), a.value());
+                    if (m_confCache) {
+                        m_confCache->setGlobal(a.key(), a.value());
+                        mpvConfDirty = true;
+                    }
+                }
+                break;
+            }
         } else if (!item->mpvKeys.isEmpty()) {
-            // === mpv 标量项（EditableCombo/SpinBox/CheckBox/LineEdit）：按 mpvType
-            // 走 typed set 下发；conf 写用字符串形式（mpv.conf 本就是文本格式） ===
+            // === mpv 标量项（EditableCombo/SpinBox/无 choices 的 CheckBox/LineEdit）：
+            // 按 mpvType 走 typed set 下发；conf 写用字符串形式（mpv.conf 本就是文本格式） ===
             const QString k = item->mpvKeys[0];
             QString confValue;
             switch (item->mpvType) {
