@@ -12,7 +12,7 @@ if(MPVQT_STATICQT)
     set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreaded)
 endif()
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets LinguistTools Concurrent)
+find_package(Qt6 REQUIRED COMPONENTS Widgets LinguistTools Concurrent Network)
 
 # ---------------------------------------------------------------------------
 # 目标 1：加载壳 main.dll（纯 Win32，无 Qt 依赖）
@@ -38,6 +38,8 @@ add_library(mpvqtcore MODULE
     src/MainWindow.h
     src/MpvController.cpp
     src/MpvController.h
+    src/HttpClient.cpp
+    src/HttpClient.h
     src/NavigatorPanel.cpp
     src/NavigatorPanel.h
     src/PlaylistDelegate.cpp
@@ -88,7 +90,7 @@ if(MPVQT_STATICQT)
     target_compile_definitions(mpvqtcore PRIVATE MPVQT_STATICQT)
 endif()
 
-target_link_libraries(mpvqtcore PRIVATE Qt6::Widgets Qt6::Concurrent)
+target_link_libraries(mpvqtcore PRIVATE Qt6::Widgets Qt6::Concurrent Qt6::Network)
 # A19：全屏期 DWM 圆角裁切抑制（仅 Windows；dwmapi 为 Vista 起系统组件）
 if(WIN32)
     target_link_libraries(mpvqtcore PRIVATE dwmapi)
@@ -153,6 +155,7 @@ if(MPVQT_BUILD_TESTS)
         tests/main.cpp
         tests/tst_MpvConf.cpp
         tests/tst_PlaylistEntity.cpp
+        tests/tst_HttpClient.cpp
         src/MpvConf.cpp
         src/MpvConf.h
         src/PlaylistEntity.cpp
@@ -163,9 +166,11 @@ if(MPVQT_BUILD_TESTS)
         src/MediaInfoHelper.h
         src/Util.cpp
         src/Util.h
+        src/HttpClient.cpp
+        src/HttpClient.h
     )
     target_include_directories(mpvqt_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(mpvqt_tests PRIVATE Qt6::Widgets Qt6::Test)
+    target_link_libraries(mpvqt_tests PRIVATE Qt6::Widgets Qt6::Test Qt6::Network)
     if(MSVC)
         target_compile_options(mpvqt_tests PRIVATE /utf-8)
     endif()

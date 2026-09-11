@@ -6,6 +6,7 @@
 #include <QAction>
 #include <QActionGroup>
 #include <QApplication>
+#include <QAuthenticator>
 #include <QButtonGroup>
 #include <QChar>
 #include <QCheckBox>
@@ -16,6 +17,7 @@
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDebug>
+#include <QDeadlineTimer>
 #include <QDesktopServices>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -53,9 +55,14 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMetaObject>
+#include <QMetaType>
 #include <QMimeData>
 #include <QMouseEvent>
+#include <QMutex>
 #include <QObject>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPointer>
@@ -75,6 +82,7 @@
 #include <QStandardPaths>
 #include <QString>
 #include <QStringList>
+#include <QSslError>
 #include <QStyle>
 #include <QStyleOptionSlider>
 #include <QStyledItemDelegate>
@@ -93,6 +101,7 @@
 #include <QVBoxLayout>
 #include <QVariantList>
 #include <QVariantMap>
+#include <QWaitCondition>
 #include <QtConcurrent/QtConcurrentRun>
 #include <QtGlobal>
 

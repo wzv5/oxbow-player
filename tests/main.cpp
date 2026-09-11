@@ -10,6 +10,7 @@
 // 各测试文件提供的套件构造（类定义于各自 cpp，此处仅入口装配）
 QObject *createTestMpvConf();
 QObject *createTestPlaylistEntity();
+QObject *createTestHttpClient();
 
 namespace {
 using SuiteFactory = QObject *(*)();
@@ -32,10 +33,11 @@ QByteArray suiteOutputArg(const QByteArray &opt, int suite) {
 } // namespace
 
 int main(int argc, char *argv[]) {
-    // 两个套件均无 GUI 依赖（QTEST_GUILESS_MAIN 同款环境）
+    // 三个套件均无 GUI 依赖（QTEST_GUILESS_MAIN 同款环境）
     QCoreApplication app(argc, argv);
 
-    const SuiteFactory suites[] = {createTestMpvConf, createTestPlaylistEntity};
+    const SuiteFactory suites[] = {createTestMpvConf, createTestPlaylistEntity,
+                                   createTestHttpClient};
     const int suiteCount = int(sizeof(suites) / sizeof(suites[0]));
 
     int status = 0;
