@@ -7,6 +7,7 @@
 #include "PlaylistProvider.h"
 
 class MpvController;
+class ServiceRegistry; // N35：服务注册表（成员以 shared_ptr 持有）
 
 // 右侧播放列表：每个 tab 对应一个播放列表，tab 标题为列表名。
 // 约定：第一个 tab 名为"默认"，不可删除；其余 tab 持久化保存到 INI 配置文件。
@@ -101,6 +102,11 @@ class PlaylistWidget : public QTabWidget {
     // ——元数据回填（N18：仅保留 duration 写入）——
     void applyDuration(const QString &path, double seconds);
 
+  public slots:
+    // N35：设置对话框 ini 键变更转接——命中远端请求设置（remoteTimeoutSec /
+    // ignoreHttpsErrors）时重读 ini 重建 client 并覆盖注册表，下一次求值即生效
+    void onPluginIniKeysChanged(const QStringList &keys);
+
   protected:
     // N5：ShortcutOverride 认领导航键——焦点在列表上时 ↑↓←→/PgUp/PgDn/Home/End
     // 走列表原生导航，全局音量动作（↑/↓）本次不触发。
@@ -184,12 +190,17 @@ class PlaylistWidget : public QTabWidget {
         QStringList oldKeys; // 换入类由枚举续作在换入前采集
         ViewSnapshot snap;   // 同上；Reactivate 由预读续作在排序前采集
     };
-    // 预读任务的结果对象：槽位只存 QFuture<void>，异构结果由它携带（类型擦除的落点）
+    // 预读任务的结果对象：槽位只存 QFuture<void>，异构结果由它携带（类型擦除的落点）。
+    // N35 修订 2：取消改"立即收尾 + 结果静默丢弃"——mutex/abandoned 供遮罩取消
+    // 的 GUI 续作与任务体同步：锁内置旗 + 搬走已算批次注入缓存（N32 缓存保留
+    // 语义），任务体此后到界即弃。锁不跨求值调用，临界区仅容器 push / move
     struct MetaResult {
         MetaCategory cat = MetaCategory::None;
         PlaylistEntity::List entities;                    // 已算出的快照实体（下标对齐）
         std::vector<FileMeta> fileMeta;                   // cat == File 时有效
         std::vector<PlaylistEntity::MediaMeta> mediaMeta; // cat == Media 时有效
+        std::mutex mutex;
+        bool abandoned = false;
     };
     // 任务槽（全插件仅一份）：全插件同一时刻至多一个在途任务，故只需一份状态与一处出口
     struct JobSlot {
@@ -198,6 +209,7 @@ class PlaylistWidget : public QTabWidget {
         bool cancelable = false;      // 枚举批次不可取消（遮罩在 Loading 模式亦无取消按钮）
         QFuture<void> future;         // 在途任务；正常出口与 abandonJob 均复位为默认构造
         QFutureWatcher<void> *watcher = nullptr;
+        std::function<void()> onAbandon; // 取消时执行（仅可取消批次）：搬走已算批次注入缓存
         bool active() const { return watcher != nullptr; }
     };
 
@@ -254,7 +266,8 @@ class PlaylistWidget : public QTabWidget {
     // ⑤ 槽位仍空才隐藏遮罩 + setBusy(false)。忙时与遮罩的复位只此一处（另一处是
     // abandonJob 的显式作废），且必须晚于续作
     void runJob(const JobContext &ctx, LoadingOverlay::Mode mode, int total, bool cancelable,
-                std::function<void(QPromise<void> &)> body, std::function<void(JobVerdict)> cont);
+                std::function<void(QPromise<void> &)> body, std::function<void(JobVerdict)> cont,
+                std::function<void()> onAbandon = {});
     // 枚举发起（意图由发起处经 m_pendingLoad 定死）：清占位、递增代际、记目标表、置忙、起遮罩
     void startLoadAsync(QListWidget *list);
     // 枚举续作：失败分支就地收尾；成功则换入 → 推进函数（结果按移动语义换入，故非 const）
@@ -352,8 +365,16 @@ class PlaylistWidget : public QTabWidget {
 
     // 右键菜单动作实现（第七节）
     void refreshCurrentTab();
-    void showPropertiesDialog(const PlaylistEntity &entity);
+    // N35：改收共享计数副本——异步属性对话框跨嵌套事件循环持有实体，
+    // 求值转发取回的值经注入口写回该实体（关闭即取消）
+    void showPropertiesDialog(const PlaylistEntity::Ptr &entity);
     void copyPathToClipboard(const QString &path);
+
+    // ——N35 服务注册表装配——
+    // 初装配（构造期）与重装配（设置变更）共用：读 ini 两项构建 HttpClient
+    // 缺省参数，provide 进注册表（重装配为覆盖，注册表身份恒定——实体持有的
+    // registry 指针不变，下一次 resolve 即得新 client）
+    void provideHttpServices();
 
     // 正在播放条目所在行（PlayingRole 命中处），无则 -1
     int playingRowOf(const QListWidget *list) const;
@@ -367,6 +388,9 @@ class PlaylistWidget : public QTabWidget {
     int m_playingTab = 0; // N25：恒 >= 0（默认 0）；同步目标失效时归位 0，不再悬空
     QString m_configFile;
     MpvController *m_mpv = nullptr; // 弱引用，attachController 注入（N4 进度恢复用）
+    // N35：服务注册表（构造期创建并初装配 HttpClient；设置变更时覆盖内部实例，
+    // 注册表身份恒定——收编 / 拖放 / 打开 URL 经工厂注入实体，实体每次求值现查）
+    std::shared_ptr<ServiceRegistry> m_registry;
     // 以 list 指针为键：不受 tab 增删导致的索引漂移影响
     QHash<const QListWidget *, TabMemory> m_memory;
     // N9：每 tab 提供者（list 创建即配静态默认，加载/设置时替换）。

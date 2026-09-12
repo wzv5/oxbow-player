@@ -48,6 +48,9 @@ add_library(mpvqtcore MODULE
     src/PlaylistEntity.h
     src/LocalFileEntity.cpp
     src/LocalFileEntity.h
+    src/HttpEntity.cpp
+    src/HttpEntity.h
+    src/ServiceRegistry.h
     src/PlaylistProvider.cpp
     src/PlaylistProvider.h
     src/ListSettingsDialog.cpp
@@ -162,6 +165,9 @@ if(MPVQT_BUILD_TESTS)
         src/PlaylistEntity.h
         src/LocalFileEntity.cpp
         src/LocalFileEntity.h
+        src/HttpEntity.cpp
+        src/HttpEntity.h
+        src/ServiceRegistry.h
         src/MediaInfoHelper.cpp
         src/MediaInfoHelper.h
         src/Util.cpp

@@ -2,6 +2,7 @@
 
 #include "PlaylistEntity.h"
 
+#include "HttpEntity.h"
 #include "LocalFileEntity.h"
 #include "Util.h"
 
@@ -17,15 +18,33 @@ const PlaylistEntity::MediaMeta &s_emptyMediaMeta() {
 }
 } // namespace
 
-PlaylistEntity::PlaylistEntity(QString playUrl) : m_playUrl(std::move(playUrl)) { deriveNames(); }
+PlaylistEntity::PlaylistEntity(QString playUrl, const std::shared_ptr<ServiceRegistry> &registry)
+    : m_playUrl(std::move(playUrl)), m_registry(registry) {
+    deriveNames();
+}
 
-PlaylistEntity::Ptr PlaylistEntity::fromPlayUrl(const QString &playUrl) {
+PlaylistEntity::Ptr PlaylistEntity::fromPlayUrl(const QString &playUrl,
+                                                const std::shared_ptr<ServiceRegistry> &registry) {
     // 本地来源唯一出口：相对 → 绝对 + 原生分隔符；网络 / 流路径原样。
     // 加工对已加工路径幂等，保证往返不变式
     const QString url = Util::resolveLocalPath(playUrl);
-    if (Util::isNetworkStreamPath(url))
-        return std::make_shared<UnknownEntity>(url);
-    return std::make_shared<LocalFileEntity>(url);
+    if (Util::isNetworkStreamPath(url)) {
+        // N35 前缀分派：http(s) → HttpEntity（需非空 registry）；其余网络 / 流
+        // 路径仍落 UnknownEntity 兜底。串前缀判定与 isNetworkStreamPath 同风格，
+        // 天然免疫 QUrl::scheme() 误判 Windows 盘符
+        const bool isHttp = url.startsWith(QStringLiteral("http://"), Qt::CaseInsensitive) ||
+                            url.startsWith(QStringLiteral("https://"), Qt::CaseInsensitive);
+        if (!isHttp)
+            return std::make_shared<UnknownEntity>(url, registry);
+        if (!registry) {
+            // http(s) + 空 registry 属调用错误（registry 必填，正常调用点恒非空）；
+            // Q_ASSERT 守候，release 降级 UnknownEntity 保"恒返回实体"契约
+            Q_ASSERT(false);
+            return std::make_shared<UnknownEntity>(url, registry);
+        }
+        return std::make_shared<HttpEntity>(url, registry);
+    }
+    return std::make_shared<LocalFileEntity>(url, registry);
 }
 
 QString PlaylistEntity::key() const {
@@ -82,7 +101,8 @@ const PlaylistEntity::MediaMeta *PlaylistEntity::cachedMediaMeta() const {
 }
 
 // ——N32 求值转发：与惰性入口同口径（能力位首判 + compute*），但不落缓存——
-// 任务线程只算不写；值由 GUI 续作经注入口 setFileMeta / setMediaMeta 写回
+// 任务线程只算不写；值由 GUI 续作经注入口 setFileMeta / setMediaMeta 写回。
+// N35 修订 2：同步阻塞求值，无取消通道（取消 = 结果静默丢弃，见变更记录）
 FileMeta PlaylistEntity::evalFileMeta() const {
     if (!supportsFileMeta())
         return {};

@@ -15,10 +15,9 @@ QStringList toNameFilters(const QStringList &extensions) {
 }
 } // namespace
 
-DirProvider::DirProvider() = default;
-
-DirProvider::DirProvider(const QString &root, bool recursive, const QStringList &extensions)
-    : m_root(root), m_recursive(recursive), m_extensions(extensions) {}
+DirProvider::DirProvider(const QString &root, bool recursive, const QStringList &extensions,
+                         const std::shared_ptr<ServiceRegistry> &registry)
+    : PlaylistProvider(registry), m_root(root), m_recursive(recursive), m_extensions(extensions) {}
 
 PlaylistProvider::Type DirProvider::type() const { return Type::Dir; }
 
@@ -51,8 +50,8 @@ std::expected<PlaylistProvider::EntityList, QString> DirProvider::enumerate() co
     entities.reserve(infos.size());
     for (const QFileInfo &fi : infos) {
         // 路径加工（绝对化 + 原生分隔符，B15）统一由 fromPlayUrl 内的
-        // resolveLocalPath 出口负责，此处不再预处理
-        auto entity = PlaylistEntity::fromPlayUrl(fi.absoluteFilePath());
+        // resolveLocalPath 出口负责，此处不再预处理；registry 转交（本地路径忽略）
+        auto entity = PlaylistEntity::fromPlayUrl(fi.absoluteFilePath(), registry());
         injectFileMeta(*entity, LocalFileEntity::fileMetaFrom(fi)); // 零成本注入
         entities.push_back(std::move(entity));
     }
@@ -76,11 +75,12 @@ void DirProvider::saveSettings(QSettings &settings) const {
     settings.setValue(QStringLiteral("sortAscending"), sortAscending());
 }
 
-std::shared_ptr<DirProvider> DirProvider::load(QSettings &settings) {
+std::shared_ptr<DirProvider> DirProvider::load(QSettings &settings,
+                                               const std::shared_ptr<ServiceRegistry> &registry) {
     auto provider = std::make_shared<DirProvider>(
         settings.value(QStringLiteral("dirRoot")).toString(),
         settings.value(QStringLiteral("dirRecursive")).toBool(),
-        settings.value(QStringLiteral("dirExtensions")).toStringList());
+        settings.value(QStringLiteral("dirExtensions")).toStringList(), registry);
     provider->setSortRule(settings.value(QStringLiteral("sortKey"), 0).toInt(),
                           settings.value(QStringLiteral("sortAscending"), true).toBool());
     return provider;

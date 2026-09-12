@@ -18,6 +18,7 @@ struct FileMeta {
 // cachedFileMeta() / cachedMediaMeta() 对此类实体恒返回 nullptr。
 class PlaylistProvider; // 前向声明：实体头不依赖提供者头
 class PlaylistWidget;   // N32：预读结果注入的第二个授权对象（见 setFileMeta 注）
+class ServiceRegistry;  // N35：服务注册表（HttpEntity 经此现查 client）
 
 class PlaylistEntity {
     // N29 注入口的唯一授权对象。友元不继承：派生提供者不可直接访问，
@@ -36,15 +37,24 @@ class PlaylistEntity {
     using MediaChapter = MediaInfoHelper::Chapter;
     using MediaMeta = MediaInfoHelper::Data;
 
-    explicit PlaylistEntity(QString playUrl);
+    // 构造注入 registry（必填，无缺省）：所有调用点必须显式传入可用实例，
+    // 缺 registry 在编译期暴露。本地 / 兜底实体同样经形参接收后存基类（忽略不用）。
+    explicit PlaylistEntity(QString playUrl, const std::shared_ptr<ServiceRegistry> &registry);
     virtual ~PlaylistEntity() = default;
 
     // ——工厂：playUrl → 实体（唯一入口；后续协议在此分派）——
     // 入参先经 Util::resolveLocalPath 加工（本地来源唯一出口；网络 / 流路径原样），
-    // 随后按 Util::isNetworkStreamPath 分派：本地路径 → LocalFileEntity，
-    // 网络 / 流路径 → UnknownEntity。
-    // 不变式：fromPlayUrl(e->playUrl())->playUrl() == e->playUrl()
-    static Ptr fromPlayUrl(const QString &playUrl);
+    // 随后按前缀分派（N35）：http:// / https://（大小写不敏感）→ HttpEntity（需
+    // 非空 registry，http(s) + 空 registry 属调用错误：Q_ASSERT 守候，release
+    // 降级 UnknownEntity 保"恒返回实体"契约）；其余网络 / 流路径（ftp / rtsp 等）
+    // → UnknownEntity 兜底；本地路径 → LocalFileEntity（忽略 registry）。
+    // 前缀判断天然免疫 QUrl::scheme() 误判 Windows 盘符的陷阱，不引入 QUrl 解析。
+    // 不变式：fromPlayUrl(e->playUrl(), registry)->playUrl() == e->playUrl()
+    // 调用方纪律：registry 必填（无缺省），一律传视图层注册表（本地路径同样传，
+    // 工厂内忽略）；同一 URL 在遵守前提下，无论经提供者、工厂还是收编路径，
+    // 都得到同类型实体。
+    static Ptr fromPlayUrl(const QString &playUrl,
+                           const std::shared_ptr<ServiceRegistry> &registry);
 
     // ——按值复制（深拷贝，含已解析缓存）——
     // 与 Ptr 共享计数相对：副本与原实体此后互不影响（一方 refresh 不清另一方）。
@@ -73,7 +83,9 @@ class PlaylistEntity {
 
     // ——N32 求值转发（public，纯计算不落缓存，可在任意线程调用）——
     // 语义与惰性入口一致（能力位首判 → 静态空回落 / compute*），唯一差别是不写缓存：
-    // 预读任务线程经此取回值，由 GUI 续作经注入口写回——实体缓存因此只在 GUI 线程写
+    // 预读任务线程经此取回值，由 GUI 续作经注入口写回——实体缓存因此只在 GUI 线程写。
+    // N35 修订 2：同步阻塞求值，无取消通道——取消语义为结果静默丢弃（调用方
+    // 不等在途项，求值返回后不采用），见规格变更记录
     FileMeta evalFileMeta() const;
     MediaMeta evalMediaMeta() const;
 
@@ -97,6 +109,11 @@ class PlaylistEntity {
         m_titleSet = true;
     }
 
+    // ——N35 服务注册表（基类统一持有，供子类求值现查 client）——
+    // 构造注入：HttpEntity 必传非空（构造内断言）；本地 / 兜底实体沿用缺省空。
+    // clone 经拷贝构造携带同一实例；注册表身份恒定，重装配只覆盖其内部实例
+    const std::shared_ptr<ServiceRegistry> &registry() const { return m_registry; }
+
     // ——N29 元数据注入口（写入外部已取得的元数据，不触发求值）——
     // 写缓存 + 视同已求值：随后 fileMeta() / mediaMeta() 返回注入值，
     // cachedFileMeta() / cachedMediaMeta() 非空，预读骨架对该行命中跳过。
@@ -105,6 +122,8 @@ class PlaylistEntity {
     void setFileMeta(const FileMeta &meta);
     void setMediaMeta(const MediaMeta &meta);
 
+    // N35 修订 2：同步求值（远端 HEAD 阻塞至完成/超时，无取消通道，取消为
+    // 结果静默丢弃——见变更记录）；仅预读任务与对话框任务线程调用
     virtual FileMeta computeFileMeta() const = 0;
     virtual MediaMeta computeMediaMeta() const = 0;
     virtual QIcon computeIcon() const = 0;
@@ -114,9 +133,10 @@ class PlaylistEntity {
     void deriveNames();
 
     QString m_playUrl;
-    QString m_title;         // 构造期派生
-    QString m_fileName;      // setFilename 可改，改则同步 suffix
-    QString m_suffix;        // 同上
+    std::shared_ptr<ServiceRegistry> m_registry; // N35：服务注册表（基类统一持有）
+    QString m_title;                             // 构造期派生
+    QString m_fileName;                          // setFilename 可改，改则同步 suffix
+    QString m_suffix;                            // 同上
     bool m_titleSet = false; // setTitle 显式设置后置位，此后 setFilename 不再联动 title
     QString m_key;           // 构造期缓存：normalizePathForMatch(playUrl)——key()
                              // 在委托绘制热路径上，避免逐行逐帧重算
@@ -131,7 +151,9 @@ class PlaylistEntity {
 // （回刷收编的 mpv 列表即现实引用者）。
 class UnknownEntity : public PlaylistEntity {
   public:
-    explicit UnknownEntity(QString playUrl) : PlaylistEntity(std::move(playUrl)) {}
+    // registry 必填（经基类持有，兜底实体不用；无缺省，调用点显式传）
+    explicit UnknownEntity(QString playUrl, const std::shared_ptr<ServiceRegistry> &registry)
+        : PlaylistEntity(std::move(playUrl), registry) {}
 
     Ptr clone() const override { return std::make_shared<UnknownEntity>(*this); }
 
@@ -141,7 +163,11 @@ class UnknownEntity : public PlaylistEntity {
     bool supportsMediaMeta() const override { return false; }
 
   protected:
-    FileMeta computeFileMeta() const override { return {}; }   // 恒不被调（supportsFileMeta 为假）
-    MediaMeta computeMediaMeta() const override { return {}; } // 恒不被调（supportsMediaMeta 为假）
+    FileMeta computeFileMeta() const override {
+        return {}; // 恒不被调（supportsFileMeta 为假）
+    }
+    MediaMeta computeMediaMeta() const override {
+        return {}; // 恒不被调（supportsMediaMeta 为假）
+    }
     QIcon computeIcon() const override;
 };

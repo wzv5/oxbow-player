@@ -10,7 +10,9 @@
 // supportsMediaMeta() 返回 dll 可用性，行为与重构前全局判定完全一致。
 class LocalFileEntity : public PlaylistEntity {
   public:
-    explicit LocalFileEntity(QString playUrl) : PlaylistEntity(std::move(playUrl)) {}
+    // registry 必填（经基类持有，本地实体不用；无缺省，调用点显式传）
+    explicit LocalFileEntity(QString playUrl, const std::shared_ptr<ServiceRegistry> &registry)
+        : PlaylistEntity(std::move(playUrl), registry) {}
 
     Ptr clone() const override { return std::make_shared<LocalFileEntity>(*this); }
 

@@ -193,7 +193,10 @@ QString normalizePathForMatch(const QString &path) {
     const QString abs = Util::resolveLocalPath(path);
     QString p = QDir::fromNativeSeparators(abs);
 #ifdef Q_OS_WIN
-    p = p.toLower();
+    // N35：网络路径保留原始大小写——URL 的 path 部分（含 userinfo）大小写敏感，
+    // 逐字节 key 与 N25 回刷口径一致；分隔符归一化保留（对 URL 无害，只转 \→/）
+    if (!Util::isNetworkStreamPath(p))
+        p = p.toLower();
 #endif
     return p;
 }

@@ -16,8 +16,8 @@
 #include <QContextMenuEvent>
 #include <QCoreApplication>
 #include <QDateTime>
-#include <QDebug>
 #include <QDeadlineTimer>
+#include <QDebug>
 #include <QDesktopServices>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -59,13 +59,14 @@
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QMutex>
-#include <QObject>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QObject>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPointer>
+#include <QPromise>
 #include <QPushButton>
 #include <QRadioButton>
 #include <QRegularExpression>
@@ -78,11 +79,11 @@
 #include <QSlider>
 #include <QSpinBox>
 #include <QSplitter>
+#include <QSslError>
 #include <QStackedWidget>
 #include <QStandardPaths>
 #include <QString>
 #include <QStringList>
-#include <QSslError>
 #include <QStyle>
 #include <QStyleOptionSlider>
 #include <QStyledItemDelegate>
@@ -92,6 +93,7 @@
 #include <QTextEdit>
 #include <QTextOption>
 #include <QThread>
+#include <QTimeZone>
 #include <QTimer>
 #include <QToolButton>
 #include <QToolTip>
@@ -113,6 +115,7 @@
 #include <functional>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>

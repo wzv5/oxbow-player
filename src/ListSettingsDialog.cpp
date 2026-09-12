@@ -25,8 +25,9 @@ QStringList parseExtensions(const QString &text) {
 
 ListSettingsDialog::ListSettingsDialog(QWidget *parent, const QString &currentName,
                                        const PlaylistProvider *current,
-                                       const QStringList &occupiedNames)
-    : QDialog(parent), m_occupiedNames(occupiedNames), m_current(current) {
+                                       const QStringList &occupiedNames,
+                                       const std::shared_ptr<ServiceRegistry> &registry)
+    : QDialog(parent), m_occupiedNames(occupiedNames), m_current(current), m_registry(registry) {
     setWindowTitle(tr("List Settings"));
     auto *layout = new QFormLayout(this);
 
@@ -195,10 +196,11 @@ void ListSettingsDialog::accept() {
         return;
     }
 
-    // 构建新提供者；排序规则默认由调用方在接入点按类型施加
+    // 构建新提供者（registry 经基类持有）；排序规则默认由调用方在接入点按类型施加
     if (providerType() == PlaylistProvider::Type::Dir)
-        m_result = std::make_shared<DirProvider>(dirRoot(), dirRecursive(), dirExtensions());
+        m_result =
+            std::make_shared<DirProvider>(dirRoot(), dirRecursive(), dirExtensions(), m_registry);
     else
-        m_result = std::make_shared<StaticProvider>();
+        m_result = std::make_shared<StaticProvider>(m_registry);
     QDialog::accept();
 }

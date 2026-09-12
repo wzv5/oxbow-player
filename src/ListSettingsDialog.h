@@ -15,9 +15,11 @@ class ListSettingsDialog : public QDialog {
     Q_OBJECT
   public:
     // current 为存量提供者（只读回显用）；occupiedNames 为全部已占用列表名
-    // （改名场景由调用方剔除自身），供 accept 内做重名拦截——校验全程不关闭对话框
+    // （改名场景由调用方剔除自身），供 accept 内做重名拦截——校验全程不关闭对话框。
+    // registry 转交新构建的提供者，必填无缺省
     ListSettingsDialog(QWidget *parent, const QString &currentName, const PlaylistProvider *current,
-                       const QStringList &occupiedNames);
+                       const QStringList &occupiedNames,
+                       const std::shared_ptr<ServiceRegistry> &registry);
 
     QString listName() const;
     PlaylistProvider::Type providerType() const;
@@ -45,6 +47,7 @@ class ListSettingsDialog : public QDialog {
     QLineEdit *m_extensionsEdit = nullptr;       // 空格分隔扩展名
     QStringList m_occupiedNames;                 // 已占用列表名（重名校验用）
     const PlaylistProvider *m_current = nullptr; // 入口提供者（null＝新建）
+    std::shared_ptr<ServiceRegistry> m_registry; // N35：转交新提供者的注册表
     std::optional<std::shared_ptr<PlaylistProvider>> m_result;
 
     void browseRoot();

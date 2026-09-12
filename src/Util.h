@@ -50,7 +50,8 @@ QString trimTrailingZeros(const QString &fixed);
 
 // 路径规范化（仅内部匹配用：元数据仓键 / 书签键 / 回显比对）。
 // 本地路径先相对→绝对（基于进程 CWD，不访问文件系统，文件不存在亦可），再统一分隔符；
-// Windows 额外转小写。禁止用于 UI 显示或向 mpv 传递。
+// Windows 额外转小写。N35：网络路径不转小写（URL 大小写敏感，key 逐字节）。
+// 禁止用于 UI 显示或向 mpv 传递。
 QString normalizePathForMatch(const QString &path);
 
 // Qt 来源路径：拿到即转原生分隔符，不做绝对化 / cleanPath / 大小写处理。

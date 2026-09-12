@@ -3,16 +3,21 @@
 #include "PlaylistWidget.h"
 
 #include "Constants.h"
+#include "HttpClient.h"
 #include "ListSettingsDialog.h"
 #include "LoadingOverlay.h"
 #include "MediaInfoHelper.h"
 #include "MpvController.h"
 #include "PlaylistDelegate.h"
+#include "ServiceRegistry.h"
 #include "StaticProvider.h"
 #include "Util.h"
 
 PlaylistWidget::PlaylistWidget(const QString &configFile, QWidget *parent)
     : QTabWidget(parent), m_configFile(configFile) {
+    // N35：注册表初装配前置——createList 出生即配 StaticProvider 并注入 registry，
+    // 装配必须先于首个提供者诞生（provideHttpServices 仅读 ini，不依赖任何控件）
+    provideHttpServices();
     setAcceptDrops(true);
     setDocumentMode(true);
     setMinimumWidth(220);
@@ -32,10 +37,16 @@ PlaylistWidget::PlaylistWidget(const QString &configFile, QWidget *parent)
             [this] { m_overlay->begin(m_overlayMode, m_overlayTotal); });
     // N32：取消请求经转发 lambda 落到当前槽位的 future（信号只连一次，future 随任务更换，
     // 不能直连）；转发前判本批次"是否可取消"——枚举批次不可取消，且遮罩在 Loading 模式下
-    // 没有取消按钮，双重保证
+    // 没有取消按钮，双重保证。N35 修订 2：取消 = 旗置位（任务体下一边界退出、在途结果
+    // 丢弃）+ onAbandon 锁内搬走已算批次注入缓存（N32 缓存保留语义）+ abandonJob 立即
+    // 收尾 GUI（腾槽、代际 +1、忙时与遮罩即复位），不等在途求值返回
     connect(m_overlay, &LoadingOverlay::cancelRequested, this, [this] {
-        if (m_job.cancelable && m_job.future.isValid())
-            m_job.future.cancel();
+        if (!m_job.cancelable || !m_job.future.isValid())
+            return;
+        m_job.future.cancel();
+        if (m_job.onAbandon)
+            m_job.onAbandon();
+        abandonJob();
     });
 }
 
@@ -50,6 +61,37 @@ PlaylistWidget::PlaylistWidget(const QString &configFile, QWidget *parent)
 PlaylistWidget::~PlaylistWidget() {
     m_pendingTab = -1;
     abandonJob();
+}
+
+// ——N35 服务注册表装配——
+
+// 读 ini 两项构建 HttpClient 缺省参数并 provide。初装配与重装配共用：
+// 注册表身份恒定（构造期创建一次），重装配只覆盖内部 HttpClient 实例——
+// 实体持有的 registry 指针不变，下一次求值 resolve 即得新 client；
+// 在途单请求不受影响（旧 client 副本随任务存活），条目粒度切换，可接受（N35 §2.3）
+void PlaylistWidget::provideHttpServices() {
+    int timeoutSec = App::remoteTimeoutSecDefault();
+    bool ignoreSsl = App::ignoreHttpsErrorsDefault();
+    if (!m_configFile.isEmpty()) {
+        QSettings s(m_configFile, QSettings::IniFormat);
+        bool ok = false;
+        const int v = s.value(QStringLiteral("remoteTimeoutSec"), timeoutSec).toInt(&ok);
+        if (ok && v >= 1 && v <= 120) // 与设置目录 range 同界，读侧自钳
+            timeoutSec = v;
+        ignoreSsl = s.value(QStringLiteral("ignoreHttpsErrors"), ignoreSsl).toBool();
+    }
+    if (!m_registry)
+        m_registry = std::make_shared<ServiceRegistry>();
+    HttpClient::Config cfg;
+    cfg.timeoutMs = timeoutSec * 1000; // ini 记秒，Config 记毫秒（N34）
+    cfg.ignoreSslErrors = ignoreSsl;
+    m_registry->provide<HttpClient>(std::make_shared<HttpClient>(cfg));
+}
+
+void PlaylistWidget::onPluginIniKeysChanged(const QStringList &keys) {
+    if (keys.contains(QStringLiteral("remoteTimeoutSec")) ||
+        keys.contains(QStringLiteral("ignoreHttpsErrors")))
+        provideHttpServices();
 }
 
 QListWidget *PlaylistWidget::createList() {
@@ -72,8 +114,9 @@ QListWidget *PlaylistWidget::createList() {
         connect(model, &QAbstractItemModel::modelReset, list, touch);
     }
     connect(list, &QListWidget::itemDoubleClicked, this, &PlaylistWidget::onItemDoubleClicked);
-    // N9：每个 tab 出生即配静态提供者（默认 tab 同样，仅持久化侧跳过）
-    m_providerOf.emplace(list, std::make_shared<StaticProvider>());
+    // N9：每个 tab 出生即配静态提供者（默认 tab 同样，仅持久化侧跳过）；
+    // N35：registry 随构造注入（基类持有），初装配已前置，m_registry 恒非空
+    m_providerOf.emplace(list, std::make_shared<StaticProvider>(m_registry));
     return list;
 }
 
@@ -320,7 +363,7 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
         const auto rit = reuse.constFind(pushed.at(i));
         PlaylistEntity::Ptr entity = rit != reuse.constEnd()
                                          ? rit.value()->clone()
-                                         : PlaylistEntity::fromPlayUrl(pushed.at(i));
+                                         : PlaylistEntity::fromPlayUrl(pushed.at(i), m_registry);
         QListWidgetItem *item = makeItem(def, std::move(entity));
         if (current.at(i)) {
             item->setData(PlayingRole, true);
@@ -366,7 +409,7 @@ void PlaylistWidget::addFiles(const QStringList &files) {
     // N25：本地先行——播放中 tab 也立即插行（回刷只会把"本地未改"的差异搬去默认 tab），
     // 插入后本地序列即等于 mpv 追加后的序列，回刷恒一致而静默
     for (const QString &file : files)
-        makeItem(list, PlaylistEntity::fromPlayUrl(file));
+        makeItem(list, PlaylistEntity::fromPlayUrl(file, m_registry));
     // 非默认本地 tab 添加后持久化（默认 tab 永不落盘，N9/N4 既定）
     if (currentIndex() != 0)
         savePlaylists();
@@ -411,7 +454,7 @@ void PlaylistWidget::setDefaultTabFiles(const QStringList &files) {
     m_loadState[list].mediaMetaLoaded = false; // N29：条目集合变化，两类已读元数据一并失效
     m_loadState[list].fileMetaLoaded = false;
     for (const QString &file : files)
-        makeItem(list, PlaylistEntity::fromPlayUrl(file));
+        makeItem(list, PlaylistEntity::fromPlayUrl(file, m_registry));
     // N31：内容序 == 打开顺序，随直写复位排序规则为无序（保留方向）——否则存量
     // 元数据规则会在下次切入默认 tab 时经 reactivateRescan 重排，吃掉刚打开的顺序。
     // 静态源 enumerate 不读排序键，与被作废的在途枚举批次无实际竞争
@@ -532,8 +575,9 @@ void PlaylistWidget::loadPlaylists() {
             mem.lastPath = Util::normalizePathForMatch(mem.lastPath);
 
         // N9：提供者反序列化完全自治（静态回填条目、目录读参数与排序键），
-        // 内容统一经 enumerate 取得（N28：静态表同样延迟到首次激活）
-        auto provider = PlaylistProvider::load(settings);
+        // 内容统一经 enumerate 取得（N28：静态表同样延迟到首次激活）；
+        // N35：registry 转交（静态持久化的 http 条目重载后仍得 HttpEntity）
+        auto provider = PlaylistProvider::load(settings, m_registry);
         settings.endGroup();
         // insert_or_assign：createList 已预置静态默认，此处必须覆盖
         m_providerOf.insert_or_assign(list, std::move(provider));
@@ -981,7 +1025,7 @@ void PlaylistWidget::runFourStep(QListWidget *list, int tab, const std::function
 // 续作起的下一轮任务会重新置忙与起遮罩，先复位会取消它的忙时与遮罩并清掉它的槽位
 void PlaylistWidget::runJob(const JobContext &ctx, LoadingOverlay::Mode mode, int total,
                             bool cancelable, std::function<void(QPromise<void> &)> body,
-                            std::function<void(JobVerdict)> cont) {
+                            std::function<void(JobVerdict)> cont, std::function<void()> onAbandon) {
     Q_ASSERT(!m_job.active()); // 单飞行：全插件同一时刻至多一个在途任务
     setBusy(true);
     armOverlay(mode, total);
@@ -989,6 +1033,7 @@ void PlaylistWidget::runJob(const JobContext &ctx, LoadingOverlay::Mode mode, in
     m_job.token = ++m_token; // 代际前进（读旧批次的一律失配）
     m_job.target = ctx.list;
     m_job.cancelable = cancelable;
+    m_job.onAbandon = std::move(onAbandon);
     auto *watcher = new QFutureWatcher<void>(this); // parent = 本对象：析构即断线
     m_job.watcher = watcher;
 
@@ -1005,6 +1050,7 @@ void PlaylistWidget::runJob(const JobContext &ctx, LoadingOverlay::Mode mode, in
         m_job.future = QFuture<void>();
         m_job.target = nullptr;
         m_job.watcher = nullptr;
+        m_job.onAbandon = nullptr;
         watcher->deleteLater();
         // ④ 续作（可能起下一轮任务并占用槽位）
         cont(verdict);
@@ -1261,17 +1307,27 @@ void PlaylistWidget::startMetaScan(JobContext ctx, MetaCategory cat) {
             QElapsedTimer throttle;
             throttle.start();
             int done = baseline;
+            // N35 修订 2：同步求值（远端 HEAD 阻塞至完成/超时，无取消通道）。
+            // 逐项边界检查取消：命中即不再发起后续项；在途项求值返回后其结果
+            // 依 abandoned 旗静默丢弃（不注入不缓存，下次预读重试）。取消时
+            // GUI 侧经 onAbandon 立即收尾（锁内搬走已算批次注入缓存），不等本任务
             for (const auto &entity : *pending) {
-                // 每条边界轮询取消：QtConcurrent 只在任务启动时查一次，轮询是唯一判据
-                // （QPromise<void> 不调 addResult，没有"返回 false"这层判据）
                 if (promise.isCanceled())
                     break;
                 if (cat == MetaCategory::File) {
+                    const FileMeta fm = entity->evalFileMeta();
+                    std::lock_guard<std::mutex> lk(result->mutex);
+                    if (result->abandoned)
+                        break;
                     result->entities.push_back(entity);
-                    result->fileMeta.push_back(entity->evalFileMeta());
+                    result->fileMeta.push_back(fm);
                 } else {
+                    const auto mm = entity->evalMediaMeta();
+                    std::lock_guard<std::mutex> lk(result->mutex);
+                    if (result->abandoned)
+                        break;
                     result->entities.push_back(entity);
-                    result->mediaMeta.push_back(entity->evalMediaMeta());
+                    result->mediaMeta.push_back(mm);
                 }
                 ++done;
                 // 进度按时间节流（不是"每 N 条"）：各条目耗时量级差异极大——本地文件
@@ -1285,7 +1341,31 @@ void PlaylistWidget::startMetaScan(JobContext ctx, MetaCategory cat) {
             if (!promise.isCanceled())
                 promise.setProgressValue(total); // 循环末尾补一次
         },
-        [this, ctx, result](JobVerdict v) { onMetaScanFinished(ctx, result, v); });
+        [this, ctx, result](JobVerdict v) { onMetaScanFinished(ctx, result, v); },
+        [this, result, cat] {
+            // 遮罩取消（GUI 线程）：锁内搬走已算批次并注入缓存——N32"取消也注入
+            // 已算批次"的缓存保留语义；在途项不注入（下次预读重试）。互斥锁保证
+            // 与任务体的 push 互斥，搬走后任务体到界即弃
+            PlaylistEntity::List entities;
+            std::vector<FileMeta> fileMeta;
+            std::vector<PlaylistEntity::MediaMeta> mediaMeta;
+            {
+                std::lock_guard<std::mutex> lk(result->mutex);
+                result->abandoned = true;
+                entities = std::move(result->entities);
+                fileMeta = std::move(result->fileMeta);
+                mediaMeta = std::move(result->mediaMeta);
+            }
+            const size_t n = entities.size();
+            for (size_t i = 0; i < n; ++i) {
+                if (cat == MetaCategory::File)
+                    entities[i]->setFileMeta(fileMeta[i]); // 友元授权写点（GUI 线程）
+                else
+                    entities[i]->setMediaMeta(mediaMeta[i]);
+            }
+            if (n)
+                repaintAllLists();
+        });
 }
 
 // N32：预读续作——注入批次（唯一的写点）→ 置"本表该类已读"标志 → 重绘 → 收尾。
@@ -1344,6 +1424,7 @@ void PlaylistWidget::abandonJob() {
     m_job.target = nullptr;
     m_job.future = QFuture<void>();
     m_job.watcher = nullptr; // watcher 的 finished 路径自会销它（早退分支同样 deleteLater）
+    m_job.onAbandon = nullptr;
     m_pendingLoad = PendingLoad{};
     if (m_busy)
         setBusy(false);
@@ -1797,15 +1878,19 @@ void PlaylistWidget::copyPathToClipboard(const QString &path) {
     QApplication::clipboard()->setText(path);
 }
 
-void PlaylistWidget::showPropertiesDialog(const PlaylistEntity &entity) {
-    // N26：文件系统四行（路径 / 大小 / 创建 / 修改）读实体 fileMeta，其余媒体字段
-    // （格式 / 总时长 / 视频 / 音频 / 字幕 / 标签 / 章节）读实体 mediaMeta——
-    // 模态内允许同步求值。supportsMediaMeta 为假（dll 缺席 / 未知实体）时
-    // 媒体区各行为空；supportsFileMeta 为假时大小/创建/修改行为空（路径行恒有）。
-    // 单 Get 5s 超时由 MediaInfoHelper 守卫；二次访问走实体缓存
-    const FileMeta &fm = entity.fileMeta();
-    const MediaInfoHelper::Data *mi = entity.supportsMediaMeta() ? &entity.mediaMeta() : nullptr;
-    const qint64 totalSize = fm.size.has_value() ? *fm.size : 0;
+// N35 重写：判定只看能力位——需任一元数据（supportsFileMeta 或 supportsMediaMeta）
+// 统一走异步；两者皆不支持只显示文件路径。刷新语义为"最新属性而非缓存"：任务线程
+// 经求值转发重读（eval 即重读，不读缓存不落缓存），GUI 续作经注入口写回实体缓存后
+// 用同一套行构建渲染——任务内不得直接调共享实体的 fileMeta() / mediaMeta()
+// （命中前写缓存与 GUI 绘制并发读写即 data race，N32 纪律），求值转发 + GUI 写回
+// 是唯一合法形状。pending 态 General 组只放文件路径行，空一行后显示"正在读取元数据"。
+// N35 修订 2：同步求值 + 结果静默丢弃——关闭对话框置 closed 旗（事件非轮询），
+// 对话框即刻返回，后台任务跑完结果自然蒸发。发起前 GUI 线程显式判
+// MediaInfoHelper::available()（supportsMediaMeta 内含，N32 前提）
+void PlaylistWidget::showPropertiesDialog(const PlaylistEntity::Ptr &entityPtr) {
+    const PlaylistEntity &entity = *entityPtr;
+    const bool needFileMeta = entity.supportsFileMeta();
+    const bool needMediaMeta = entity.supportsMediaMeta();
 
     auto timeText = [](const QDateTime &dt) {
         return dt.isValid() ? dt.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")) : QString();
@@ -1824,238 +1909,312 @@ void PlaylistWidget::showPropertiesDialog(const PlaylistEntity &entity) {
     view->setReadOnly(true);
     view->setFrameShape(QFrame::NoFrame);
     view->setLineWrapMode(QTextEdit::NoWrap);
-    {
-        // 键列统一停靠宽度（最长键为四个汉字加冒号），保证值列纵向对齐
-        QTextOption opt = view->document()->defaultTextOption();
-        opt.setTabStopDistance(100.0);
-        view->document()->setDefaultTextOption(opt);
-    }
-
-    QTextCursor cur(view->document());
-    // 配色与播放列表三色体系对齐（维护者指定）：
-    // 属性名=正播项蓝、属性值=普通未选灰、组标题保持浅灰
-    QTextCharFormat nameFmt;
-    nameFmt.setForeground(QColor(0x19, 0x76, 0xD2));
-    QTextCharFormat valueFmt;
-    valueFmt.setForeground(QColor(0x60, 0x60, 0x60));
-    QTextCharFormat headFmt; // 分组标题：浅灰
-    headFmt.setForeground(QColor(0x90, 0x90, 0x90));
-
-    auto appendRow = [&cur, &nameFmt, &valueFmt](const Row &row) {
-        cur.setCharFormat(nameFmt);
-        cur.insertText(row.prop + QStringLiteral(":"));
-        cur.setCharFormat(valueFmt);
-        cur.insertText(QStringLiteral("\t"));
-        cur.insertText(row.value);
-        cur.insertBlock();
-    };
-    auto appendGroup = [&](const QString &title, const QList<Row> &groupRows) {
-        if (groupRows.isEmpty())
-            return;
-        if (!cur.atStart())
-            cur.insertBlock(); // 组间空行
-        cur.setCharFormat(headFmt);
-        cur.insertText(title, headFmt);
-        cur.insertBlock();
-        for (const Row &r : groupRows)
-            appendRow(r);
-    };
-
-    // ——N18 格式化辅助：空格版（与旧版同形态，UI 不变）——
-    auto formatKHzSpaced = [](int sr) -> QString {
-        QString s = QString::number(sr / 1000.0, 'f', 1);
-        if (s.contains(QLatin1Char('.'))) {
-            while (s.endsWith(QLatin1Char('0')))
-                s.chop(1);
-            if (s.endsWith(QLatin1Char('.')))
-                s.chop(1);
-        }
-        return s + QStringLiteral(" kHz");
-    };
-    auto formatFpsSpaced = [](double fps) -> QString {
-        QString s = QString::number(fps, 'f', 2);
-        if (s.contains(QLatin1Char('.'))) {
-            while (s.endsWith(QLatin1Char('0')))
-                s.chop(1);
-            if (s.endsWith(QLatin1Char('.')))
-                s.chop(1);
-        }
-        return s + QStringLiteral(" fps");
-    };
-    auto formatKbpsSpaced = [](qint64 bps) -> QString {
-        return QString::number((bps + 500) / 1000) + QStringLiteral(" kbps");
-    };
-    auto formatHMS = [](double s) -> QString {
-        return QStringLiteral("%1:%2:%3")
-            .arg(qint64(s) / 3600)
-            .arg((qint64(s) % 3600) / 60, 2, 10, QLatin1Char('0'))
-            .arg(qint64(s) % 60, 2, 10, QLatin1Char('0'));
-    };
-
-    // ——常规组：路径 / 大小 / 创建 / 修改 走实体 fileMeta；
-    // 文件格式 / 总时长 走实体 mediaMeta
-    QList<Row> general;
-    general.append({tr("File Path"), entity.playUrl()});
-    if (mi && !mi->format.isEmpty())
-        general.append({tr("Format"), mi->format});
-    if (totalSize > 0)
-        general.append({tr("File Size"), Util::formatFileSize(totalSize)});
-    if (fm.created.has_value()) {
-        const QString t = timeText(*fm.created);
-        if (!t.isEmpty())
-            general.append({tr("Created"), t});
-    }
-    if (fm.modified.has_value()) {
-        const QString t = timeText(*fm.modified);
-        if (!t.isEmpty())
-            general.append({tr("Modified"), t});
-    }
-    if (mi && mi->duration.has_value())
-        general.append({tr("Duration"), formatHMS(*mi->duration)});
-
-    // 流"大小"格式化："1.23 GB (82%)"，百分比相对文件总大小
-    auto formatStreamSize = [&](qint64 sz, qint64 filesize) -> QString {
-        if (sz <= 0)
-            return {};
-        const QString sizeStr = Util::formatFileSize(sz);
-        if (filesize <= 0)
-            return sizeStr;
-        const int pct = int(double(sz) / double(filesize) * 100.0 + 0.5);
-        return QStringLiteral("%1 (%2%)").arg(sizeStr).arg(pct);
-    };
-
-    // ——流分组：依次遍历实体媒体元数据 streams，按 kind 分桶
-    auto buildVideoRows = [&](const MediaInfoHelper::Stream &t) -> QList<Row> {
-        QList<Row> rows;
-        if (t.isDefault)
-            rows.append({tr("Default"), tr("Yes")});
-        if (!t.title.isEmpty())
-            rows.append({tr("Title"), t.title});
-        if (!t.language.isEmpty())
-            rows.append({tr("Language"), t.language});
-        if (!t.codec.isEmpty())
-            rows.append({tr("Codec"), t.codec});
-        if (t.width > 0 && t.height > 0)
-            rows.append({tr("Resolution"), QStringLiteral("%1 x %2").arg(t.width).arg(t.height)});
-        if (t.frameRate > 0.0)
-            rows.append({tr("Frame Rate"), formatFpsSpaced(t.frameRate)});
-        if (t.bitrate > 0)
-            rows.append({tr("Bitrate"), formatKbpsSpaced(t.bitrate)});
-        const QString sizeStr = formatStreamSize(t.streamSize, totalSize);
-        if (!sizeStr.isEmpty())
-            rows.append({tr("Size"), sizeStr});
-        return rows;
-    };
-    auto buildAudioRows = [&](const MediaInfoHelper::Stream &t) -> QList<Row> {
-        QList<Row> rows;
-        if (t.isDefault)
-            rows.append({tr("Default"), tr("Yes")});
-        if (!t.title.isEmpty())
-            rows.append({tr("Title"), t.title});
-        if (!t.language.isEmpty())
-            rows.append({tr("Language"), t.language});
-        if (!t.codec.isEmpty())
-            rows.append({tr("Codec"), t.codec});
-        if (t.channelCount > 0)
-            rows.append({tr("Channels"), QString::number(t.channelCount)});
-        if (t.sampleRate > 0)
-            rows.append({tr("Sample Rate"), formatKHzSpaced(t.sampleRate)});
-        if (t.bitrate > 0)
-            rows.append({tr("Bitrate"), formatKbpsSpaced(t.bitrate)});
-        const QString sizeStr = formatStreamSize(t.streamSize, totalSize);
-        if (!sizeStr.isEmpty())
-            rows.append({tr("Size"), sizeStr});
-        return rows;
-    };
-    auto buildTextRows = [&](const MediaInfoHelper::Stream &t) -> QList<Row> {
-        QList<Row> rows;
-        if (t.isDefault)
-            rows.append({tr("Default"), tr("Yes")});
-        if (!t.title.isEmpty())
-            rows.append({tr("Title"), t.title});
-        if (!t.language.isEmpty())
-            rows.append({tr("Language"), t.language});
-        if (!t.codec.isEmpty())
-            rows.append({tr("Codec"), t.codec});
-        const QString sizeStr = formatStreamSize(t.streamSize, totalSize);
-        if (!sizeStr.isEmpty())
-            rows.append({tr("Size"), sizeStr});
-        return rows;
-    };
-
-    QList<QList<Row>> videos, audios, texts;
-    if (mi) {
-        for (const auto &s : mi->streams) {
-            switch (s.kind) {
-            case MediaInfoHelper::Stream::Kind::Video:
-                videos.append(buildVideoRows(s));
-                break;
-            case MediaInfoHelper::Stream::Kind::Audio:
-                audios.append(buildAudioRows(s));
-                break;
-            case MediaInfoHelper::Stream::Kind::Text:
-                texts.append(buildTextRows(s));
-                break;
-            default:
-                break;
-            }
-        }
-    }
-
-    // ——标签组：标题 / 专辑 / 作者 / 发行时间
-    QList<Row> tags;
-    if (mi && !mi->title.isEmpty())
-        tags.append({tr("Title"), mi->title});
-    if (mi && !mi->album.isEmpty())
-        tags.append({tr("Album"), mi->album});
-    if (mi && !mi->performer.isEmpty())
-        tags.append({tr("Author"), mi->performer});
-    if (mi && mi->recordedDate.isValid())
-        tags.append({tr("Released"), timeText(mi->recordedDate)});
-
-    appendGroup(tr("General"), general);
-    for (int i = 0; i < videos.size(); ++i)
-        appendGroup(tr("Video #%1").arg(i + 1), videos[i]);
-    for (int i = 0; i < audios.size(); ++i)
-        appendGroup(tr("Audio #%1").arg(i + 1), audios[i]);
-    for (int i = 0; i < texts.size(); ++i)
-        appendGroup(tr("Subtitle #%1").arg(i + 1), texts[i]);
-    appendGroup(tr("Tags"), tags);
-
-    // ——章节组：每章节一行 `[hh:mm:ss.zzz] 标题`；媒体信息不可用时不显示
-    if (mi && !mi->chapters.isEmpty()) {
-        if (!cur.atStart())
-            cur.insertBlock();
-        cur.setCharFormat(headFmt);
-        cur.insertText(tr("Chapters"), headFmt);
-        cur.insertBlock();
-        for (const auto &c : mi->chapters) {
-            cur.setCharFormat(valueFmt);
-            cur.insertText(QStringLiteral("["));
-            cur.setCharFormat(nameFmt);
-            cur.insertText(Util::formatTimeHMSms(c.timeSeconds));
-            cur.setCharFormat(valueFmt);
-            cur.insertText(QStringLiteral("]\t") + c.title);
-            cur.insertBlock();
-        }
-    }
-
-    // 光标归位到文档开头，避免打开时选区残留
-    view->setTextCursor(QTextCursor(view->document()));
 
     auto *layout = new QVBoxLayout(&dialog);
     layout->setContentsMargins(12, 12, 12, 12);
     layout->addWidget(view);
-    int lineCount = general.size() + videos.size() + audios.size() + texts.size() + tags.size() + 8;
-    for (const auto &g : videos)
-        lineCount += g.size() + 2;
-    for (const auto &g : audios)
-        lineCount += g.size() + 2;
-    for (const auto &g : texts)
-        lineCount += g.size() + 2;
-    if (mi && !mi->chapters.isEmpty())
-        lineCount += mi->chapters.size() + 1; // 组标题 + 每章节一行
-    dialog.resize(520, qMin(lineCount * 22 + 40, 600));
+
+    // ——渲染器：按给定值构建整篇内容（pending 时只放路径行 + 占位）——
+    // 续作仅在对话框存续期（exec 嵌套事件循环内）触发，按引用捕获安全
+    auto renderDocument = [&](const FileMeta &fm, const MediaInfoHelper::Data *mi, bool pending) {
+        const qint64 totalSize = fm.size.has_value() ? *fm.size : 0;
+        view->clear();
+        { // 键列统一停靠宽度；clear 后重设（文档默认选项不随 clear 保留）
+            QTextOption opt = view->document()->defaultTextOption();
+            opt.setTabStopDistance(100.0);
+            view->document()->setDefaultTextOption(opt);
+        }
+        QTextCursor cur(view->document());
+        // 配色与播放列表三色体系对齐（维护者指定）：
+        // 属性名=正播项蓝、属性值=普通未选灰、组标题保持浅灰
+        QTextCharFormat nameFmt;
+        nameFmt.setForeground(QColor(0x19, 0x76, 0xD2));
+        QTextCharFormat valueFmt;
+        valueFmt.setForeground(QColor(0x60, 0x60, 0x60));
+        QTextCharFormat headFmt; // 分组标题：浅灰
+        headFmt.setForeground(QColor(0x90, 0x90, 0x90));
+
+        auto appendRow = [&cur, &nameFmt, &valueFmt](const Row &row) {
+            cur.setCharFormat(nameFmt);
+            cur.insertText(row.prop + QStringLiteral(":"));
+            cur.setCharFormat(valueFmt);
+            cur.insertText(QStringLiteral("\t"));
+            cur.insertText(row.value);
+            cur.insertBlock();
+        };
+        auto appendGroup = [&](const QString &title, const QList<Row> &groupRows) {
+            if (groupRows.isEmpty())
+                return;
+            if (!cur.atStart())
+                cur.insertBlock(); // 组间空行
+            cur.setCharFormat(headFmt);
+            cur.insertText(title, headFmt);
+            cur.insertBlock();
+            for (const Row &r : groupRows)
+                appendRow(r);
+        };
+
+        // ——N18 格式化辅助：空格版（与旧版同形态，UI 不变）——
+        auto formatKHzSpaced = [](int sr) -> QString {
+            QString s = QString::number(sr / 1000.0, 'f', 1);
+            if (s.contains(QLatin1Char('.'))) {
+                while (s.endsWith(QLatin1Char('0')))
+                    s.chop(1);
+                if (s.endsWith(QLatin1Char('.')))
+                    s.chop(1);
+            }
+            return s + QStringLiteral(" kHz");
+        };
+        auto formatFpsSpaced = [](double fps) -> QString {
+            QString s = QString::number(fps, 'f', 2);
+            if (s.contains(QLatin1Char('.'))) {
+                while (s.endsWith(QLatin1Char('0')))
+                    s.chop(1);
+                if (s.endsWith(QLatin1Char('.')))
+                    s.chop(1);
+            }
+            return s + QStringLiteral(" fps");
+        };
+        auto formatKbpsSpaced = [](qint64 bps) -> QString {
+            return QString::number((bps + 500) / 1000) + QStringLiteral(" kbps");
+        };
+        auto formatHMS = [](double s) -> QString {
+            return QStringLiteral("%1:%2:%3")
+                .arg(qint64(s) / 3600)
+                .arg((qint64(s) % 3600) / 60, 2, 10, QLatin1Char('0'))
+                .arg(qint64(s) % 60, 2, 10, QLatin1Char('0'));
+        };
+
+        // ——常规组：路径 / 大小 / 创建 / 修改 走实体 fileMeta；
+        // 文件格式 / 总时长 走实体 mediaMeta
+        QList<Row> general;
+        general.append({tr("File Path"), entity.playUrl()});
+        if (mi && !mi->format.isEmpty())
+            general.append({tr("Format"), mi->format});
+        if (totalSize > 0)
+            general.append({tr("File Size"), Util::formatFileSize(totalSize)});
+        if (fm.created.has_value()) {
+            const QString t = timeText(*fm.created);
+            if (!t.isEmpty())
+                general.append({tr("Created"), t});
+        }
+        if (fm.modified.has_value()) {
+            const QString t = timeText(*fm.modified);
+            if (!t.isEmpty())
+                general.append({tr("Modified"), t});
+        }
+        if (mi && mi->duration.has_value())
+            general.append({tr("Duration"), formatHMS(*mi->duration)});
+
+        // 流"大小"格式化："1.23 GB (82%)"，百分比相对文件总大小
+        auto formatStreamSize = [&](qint64 sz, qint64 filesize) -> QString {
+            if (sz <= 0)
+                return {};
+            const QString sizeStr = Util::formatFileSize(sz);
+            if (filesize <= 0)
+                return sizeStr;
+            const int pct = int(double(sz) / double(filesize) * 100.0 + 0.5);
+            return QStringLiteral("%1 (%2%)").arg(sizeStr).arg(pct);
+        };
+
+        // ——流分组：依次遍历实体媒体元数据 streams，按 kind 分桶
+        auto buildVideoRows = [&](const MediaInfoHelper::Stream &t) -> QList<Row> {
+            QList<Row> rows;
+            if (t.isDefault)
+                rows.append({tr("Default"), tr("Yes")});
+            if (!t.title.isEmpty())
+                rows.append({tr("Title"), t.title});
+            if (!t.language.isEmpty())
+                rows.append({tr("Language"), t.language});
+            if (!t.codec.isEmpty())
+                rows.append({tr("Codec"), t.codec});
+            if (t.width > 0 && t.height > 0)
+                rows.append(
+                    {tr("Resolution"), QStringLiteral("%1 x %2").arg(t.width).arg(t.height)});
+            if (t.frameRate > 0.0)
+                rows.append({tr("Frame Rate"), formatFpsSpaced(t.frameRate)});
+            if (t.bitrate > 0)
+                rows.append({tr("Bitrate"), formatKbpsSpaced(t.bitrate)});
+            const QString sizeStr = formatStreamSize(t.streamSize, totalSize);
+            if (!sizeStr.isEmpty())
+                rows.append({tr("Size"), sizeStr});
+            return rows;
+        };
+        auto buildAudioRows = [&](const MediaInfoHelper::Stream &t) -> QList<Row> {
+            QList<Row> rows;
+            if (t.isDefault)
+                rows.append({tr("Default"), tr("Yes")});
+            if (!t.title.isEmpty())
+                rows.append({tr("Title"), t.title});
+            if (!t.language.isEmpty())
+                rows.append({tr("Language"), t.language});
+            if (!t.codec.isEmpty())
+                rows.append({tr("Codec"), t.codec});
+            if (t.channelCount > 0)
+                rows.append({tr("Channels"), QString::number(t.channelCount)});
+            if (t.sampleRate > 0)
+                rows.append({tr("Sample Rate"), formatKHzSpaced(t.sampleRate)});
+            if (t.bitrate > 0)
+                rows.append({tr("Bitrate"), formatKbpsSpaced(t.bitrate)});
+            const QString sizeStr = formatStreamSize(t.streamSize, totalSize);
+            if (!sizeStr.isEmpty())
+                rows.append({tr("Size"), sizeStr});
+            return rows;
+        };
+        auto buildTextRows = [&](const MediaInfoHelper::Stream &t) -> QList<Row> {
+            QList<Row> rows;
+            if (t.isDefault)
+                rows.append({tr("Default"), tr("Yes")});
+            if (!t.title.isEmpty())
+                rows.append({tr("Title"), t.title});
+            if (!t.language.isEmpty())
+                rows.append({tr("Language"), t.language});
+            if (!t.codec.isEmpty())
+                rows.append({tr("Codec"), t.codec});
+            const QString sizeStr = formatStreamSize(t.streamSize, totalSize);
+            if (!sizeStr.isEmpty())
+                rows.append({tr("Size"), sizeStr});
+            return rows;
+        };
+
+        QList<QList<Row>> videos, audios, texts;
+        if (mi) {
+            for (const auto &s : mi->streams) {
+                switch (s.kind) {
+                case MediaInfoHelper::Stream::Kind::Video:
+                    videos.append(buildVideoRows(s));
+                    break;
+                case MediaInfoHelper::Stream::Kind::Audio:
+                    audios.append(buildAudioRows(s));
+                    break;
+                case MediaInfoHelper::Stream::Kind::Text:
+                    texts.append(buildTextRows(s));
+                    break;
+                default:
+                    break;
+                }
+            }
+        }
+
+        // ——标签组：标题 / 专辑 / 作者 / 发行时间
+        QList<Row> tags;
+        if (mi && !mi->title.isEmpty())
+            tags.append({tr("Title"), mi->title});
+        if (mi && !mi->album.isEmpty())
+            tags.append({tr("Album"), mi->album});
+        if (mi && !mi->performer.isEmpty())
+            tags.append({tr("Author"), mi->performer});
+        if (mi && mi->recordedDate.isValid())
+            tags.append({tr("Released"), timeText(mi->recordedDate)});
+
+        appendGroup(tr("General"), general);
+        for (int i = 0; i < videos.size(); ++i)
+            appendGroup(tr("Video #%1").arg(i + 1), videos[i]);
+        for (int i = 0; i < audios.size(); ++i)
+            appendGroup(tr("Audio #%1").arg(i + 1), audios[i]);
+        for (int i = 0; i < texts.size(); ++i)
+            appendGroup(tr("Subtitle #%1").arg(i + 1), texts[i]);
+        appendGroup(tr("Tags"), tags);
+
+        // ——章节组：每章节一行 `[hh:mm:ss.zzz] 标题`；媒体信息不可用时不显示
+        if (mi && !mi->chapters.isEmpty()) {
+            if (!cur.atStart())
+                cur.insertBlock();
+            cur.setCharFormat(headFmt);
+            cur.insertText(tr("Chapters"), headFmt);
+            cur.insertBlock();
+            for (const auto &c : mi->chapters) {
+                cur.setCharFormat(valueFmt);
+                cur.insertText(QStringLiteral("["));
+                cur.setCharFormat(nameFmt);
+                cur.insertText(Util::formatTimeHMSms(c.timeSeconds));
+                cur.setCharFormat(valueFmt);
+                cur.insertText(QStringLiteral("]\t") + c.title);
+                cur.insertBlock();
+            }
+        }
+
+        // ——N35 pending 占位：空一行后显示"正在读取元数据"（完成后整篇重渲染即移除）——
+        if (pending) {
+            if (!cur.atStart())
+                cur.insertBlock(); // 空行
+            cur.setCharFormat(valueFmt);
+            cur.insertText(tr("Reading metadata..."));
+            cur.insertBlock();
+        }
+
+        // 光标归位到文档开头，避免打开时选区残留
+        view->setTextCursor(QTextCursor(view->document()));
+
+        // 尺寸适配按当前内容行数重估（pending 占位行数少，先小后大可接受）
+        int lineCount =
+            general.size() + videos.size() + audios.size() + texts.size() + tags.size() + 8;
+        for (const auto &g : videos)
+            lineCount += g.size() + 2;
+        for (const auto &g : audios)
+            lineCount += g.size() + 2;
+        for (const auto &g : texts)
+            lineCount += g.size() + 2;
+        if (mi && !mi->chapters.isEmpty())
+            lineCount += mi->chapters.size() + 1; // 组标题 + 每章节一行
+        if (pending)
+            lineCount += 2; // 空行 + "正在读取元数据"占位行
+        dialog.resize(520, qMin(lineCount * 22 + 40, 600));
+    };
+
+    // ——分支一：两者皆不支持（未知实体）→ 只显示文件路径，同步出框——
+    if (!needFileMeta && !needMediaMeta) {
+        renderDocument(FileMeta{}, nullptr, /*pending=*/false);
+        dialog.exec();
+        return;
+    }
+
+    // ——分支二：pending 占位 → 异步求值 → 注入写回 → 重渲染（N35 §2.5）——
+    renderDocument(FileMeta{}, nullptr, /*pending=*/true);
+
+    // N35 修订 2：同步求值 + 结果静默丢弃——关闭对话框仅置关闭旗（事件，非轮询），
+    // 对话框即刻返回；后台任务跑完（在途远端 HEAD ≤ 超时）结果自然蒸发，
+    // 不写缓存、不触碰 GUI。任务体只捕获副本，绝不捕获 this / widget
+    const auto closed = std::make_shared<std::atomic_bool>(false);
+    connect(&dialog, &QDialog::finished, &dialog, [closed] { closed->store(true); });
+
+    struct PropResult {
+        FileMeta fm;
+        MediaInfoHelper::Data mm;
+    };
+    const auto result = std::make_shared<PropResult>();
+    const PlaylistEntity::Ptr ent = entityPtr; // 实体本体由共享计数副本保活
+
+    // 续作（GUI）：经注入口写回（唯一合法写点）+ 重渲染。按引用捕获
+    // renderDocument 安全：投递窗口 ⊆ exec 嵌套事件循环 ⊆ 本函数栈帧存续期
+    auto finishRender = [this, &renderDocument, ent, result, closed, needFileMeta, needMediaMeta] {
+        if (closed->load())
+            return; // 关闭即取消：结果静默丢弃，不写回、不重渲染
+        // 求值转发取回的值由 GUI 续作经注入口写回——实体缓存只在 GUI 线程写（N32）。
+        // 失败（空值）同样入缓存：不再重试（N35 §2.4）
+        if (needFileMeta)
+            ent->setFileMeta(result->fm);
+        if (needMediaMeta)
+            ent->setMediaMeta(result->mm);
+        repaintAllLists(); // 写回影响行绘制（时长列回落实体缓存元数据）
+        renderDocument(result->fm, needMediaMeta ? &result->mm : nullptr, /*pending=*/false);
+    };
+    auto *watcher = new QFutureWatcher<void>(&dialog); // parent = 对话框：随框销毁
+    connect(watcher, &QFutureWatcher<void>::finished, &dialog, finishRender);
+
+    watcher->setFuture(
+        QtConcurrent::run([ent, result, closed, needFileMeta, needMediaMeta](QPromise<void> &) {
+            if (needFileMeta)
+                result->fm = ent->evalFileMeta(); // 同步求值（关闭不中断，结果丢弃）
+            if (needMediaMeta && !closed->load())
+                result->mm = ent->evalMediaMeta();
+        }));
+    // 防御：任务可能在 setFuture 之前就跑完（池线程空闲 + 任务极短），此时 Qt 是否
+    // 补发 finished 不在文档保证之内——立即补判一次，递延到事件循环执行以免在
+    // 发起栈内同步跑续作（与 runJob 同款兜底；closed 守候下幂等，双跑无害）
+    if (watcher->isFinished())
+        QMetaObject::invokeMethod(this, finishRender, Qt::QueuedConnection);
+
     dialog.exec();
 }
 
@@ -2082,7 +2241,11 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
                 }
             }
         }
-        QMenu menu(this);
+        // 弹层父指针挂顶层窗口：原生视频区与 splitter 内容叠压（N3）使 Qt 把
+        // splitter 隐式原生化，QMenuPrivate::transientParentWindow 会取
+        // nativeParentWidget 的窗口句柄当 transient parent，挂 splitter 之下的
+        // 控件时该句柄非顶层而触发 "must be a top level window" 警告
+        QMenu menu(window());
         QAction *newTabAction = menu.addAction(tr("New Playlist"));
         QAction *closeTabAction = menu.addAction(tr("Delete Current List"));
         QAction *settingsAction = menu.addAction(tr("List Settings…"));
@@ -2135,7 +2298,8 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
         m_menuTargetList ? entityPtrAt(m_menuTargetList, m_menuTargetRow) : nullptr;
     const QString targetUrl = targetEntity ? targetEntity->playUrl() : QString();
 
-    QMenu menu(this);
+    // 弹层父指针挂顶层窗口（原因见表头菜单分支注释）
+    QMenu menu(window());
 
     QAction *addAction = menu.addAction(tr("Add Files…"));
     menu.addSeparator();
@@ -2265,7 +2429,7 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
     } else if (chosen == copyPathAction) {
         copyPathToClipboard(targetUrl);
     } else if (chosen == propsAction) {
-        showPropertiesDialog(*targetEntity);
+        showPropertiesDialog(targetEntity); // N35：传共享计数副本（异步对话框持有实体）
     } else if (chosen == removeSelAction && list && modifiable) {
         QList<int> rows;
         for (QListWidgetItem *sel : list->selectedItems())
@@ -2365,7 +2529,7 @@ void PlaylistWidget::createNewList() {
     QStringList occupied;
     for (int i = 0; i < count(); ++i)
         occupied << tabText(i);
-    ListSettingsDialog dlg(this, tr("Playlist %1").arg(maxN + 1), nullptr, occupied);
+    ListSettingsDialog dlg(this, tr("Playlist %1").arg(maxN + 1), nullptr, occupied, m_registry);
     if (dlg.exec() != QDialog::Accepted)
         return;
     const QString name = dlg.listName();
@@ -2403,7 +2567,7 @@ void PlaylistWidget::openListSettings(int tabIndex) {
         if (i != tabIndex)
             occupied << tabText(i);
     }
-    ListSettingsDialog dlg(this, tabText(tabIndex), providerAt(tabIndex), occupied);
+    ListSettingsDialog dlg(this, tabText(tabIndex), providerAt(tabIndex), occupied, m_registry);
     if (dlg.exec() != QDialog::Accepted)
         return;
     const QString name = dlg.listName();

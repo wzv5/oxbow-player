@@ -1668,6 +1668,10 @@ void MainWindow::ensureSettingsDialog() {
     m_settingsDialog = new SettingsDialog(this, m_controller, m_configFile);
     m_settingsDialog->setAttribute(Qt::WA_DeleteOnClose, true);
     connect(m_settingsDialog, &QObject::destroyed, this, [this] { m_settingsDialog = nullptr; });
+    // N35：ini 键变更转接播放列表——命中远端请求设置（remoteTimeoutSec /
+    // ignoreHttpsErrors）时重读 ini 重建 client 并覆盖注册表，下一次求值即生效
+    connect(m_settingsDialog, &SettingsDialog::pluginIniKeysChanged, m_playlist,
+            &PlaylistWidget::onPluginIniKeysChanged);
     m_settingsDialog->show();
 }
 

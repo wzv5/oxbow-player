@@ -34,4 +34,10 @@ inline int playlistDefaultWidth() { return 310; }
 // 宽度 480 为实测下限——再窄底部控制栏即显示不全，勿再下调
 inline QSize videoDefaultSize() { return QSize(480, 320); }
 
+// ——N35 远端请求设置缺省值——
+// iniKey: remoteTimeoutSec（秒）；设置目录 fallback 与 PlaylistWidget 初装配同源
+inline int remoteTimeoutSecDefault() { return 5; }
+// iniKey: ignoreHttpsErrors（bool，默认关）
+inline bool ignoreHttpsErrorsDefault() { return false; }
+
 } // namespace App

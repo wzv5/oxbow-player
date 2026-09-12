@@ -10,8 +10,10 @@
 // （工作线程经裸指针调用，见 PlaylistWidget::startLoadAsync）
 class DirProvider : public PlaylistProvider {
   public:
-    DirProvider();
-    DirProvider(const QString &root, bool recursive, const QStringList &extensions);
+    // registry 经基类持有，必填无缺省（目录枚举只产本地路径，当前未用；
+    // 为与 Static 统一接口）
+    DirProvider(const QString &root, bool recursive, const QStringList &extensions,
+                const std::shared_ptr<ServiceRegistry> &registry);
 
     Type type() const override;
     QString describe() const override;
@@ -28,7 +30,8 @@ class DirProvider : public PlaylistProvider {
 
     void saveSettings(QSettings &settings) const override;
 
-    static std::shared_ptr<DirProvider> load(QSettings &settings);
+    static std::shared_ptr<DirProvider> load(QSettings &settings,
+                                             const std::shared_ptr<ServiceRegistry> &registry);
 
   private:
     // 递归收集辅助：dir 内命中过滤器的条目信息追加至 out；不可读子目录记入 warnings 后跳过

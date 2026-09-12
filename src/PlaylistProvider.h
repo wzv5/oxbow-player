@@ -19,6 +19,11 @@ class PlaylistProvider {
 
     using EntityList = PlaylistEntity::List;
 
+    // ——N35 服务注册表（基类统一持有，供子类 enumerate 造实体时注入）——
+    // 构造注入，必填无缺省：所有提供者诞生点必须显式传入可用实例。
+    // Static 经此向 fromPlayUrl 转交，使持久化的 http 条目重载后仍得同类型实体
+    explicit PlaylistProvider(const std::shared_ptr<ServiceRegistry> &registry);
+
     virtual ~PlaylistProvider();
 
     virtual Type type() const = 0;
@@ -47,10 +52,11 @@ class PlaylistProvider {
     virtual void saveSettings(QSettings &settings) const = 0;
 
     // 工厂：按 group 内 provider 键分派到对应实现的 load；
-    // static 或缺失键 → 静态提供者。
+    // static 或缺失键 → 静态提供者。registry 转交对应实现（缺省空）
     // N28：直接产出 shared_ptr——提供者所有权模型即共享（视图容器 + 枚举线程），
     // 调用点无需再经 unique_ptr 中间形态转换
-    static std::shared_ptr<PlaylistProvider> load(QSettings &settings);
+    static std::shared_ptr<PlaylistProvider> load(QSettings &settings,
+                                                  const std::shared_ptr<ServiceRegistry> &registry);
 
     // ——排序规则（非虚，统一持有；取值域见 PlaylistWidget::SortKey，
     // 提供者仅作不透明值存储并自行持久化）——
@@ -61,8 +67,12 @@ class PlaylistProvider {
   private:
     int m_sortKey = 0; // 0 = None
     bool m_sortAscending = true;
+    std::shared_ptr<ServiceRegistry> m_registry; // N35：服务注册表（基类统一持有）
 
   protected:
+    // 子类经此取构造期注入的注册表（enumerate 造实体时转交 fromPlayUrl）
+    const std::shared_ptr<ServiceRegistry> &registry() const { return m_registry; }
+
     // ——N29 元数据注入口（唯一授权通道）——
     // 实体的 setFileMeta / setMediaMeta 为 protected 且仅友元（本类）可及；
     // 友元不继承，具体提供者经此静态转发写入——访问发生在本类成员函数体内，

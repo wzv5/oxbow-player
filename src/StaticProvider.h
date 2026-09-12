@@ -10,6 +10,9 @@
 // 仅持久化侧跳过
 class StaticProvider : public PlaylistProvider {
   public:
+    // registry 经基类持有，必填无缺省，enumerate 造实体时转交 fromPlayUrl
+    explicit StaticProvider(const std::shared_ptr<ServiceRegistry> &registry);
+
     PlaylistProvider::Type type() const override;
     QString describe() const override;
     std::expected<EntityList, QString> enumerate() const override;
@@ -19,7 +22,8 @@ class StaticProvider : public PlaylistProvider {
 
     void saveSettings(QSettings &settings) const override;
 
-    static std::shared_ptr<StaticProvider> load(QSettings &settings);
+    static std::shared_ptr<StaticProvider> load(QSettings &settings,
+                                                const std::shared_ptr<ServiceRegistry> &registry);
 
   private:
     QStringList m_urls; // 持久化形态的 playUrl 有序表

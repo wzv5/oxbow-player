@@ -37,6 +37,12 @@ class SettingsDialog : public QDialog {
     explicit SettingsDialog(QWidget *parent, MpvController *controller,
                             const QString &pluginIniPath);
 
+  signals:
+    // N35：Apply/OK 应用成功后发出，keys 为本轮实际写入 mpv-qt.ini 的键集合
+    // （与快照比对后确有变化者）。仅覆盖 ini 配置变化；mpv 配置变化已由
+    // mpv 属性事件跟踪，不在此列。无 ini 变更则不发射
+    void pluginIniKeysChanged(const QStringList &keys);
+
   private:
     // 通用 valueChanged 槽：item 为触发控件的目录项指针（connect 时以 lambda
     // 捕获传入，static 目录生命周期内稳定）；若该项是联动主控 CheckBox，

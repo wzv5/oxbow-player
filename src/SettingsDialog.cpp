@@ -2,6 +2,7 @@
 
 #include "SettingsDialog.h"
 
+#include "Constants.h"
 #include "MpvConf.h"
 #include "MpvController.h"
 #include "Util.h"
@@ -259,6 +260,21 @@ const QList<SettingCategory> &settingCatalog() {
                  {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Audio Filters"),
                   .widget = WidgetKind::LineEdit,
                   .mpvKeys = {"af"}}, // 默认空：不设置过滤器的语义由 mpv 属性空值表达
+             }},
+        // ⑤ 网络 —— 插件本体选项（写 mpv-qt.ini，N35）：远端元数据浏览链路
+        // （HttpEntity 惰性 HEAD）所用 client 的缺省参数；播放侧证书开关仍归 N37
+        {.title = QT_TRANSLATE_NOOP("SettingsDialog", "Network"),
+         .items =
+             {
+                 {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Remote Request Timeout"),
+                  .widget = WidgetKind::SpinBox,
+                  .iniKey = "remoteTimeoutSec",
+                  .fallback = App::remoteTimeoutSecDefault(),
+                  .range = {1, 120}},
+                 {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Ignore HTTPS Certificate Errors"),
+                  .widget = WidgetKind::CheckBox,
+                  .iniKey = "ignoreHttpsErrors",
+                  .fallback = App::ignoreHttpsErrorsDefault()},
              }},
     };
     return catalog;
@@ -897,6 +913,7 @@ void SettingsDialog::updateApplyButtonState() {
 bool SettingsDialog::applyAll() {
     bool ok = true;
     bool mpvConfDirty = false;
+    QStringList changedIniKeys; // N35：本轮实际写入的 ini 键（应用成功后随信号发出）
     for (auto it = m_pending.begin(); it != m_pending.end(); ++it) {
         const SettingItem *item = it.key();
         if (!item)
@@ -916,6 +933,7 @@ bool SettingsDialog::applyAll() {
             // === 插件本体选项：写 mpv-qt.ini ===
             QSettings s(m_pluginIniPath, QSettings::IniFormat);
             s.setValue(item->iniKey, val);
+            changedIniKeys << item->iniKey;
         } else if (!item->mpvKeys.isEmpty() && item->widget == WidgetKind::Combo) {
             // === mpv 枚举项：按 value 反查选项；占位（assignments 空）不下发不写 conf ===
             const auto choices = item->choices ? item->choices() : QList<SettingChoice>{};
@@ -992,6 +1010,10 @@ bool SettingsDialog::applyAll() {
         m_dirty = false;
         if (m_buttonBox && m_buttonBox->button(QDialogButtonBox::Apply))
             m_buttonBox->button(QDialogButtonBox::Apply)->setEnabled(false);
+        // N35：携本轮实际写入的 ini 键集合通知视图层（注册表重装配的触发源）；
+        // 接收方按键过滤，无关 ini 变更零成本
+        if (!changedIniKeys.isEmpty())
+            emit pluginIniKeysChanged(changedIniKeys);
     }
     return ok;
 }
