@@ -13,16 +13,26 @@ QString formatFileSize(qint64 bytes);
 // 此时允许相邻出现多个文本段
 struct NameSegment {
     bool isNumber;
-    QString text;     // isNumber == false 时有效
+    QStringView text; // isNumber == false 时有效：引用拥有者文本的切片，不拥有内存
     qlonglong number; // isNumber == true 时有效
 };
 
-// 预分段（装饰-排序：排序前对每项调用一次，比较仅在段序列间进行）
-QList<NameSegment> segmentName(const QString &name);
+// 分段结果的拥有者：storage 持有原串（隐式共享浅拷贝），segs 中文本段视图指向 storage。
+// 视图仅在拥有者存活期间有效（排序作用域内持有容器即保证）；建成后不得修改 storage
+// （视图指向共享数据堆块，QString 移动不搬运堆块，故值返回搬移安全，修改则悬空）
+struct SegmentedName {
+    QString storage;
+    QList<NameSegment> segs;
+};
+
+// 预分段（装饰-排序：排序前对每项调用一次，比较仅在段序列间进行）。
+// 按值接参：调用方的 const&（如实体 fileName）只做一次隐式共享浅拷贝，
+// 临时量则被移动进 storage；两种来源的视图都有效
+SegmentedName segmentName(QString name);
 
 // 段序列比较：逐段对比，同类型按类型内规则（数值比大小 / 文本大小写不敏感字典序），
 // 跨类型时数值段恒小于文本段；前缀较短者小；全等返回 0（等键，交由稳定排序保序）
-int naturalCompare(const QList<NameSegment> &a, const QList<NameSegment> &b);
+int naturalCompare(const SegmentedName &a, const SegmentedName &b);
 
 // 打开文件所在目录并选中该文件。Windows 经 Shell API（不派生 explorer 进程）；
 // 其他平台或失败时降级为打开所在目录。返回是否成功定位选中

@@ -12,6 +12,7 @@ QObject *createTestMpvConf();
 QObject *createTestPlaylistEntity();
 QObject *createTestHttpClient();
 QObject *createTestDirProvider();
+QObject *createTestUtil();
 
 namespace {
 using SuiteFactory = QObject *(*)();
@@ -34,11 +35,11 @@ QByteArray suiteOutputArg(const QByteArray &opt, int suite) {
 } // namespace
 
 int main(int argc, char *argv[]) {
-    // 四个套件均无 GUI 依赖（QTEST_GUILESS_MAIN 同款环境）
+    // 五个套件均无 GUI 依赖（QTEST_GUILESS_MAIN 同款环境）
     QCoreApplication app(argc, argv);
 
     const SuiteFactory suites[] = {createTestMpvConf, createTestPlaylistEntity,
-                                   createTestHttpClient, createTestDirProvider};
+                                   createTestHttpClient, createTestDirProvider, createTestUtil};
     const int suiteCount = int(sizeof(suites) / sizeof(suites[0]));
 
     int status = 0;

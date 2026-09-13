@@ -84,6 +84,7 @@
 #include <QStandardPaths>
 #include <QString>
 #include <QStringList>
+#include <QStringView>
 #include <QStyle>
 #include <QStyleOptionSlider>
 #include <QStyledItemDelegate>

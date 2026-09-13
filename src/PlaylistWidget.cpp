@@ -1465,7 +1465,7 @@ void PlaylistWidget::sortListItems(QListWidget *list, SortKey key, bool ascendin
     for (int i = 0; i < n; ++i)
         rows[i] = entityFromItem(list->item(i));
 
-    QVector<QList<Util::NameSegment>> numericSegs;
+    QVector<Util::SegmentedName> numericSegs;
     if (key == SortKey::FileNameNumeric) {
         numericSegs.resize(n);
         for (int i = 0; i < n; ++i)

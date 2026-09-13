@@ -36,54 +36,56 @@ bool parseDigitRun(QStringView run, qlonglong *out) {
 }
 } // namespace
 
-QList<NameSegment> segmentName(const QString &name) {
-    QList<NameSegment> segments;
+SegmentedName segmentName(QString name) {
+    SegmentedName out;
+    out.storage = std::move(name);
+    const QStringView view(out.storage);
+    const qsizetype n = view.size();
     qsizetype i = 0;
-    const qsizetype n = name.size();
     while (i < n) {
         // 仅 ASCII 0-9 视为数字（裁决 1）：显式范围判断而非 isDigit()
-        if (name[i] >= u'0' && name[i] <= u'9') {
+        if (view[i] >= u'0' && view[i] <= u'9') {
             qsizetype j = i;
-            while (j < n && name[j] >= u'0' && name[j] <= u'9')
+            while (j < n && view[j] >= u'0' && view[j] <= u'9')
                 ++j;
             NameSegment seg;
-            seg.isNumber = parseDigitRun(QStringView(name).sliced(i, j - i), &seg.number);
+            seg.isNumber = parseDigitRun(view.sliced(i, j - i), &seg.number);
             if (!seg.isNumber)
-                seg.text = name.mid(i, j - i);
-            segments.append(seg);
+                seg.text = view.sliced(i, j - i);
+            out.segs.append(seg);
             i = j;
         } else {
             qsizetype j = i;
-            while (j < n && !(name[j] >= u'0' && name[j] <= u'9'))
+            while (j < n && !(view[j] >= u'0' && view[j] <= u'9'))
                 ++j;
             NameSegment seg;
             seg.isNumber = false;
-            seg.text = name.mid(i, j - i);
-            segments.append(seg);
+            seg.text = view.sliced(i, j - i);
+            out.segs.append(seg);
             i = j;
         }
     }
-    return segments;
+    return out;
 }
 
-int naturalCompare(const QList<NameSegment> &a, const QList<NameSegment> &b) {
-    const qsizetype n = qMin(a.size(), b.size());
+int naturalCompare(const SegmentedName &a, const SegmentedName &b) {
+    const qsizetype n = qMin(a.segs.size(), b.segs.size());
     for (qsizetype k = 0; k < n; ++k) {
-        const NameSegment &sa = a[k];
-        const NameSegment &sb = b[k];
+        const NameSegment &sa = a.segs[k];
+        const NameSegment &sb = b.segs[k];
         if (sa.isNumber != sb.isNumber)
             return sa.isNumber ? -1 : 1; // 跨类型：数值段恒小于文本段
         if (sa.isNumber) {
             if (sa.number != sb.number)
                 return sa.number < sb.number ? -1 : 1;
         } else {
-            const int c = QString::compare(sa.text, sb.text, Qt::CaseInsensitive);
+            const int c = sa.text.compare(sb.text, Qt::CaseInsensitive);
             if (c != 0)
                 return c;
         }
     }
     // 前缀较短者小；完全相等返回 0（等键）
-    return a.size() == b.size() ? 0 : (a.size() < b.size() ? -1 : 1);
+    return a.segs.size() == b.segs.size() ? 0 : (a.segs.size() < b.segs.size() ? -1 : 1);
 }
 
 bool openFileLocation(const QString &path, QWidget *parent) {

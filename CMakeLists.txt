@@ -161,6 +161,7 @@ if(MPVQT_BUILD_TESTS)
         tests/tst_PlaylistEntity.cpp
         tests/tst_HttpClient.cpp
         tests/tst_DirProvider.cpp
+        tests/tst_Util.cpp
         src/DirProvider.cpp
         src/DirProvider.h
         src/PlaylistProvider.cpp
