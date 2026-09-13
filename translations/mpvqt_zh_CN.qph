@@ -1,5 +1,5 @@
 <!DOCTYPE QPH>
-<QPH sourcelanguage="en_US" language="zh_CN">
+<QPH language="zh_CN" sourcelanguage="en_US">
 <phrase>
     <source>&amp;Open File…</source>
     <target>打开文件(&amp;O)…</target>
@@ -135,6 +135,90 @@
 <phrase>
     <source>Clear all bookmarks?</source>
     <target>确定清空所有书签？</target>
+</phrase>
+<phrase>
+    <source>Request timed out (total limit %1 ms)</source>
+    <target></target>
+</phrase>
+<phrase>
+    <source>Connection refused</source>
+    <target></target>
+</phrase>
+<phrase>
+    <source>Remote host closed the connection</source>
+    <target></target>
+</phrase>
+<phrase>
+    <source>Host not found</source>
+    <target></target>
+</phrase>
+<phrase>
+    <source>Connection timed out</source>
+    <target></target>
+</phrase>
+<phrase>
+    <source>Authentication failed (credentials rejected)</source>
+    <target></target>
+</phrase>
+<phrase>
+    <source>Resource not found (404)</source>
+    <target></target>
+</phrase>
+<phrase>
+    <source>Unsupported protocol</source>
+    <target></target>
+</phrase>
+<phrase>
+    <source>TLS handshake failed</source>
+    <target></target>
+</phrase>
+<phrase>
+    <source>Network error (%1)</source>
+    <target></target>
+</phrase>
+<phrase>
+    <source>Application quitting; request canceled</source>
+    <target></target>
+</phrase>
+<phrase>
+    <source>Too many redirects (limit %1)</source>
+    <target></target>
+</phrase>
+<phrase>
+    <source>Response body exceeds limit (%1 bytes); aborted</source>
+    <target></target>
+</phrase>
+<phrase>
+    <source>Server does not support HEAD (%1); registered, subsequent HEAD requests to this origin will not be sent</source>
+    <target></target>
+</phrase>
+<phrase>
+    <source>Application quitting; request not sent</source>
+    <target></target>
+</phrase>
+<phrase>
+    <source>Request method is empty</source>
+    <target></target>
+</phrase>
+<phrase>
+    <source>HttpClient has no baseUrl bound; cannot resolve relative URL: %1</source>
+    <target></target>
+</phrase>
+<phrase>
+    <source>Server does not support HEAD (%1); request not sent</source>
+    <target></target>
+</phrase>
+<phrase>
+    <source>Invalid job handle</source>
+    <target></target>
+</phrase>
+<phrase>
+    <source>Job not finished yet (contract: take after wait returns true)</source>
+    <target></target>
+</phrase>
+<phrase>
+    <source>Request aborted</source>
+    <target></target>
 </phrase>
 <phrase>
     <source>List Settings</source>
@@ -499,6 +583,10 @@ Video rendering is performed by mpv; this plugin only provides the graphical int
     <target>章节</target>
 </phrase>
 <phrase>
+    <source>Reading metadata...</source>
+    <target>正在读取元数据 ...</target>
+</phrase>
+<phrase>
     <source>New Playlist</source>
     <target>新建播放列表</target>
 </phrase>
@@ -651,6 +739,10 @@ Video rendering is performed by mpv; this plugin only provides the graphical int
     <target>方向键步长</target>
 </phrase>
 <phrase>
+    <source>Recursive Depth Limit</source>
+    <target>递归深度</target>
+</phrase>
+<phrase>
     <source>Playback</source>
     <target>播放</target>
 </phrase>
@@ -679,11 +771,19 @@ Video rendering is performed by mpv; this plugin only provides the graphical int
     <target>音频滤镜</target>
 </phrase>
 <phrase>
-    <source>Settings</source>
-    <target>设置</target>
+    <source>Network</source>
+    <target>网络</target>
 </phrase>
 <phrase>
-    <source>Auto</source>
-    <target>自动</target>
+    <source>Remote Request Timeout</source>
+    <target>远程请求超时</target>
+</phrase>
+<phrase>
+    <source>Ignore HTTPS Certificate Errors</source>
+    <target>忽略 HTTPS 证书错误</target>
+</phrase>
+<phrase>
+    <source>Settings</source>
+    <target>设置</target>
 </phrase>
 </QPH>
