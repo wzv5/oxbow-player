@@ -1,22 +1,19 @@
 // PlaylistEntity 单元测试（N26）：工厂分派与往返幂等、命名派生与修正联动、
 // 惰性求值与缓存清空、能力位与静态空回落、clone 深拷贝互不影响。
 // 测试无副作用：文件级 case 用 QTemporaryDir 隔离，结束时自动清理。
-// 编译进独立可执行 mpvqt_tests（MOC 处理 QObject 测试类），运行：
-//   mpvqt_tests                  # 跑全部
-//   mpvqt_tests -iterations 1 -matchcase xxx   # 按需筛选
+// 一类一可执行（R5）：ctest --test-dir build -C Debug -R PlaylistEntity 跑本套件；
+//   mpvqt_tests_PlaylistEntity <槽名> 跑单个用例。
 
-#include <QDir>
-#include <QFile>
-#include <QIcon>
-#include <QObject>
+#include "pch.h"
+
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
-#include "src/HttpEntity.h"
-#include "src/LocalFileEntity.h"
-#include "src/PlaylistEntity.h"
-#include "src/ServiceRegistry.h"
-#include "src/Util.h"
+#include "HttpEntity.h"
+#include "LocalFileEntity.h"
+#include "PlaylistEntity.h"
+#include "ServiceRegistry.h"
+#include "Util.h"
 
 // 测试桩实体：compute* 带调用计数，能力位可调，保护修正入口透出。
 // 计数器 mutable（compute* 为 const 惰性入口）；随拷贝复制，断言前按需归零
@@ -420,8 +417,7 @@ void TestPlaylistEntity::keyIsNormalizedPlayUrl() {
     QCOMPARE(u->key(), Util::normalizePathForMatch(u->playUrl()));
 }
 
-// 多套件共用一个可执行文件（N26 起测试文件多于一个）：
-// main 集中在 tests/main.cpp，各文件只提供套件工厂
-QObject *createTestPlaylistEntity() { return new TestPlaylistEntity; }
+// 一类一可执行（R5）：自带 main（QTEST_GUILESS_MAIN），无 GUI 依赖
+QTEST_GUILESS_MAIN(TestPlaylistEntity)
 
 #include "tst_PlaylistEntity.moc"

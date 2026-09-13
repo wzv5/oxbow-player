@@ -148,20 +148,19 @@ if(MPV_BIN_DIR AND EXISTS "${MEDIAINFO_DLL}")
 endif()
 
 # ---------------------------------------------------------------------------
-# R3：单元测试目标（默认不构建）。不纳入插件部署路径。
+# R3：单元测试（默认不构建）。不纳入插件部署路径。
 # 启用方式：cmake -B build -DMPVQT_BUILD_TESTS=ON ...
-# 运行：./build/Release/mpvqt_tests.exe   （或 -platform offscreen）
+# 运行：ctest --test-dir build -C Debug -R <套件短名>   （如 ctest --test-dir build -C Debug -R Util）
+#       ./build/Debug/mpvqt_tests_Util    （直调 exe；末尾加槽名即单用例）
+# R5：一类一可执行（QTest 标准用法）+ 测试静态库，被测源码只编一份；
+# 插件构建图（mpvqtcore / 翻译 / 部署）不受影响。
 # ---------------------------------------------------------------------------
 if(MPVQT_BUILD_TESTS)
     find_package(Qt6 REQUIRED COMPONENTS Test)
     enable_testing()
-    add_executable(mpvqt_tests
-        tests/main.cpp
-        tests/tst_MpvConf.cpp
-        tests/tst_PlaylistEntity.cpp
-        tests/tst_HttpClient.cpp
-        tests/tst_DirProvider.cpp
-        tests/tst_Util.cpp
+
+    # 被测源码进测试静态库，各测试 exe 链接复用（静态归档只拉被引用 object）
+    add_library(mpvqt_testlib STATIC
         src/DirProvider.cpp
         src/DirProvider.h
         src/PlaylistProvider.cpp
@@ -185,14 +184,35 @@ if(MPVQT_BUILD_TESTS)
         src/HttpClient.cpp
         src/HttpClient.h
     )
-    target_include_directories(mpvqt_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(mpvqt_tests PRIVATE Qt6::Widgets Qt6::Test Qt6::Network)
+    target_include_directories(mpvqt_testlib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(mpvqt_testlib PUBLIC Qt6::Widgets Qt6::Concurrent Qt6::Network)
+    target_precompile_headers(mpvqt_testlib PRIVATE src/pch.h)
     if(MSVC)
-        target_compile_options(mpvqt_tests PRIVATE /utf-8)
+        target_compile_options(mpvqt_testlib PRIVATE /utf-8)
     endif()
-    if(NOT MPVQT_STATICQT)
-        add_custom_command(TARGET mpvqt_tests POST_BUILD
-            COMMAND ${WINDEPLOYQT_EXE} --no-translations --compiler-runtime $<TARGET_FILE:mpvqt_tests>)
-    endif()
-    add_test(NAME mpvqt_tests COMMAND mpvqt_tests)
+
+    # 注册一个单类测试 exe：源文件固定为 tests/tst_<name>.cpp
+    # 用法：mpvqt_add_test(MpvConf)
+    function(mpvqt_add_test name)
+        add_executable(mpvqt_tests_${name} tests/tst_${name}.cpp)
+        target_include_directories(mpvqt_tests_${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+        target_precompile_headers(mpvqt_tests_${name} REUSE_FROM mpvqt_testlib)
+        target_link_libraries(mpvqt_tests_${name} PRIVATE mpvqt_testlib Qt6::Test)
+        if(MSVC)
+            target_compile_options(mpvqt_tests_${name} PRIVATE /utf-8)
+        endif()
+        add_test(NAME ${name} COMMAND mpvqt_tests_${name})
+        # 各 exe 落同一输出目录，windeployqt 只需跑一遍：首个注册者挂载即全覆盖
+        if(NOT MPVQT_STATICQT AND NOT _mpvqt_test_deployed)
+            add_custom_command(TARGET mpvqt_tests_${name} POST_BUILD
+                COMMAND ${WINDEPLOYQT_EXE} --no-translations --compiler-runtime $<TARGET_FILE:mpvqt_tests_${name}>)
+            set(_mpvqt_test_deployed TRUE PARENT_SCOPE)
+        endif()
+    endfunction()
+
+    mpvqt_add_test(MpvConf)
+    mpvqt_add_test(PlaylistEntity)
+    mpvqt_add_test(HttpClient)
+    mpvqt_add_test(DirProvider)
+    mpvqt_add_test(Util)
 endif()

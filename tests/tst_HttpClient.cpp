@@ -6,23 +6,20 @@
 // TLS：先用未受信证书验证握手失败与 ignoreSslErrors 两态，再把 CA 加进进程内
 // 默认 QSslConfiguration 验证"加入可信根后通过"。
 
+#include "pch.h"
+
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QProcess>
 #include <QSslCertificate>
 #include <QSslConfiguration>
-#include <QStandardPaths>
 #include <QtTest/QtTest>
 
-#include <algorithm>
-#include <functional>
-#include <memory>
 #include <thread>
 #include <utility>
-#include <vector>
 
-#include "src/HttpClient.h"
+#include "HttpClient.h"
 
 namespace {
 
@@ -858,6 +855,7 @@ class TestHttpClient : public QObject {
     PythonStub m_stub;
 };
 
-QObject *createTestHttpClient() { return new TestHttpClient; }
+// 一类一可执行（R5）：自带 main（QTEST_GUILESS_MAIN），无 GUI 依赖
+QTEST_GUILESS_MAIN(TestHttpClient)
 
 #include "tst_HttpClient.moc"

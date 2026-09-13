@@ -10,25 +10,21 @@
 // junction 用例是防御的硬探针：Qt 的 canonicalFilePath() 不解析 junction，去重键
 // 必须先解开 junction 链（见 DirProvider::canonicalDirPath），否则环会被当成普通
 // 目录逐层展开——表现为结果重复收录（曾实测出 41 条，应为 2 条）。
-// 编译进独立可执行 mpvqt_tests（MOC 处理 QObject 测试类），运行：
-//   mpvqt_tests                              # 跑全部
-//   mpvqt_tests -matchcase symlinkLoop*      # 只跑环相关
+// 一类一可执行（R5）：ctest --test-dir build -C Debug -R DirProvider 跑本套件；
+//   mpvqt_tests_DirProvider symlinkLoop* 只跑环相关。
 
-#include <QDir>
-#include <QFile>
-#include <QFileInfo>
-#include <QObject>
+#include "pch.h"
+
 #include <QProcess>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
-#include <expected>
 #include <utility>
 
-#include "src/Constants.h"
-#include "src/DirProvider.h"
-#include "src/ServiceRegistry.h"
-#include "src/TraversalPolicy.h"
+#include "Constants.h"
+#include "DirProvider.h"
+#include "ServiceRegistry.h"
+#include "TraversalPolicy.h"
 
 namespace {
 // 建目录成功返回路径，失败返回空串（用例自行 QVERIFY）
@@ -341,7 +337,7 @@ void TestDirProvider::defaultDepthCollectsThreeLevels() {
     QCOMPARE(*result, QStringList({norm(t.a), norm(t.b), norm(t.c), norm(t.d)}));
 }
 
-// 多套件共用一个可执行文件：main 集中在 tests/main.cpp，各文件只提供套件工厂
-QObject *createTestDirProvider() { return new TestDirProvider; }
+// 一类一可执行（R5）：自带 main（QTEST_GUILESS_MAIN），无 GUI 依赖
+QTEST_GUILESS_MAIN(TestDirProvider)
 
 #include "tst_DirProvider.moc"

@@ -1,15 +1,14 @@
 // Util::segmentName / naturalCompare 单元测试：QStringView 零拷贝分段重构的验证。
 // 覆盖：分段正确性（文本/数值/前导零/ASCII 判定/超限降级）、排序语义（数值序/
 // 跨类型/前缀/大小写不敏感）、视图有效性（拥有者+移动后仍有效）、调用方整链排序。
-// 无 GUI 依赖，随 mpvqt_tests 由 tests/main.cpp 统一装配执行。
+// 无 GUI 依赖，一类一可执行（R5）：ctest --test-dir build -C Debug -R Util 跑本套件；
+//   mpvqt_tests_Util <槽名> 跑单个用例。
 
-#include <QObject>
+#include "pch.h"
+
 #include <QtTest/QtTest>
 
-#include <algorithm>
-#include <vector>
-
-#include "src/Util.h"
+#include "Util.h"
 
 // 中文片段统一经 fromUtf8 构造：窄字面量在 MSVC /utf-8 与 Clang 默认 UTF-8
 // 源码编码下均为 UTF-8，比 QStringLiteral 更不受编译器字面量编码影响
@@ -212,7 +211,7 @@ void TestUtil::endToEndCallerSort() {
     QCOMPARE(result, ascending);
 }
 
-// 多套件共用一个可执行文件：main 集中在 tests/main.cpp，此处只提供套件工厂
-QObject *createTestUtil() { return new TestUtil; }
+// 一类一可执行（R5）：自带 main（QTEST_GUILESS_MAIN）
+QTEST_GUILESS_MAIN(TestUtil)
 
 #include "tst_Util.moc"

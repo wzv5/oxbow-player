@@ -1,17 +1,14 @@
 // MpvConf 单元测试（R3）：手写 mpv.conf 解析器的边界 case 覆盖。
 // 测试无副作用：每个 case 用 QTemporaryFile 隔离路径，结束时自动清理。
-// 编译进独立可执行 mpvqt_tests（MOC 处理 QObject 测试类），运行：
-//   mpvqt_tests                  # 跑全部
-//   mpvqt-tests -iterations 1 -matchcase xxx   # 按需筛选
+// 一类一可执行（R5）：ctest --test-dir build -C Debug -R MpvConf 跑本套件；
+//   mpvqt_tests_MpvConf <槽名> 跑单个用例。
 
-#include <QDir>
-#include <QFile>
-#include <QObject>
-#include <QTemporaryFile>
+#include "pch.h"
+
 #include <QTextStream>
 #include <QtTest/QtTest>
 
-#include "src/MpvConf.h"
+#include "MpvConf.h"
 
 class TestMpvConf : public QObject {
     Q_OBJECT
@@ -254,8 +251,7 @@ void TestMpvConf::loopModeDualKeyWrite() {
     QCOMPARE(c3->getGlobal("loop-playlist"), QStringLiteral("inf"));
 }
 
-// 多套件共用一个可执行文件（N26 起测试文件多于一个）：
-// main 集中在 tests/main.cpp，各文件只提供套件工厂
-QObject *createTestMpvConf() { return new TestMpvConf; }
+// 一类一可执行（R5）：自带 main（QTEST_GUILESS_MAIN），无 GUI 依赖
+QTEST_GUILESS_MAIN(TestMpvConf)
 
 #include "tst_MpvConf.moc"
