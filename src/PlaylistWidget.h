@@ -376,6 +376,11 @@ class PlaylistWidget : public QTabWidget {
     // registry 指针不变，下一次 resolve 即得新 client）
     void provideHttpServices();
 
+    // ——N36 遍历策略装配——
+    // 同走 N35 路子：GUI 线程读 ini 构建 TraversalPolicy 快照 provide 进同一注册表，
+    // 替换即覆盖（注册表身份恒定）。取值侧在 DirProvider::enumerate 起始处 resolve
+    void provideTraversalPolicy();
+
     // 正在播放条目所在行（PlayingRole 命中处），无则 -1
     int playingRowOf(const QListWidget *list) const;
 
@@ -388,8 +393,9 @@ class PlaylistWidget : public QTabWidget {
     int m_playingTab = 0; // N25：恒 >= 0（默认 0）；同步目标失效时归位 0，不再悬空
     QString m_configFile;
     MpvController *m_mpv = nullptr; // 弱引用，attachController 注入（N4 进度恢复用）
-    // N35：服务注册表（构造期创建并初装配 HttpClient；设置变更时覆盖内部实例，
+    // N35：服务注册表（初始化列表创建，此后恒非空；设置变更时只覆盖其内部实例，
     // 注册表身份恒定——收编 / 拖放 / 打开 URL 经工厂注入实体，实体每次求值现查）
+    // N36：TraversalPolicy 同注册于此；创建与装配分离，两个 provide 函数各管一项
     std::shared_ptr<ServiceRegistry> m_registry;
     // 以 list 指针为键：不受 tab 增删导致的索引漂移影响
     QHash<const QListWidget *, TabMemory> m_memory;

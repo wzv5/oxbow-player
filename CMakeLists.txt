@@ -51,6 +51,7 @@ add_library(mpvqtcore MODULE
     src/HttpEntity.cpp
     src/HttpEntity.h
     src/ServiceRegistry.h
+    src/TraversalPolicy.h
     src/PlaylistProvider.cpp
     src/PlaylistProvider.h
     src/ListSettingsDialog.cpp
@@ -159,6 +160,13 @@ if(MPVQT_BUILD_TESTS)
         tests/tst_MpvConf.cpp
         tests/tst_PlaylistEntity.cpp
         tests/tst_HttpClient.cpp
+        tests/tst_DirProvider.cpp
+        src/DirProvider.cpp
+        src/DirProvider.h
+        src/PlaylistProvider.cpp
+        src/PlaylistProvider.h
+        src/StaticProvider.cpp
+        src/StaticProvider.h
         src/MpvConf.cpp
         src/MpvConf.h
         src/PlaylistEntity.cpp
@@ -168,6 +176,7 @@ if(MPVQT_BUILD_TESTS)
         src/HttpEntity.cpp
         src/HttpEntity.h
         src/ServiceRegistry.h
+        src/TraversalPolicy.h
         src/MediaInfoHelper.cpp
         src/MediaInfoHelper.h
         src/Util.cpp

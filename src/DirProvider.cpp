@@ -2,7 +2,10 @@
 
 #include "DirProvider.h"
 
+#include "Constants.h"
 #include "LocalFileEntity.h"
+#include "ServiceRegistry.h"
+#include "TraversalPolicy.h"
 
 namespace {
 // 扩展名 → QDir 名称过滤器（*.mp4 形态）
@@ -12,6 +15,30 @@ QStringList toNameFilters(const QStringList &extensions) {
     for (const QString &ext : extensions)
         filters << QStringLiteral("*.") + ext;
     return filters;
+}
+// junction 链解析上限：病态链 / 自指链不至于把枚举拖死
+constexpr int kJunctionChainGuard = 32;
+
+// 目录真实路径（去重键唯一来源）：先解开 NTFS junction 链，再取 canonical
+// （解析符号链接 / . / ..），解析失败退回原路径——使"同一目录经多条路径可达"
+// 收敛为同一个键。
+// 实测（Qt 6.11.2 / Windows 11）：canonicalFilePath() 不解析 junction——链接的
+// canonical 仍是链接自身路径，直接拿它当键等于没去重，junction 环会被当成普通
+// 目录逐层展开；故此处显式经 junctionTarget() 解到真实目录再取 canonical
+QString canonicalDirPath(const QString &path) {
+    QFileInfo info(path);
+    for (int i = 0; i < kJunctionChainGuard && info.isJunction(); ++i) {
+        QString target = info.junctionTarget();
+        if (target.isEmpty())
+            break;
+        // reparse 目标可能带 \??\ / \\?\ 前缀，统一转成 Qt 路径形态再续解
+        if (target.startsWith(QStringLiteral("\\\\?\\")) ||
+            target.startsWith(QStringLiteral("\\??\\")))
+            target = target.mid(4);
+        info = QFileInfo(QDir::fromNativeSeparators(target));
+    }
+    const QString canon = info.canonicalFilePath();
+    return canon.isEmpty() ? info.absoluteFilePath() : canon;
 }
 } // namespace
 
@@ -40,10 +67,19 @@ std::expected<PlaylistProvider::EntityList, QString> DirProvider::enumerate() co
     if (!rootDir.isReadable())
         return std::unexpected(QObject::tr("Directory is not readable: %1").arg(m_root));
     // 扩展名空表＝不过滤；过滤器一次构造逐层复用
+    // N36：本批遍历参数经注册表策略快照取用（GUI 线程装配、任务线程只读，N36 修订 1）；
+    // 起始处解析一次贯穿整次遍历，设置变更只影响下一次枚举。resolve 为空按缺省兜底
+    int maxDepth = App::recursiveDepthLimitDefault();
+    if (const auto policy = registry()->resolve<TraversalPolicy>())
+        maxDepth = policy->depthLimit;
     QFileInfoList infos;
     QStringList warnings;
+    // N36 修订 3：已访问目录的 canonical 路径集——符号链接环 / 同一目录重复访问
+    // 的剪枝依据，根先入集
+    QSet<QString> visited;
+    visited.insert(canonicalDirPath(m_root));
     collect(rootDir, m_extensions.isEmpty() ? QStringList() : toNameFilters(m_extensions),
-            m_recursive, infos, warnings);
+            m_recursive, 0, maxDepth, visited, infos, warnings);
     if (!warnings.isEmpty())
         return std::unexpected(warnings.join(QStringLiteral("\n")));
     EntityList entities;
@@ -86,8 +122,9 @@ std::shared_ptr<DirProvider> DirProvider::load(QSettings &settings,
     return provider;
 }
 
-void DirProvider::collect(const QDir &dir, const QStringList &filters, bool recursive,
-                          QFileInfoList &out, QStringList &warnings) {
+void DirProvider::collect(const QDir &dir, const QStringList &filters, bool recursive, int depth,
+                          int maxDepth, QSet<QString> &visited, QFileInfoList &out,
+                          QStringList &warnings) {
     // 文件层：命中扩展名的条目信息追加（N29：整个 QFileInfo 留给注入，
     // 路径加工统一在 fromPlayUrl 的 resolveLocalPath 出口做）
     const QFileInfoList files =
@@ -101,11 +138,22 @@ void DirProvider::collect(const QDir &dir, const QStringList &filters, bool recu
     const QFileInfoList subDirs =
         dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::NoSort);
     for (const QFileInfo &fi : subDirs) {
+        // N36：子目录深度超过上限不再深入（上限 n = 最多深入 n 层，0 = 不递归）；
+        // 截断静默，不记 warning（超深是配置使然，不是错误）
+        if (depth + 1 > maxDepth)
+            continue;
+        // N36 修订 3：已访问过（符号链接环，或同一目录经多条路径可达）即静默跳过，
+        // 不记 warning——这是防御，不是错误；深度上限之外的第二道闸门
+        const QString key = canonicalDirPath(fi.absoluteFilePath());
+        if (visited.contains(key))
+            continue;
         if (!QDir(fi.absoluteFilePath()).isReadable()) {
             warnings << QObject::tr("Subdirectory is not readable, skipped: %1")
                             .arg(fi.absoluteFilePath());
             continue;
         }
-        collect(fi.absoluteFilePath(), filters, recursive, out, warnings);
+        visited.insert(key);
+        collect(fi.absoluteFilePath(), filters, recursive, depth + 1, maxDepth, visited, out,
+                warnings);
     }
 }

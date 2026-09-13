@@ -11,13 +11,19 @@
 #include "PlaylistDelegate.h"
 #include "ServiceRegistry.h"
 #include "StaticProvider.h"
+#include "TraversalPolicy.h"
 #include "Util.h"
 
 PlaylistWidget::PlaylistWidget(const QString &configFile, QWidget *parent)
-    : QTabWidget(parent), m_configFile(configFile) {
-    // N35：注册表初装配前置——createList 出生即配 StaticProvider 并注入 registry，
-    // 装配必须先于首个提供者诞生（provideHttpServices 仅读 ini，不依赖任何控件）
+    : QTabWidget(parent), m_configFile(configFile),
+      m_registry(std::make_shared<ServiceRegistry>()) {
+    // 注册表在初始化列表创建——创建是本对象的初始化职责，不归任何一个装配函数；
+    // 此后 m_registry 恒非空，两个 provide 函数只做"读 ini + 覆盖内部实例"，
+    // 彼此独立、可任意次序调用
+    // N35：装配仍须前置——createList 出生即配 StaticProvider 并注入 registry，
+    // 两个装配函数仅读 ini，不依赖任何控件
     provideHttpServices();
+    provideTraversalPolicy();
     setAcceptDrops(true);
     setDocumentMode(true);
     setMinimumWidth(220);
@@ -66,8 +72,8 @@ PlaylistWidget::~PlaylistWidget() {
 // ——N35 服务注册表装配——
 
 // 读 ini 两项构建 HttpClient 缺省参数并 provide。初装配与重装配共用：
-// 注册表身份恒定（构造期创建一次），重装配只覆盖内部 HttpClient 实例——
-// 实体持有的 registry 指针不变，下一次求值 resolve 即得新 client；
+// 注册表身份恒定（初始化列表创建一次，此后恒非空），重装配只覆盖内部
+// HttpClient 实例——实体持有的 registry 指针不变，下一次求值 resolve 即得新 client；
 // 在途单请求不受影响（旧 client 副本随任务存活），条目粒度切换，可接受（N35 §2.3）
 void PlaylistWidget::provideHttpServices() {
     int timeoutSec = App::remoteTimeoutSecDefault();
@@ -80,18 +86,35 @@ void PlaylistWidget::provideHttpServices() {
             timeoutSec = v;
         ignoreSsl = s.value(QStringLiteral("ignoreHttpsErrors"), ignoreSsl).toBool();
     }
-    if (!m_registry)
-        m_registry = std::make_shared<ServiceRegistry>();
     HttpClient::Config cfg;
     cfg.timeoutMs = timeoutSec * 1000; // ini 记秒，Config 记毫秒（N34）
     cfg.ignoreSslErrors = ignoreSsl;
     m_registry->provide<HttpClient>(std::make_shared<HttpClient>(cfg));
 }
 
+// N36：遍历策略同路——读 ini 构建 TraversalPolicy 快照 provide 进同一注册表
+// （m_registry 于初始化列表创建，恒非空）；取值侧在 DirProvider::enumerate 起始处 resolve
+void PlaylistWidget::provideTraversalPolicy() {
+    int depthLimit = App::recursiveDepthLimitDefault();
+    if (!m_configFile.isEmpty()) {
+        QSettings s(m_configFile, QSettings::IniFormat);
+        bool ok = false;
+        const int v = s.value(QStringLiteral("recursiveDepthLimit"), depthLimit).toInt(&ok);
+        // 读侧自钳：上界与设置目录 range 同源（见 Constants.h）；下界恒 0
+        if (ok && v >= 0 && v <= App::recursiveDepthLimitMax())
+            depthLimit = v;
+    }
+    auto policy = std::make_shared<TraversalPolicy>();
+    policy->depthLimit = depthLimit;
+    m_registry->provide<TraversalPolicy>(std::move(policy));
+}
+
 void PlaylistWidget::onPluginIniKeysChanged(const QStringList &keys) {
     if (keys.contains(QStringLiteral("remoteTimeoutSec")) ||
         keys.contains(QStringLiteral("ignoreHttpsErrors")))
         provideHttpServices();
+    if (keys.contains(QStringLiteral("recursiveDepthLimit")))
+        provideTraversalPolicy();
 }
 
 QListWidget *PlaylistWidget::createList() {
@@ -115,7 +138,7 @@ QListWidget *PlaylistWidget::createList() {
     }
     connect(list, &QListWidget::itemDoubleClicked, this, &PlaylistWidget::onItemDoubleClicked);
     // N9：每个 tab 出生即配静态提供者（默认 tab 同样，仅持久化侧跳过）；
-    // N35：registry 随构造注入（基类持有），初装配已前置，m_registry 恒非空
+    // N35：registry 随构造注入（基类持有）；m_registry 于初始化列表创建，恒非空
     m_providerOf.emplace(list, std::make_shared<StaticProvider>(m_registry));
     return list;
 }

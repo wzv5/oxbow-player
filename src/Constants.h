@@ -40,4 +40,14 @@ inline int remoteTimeoutSecDefault() { return 5; }
 // iniKey: ignoreHttpsErrors（bool，默认关）
 inline bool ignoreHttpsErrorsDefault() { return false; }
 
+// ——N36 递归深度上限——
+// iniKey: recursiveDepthLimit；设置目录 fallback / range 与装配侧读值同源
+// 取值域：0 = 不递归（只收绑定目录内的文件），n = 最多深入 n 层子目录
+// （修订 2 起 0 不再表示"不限"——无上限遍历遇上符号链接环会失控）
+inline int recursiveDepthLimitDefault() { return 3; }
+// 取值域上界：设置目录 SpinBox 的 range 与装配侧读值钳制共用一处，否则任一
+// 单边改动都会让两处静默漂移。下界恒为 0（深度不能为负，0 = 不递归），
+// 是语义本身而非配置值，故不抽常量、直接写死
+inline int recursiveDepthLimitMax() { return 20; }
+
 } // namespace App

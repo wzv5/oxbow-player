@@ -226,6 +226,11 @@ const QList<SettingCategory> &settingCatalog() {
                   .iniKey = "volumeKeyStep",
                   .choices = stepChoices,
                   .fallback = 5}, // 对齐现版：miss 兜底 5 而非第 0 项
+                 {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Recursive Depth Limit"),
+                  .widget = WidgetKind::SpinBox,
+                  .iniKey = "recursiveDepthLimit",
+                  .fallback = App::recursiveDepthLimitDefault(),
+                  .range = {0, App::recursiveDepthLimitMax()}},
              }},
         // ② 播放 —— mpv 选项（写 mpv.conf + 下发）
         {.title = QT_TRANSLATE_NOOP("SettingsDialog", "Playback"),
