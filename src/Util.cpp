@@ -189,18 +189,156 @@ QString trimTrailingZeros(const QString &fixed) {
     return s;
 }
 
+namespace {
+// N37：URL 匹配形态的编码收敛内核（约二十行纯字符串函数，不解析 URL 结构、
+// 不依赖任何 Qt 版本行为）。扫 %HH：合法 hex 对中 unreserved 字符（ALPHA / DIGIT /
+// '-' '.' '_' '~'）解码为字面量，其余统一十六进制为大写；畸形（% 后不足两位或
+// 非 hex）原样保留。reserved 字符的转义不解码（%2F 必须原样保留，否则 / 的语义
+// 就变）；不合并 . / .. 段、不碰 +。单调性：所有比对都是"两侧各落一次 key"，
+// 收敛只可能让原本不等的形态相等，不会让原本相等的不等。
+QString convergeUrlEscapes(const QString &s) {
+    auto hexVal = [](QChar c) -> int {
+        const char ch = c.toLatin1();
+        if (ch >= '0' && ch <= '9')
+            return ch - '0';
+        if (ch >= 'a' && ch <= 'f')
+            return ch - 'a' + 10;
+        if (ch >= 'A' && ch <= 'F')
+            return ch - 'A' + 10;
+        return -1;
+    };
+    static constexpr char kUpperHex[] = "0123456789ABCDEF";
+    auto isUnreserved = [](int b) {
+        return (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') || (b >= '0' && b <= '9') ||
+               b == '-' || b == '.' || b == '_' || b == '~';
+    };
+    QString out;
+    out.reserve(s.size());
+    const int n = s.size();
+    int i = 0;
+    while (i < n) {
+        if (s.at(i) == u'%' && i + 2 < n) {
+            const int hi = hexVal(s.at(i + 1));
+            const int lo = hexVal(s.at(i + 2));
+            if (hi >= 0 && lo >= 0) {
+                const int byte = hi * 16 + lo;
+                if (isUnreserved(byte)) {
+                    out.append(QChar(byte));
+                } else {
+                    out.append(u'%');
+                    out.append(QLatin1Char(kUpperHex[hi]));
+                    out.append(QLatin1Char(kUpperHex[lo]));
+                }
+                i += 3;
+                continue;
+            }
+        }
+        out.append(s.at(i));
+        ++i;
+    }
+    return out;
+}
+
+// N37：http(s) URL 的规范形态内核——scheme / host 归小写、去默认端口
+// （http 80 / https 443），userinfo 原样保留（大小写敏感，不解析），其余整段过
+// 编码收敛。纯字符串操作，无解析失败路径；找不到 "://" 时原样返回。
+// 入口形态（nativePath）与匹配形态（normalizePathForMatch）共用同一内核——
+// "入口即规范"，服务端以等价书写指向同一文件时归一为同一 playUrl，不产出重复条目
+QString convergeHttpUrlForm(const QString &url) {
+    const int schemeEnd = url.indexOf(QStringLiteral("://"));
+    if (schemeEnd < 0)
+        return url;
+    const QString scheme = url.left(schemeEnd).toLower();
+    // authority 终止于首个 '/'、'?' 或 '#'（query / fragment 不在此段）
+    const int authStart = schemeEnd + 3;
+    int authEnd = authStart;
+    while (authEnd < url.size()) {
+        const QChar c = url.at(authEnd);
+        if (c == u'/' || c == u'?' || c == u'#')
+            break;
+        ++authEnd;
+    }
+    // userinfo 原样保留（最后一个 '@' 之前的部分；userinfo 内的 '@' 必为编码形态，
+    // 字面 '@' 是合法分隔符）
+    const QString authority = url.mid(authStart, authEnd - authStart);
+    const int at = authority.lastIndexOf(u'@');
+    const QString userinfo = at >= 0 ? authority.left(at + 1) : QString();
+    QString hostPort = at >= 0 ? authority.mid(at + 1) : authority;
+    // host[:port]：用最后一个 ':' 且其后为纯数字判定端口（IPv6 字面量带方括号，
+    // 其 ':' 后非纯数字，不误判；裸 IPv6 authority 本就非法——须方括号，不构成
+    // 误判场景）
+    QString host = hostPort;
+    int port = 0;
+    const int colon = hostPort.lastIndexOf(u':');
+    if (colon >= 0) {
+        bool ok = false;
+        const int p = hostPort.mid(colon + 1).toInt(&ok);
+        if (ok && p > 0) {
+            host = hostPort.left(colon);
+            port = p;
+        }
+    }
+    const bool defaultPort = (scheme == QLatin1String("http") && port == 80) ||
+                             (scheme == QLatin1String("https") && port == 443);
+    QString rebuilt = scheme;
+    rebuilt += QStringLiteral("://");
+    rebuilt += userinfo;
+    rebuilt += host.toLower();
+    if (port > 0 && !defaultPort)
+        rebuilt += u':' + QString::number(port);
+    rebuilt += url.mid(authEnd);
+    return convergeUrlEscapes(rebuilt);
+}
+} // namespace
+
+namespace {
+// N37：URL 形态处理仅对 http(s) 生效——percent / URL 语义只对 URI 路径成立，
+// 其余网络协议（rtsp / srt / udp / edl 等）不参与 URL 规范化与编码收敛
+bool isHttpUrl(const QString &path) {
+    const int schemeEnd = path.indexOf(QStringLiteral("://"));
+    if (schemeEnd < 0)
+        return false;
+    const QString scheme = path.left(schemeEnd).toLower();
+    return scheme == QLatin1String("http") || scheme == QLatin1String("https");
+}
+} // namespace
+
 QString normalizePathForMatch(const QString &path) {
     // 本地路径先相对→绝对（基于进程 CWD，不访问文件系统），再统一分隔符；
     // Windows 额外转小写。仅用于内部匹配；UI 展示与向 mpv 传递始终保持原样。
     const QString abs = Util::resolveLocalPath(path);
+    if (Util::isNetworkStreamPath(abs)) {
+        // N37：URL 编码收敛仅对 http(s)（与 playUrlFileName 同口径——URL 语义只对
+        // URI 路径成立）；其余网络协议维持 N35 既有形态（分隔符归一、不转小写）。
+        // 收敛是"两侧各落一次 key"，按协议族划分后每族内单调性依旧成立
+        if (isHttpUrl(abs))
+            return convergeHttpUrlForm(abs);
+        return QDir::fromNativeSeparators(abs);
+    }
     QString p = QDir::fromNativeSeparators(abs);
 #ifdef Q_OS_WIN
-    // N35：网络路径保留原始大小写——URL 的 path 部分（含 userinfo）大小写敏感，
-    // 逐字节 key 与 N25 回刷口径一致；分隔符归一化保留（对 URL 无害，只转 \→/）
-    if (!Util::isNetworkStreamPath(p))
-        p = p.toLower();
+    p = p.toLower(); // 网络路径已在上面分支返回，此处必为本地路径
 #endif
     return p;
+}
+
+QString nativePath(const QString &path) {
+    // 网络分支：http(s) 走 URL 规范化（入口形态），绝不做 toNativeSeparators——
+    // 后者会把 '/' 换成 '\'，对 URL 是破坏性的（N37 前的隐患，此前无调用点传
+    // URL 未暴露）；解析失败退回原串（不抛错、不判失败）。其余网络协议原样
+    // 返回——toNativeSeparators 同样破坏 URL，QUrl 重序列化对非 URI scheme
+    // 的语义没有保证
+    if (Util::isNetworkStreamPath(path)) {
+        if (!isHttpUrl(path))
+            return path;
+        const QUrl u = QUrl(path, QUrl::ParsingMode::TolerantMode);
+        if (!u.isValid())
+            return path;
+        // Qt 完成 scheme / host 归小写与非 ASCII 的编码；默认端口剥离与转义收敛
+        // 和匹配形态共用同一内核——"入口即规范"，等价书写不产出重复条目
+        return convergeHttpUrlForm(u.toString(QUrl::ComponentFormattingOption::FullyEncoded));
+    }
+    return QDir::toNativeSeparators(path);
 }
 
 bool Util::isNetworkStreamPath(const QString &path) {
@@ -261,6 +399,48 @@ QDateTime parseReleaseDate(const QString &s) {
             return {d2.startOfDay()};
     }
     return {};
+}
+
+// N37：播放项显示文件名（自 HttpEntity 构造内的同名逻辑收编，供标题 / OSD
+// 取名共用，见头注）。percent-decode 仅对 http(s) 生效（isHttpUrl，与
+// nativePath / normalizePathForMatch 的网络分支同口径）
+QString playUrlFileName(const QString &playUrl) {
+    if (isHttpUrl(playUrl)) {
+        const qsizetype cutA = playUrl.indexOf(QLatin1Char('?'));
+        const qsizetype cutB = playUrl.indexOf(QLatin1Char('#'));
+        qsizetype cut = playUrl.size();
+        if (cutA >= 0)
+            cut = qMin(cut, cutA);
+        if (cutB >= 0)
+            cut = qMin(cut, cutB);
+        const QString spec = playUrl.left(cut);
+        const qsizetype slash = spec.lastIndexOf(QLatin1Char('/'));
+        const QString lastSeg = slash >= 0 ? spec.mid(slash + 1) : spec;
+        return QUrl::fromPercentEncoding(lastSeg.toUtf8());
+    }
+    return QFileInfo(playUrl).fileName();
+}
+
+// N37：HTTP 日期解析（自 HttpEntity 迁入，行为不变——详见头注）
+QDateTime parseHttpDate(const QByteArray &raw) {
+    QString s = QString::fromLatin1(raw).trimmed();
+    if (s.isEmpty())
+        return {};
+
+    // 字母时区后缀 → 等价 +0000（数字时区保留原样；无后缀即 0 时区，与
+    // Last-Modified 恒为 UTC 墙钟的语义吻合）
+    static const char *kZoneNames[] = {"GMT", "UTC", "UT"};
+    for (const char *z : kZoneNames) {
+        const QString suffix = QStringLiteral(" ") + QString::fromLatin1(z);
+        if (s.endsWith(suffix, Qt::CaseInsensitive)) {
+            s.chop(suffix.size());
+            s += QStringLiteral(" +0000");
+            break;
+        }
+    }
+
+    const QDateTime dt = QDateTime::fromString(s, Qt::RFC2822Date);
+    return dt.toLocalTime(); // invalid 时保持 invalid，调用方按"值未知"丢弃
 }
 
 QString resolveMpvConfPath(const QString &pluginDir) {

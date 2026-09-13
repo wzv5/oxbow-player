@@ -17,7 +17,7 @@ class DirProvider : public PlaylistProvider {
 
     Type type() const override;
     QString describe() const override;
-    std::expected<EntityList, QString> enumerate() const override;
+    std::expected<Enumeration, QString> enumerate() const override;
     bool supportsModify() const override;
     // 显式 true：目录表内容以枚举为准不可增删，但仍可排序并持久化规则
     bool supportsSort() const override;

@@ -204,6 +204,20 @@ QList<SettingChoice> hwdecPresets() {
             {QStringLiteral("no")}};
 }
 
+// N37：播放侧证书开关（mpv tls-verify）的两态映射（N33 §2.1）。勾选"忽略"对应
+// tls-verify=no（与 Flag 默认语义相反，故不引入取反字段、按两态映射表达），
+// 未勾选 → yes 转严格校验。逻辑值仅 CheckBox 内部使用，标签不显示
+QList<SettingChoice> tlsVerifyChoices() {
+    return {
+        {QT_TRANSLATE_NOOP("SettingsDialog", "Ignore"),
+         true,
+         {{QStringLiteral("tls-verify"), QStringLiteral("no")}}},
+        {QT_TRANSLATE_NOOP("SettingsDialog", "Strict"),
+         false,
+         {{QStringLiteral("tls-verify"), QStringLiteral("yes")}}},
+    };
+}
+
 // 全局目录（函数内 static 单例，内容 const；规避跨编译单元静态初始化顺序问题）。
 // 指定初始化器：省略的字段取声明处默认值，新增可选字段零波及。
 const QList<SettingCategory> &settingCatalog() {
@@ -266,8 +280,10 @@ const QList<SettingCategory> &settingCatalog() {
                   .widget = WidgetKind::LineEdit,
                   .mpvKeys = {"af"}}, // 默认空：不设置过滤器的语义由 mpv 属性空值表达
              }},
-        // ⑤ 网络 —— 插件本体选项（写 mpv-qt.ini，N35）：远端元数据浏览链路
-        // （HttpEntity 惰性 HEAD）所用 client 的缺省参数；播放侧证书开关仍归 N37
+        // ⑤ 网络 —— N35：远端元数据浏览链路（HttpEntity 惰性 HEAD、WebDAV 枚举）
+        // 所用 client 的缺省参数（写 mpv-qt.ini）；N37 起并列 mpv 侧播放证书开关
+        // （写 mpv.conf + 下发 tls-verify）——两条链路的证书校验各自独立，
+        // 只关一侧就会出现"能列出、播不了"（或反之），两开关互不联动
         {.title = QT_TRANSLATE_NOOP("SettingsDialog", "Network"),
          .items =
              {
@@ -279,7 +295,21 @@ const QList<SettingCategory> &settingCatalog() {
                  {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Ignore HTTPS Certificate Errors"),
                   .widget = WidgetKind::CheckBox,
                   .iniKey = "ignoreHttpsErrors",
-                  .fallback = App::ignoreHttpsErrorsDefault()},
+                  .fallback = App::ignoreHttpsErrorsDefault(),
+                  // N37：澄清只管浏览侧（列表与元数据请求），不影响播放
+                  .note = QT_TRANSLATE_NOOP("SettingsDialog",
+                                            "Applies to list and metadata requests only; "
+                                            "playback is governed by the mpv-side option below")},
+                 // N37：播放侧（mpv / ffmpeg 发请求）证书开关。fallback 为未勾选——
+                 // 只在属性不可读或取值未命中两项赋值时兜底；mpv 内置默认 tls-verify=no
+                 // 且可实时读写，首次打开呈现为已勾选，保持勾选不改变任何现状
+                 {.label = QT_TRANSLATE_NOOP("SettingsDialog",
+                                             "Ignore HTTPS Certificate Errors (mpv side)"),
+                  .widget = WidgetKind::CheckBox,
+                  .mpvKeys = {"tls-verify"},
+                  .choices = tlsVerifyChoices,
+                  .fallback = false,
+                  .mpvType = MpvType::String},
              }},
     };
     return catalog;

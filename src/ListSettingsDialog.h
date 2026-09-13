@@ -10,7 +10,10 @@
 //   新建（入口 null）→ 必产出新提供者；
 //   存量同类型且参数未变 → nullopt（调用方仅应用改名）；
 //   存量类型或参数有变 → 产出新提供者。
-// 校验在 accept 内完成：名称非空/非"默认"/重名；目录要求根目录存在。
+// 校验在 accept 内完成：名称非空/非"默认"/重名；目录要求根目录存在；
+// WebDAV 要求 URL 非空且为可解析的 http(s) URL、不得内嵌 userinfo（N37）。
+// N37：扩展名编辑区 dir / webdav 两页各自一组，直接堆叠在各自参数区之下
+// （静态源无此区）；不做布局合并，暂不考虑美观与可操作性
 class ListSettingsDialog : public QDialog {
     Q_OBJECT
   public:
@@ -25,7 +28,16 @@ class ListSettingsDialog : public QDialog {
     PlaylistProvider::Type providerType() const;
     QString dirRoot() const;
     bool dirRecursive() const;
+    // 扩展名清单（N37：dir / webdav 两页各一个输入框，各自取值）
     QStringList dirExtensions() const;
+    // N37：WebDAV 参数。davUrl 是 URL 的来源处——trim → Util::nativePath 规范化
+    // （网络分支）→ 补尾斜杠（尾斜杠是 WebDAV 的基目录语义，属来源自身规则，
+    // 不进通用函数）
+    QString davUrl() const;
+    QString davUser() const;
+    QString davPassword() const;
+    bool davRecursive() const;
+    QStringList davExtensions() const;
 
     // 确定后的提供者交付：nullopt＝未变更；否则为新构建实例
     // （N28：shared_ptr 交付，与视图容器的所有权模型一致）
@@ -36,15 +48,23 @@ class ListSettingsDialog : public QDialog {
 
   private:
     // 控件创建完成后的数据回填：按入口提供者类型（if 分支 + static_cast 下探）
-    // 设置单选、目录参数与扩展名初值；新建（无提供者）走静态+默认清单
+    // 设置单选、目录 / WebDAV 参数与扩展名初值；新建（无提供者）走静态+默认清单
     void populateFromCurrent();
 
     QLineEdit *m_nameEdit = nullptr;
     QRadioButton *m_staticRadio = nullptr;
     QRadioButton *m_dirRadio = nullptr;
+    QRadioButton *m_webdavRadio = nullptr; // N37
     QLineEdit *m_rootEdit = nullptr;
     QCheckBox *m_recursiveCheck = nullptr;
-    QLineEdit *m_extensionsEdit = nullptr;       // 空格分隔扩展名
+    // ——目录页扩展名编辑区（N37 前即有，形态不变）——
+    QLineEdit *m_dirExtensionsEdit = nullptr; // 空格分隔扩展名
+    // ——N37 WebDAV 参数区（含自己的扩展名编辑区）——
+    QLineEdit *m_urlEdit = nullptr;
+    QLineEdit *m_userEdit = nullptr;
+    QLineEdit *m_passwordEdit = nullptr; // EchoMode::Password
+    QCheckBox *m_davRecursiveCheck = nullptr;
+    QLineEdit *m_davExtensionsEdit = nullptr;    // 空格分隔扩展名
     QStringList m_occupiedNames;                 // 已占用列表名（重名校验用）
     const PlaylistProvider *m_current = nullptr; // 入口提供者（null＝新建）
     std::shared_ptr<ServiceRegistry> m_registry; // N35：转交新提供者的注册表

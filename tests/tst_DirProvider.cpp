@@ -111,7 +111,8 @@ std::shared_ptr<ServiceRegistry> registryWithDepth(int depth) {
     return registry;
 }
 
-// 枚举并抽出 playUrl（统一分隔符后升序）——集合语义，便于逐层比对
+// 枚举并抽出 playUrl（统一分隔符后升序）——集合语义，便于逐层比对。
+// N37：enumerate 返回类型改为 Enumeration，取 entities 字段（warnings 非本套件关注点）
 std::expected<QStringList, QString> enumerateUrls(const QString &root, int depth) {
     // 递归开、扩展名只认 mp4：与本轮被测的遍历口径对齐
     DirProvider provider(root, true, {QStringLiteral("mp4")}, registryWithDepth(depth));
@@ -119,8 +120,8 @@ std::expected<QStringList, QString> enumerateUrls(const QString &root, int depth
     if (!result.has_value())
         return std::unexpected(result.error());
     QStringList urls;
-    urls.reserve(int(result->size()));
-    for (const auto &e : *result)
+    urls.reserve(int(result->entities.size()));
+    for (const auto &e : result->entities)
         urls << QDir::fromNativeSeparators(e->playUrl()); // 加工后为原生分隔符
     urls.sort();
     return urls;
@@ -154,6 +155,12 @@ class TestDirProvider : public QObject {
     void depthOneStopsAfterFirstLevel();
     // N36 修订 2：默认 3 = 第三级子目录仍收录，第四级不出现
     void defaultDepthCollectsThreeLevels();
+    // N37：不可读子目录由"整次失败"改为"枚举成功 + 警告"（失败面收缩为
+    // 根未绑定 / 不存在 / 不可读三项）。Windows 下 Qt 默认不查 NTFS ACL
+    // （qt_ntfs_permission_lookup 默认关闭），QDir::isReadable() 恒为真——运行时
+    // 同样识别不出被拒目录（它被当成空目录静默处理），非仅"测试造不出来"；
+    // 已知不修，见主仓 AGENTS.md 持久陷阱。该用例仅在可 chmod 的平台执行
+    void unreadableSubdirectoryYieldsWarning();
 };
 
 void TestDirProvider::symlinkLoopToRootIsPruned() {
@@ -335,6 +342,43 @@ void TestDirProvider::defaultDepthCollectsThreeLevels() {
     if (!result.has_value())
         QFAIL(qPrintable(result.error()));
     QCOMPARE(*result, QStringList({norm(t.a), norm(t.b), norm(t.c), norm(t.d)}));
+}
+
+void TestDirProvider::unreadableSubdirectoryYieldsWarning() {
+#ifdef Q_OS_WIN
+    QSKIP("Windows 下 Qt 默认不查 NTFS ACL，QDir::isReadable() 恒为真，运行时同样"
+          "识别不出被拒目录（已知不修，见 AGENTS.md）；失败面收缩的语义仅在此平台钉死");
+#else
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    const QString root = tmp.path();
+    const QString a = makeMedia(root, QStringLiteral("a.mp4"));
+    const QString sub = makeDir(root, QStringLiteral("sub"));
+    const QString b = makeMedia(sub, QStringLiteral("b.mp4"));
+    QVERIFY(!a.isEmpty());
+    QVERIFY(!sub.isEmpty());
+    QVERIFY(!b.isEmpty());
+
+    // 剥夺子目录全部权限位；守卫确认确实不可读（运行环境可能忽略权限位）
+    QFile::setPermissions(sub, QFile::Permissions());
+    if (QDir(sub).isReadable())
+        QSKIP("权限剥夺未生效，无法构造不可读子目录场景");
+
+    DirProvider provider(root, true, {QStringLiteral("mp4")},
+                         registryWithDepth(App::recursiveDepthLimitMax()));
+    const auto result = provider.enumerate();
+    // N37：不再整次失败——根内文件照常收录，子目录失败随 warnings 回传
+    if (!result.has_value())
+        QFAIL(qPrintable(result.error()));
+    QCOMPARE(int(result->entities.size()), 1);
+    QCOMPARE(result->entities.front()->playUrl(), a);
+    QVERIFY(!result->warnings.isEmpty());
+
+    // 恢复权限位，让 QTemporaryDir 的递归清理得以完成
+    QFile::setPermissions(sub, QFile::Permissions(QFile::ReadOwner | QFile::WriteOwner |
+                                                  QFile::ExeOwner | QFile::ReadUser |
+                                                  QFile::WriteUser | QFile::ExeUser));
+#endif
 }
 
 // 一类一可执行（R5）：自带 main（QTEST_GUILESS_MAIN），无 GUI 依赖

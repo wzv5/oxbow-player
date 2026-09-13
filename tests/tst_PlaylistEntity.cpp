@@ -211,8 +211,10 @@ void TestPlaylistEntity::httpEntityKeyPreservesCase() {
     auto registry = std::make_shared<ServiceRegistry>();
     const QString url = QStringLiteral("https://Example.COM/V/a.mp4");
     auto e = PlaylistEntity::fromPlayUrl(url, registry);
-    // 网络路径 key 逐字节：主机与路径大小写保留（N35 §2.6）
-    QCOMPARE(e->key(), url);
+    // N37：key 为匹配形态——scheme / host 归小写，path 大小写敏感逐字节保留
+    // （N35 的"逐字节 key"口径随匹配形态收敛改写）；playUrl 本身不受影响
+    QCOMPARE(e->playUrl(), url);
+    QCOMPARE(e->key(), QStringLiteral("https://example.com/V/a.mp4"));
 }
 
 void TestPlaylistEntity::factoryRoundtripIdempotent() {

@@ -5,6 +5,7 @@
 #include "DirProvider.h"
 #include "StaticProvider.h"
 #include "Util.h"
+#include "WebDavProvider.h"
 
 namespace {
 // 扩展名编辑区文本 → 规范清单：按空白拆分、去点、转小写、去重保序
@@ -47,14 +48,14 @@ ListSettingsDialog::ListSettingsDialog(QWidget *parent, const QString &currentNa
     rootRow->addWidget(m_rootEdit, 1);
     rootRow->addWidget(browseBtn);
     m_recursiveCheck = new QCheckBox(tr("Include Subdirectories"));
-    m_extensionsEdit = new QLineEdit;
-    auto *extRow = new QHBoxLayout;
-    extRow->addWidget(m_extensionsEdit, 1);
-    // 恢复默认清单（↺ U+21BA）：与 NavigatorPanel 复位按钮符号一致
-    auto *extResetBtn = new QPushButton(QStringLiteral("\u21ba"));
-    extResetBtn->setToolTip(tr("Reset to default extension list"));
-    extResetBtn->setFixedWidth(28);
-    extRow->addWidget(extResetBtn);
+    // 目录页扩展名编辑区（N37 前即有）：整组直接堆叠在目录参数之下
+    m_dirExtensionsEdit = new QLineEdit;
+    auto *dirExtRow = new QHBoxLayout;
+    dirExtRow->addWidget(m_dirExtensionsEdit, 1);
+    auto *dirExtResetBtn = new QPushButton(QStringLiteral("\u21ba"));
+    dirExtResetBtn->setToolTip(tr("Reset to default extension list"));
+    dirExtResetBtn->setFixedWidth(28);
+    dirExtRow->addWidget(dirExtResetBtn);
     auto *dirPage = new QWidget;
     auto *dirLayout = new QVBoxLayout(dirPage);
     dirLayout->setContentsMargins(16, 0, 0, 0);
@@ -62,21 +63,68 @@ ListSettingsDialog::ListSettingsDialog(QWidget *parent, const QString &currentNa
     dirLayout->addWidget(m_recursiveCheck);
     dirLayout->addWidget(new QLabel(tr("Media extensions (space-separated; leave empty for no "
                                        "filter):")));
-    dirLayout->addLayout(extRow);
+    dirLayout->addLayout(dirExtRow);
     layout->addRow(m_dirRadio);
     layout->addRow(dirPage);
+
+    // ——N37：WebDAV 参数区（扩展名组同形堆叠在本页参数之下）——
+    m_webdavRadio = new QRadioButton(tr("WebDAV Directory"));
+    auto *urlRow = new QHBoxLayout;
+    m_urlEdit = new QLineEdit;
+    urlRow->addWidget(new QLabel(tr("Directory URL")), 0);
+    urlRow->addWidget(m_urlEdit, 1);
+    auto *userRow = new QHBoxLayout;
+    m_userEdit = new QLineEdit;
+    userRow->addWidget(new QLabel(tr("Username")), 0);
+    userRow->addWidget(m_userEdit, 1);
+    auto *passwordRow = new QHBoxLayout;
+    m_passwordEdit = new QLineEdit;
+    m_passwordEdit->setEchoMode(QLineEdit::EchoMode::Password);
+    passwordRow->addWidget(new QLabel(tr("Password")), 0);
+    passwordRow->addWidget(m_passwordEdit, 1);
+    m_davRecursiveCheck = new QCheckBox(tr("Include Subdirectories"));
+    m_davExtensionsEdit = new QLineEdit;
+    auto *davExtRow = new QHBoxLayout;
+    davExtRow->addWidget(m_davExtensionsEdit, 1);
+    auto *davExtResetBtn = new QPushButton(QStringLiteral("\u21ba"));
+    davExtResetBtn->setToolTip(tr("Reset to default extension list"));
+    davExtResetBtn->setFixedWidth(28);
+    davExtRow->addWidget(davExtResetBtn);
+    auto *webdavPage = new QWidget;
+    auto *webdavLayout = new QVBoxLayout(webdavPage);
+    webdavLayout->setContentsMargins(16, 0, 0, 0);
+    webdavLayout->addLayout(urlRow);
+    webdavLayout->addLayout(userRow);
+    webdavLayout->addLayout(passwordRow);
+    webdavLayout->addWidget(m_davRecursiveCheck);
+    webdavLayout->addWidget(new QLabel(tr("Media extensions (space-separated; leave empty for no "
+                                          "filter):")));
+    webdavLayout->addLayout(davExtRow);
+    layout->addRow(m_webdavRadio);
+    layout->addRow(webdavPage);
 
     auto *group = new QButtonGroup(this);
     group->addButton(m_staticRadio);
     group->addButton(m_dirRadio);
+    group->addButton(m_webdavRadio);
 
     connect(browseBtn, &QPushButton::clicked, this, &ListSettingsDialog::browseRoot);
-    // 恢复默认清单：预填 Constants 默认值（不校验、可继续编辑）
-    connect(extResetBtn, &QPushButton::clicked, this, [this] {
-        m_extensionsEdit->setText(App::defaultMediaExtensions().join(QLatin1Char(' ')));
+    // 恢复默认清单：预填 Constants 默认值（不校验、可继续编辑）；两页各自复位
+    connect(dirExtResetBtn, &QPushButton::clicked, this, [this] {
+        m_dirExtensionsEdit->setText(App::defaultMediaExtensions().join(QLatin1Char(' ')));
     });
-    // 切换单选联动目录参数区启停（populate 的程序性 setChecked 同样触发本信号）
-    connect(m_staticRadio, &QRadioButton::toggled, dirPage, &QWidget::setDisabled);
+    connect(davExtResetBtn, &QPushButton::clicked, this, [this] {
+        m_davExtensionsEdit->setText(App::defaultMediaExtensions().join(QLatin1Char(' ')));
+    });
+    // 切换单选联动参数区启停（populate 的程序性 setChecked 同样触发本信号）：
+    // 目录页 / WebDAV 页各随自己的单选启停（扩展名组已属各自页面，随页启停）
+    auto updateEnabling = [this, dirPage, webdavPage] {
+        dirPage->setEnabled(m_dirRadio->isChecked());
+        webdavPage->setEnabled(m_webdavRadio->isChecked());
+    };
+    connect(m_staticRadio, &QRadioButton::toggled, this, updateEnabling);
+    connect(m_dirRadio, &QRadioButton::toggled, this, updateEnabling);
+    connect(m_webdavRadio, &QRadioButton::toggled, this, updateEnabling);
 
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     connect(buttons, &QDialogButtonBox::accepted, this, &ListSettingsDialog::accept);
@@ -85,13 +133,15 @@ ListSettingsDialog::ListSettingsDialog(QWidget *parent, const QString &currentNa
 
     // ——第二步：控件就绪后统一回填入口提供者数据（信号已接线，联动自然生效）——
     populateFromCurrent();
+    updateEnabling(); // 防御：回填未触发 toggled（初值即目标态）时也保证联动正确
 }
 
 void ListSettingsDialog::populateFromCurrent() {
     if (!m_current) {
-        // 新建列表：静态默认，扩展名预填全局默认清单
+        // 新建列表：静态默认，两页扩展名框均预填全局默认清单
         m_staticRadio->setChecked(true);
-        m_extensionsEdit->setText(App::defaultMediaExtensions().join(QLatin1Char(' ')));
+        m_dirExtensionsEdit->setText(App::defaultMediaExtensions().join(QLatin1Char(' ')));
+        m_davExtensionsEdit->setText(App::defaultMediaExtensions().join(QLatin1Char(' ')));
         return;
     }
     if (m_current->type() == PlaylistProvider::Type::Dir) {
@@ -100,19 +150,35 @@ void ListSettingsDialog::populateFromCurrent() {
         // m_root 已为原生分隔符（来源处处理），不再额外 toNativeSeparators（B15）
         m_rootEdit->setText(d->rootPath());
         m_recursiveCheck->setChecked(d->recursive());
-        m_extensionsEdit->setText(d->extensions().join(QLatin1Char(' ')));
+        m_dirExtensionsEdit->setText(d->extensions().join(QLatin1Char(' ')));
+        m_davExtensionsEdit->setText(App::defaultMediaExtensions().join(QLatin1Char(' ')));
+    } else if (m_current->type() == PlaylistProvider::Type::WebDav) {
+        // N37：WebDAV 参数回填（六项全量；davUrl 已含尾斜杠，URL 框原样回显）
+        auto *w = static_cast<const WebDavProvider *>(m_current);
+        m_webdavRadio->setChecked(true);
+        m_urlEdit->setText(w->rootUrl());
+        m_userEdit->setText(w->user());
+        m_passwordEdit->setText(w->password());
+        m_davRecursiveCheck->setChecked(w->recursive());
+        m_davExtensionsEdit->setText(w->extensions().join(QLatin1Char(' ')));
+        m_dirExtensionsEdit->setText(App::defaultMediaExtensions().join(QLatin1Char(' ')));
     } else {
         auto *s = static_cast<const StaticProvider *>(m_current);
-        Q_UNUSED(s); // 静态无参数区：仅选中单选，扩展名框预填默认清单
+        Q_UNUSED(s); // 静态无参数区：仅选中单选，两页扩展名框预填默认清单
         m_staticRadio->setChecked(true);
-        m_extensionsEdit->setText(App::defaultMediaExtensions().join(QLatin1Char(' ')));
+        m_dirExtensionsEdit->setText(App::defaultMediaExtensions().join(QLatin1Char(' ')));
+        m_davExtensionsEdit->setText(App::defaultMediaExtensions().join(QLatin1Char(' ')));
     }
 }
 
 QString ListSettingsDialog::listName() const { return m_nameEdit->text().trimmed(); }
 
 PlaylistProvider::Type ListSettingsDialog::providerType() const {
-    return m_dirRadio->isChecked() ? PlaylistProvider::Type::Dir : PlaylistProvider::Type::Static;
+    if (m_dirRadio->isChecked())
+        return PlaylistProvider::Type::Dir;
+    if (m_webdavRadio->isChecked())
+        return PlaylistProvider::Type::WebDav; // N37
+    return PlaylistProvider::Type::Static;
 }
 
 QString ListSettingsDialog::dirRoot() const {
@@ -127,7 +193,40 @@ QString ListSettingsDialog::dirRoot() const {
 bool ListSettingsDialog::dirRecursive() const { return m_recursiveCheck->isChecked(); }
 
 QStringList ListSettingsDialog::dirExtensions() const {
-    return parseExtensions(m_extensionsEdit->text());
+    return parseExtensions(m_dirExtensionsEdit->text());
+}
+
+// N37：URL 的来源处（§3.1 第 1 条）——trim → 经 Util::nativePath 规范化（网络分支）
+// → 补尾斜杠。尾斜杠是 WebDAV 的基目录语义（resolved 展开相对 href 的前提），
+// 属该来源自身的规则，不进通用函数
+QString ListSettingsDialog::davUrl() const {
+    QString text = m_urlEdit->text().trimmed();
+    if (text.isEmpty())
+        return text;
+    text = Util::nativePath(text);
+    // 尾斜杠补在 path 上：基目录语义只对路径成立，直接补在串尾会把分隔符塞进
+    // query（"…/dav?token=1/"）。query / fragment 原样保留在后
+    const qsizetype q = text.indexOf(QLatin1Char('?'));
+    const qsizetype f = text.indexOf(QLatin1Char('#'));
+    qsizetype cut = text.size();
+    if (q >= 0)
+        cut = qMin(cut, q);
+    if (f >= 0)
+        cut = qMin(cut, f);
+    QString head = text.left(cut);
+    if (!head.endsWith(QLatin1Char('/')))
+        head += QLatin1Char('/');
+    return head + text.mid(cut);
+}
+
+QString ListSettingsDialog::davUser() const { return m_userEdit->text().trimmed(); }
+
+QString ListSettingsDialog::davPassword() const { return m_passwordEdit->text(); }
+
+bool ListSettingsDialog::davRecursive() const { return m_davRecursiveCheck->isChecked(); }
+
+QStringList ListSettingsDialog::davExtensions() const {
+    return parseExtensions(m_davExtensionsEdit->text());
 }
 
 std::optional<std::shared_ptr<PlaylistProvider>> ListSettingsDialog::takeProvider() {
@@ -178,6 +277,30 @@ void ListSettingsDialog::accept() {
             return;
         }
     }
+    // N37：WebDAV 校验——URL 非空 + QUrl 可解析 + scheme ∈ {http, https}；
+    // 不得内嵌 userinfo（提示改用用户名 / 密码栏，避免凭据出现两个来源）；
+    // 不做连通性探测——交由异步枚举，失败即占位行 + 右键刷新重试
+    if (providerType() == PlaylistProvider::Type::WebDav) {
+        const QString url = davUrl();
+        if (url.isEmpty()) {
+            QMessageBox::warning(this, tr("List Settings"), tr("Please enter a directory URL."));
+            return;
+        }
+        const QUrl parsed(url, QUrl::ParsingMode::TolerantMode);
+        if (!parsed.isValid() || (parsed.scheme().toLower() != QLatin1String("http") &&
+                                  parsed.scheme().toLower() != QLatin1String("https"))) {
+            QMessageBox::warning(this, tr("List Settings"),
+                                 tr("Directory URL must be a valid http(s) URL."));
+            return;
+        }
+        if (!parsed.userName(QUrl::ComponentFormattingOption::FullyDecoded).isEmpty() ||
+            !parsed.password(QUrl::ComponentFormattingOption::FullyDecoded).isEmpty()) {
+            QMessageBox::warning(this, tr("List Settings"),
+                                 tr("Directory URL must not embed credentials; "
+                                    "use the username and password fields instead."));
+            return;
+        }
+    }
 
     // 存量同类型且参数未变 → 不产出新提供者（调用方仅应用改名）。
     // 先按类型分支再下探子类，不依赖 RTTI
@@ -187,6 +310,12 @@ void ListSettingsDialog::accept() {
             auto *d = static_cast<const DirProvider *>(m_current);
             unchanged = d->rootPath() == dirRoot() && d->recursive() == dirRecursive() &&
                         d->extensions() == dirExtensions();
+        } else if (providerType() == PlaylistProvider::Type::WebDav) {
+            // N37：URL / 用户名 / 密码 / 递归 / 扩展名全等方判未变
+            auto *w = static_cast<const WebDavProvider *>(m_current);
+            unchanged = w->rootUrl() == davUrl() && w->user() == davUser() &&
+                        w->password() == davPassword() && w->recursive() == davRecursive() &&
+                        w->extensions() == davExtensions();
         } else {
             unchanged = true; // 静态无参数，同类型即未变
         }
@@ -200,6 +329,9 @@ void ListSettingsDialog::accept() {
     if (providerType() == PlaylistProvider::Type::Dir)
         m_result =
             std::make_shared<DirProvider>(dirRoot(), dirRecursive(), dirExtensions(), m_registry);
+    else if (providerType() == PlaylistProvider::Type::WebDav)
+        m_result = std::make_shared<WebDavProvider>(davUrl(), davUser(), davPassword(),
+                                                    davRecursive(), davExtensions(), m_registry);
     else
         m_result = std::make_shared<StaticProvider>(m_registry);
     QDialog::accept();

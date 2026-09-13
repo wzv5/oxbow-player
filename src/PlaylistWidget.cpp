@@ -1043,7 +1043,7 @@ void PlaylistWidget::runFourStep(QListWidget *list, int tab, const std::function
 // ——N32 任务槽（枚举与预读共用，全插件仅一份）——
 
 // 唯一出口（六步，顺序不可交换）。投递的收尾不外乎"取判定 → 校验身份 → 腾槽 → 续作 →
-// 条件复位"这一条链：任务体只算不写，一切落到视图的动作都在续作里发生。
+// 条件复位 → 警告弹框"这一条链：任务体只算不写，一切落到视图的动作都在续作里发生。
 // 忙时与遮罩的复位只在此处（另一处是 abandonJob 的显式作废），且必须晚于续作——
 // 续作起的下一轮任务会重新置忙与起遮罩，先复位会取消它的忙时与遮罩并清掉它的槽位
 void PlaylistWidget::runJob(const JobContext &ctx, LoadingOverlay::Mode mode, int total,
@@ -1080,6 +1080,29 @@ void PlaylistWidget::runJob(const JobContext &ctx, LoadingOverlay::Mode mode, in
         // ⑤ 槽位仍空才复位——setBusy(false) 内含 flushPendingTab，必为最后一步
         if (!m_job.active())
             setBusy(false);
+        // ⑥ N37：枚举警告弹框——落在忙时与遮罩复位之后，经零延时单发投递，
+        // 不占续作的栈（模态框若开在续作内会嵌套事件循环，可能与 flushPendingTab
+        // 重入）。续作起了下一轮任务时本步跳过，警告自动延后到那一轮的第⑥步；
+        // 无警告零成本（Discarded 批次不累积，不会误弹）
+        if (!m_enumWarnings.isEmpty() && !m_job.active()) {
+            const QStringList lines = std::move(m_enumWarnings);
+            m_enumWarnings.clear();
+            QTimer::singleShot(0, this, [this, lines] {
+                // 0ms 窗口内可能已有新任务起跑（连续刷新）：命中即放回队首，
+                // 随那一轮的第⑥步再弹——弹框时机恒落空闲态
+                if (m_busy || m_job.active()) {
+                    m_enumWarnings = lines + m_enumWarnings;
+                    return;
+                }
+                QString text = lines.join(QLatin1Char('\n'));
+                if (lines.size() > 10) {
+                    // 封顶 10 行：防上百个不可读子目录撑爆对话框
+                    text = QStringList(lines.mid(0, 10)).join(QLatin1Char('\n')) +
+                           QStringLiteral("\n") + tr("…and %1 more").arg(lines.size() - 10);
+                }
+                QMessageBox::warning(this, tr("Enumeration Warnings"), text);
+            });
+        }
     };
     // 只接 finished 一个信号：Qt 侧语义为取消后 future 亦以 finished 收尾
     // （RunFunctionTaskBase::run() 取消时走 reportFinished()；启动前取消则不执行任务体），
@@ -1128,7 +1151,7 @@ void PlaylistWidget::startLoadAsync(QListWidget *list) {
     ctx.list = list;
     ctx.tab = indexOf(list);
 
-    auto result = std::make_shared<std::expected<PlaylistEntity::List, QString>>();
+    auto result = std::make_shared<std::expected<PlaylistProvider::Enumeration, QString>>();
     runJob(
         ctx, LoadingOverlay::Mode::Loading, 0, /*cancelable=*/false,
         [provider, result](QPromise<void> &) {
@@ -1187,9 +1210,12 @@ bool PlaylistWidget::syncAfterRefresh(QListWidget *list, int tab, const QStringL
 // N32：枚举续作（GUI 线程，唯一出口的续作步之内）——换入 → 推进函数。
 // 枚举失败与元数据缺失是两回事：占位 / 停播 / 同步目标归位仍是枚举专属，故失败分支
 // 不进推进函数；成功分支的后半段（换入之后）一律交 advanceTab。
-// 判定的来源：本批次已作废（Discarded）即行未换入、什么都不碰，忙时由唯一出口复位
+// 判定的来源：本批次已作废（Discarded）即行未换入、什么都不碰，忙时由唯一出口复位。
+// N37：成功批次的 warnings 入 m_enumWarnings（Discarded 首行早退不写，Cancelled
+// 防御路径在此返回亦不写），弹框延后到唯一出口第⑥步
 void PlaylistWidget::onLoadFinished(const JobContext &ctx,
-                                    std::expected<PlaylistEntity::List, QString> &r, JobVerdict v) {
+                                    std::expected<PlaylistProvider::Enumeration, QString> &r,
+                                    JobVerdict v) {
     QListWidget *list = ctx.list;
     if (!list || v == JobVerdict::Discarded)
         return;
@@ -1219,12 +1245,15 @@ void PlaylistWidget::onLoadFinished(const JobContext &ctx,
 
     // 换入前一刻才采集（§4.3）：在途期间 mpv 事件仍经 recordPlayback 推进本表记忆，
     // 发起时快照会丢掉这段进度。oldKeys 仅刷新批次需要（供比对；其余意图无旧内容可比）
+    PlaylistProvider::Enumeration enumeration = std::move(r.value());
+    if (!enumeration.warnings.isEmpty())
+        m_enumWarnings.append(enumeration.warnings); // N37：部分失败警告随成功批次入库
     JobContext out = ctx;
     if (ctx.intent == Intent::Refresh)
         out.oldKeys = keysOf(list);
     out.snap = captureViewSnapshot(list);
     out.snap.selectFirst = (ctx.intent == Intent::SwitchSource);
-    applyEntitiesToRows(list, std::move(r.value()));
+    applyEntitiesToRows(list, std::move(enumeration.entities));
     advanceTab(out, false);
 }
 
@@ -1449,6 +1478,8 @@ void PlaylistWidget::abandonJob() {
     m_job.watcher = nullptr; // watcher 的 finished 路径自会销它（早退分支同样 deleteLater）
     m_job.onAbandon = nullptr;
     m_pendingLoad = PendingLoad{};
+    // N37：作废即丢弃待弹警告——内容可能指向已不存在 / 已换源的 tab
+    m_enumWarnings.clear();
     if (m_busy)
         setBusy(false);
 }

@@ -263,16 +263,18 @@ class PlaylistWidget : public QTabWidget {
     void activateTab(int index); // 原 onTabChanged 体：选中记忆行/播放行滚动
     // 唯一出口（六步、顺序不可交换）：① 取判定；② 身份校验——本 watcher 已非当前槽位项
     // 即什么都不碰；③ 腾出槽位并销 watcher；④ 调续作（可能起下一轮任务并占用槽位）；
-    // ⑤ 槽位仍空才隐藏遮罩 + setBusy(false)。忙时与遮罩的复位只此一处（另一处是
-    // abandonJob 的显式作废），且必须晚于续作
+    // ⑤ 槽位仍空才隐藏遮罩 + setBusy(false)；⑥ N37 枚举警告弹框（零延时投递，
+    // 槽位为空才弹）。忙时与遮罩的复位只此一处（另一处是 abandonJob 的显式作废），
+    // 且必须晚于续作
     void runJob(const JobContext &ctx, LoadingOverlay::Mode mode, int total, bool cancelable,
                 std::function<void(QPromise<void> &)> body, std::function<void(JobVerdict)> cont,
                 std::function<void()> onAbandon = {});
     // 枚举发起（意图由发起处经 m_pendingLoad 定死）：清占位、递增代际、记目标表、置忙、起遮罩
     void startLoadAsync(QListWidget *list);
-    // 枚举续作：失败分支就地收尾；成功则换入 → 推进函数（结果按移动语义换入，故非 const）
-    void onLoadFinished(const JobContext &ctx, std::expected<PlaylistEntity::List, QString> &r,
-                        JobVerdict v);
+    // 枚举续作：失败分支就地收尾；成功则警告入库、换入 → 推进函数
+    // （结果按移动语义换入，故非 const；N37 起结果类型为 Enumeration）
+    void onLoadFinished(const JobContext &ctx,
+                        std::expected<PlaylistProvider::Enumeration, QString> &r, JobVerdict v);
     // N32 推进函数（业务状态机，唯一入口）：要预读就起预读任务并让自己作为其续作
     // （fromMetaScan 为真时不再入内，自然终止）；否则做收尾。
     // 预读触发点由原三处（枚举收尾 / 切入重读 / 手动排序）收敛为这一处
@@ -421,6 +423,9 @@ class PlaylistWidget : public QTabWidget {
     quint64 m_token = 0;   // 代际计数器；唯一递增点：runJob 起任务、abandonJob 作废
     bool m_busy = false;   // 加载在途或预读中：tab 栏 + 列表 + 右键菜单冻结
     int m_pendingTab = -1; // 忙时排队的程序化切 tab（last-wins）
+    // N37：枚举警告累积（仅 Ok 批次写入；Discarded 在 onLoadFinished 首行早退不写），
+    // 唯一出口第⑤步复位后弹框，弹完即清（§3.5）
+    QStringList m_enumWarnings;
     LoadingOverlay *m_overlay = nullptr;
     LoadingOverlay::Mode m_overlayMode = LoadingOverlay::Mode::Loading;
     int m_overlayTotal = 0;

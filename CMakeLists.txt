@@ -60,6 +60,8 @@ add_library(mpvqtcore MODULE
     src/StaticProvider.h
     src/DirProvider.cpp
     src/DirProvider.h
+    src/WebDavProvider.cpp
+    src/WebDavProvider.h
     src/LoadingOverlay.cpp
     src/LoadingOverlay.h
     src/PlaylistWidget.cpp
@@ -163,6 +165,8 @@ if(MPVQT_BUILD_TESTS)
     add_library(mpvqt_testlib STATIC
         src/DirProvider.cpp
         src/DirProvider.h
+        src/WebDavProvider.cpp
+        src/WebDavProvider.h
         src/PlaylistProvider.cpp
         src/PlaylistProvider.h
         src/StaticProvider.cpp
@@ -214,5 +218,6 @@ if(MPVQT_BUILD_TESTS)
     mpvqt_add_test(PlaylistEntity)
     mpvqt_add_test(HttpClient)
     mpvqt_add_test(DirProvider)
+    mpvqt_add_test(WebDavProvider)
     mpvqt_add_test(Util)
 endif()

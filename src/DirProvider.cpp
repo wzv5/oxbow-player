@@ -53,12 +53,12 @@ QString DirProvider::describe() const {
     return QObject::tr("Local directory: %1%2").arg(m_root, suffix);
 }
 
-// 枚举并造实体：成功带实体有序表，失败带错误文案；
+// 枚举并造实体：成功带实体有序表与警告，失败带错误文案；
 // N29 起不预热：collect 产 QFileInfoList（枚举一次 stat 顺手取得），遍历中经
 // 注入口把文件元数据零成本注入实体（口径与惰性求值共用 fileMetaFrom）。
-// root 不存在/不可读为全失败，递归中个别子目录不可读为部分成功 + warning
-// （error 非空即视为有错，由调用方走失败占位处理）
-std::expected<PlaylistProvider::EntityList, QString> DirProvider::enumerate() const {
+// N37：失败面收缩为"根未绑定 / 不存在 / 不可读"三项；递归中个别子目录不可读
+// 为部分成功，随 warnings 回传（不再整次失败进占位）
+std::expected<PlaylistProvider::Enumeration, QString> DirProvider::enumerate() const {
     if (m_root.isEmpty())
         return std::unexpected(QObject::tr("No directory bound."));
     const QDir rootDir(m_root);
@@ -74,14 +74,13 @@ std::expected<PlaylistProvider::EntityList, QString> DirProvider::enumerate() co
         maxDepth = policy->depthLimit;
     QFileInfoList infos;
     QStringList warnings;
-    // N36 修订 3：已访问目录的 canonical 路径集——符号链接环 / 同一目录重复访问
+    // N36 修订 3：已访问目录的 canonical 路径集——符号链接环 / 同一目录经多条路径可达
     // 的剪枝依据，根先入集
     QSet<QString> visited;
     visited.insert(canonicalDirPath(m_root));
     collect(rootDir, m_extensions.isEmpty() ? QStringList() : toNameFilters(m_extensions),
             m_recursive, 0, maxDepth, visited, infos, warnings);
-    if (!warnings.isEmpty())
-        return std::unexpected(warnings.join(QStringLiteral("\n")));
+    // N37：warnings 随结果回传（部分成功），不再触发整次失败
     EntityList entities;
     entities.reserve(infos.size());
     for (const QFileInfo &fi : infos) {
@@ -91,7 +90,7 @@ std::expected<PlaylistProvider::EntityList, QString> DirProvider::enumerate() co
         injectFileMeta(*entity, LocalFileEntity::fileMetaFrom(fi)); // 零成本注入
         entities.push_back(std::move(entity));
     }
-    return entities;
+    return Enumeration{std::move(entities), std::move(warnings)};
 }
 
 bool DirProvider::supportsModify() const { return false; }

@@ -105,6 +105,7 @@
 #include <QVariantList>
 #include <QVariantMap>
 #include <QWaitCondition>
+#include <QXmlStreamReader>
 #include <QtConcurrent/QtConcurrentRun>
 #include <QtGlobal>
 

@@ -1469,13 +1469,19 @@ void MainWindow::changeVolume(int delta) { applyVolume(m_volumeSlider->value() +
 // B11：正在播放的真实文件名（含后缀不含路径），标题与 OSD #2 同源。
 // 列表镜像优先——playlist-pos 推送早于新文件装载完成，此刻读 filename 属性
 // 会拿到上一个文件的残留值（概率性错名根因）；本地镜像顺序与 mpv 恒一致，
-// 按 pos 取名为确定性来源。属性仅作镜像缺失时的兜底（如起播早期回刷未达）
+// 按 pos 取名为确定性来源。属性仅作镜像缺失时的兜底（如起播早期回刷未达）。
+// N37：WebDAV 条目的 playUrl 为完整 URL，末段经 percent-decode 才是显示名
+// （Util::playUrlFileName，与列表显示名同一出口），否则标题 / OSD 出现 "%XX" 形态
 QString MainWindow::playingFilename() {
     const int pt = m_playlist->playingTabIndex();
     if (pt >= 0 && m_playlistPos >= 0) {
         const QStringList files = m_playlist->filesOf(pt);
-        if (m_playlistPos < files.size())
-            return QFileInfo(files[m_playlistPos]).fileName();
+        if (m_playlistPos < files.size()) {
+            // 解后为空（如以 / 结尾的 URL）回退属性兜底，与 HttpEntity 显示名的
+            // 空串回退同哲学——两侧不出现空白标题
+            if (const QString name = Util::playUrlFileName(files[m_playlistPos]); !name.isEmpty())
+                return name;
+        }
     }
     return m_controller->propertyString(QStringLiteral("filename"));
 }

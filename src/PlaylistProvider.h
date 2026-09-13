@@ -15,9 +15,17 @@ class PlaylistProvider {
   public:
     // N27：仅用于列表设置对话框的回显 / 构造与 INI 序列化，不再参与任何行为分支
     // （行为一律由 supportsModify / supportsSort 能力位决定）
-    enum class Type { Static, Dir };
+    enum class Type { Static, Dir, WebDav };
 
     using EntityList = PlaylistEntity::List;
+
+    // N37：枚举结果——条目 + 非致命警告。warnings 为"部分来源失败 / 被跳过"的可读
+    // 文案（条目已产出，不判整次失败）；unexpected 语义不变：来源整体不可用，
+    // 视图进占位行
+    struct Enumeration {
+        EntityList entities;
+        QStringList warnings;
+    };
 
     // ——N35 服务注册表（基类统一持有，供子类 enumerate 造实体时注入）——
     // 构造注入，必填无缺省：所有提供者诞生点必须显式传入可用实例。
@@ -29,9 +37,10 @@ class PlaylistProvider {
     virtual Type type() const = 0;
     // UI 展示描述（列表设置对话框回显）
     virtual QString describe() const = 0;
-    // 枚举条目（同步）：内容唯一来源。返回 expected——成功带实体有序表，
-    // 失败带错误文案（空目录成功返回空表，与失败区分）
-    virtual std::expected<EntityList, QString> enumerate() const = 0;
+    // 枚举条目（同步）：内容唯一来源。返回 expected——成功带实体有序表与警告
+    // （空目录成功返回空表，与失败区分；N37 起部分来源失败随 warnings 回传），
+    // 失败带错误文案
+    virtual std::expected<Enumeration, QString> enumerate() const = 0;
     // 视图 → 提供者内容回传（只读引用）。基类默认实现忽略——不可修改的提供者
     // 不参与回传。回传是内容落盘的唯一入口：savePlaylists 对可修改提供者逐个回传
     // 后随即序列化，回传与落盘不得拆开（N27）。

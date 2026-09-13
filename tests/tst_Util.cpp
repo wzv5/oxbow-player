@@ -47,6 +47,19 @@ class TestUtil : public QObject {
     void temporariesAndMovesKeepViewsValid();
     // 整链：乱序剧集表经 stable_sort + naturalCompare（新签名）恢复数值序
     void endToEndCallerSort();
+    // ——N37：normalizePathForMatch 网络分支（匹配形态收敛）——
+    // 等价书写收敛为同一键：scheme/host 大小写、默认端口、unreserved 转义、hex 大小写
+    void networkMatchKeyConvergesEquivalentForms();
+    // reserved 转义不参与收敛：%2F 与 / 不得混同（语义不同）
+    void networkMatchKeyKeepsReservedEscapes();
+    // 健壮性：畸形转义原样保留、非网络串不崩
+    void networkMatchKeyRobustness();
+    // ——N37：playUrlFileName（播放项显示文件名唯一出口）——
+    // 本地取末段；http(s) URL 剥 query / fragment 后取末段并 percent-decode
+    void playUrlFileNameExtraction();
+    // ——N37：nativePath 三分支——本地转原生分隔符、http(s) 走 URL 规范化、
+    // 其余网络协议原样返回
+    void nativePathBranches();
 };
 
 void TestUtil::emptyInputYieldsNoSegments() {
@@ -209,6 +222,98 @@ void TestUtil::endToEndCallerSort() {
     for (int idx : order)
         result << input[idx];
     QCOMPARE(result, ascending);
+}
+
+// ——N37：normalizePathForMatch 网络分支——
+
+void TestUtil::networkMatchKeyConvergesEquivalentForms() {
+    // scheme / host 大小写归一
+    QCOMPARE(Util::normalizePathForMatch(QStringLiteral("HTTP://Host/a.mp4")),
+             Util::normalizePathForMatch(QStringLiteral("http://host/a.mp4")));
+    // 默认端口去除（http 80 / https 443）；非默认端口保留
+    QCOMPARE(Util::normalizePathForMatch(QStringLiteral("http://host:80/a.mp4")),
+             Util::normalizePathForMatch(QStringLiteral("http://host/a.mp4")));
+    QCOMPARE(Util::normalizePathForMatch(QStringLiteral("https://host:443/a.mp4")),
+             Util::normalizePathForMatch(QStringLiteral("https://host/a.mp4")));
+    QCOMPARE(Util::normalizePathForMatch(QStringLiteral("http://host:8080/a.mp4")),
+             Util::normalizePathForMatch(QStringLiteral("http://host:8080/a.mp4")));
+    // unreserved 字符（~）转义与否等价；转义 hex 大小写等价
+    QCOMPARE(Util::normalizePathForMatch(QStringLiteral("http://host/dav/%7E/u/a.mp4")),
+             Util::normalizePathForMatch(QStringLiteral("http://host/dav/~/u/a.mp4")));
+    QCOMPARE(Util::normalizePathForMatch(QStringLiteral("http://host/a%2fb.mp4")),
+             Util::normalizePathForMatch(QStringLiteral("http://host/a%2Fb.mp4")));
+    // 组合形态：同一 URL 的多种书写收敛为同一键
+    QCOMPARE(Util::normalizePathForMatch(QStringLiteral("HTTPS://Server:443/Dav/%7Euser/%41.mp4")),
+             Util::normalizePathForMatch(QStringLiteral("https://server/Dav/~user/A.mp4")));
+    // userinfo 原样保留（大小写敏感，不参与 host 归小写）
+    QCOMPARE(Util::normalizePathForMatch(QStringLiteral("http://u:p@HOST/a.mp4")),
+             Util::normalizePathForMatch(QStringLiteral("http://u:p@host/a.mp4")));
+}
+
+void TestUtil::networkMatchKeyKeepsReservedEscapes() {
+    // %2F 与 / 不得混同：reserved 转义不解码，解码即改变路径段语义
+    const QString escaped = Util::normalizePathForMatch(QStringLiteral("http://host/a%2Fb.mp4"));
+    const QString literal = Util::normalizePathForMatch(QStringLiteral("http://host/a/b.mp4"));
+    QVERIFY(escaped != literal);
+    // 非 unreserved 的转义一律保留（仅 hex 统一大写），不产生字面量
+    QVERIFY(Util::normalizePathForMatch(QStringLiteral("http://host/a%20b.mp4")) !=
+            Util::normalizePathForMatch(QStringLiteral("http://host/a b.mp4")));
+}
+
+void TestUtil::networkMatchKeyRobustness() {
+    // 畸形转义（% 后不足两位 / 非 hex）原样保留，不崩、不误删
+    QCOMPARE(Util::normalizePathForMatch(QStringLiteral("http://host/a%2")),
+             QStringLiteral("http://host/a%2"));
+    QCOMPARE(Util::normalizePathForMatch(QStringLiteral("http://host/a%zz")),
+             QStringLiteral("http://host/a%zz"));
+    // 非网络串走本地分支（Windows 转小写），恒不崩；空串恒空
+    const QString local = Util::normalizePathForMatch(QStringLiteral("C:\\dir\\a.mp4"));
+    QVERIFY(!local.isEmpty());
+    QVERIFY(Util::normalizePathForMatch(QString()).isEmpty());
+}
+
+void TestUtil::playUrlFileNameExtraction() {
+    // 本地路径：QFileInfo::fileName 口径（本轮行为不变）
+    QCOMPARE(Util::playUrlFileName(QStringLiteral("C:\\dir\\a b.mp4")), QStringLiteral("a b.mp4"));
+    QCOMPARE(Util::playUrlFileName(QStringLiteral("C:\\dir\\noext")), QStringLiteral("noext"));
+    // URL：末段 percent-decode（列表显示名与标题 / OSD 同一口径）
+    QCOMPARE(Util::playUrlFileName(QStringLiteral("http://u:p@host/dav/a%20b.mp4")),
+             QStringLiteral("a b.mp4"));
+    // query / fragment 先剥再取末段（避免混入 "?token=xx"）
+    QCOMPARE(Util::playUrlFileName(QStringLiteral("http://host/dav/x.mkv?token=1%2F2")),
+             QStringLiteral("x.mkv"));
+    QCOMPARE(Util::playUrlFileName(QStringLiteral("http://host/dav/%E4%B8%AD.mp4#frag")),
+             QString::fromUtf8("中.mp4"));
+    // 以 / 结尾：解后为空，调用方按"未知"处理；无路径且无尾斜杠时末段即
+    // 主机名（N35 起 HttpEntity 显示名的既有口径，非空）
+    QVERIFY(Util::playUrlFileName(QStringLiteral("http://host/dav/")).isEmpty());
+    QCOMPARE(Util::playUrlFileName(QStringLiteral("http://host")), QStringLiteral("host"));
+    // 解码仅限 http(s)：其余协议的地址里字面 %XX 不是编码，末段原样返回
+    // （与 UnknownEntity 列表显示同形）
+    QCOMPARE(Util::playUrlFileName(QStringLiteral("rtsp://host/live/a%20b.mp4")),
+             QStringLiteral("a%20b.mp4"));
+    // 非 http(s) 网络键维持 N35 既有形态：分隔符归一、不转小写、不收敛
+    QCOMPARE(Util::normalizePathForMatch(QStringLiteral("rtsp://Host/live/a b.mp4")),
+             QStringLiteral("rtsp://Host/live/a b.mp4"));
+    QVERIFY(Util::normalizePathForMatch(QStringLiteral("rtsp://Host/live/a.mp4")) !=
+            Util::normalizePathForMatch(QStringLiteral("rtsp://host/live/a.mp4")));
+}
+
+void TestUtil::nativePathBranches() {
+    // 本地：转原生分隔符（既有行为）
+    QCOMPARE(Util::nativePath(QStringLiteral("C:/dir/a.mp4")),
+             QDir::toNativeSeparators(QStringLiteral("C:/dir/a.mp4")));
+    // http(s)：QUrl 规范化 + 与匹配形态同内核的收敛（默认端口剥离、转义收敛）
+    // ——"入口即规范"，等价书写不产出重复条目
+    QCOMPARE(Util::nativePath(QStringLiteral("HTTP://Host/a%20b.mp4")),
+             QStringLiteral("http://host/a%20b.mp4"));
+    QCOMPARE(Util::nativePath(QStringLiteral("http://Host:80/dav/%41.mp4")),
+             QStringLiteral("http://host/dav/A.mp4"));
+    QCOMPARE(Util::nativePath(QStringLiteral("http://host/dav/%7Eu/%2fb")),
+             QStringLiteral("http://host/dav/~u/%2Fb"));
+    // 其余网络协议：原样返回（不被 toNativeSeparators 破坏，也不经 URL 重序列化）
+    QCOMPARE(Util::nativePath(QStringLiteral("rtsp://host/live/a b.mp4")),
+             QStringLiteral("rtsp://host/live/a b.mp4"));
 }
 
 // 一类一可执行（R5）：自带 main（QTEST_GUILESS_MAIN）
