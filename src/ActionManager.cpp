@@ -21,6 +21,8 @@ ActionManager::ActionManager(QWidget *host) : m_host(host) {
     declareAction(Id::Playlist, tr("P&laylist"), QStringLiteral("Ctrl+L"), true);
     declareAction(Id::Navigator, tr("&Navigator"), QStringLiteral("Ctrl+Shift+N"), true);
     declareAction(Id::Fullscreen, tr("&Fullscreen"), QStringLiteral("F11"), true);
+    // 无状态开关：显隐真相由 mpv 的 stats 脚本持有，插件侧不跟踪勾选态
+    declareAction(Id::ToggleStats, tr("Toggle &Status Info"), Qt::Key_T);
     declareAction(Id::About, tr("&About"));
     declareShortcut(Id::Escape, Qt::Key_Escape);
     // N6：±5 秒相对 seek，隐绑定无菜单实体

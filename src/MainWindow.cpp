@@ -401,6 +401,13 @@ void MainWindow::createMenus() {
         if (on != m_fullscreen)
             toggleFullscreen();
     });
+    // 状态信息叠加层：转发 script-message 给 mpv 侧 stats 脚本，插件不持有开关状态
+    viewMenu->addAction(act(AM::Id::ToggleStats));
+    connect(act(AM::Id::ToggleStats), &QAction::triggered, this, [this] {
+        m_controller->command({QStringLiteral("script-message-to"), QStringLiteral("stats"),
+                               QStringLiteral("display-stats-toggle")});
+    });
+
     // Esc 隐绑定经管理器取用，守卫逻辑留主窗口：仅全屏态退出，
     // 弹出菜单打开时 Esc 由 popup 自行消费
     connect(m_actions->shortcut(AM::Id::Escape), &QShortcut::activated, this, [this] {
