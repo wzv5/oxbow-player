@@ -8,6 +8,11 @@
 #include "TraversalPolicy.h"
 
 namespace {
+// 非 Q_OBJECT 类的用户可见串：英文源 + QT_TRANSLATE_NOOP 标注翻译上下文
+// （供 lupdate 提取），运行期经 QCoreApplication::translate 取值——无译文时即
+// 英文原文（N34/HttpClient 同款约定）
+QString trText(const char *source) { return QCoreApplication::translate("DirProvider", source); }
+
 // 扩展名 → QDir 名称过滤器（*.mp4 形态）
 QStringList toNameFilters(const QStringList &extensions) {
     QStringList filters;
@@ -49,8 +54,10 @@ DirProvider::DirProvider(const QString &root, bool recursive, const QStringList 
 PlaylistProvider::Type DirProvider::type() const { return Type::Dir; }
 
 QString DirProvider::describe() const {
-    const QString suffix = m_recursive ? QObject::tr(" (with subdirectories)") : QString();
-    return QObject::tr("Local directory: %1%2").arg(m_root, suffix);
+    const QString suffix = m_recursive
+                               ? trText(QT_TRANSLATE_NOOP("DirProvider", " (with subdirectories)"))
+                               : QString();
+    return trText(QT_TRANSLATE_NOOP("DirProvider", "Local directory: %1%2")).arg(m_root, suffix);
 }
 
 // 枚举并造实体：成功带实体有序表与警告，失败带错误文案；
@@ -60,12 +67,14 @@ QString DirProvider::describe() const {
 // 为部分成功，随 warnings 回传（不再整次失败进占位）
 std::expected<PlaylistProvider::Enumeration, QString> DirProvider::enumerate() const {
     if (m_root.isEmpty())
-        return std::unexpected(QObject::tr("No directory bound."));
+        return std::unexpected(trText(QT_TRANSLATE_NOOP("DirProvider", "No directory bound.")));
     const QDir rootDir(m_root);
     if (!rootDir.exists())
-        return std::unexpected(QObject::tr("Directory does not exist: %1").arg(m_root));
+        return std::unexpected(
+            trText(QT_TRANSLATE_NOOP("DirProvider", "Directory does not exist: %1")).arg(m_root));
     if (!rootDir.isReadable())
-        return std::unexpected(QObject::tr("Directory is not readable: %1").arg(m_root));
+        return std::unexpected(
+            trText(QT_TRANSLATE_NOOP("DirProvider", "Directory is not readable: %1")).arg(m_root));
     // 扩展名空表＝不过滤；过滤器一次构造逐层复用
     // N36：本批遍历参数经注册表策略快照取用（GUI 线程装配、任务线程只读，N36 修订 1）；
     // 起始处解析一次贯穿整次遍历，设置变更只影响下一次枚举。resolve 为空按缺省兜底
@@ -147,7 +156,8 @@ void DirProvider::collect(const QDir &dir, const QStringList &filters, bool recu
         if (visited.contains(key))
             continue;
         if (!QDir(fi.absoluteFilePath()).isReadable()) {
-            warnings << QObject::tr("Subdirectory is not readable, skipped: %1")
+            warnings << trText(QT_TRANSLATE_NOOP("DirProvider",
+                                                 "Subdirectory is not readable, skipped: %1"))
                             .arg(fi.absoluteFilePath());
             continue;
         }

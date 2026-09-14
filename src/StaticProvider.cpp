@@ -2,12 +2,21 @@
 
 #include "StaticProvider.h"
 
+namespace {
+// 非 Q_OBJECT 类的用户可见串：英文源 + QT_TRANSLATE_NOOP 标注翻译上下文
+// （供 lupdate 提取），运行期经 QCoreApplication::translate 取值——无译文时即
+// 英文原文（N34/HttpClient 同款约定）
+QString trText(const char *source) { return QCoreApplication::translate("StaticProvider", source); }
+} // namespace
+
 PlaylistProvider::Type StaticProvider::type() const { return Type::Static; }
 
 StaticProvider::StaticProvider(const std::shared_ptr<ServiceRegistry> &registry)
     : PlaylistProvider(registry) {}
 
-QString StaticProvider::describe() const { return QObject::tr("Local static list"); }
+QString StaticProvider::describe() const {
+    return trText(QT_TRANSLATE_NOOP("StaticProvider", "Local static list"));
+}
 
 // 从实体提取 playUrl 覆盖最小表示（未来加标题等字段不改签名）。
 // 不变式：只提取标量，不保存实体指针
