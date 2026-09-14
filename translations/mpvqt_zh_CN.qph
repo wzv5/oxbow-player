@@ -37,6 +37,10 @@
     <target>音量减小(&amp;D)</target>
 </phrase>
 <phrase>
+    <source>&amp;Mute</source>
+    <target>静音(&amp;M)</target>
+</phrase>
+<phrase>
     <source>&amp;Speed Up</source>
     <target>增加速度(&amp;C)</target>
 </phrase>
@@ -59,6 +63,10 @@
 <phrase>
     <source>&amp;Fullscreen</source>
     <target>全屏(&amp;F)</target>
+</phrase>
+<phrase>
+    <source>Toggle &amp;Status Info</source>
+    <target>切换状态信息(&amp;S)</target>
 </phrase>
 <phrase>
     <source>&amp;About</source>
@@ -135,6 +143,30 @@
 <phrase>
     <source>Clear all bookmarks?</source>
     <target>确定清空所有书签？</target>
+</phrase>
+<phrase>
+    <source> (with subdirectories)</source>
+    <target>（含子目录）</target>
+</phrase>
+<phrase>
+    <source>Local directory: %1%2</source>
+    <target>本地目录：%1%2</target>
+</phrase>
+<phrase>
+    <source>No directory bound.</source>
+    <target>没有绑定目录。</target>
+</phrase>
+<phrase>
+    <source>Directory does not exist: %1</source>
+    <target>目录不存在：%1</target>
+</phrase>
+<phrase>
+    <source>Directory is not readable: %1</source>
+    <target>目录不可读：%1</target>
+</phrase>
+<phrase>
+    <source>Subdirectory is not readable, skipped: %1</source>
+    <target>子目录不可读，跳过：%1</target>
 </phrase>
 <phrase>
     <source>Request timed out (total limit %1 ms)</source>
@@ -257,6 +289,22 @@
     <target>媒体扩展名（空格分隔，留空不过滤）：</target>
 </phrase>
 <phrase>
+    <source>WebDAV Directory</source>
+    <target>WebDAV 目录</target>
+</phrase>
+<phrase>
+    <source>Directory URL</source>
+    <target>目录 URL</target>
+</phrase>
+<phrase>
+    <source>Username</source>
+    <target>用户名</target>
+</phrase>
+<phrase>
+    <source>Password</source>
+    <target>密码</target>
+</phrase>
+<phrase>
     <source>Select Directory</source>
     <target>选择目录</target>
 </phrase>
@@ -289,6 +337,18 @@
     <target>目录不存在：%1</target>
 </phrase>
 <phrase>
+    <source>Please enter a directory URL.</source>
+    <target>请输入目录 URL。</target>
+</phrase>
+<phrase>
+    <source>Directory URL must be a valid http(s) URL.</source>
+    <target>目录 URL 必须是有效的 http(s) URL。</target>
+</phrase>
+<phrase>
+    <source>Directory URL must not embed credentials; use the username and password fields instead.</source>
+    <target>目录 URL 不能内嵌用户凭证，使用“用户名”和“密码”字段代替。</target>
+</phrase>
+<phrase>
     <source>Cancel</source>
     <target>取消</target>
 </phrase>
@@ -299,10 +359,6 @@
 <phrase>
     <source>Loading</source>
     <target>正在加载</target>
-</phrase>
-<phrase>
-    <source>Volume</source>
-    <target>音量</target>
 </phrase>
 <phrase>
     <source>Play/Pause</source>
@@ -379,6 +435,18 @@
 <phrase>
     <source>Open File</source>
     <target>打开文件</target>
+</phrase>
+<phrase>
+    <source>Mute</source>
+    <target>静音</target>
+</phrase>
+<phrase>
+    <source>Mute: On</source>
+    <target>静音: 开启</target>
+</phrase>
+<phrase>
+    <source>Mute: Off</source>
+    <target>静音: 关闭</target>
 </phrase>
 <phrase>
     <source>Media files (%1);;All files (*)</source>
@@ -473,6 +541,14 @@ Video rendering is performed by mpv; this plugin only provides the graphical int
 <phrase>
     <source>Default</source>
     <target>默认</target>
+</phrase>
+<phrase>
+    <source>…and %1 more</source>
+    <target></target>
+</phrase>
+<phrase>
+    <source>Enumeration Warnings</source>
+    <target>枚举警告</target>
 </phrase>
 <phrase>
     <source>&lt;Load failed&gt;</source>
@@ -675,34 +751,6 @@ Video rendering is performed by mpv; this plugin only provides the graphical int
     <target>播放列表 %1</target>
 </phrase>
 <phrase>
-    <source> (with subdirectories)</source>
-    <target>（含子目录）</target>
-</phrase>
-<phrase>
-    <source>Local directory: %1%2</source>
-    <target>本地目录：%1%2</target>
-</phrase>
-<phrase>
-    <source>No directory bound.</source>
-    <target>没有绑定目录。</target>
-</phrase>
-<phrase>
-    <source>Directory does not exist: %1</source>
-    <target>目录不存在：%1</target>
-</phrase>
-<phrase>
-    <source>Directory is not readable: %1</source>
-    <target>目录不可读：%1</target>
-</phrase>
-<phrase>
-    <source>Subdirectory is not readable, skipped: %1</source>
-    <target>子目录不可读，跳过：%1</target>
-</phrase>
-<phrase>
-    <source>Local static list</source>
-    <target>本地静态列表</target>
-</phrase>
-<phrase>
     <source>Auto</source>
     <target>自动</target>
 </phrase>
@@ -721,6 +769,14 @@ Video rendering is performed by mpv; this plugin only provides the graphical int
 <phrase>
     <source>Loop Playlist</source>
     <target>列表循环</target>
+</phrase>
+<phrase>
+    <source>Ignore</source>
+    <target></target>
+</phrase>
+<phrase>
+    <source>Strict</source>
+    <target></target>
 </phrase>
 <phrase>
     <source>Basic</source>
@@ -783,7 +839,75 @@ Video rendering is performed by mpv; this plugin only provides the graphical int
     <target>忽略 HTTPS 证书错误</target>
 </phrase>
 <phrase>
+    <source>Applies to list and metadata requests only; playback is governed by the mpv-side option below</source>
+    <target>仅用于列表和元数据请求，播放由下方的 mpv 侧选项控制</target>
+</phrase>
+<phrase>
+    <source>Ignore HTTPS Certificate Errors (mpv side)</source>
+    <target>忽略 HTTPS 证书错误（mpv 侧）</target>
+</phrase>
+<phrase>
     <source>Settings</source>
     <target>设置</target>
+</phrase>
+<phrase>
+    <source>Local static list</source>
+    <target>本地静态列表</target>
+</phrase>
+<phrase>
+    <source> (with subdirectories)</source>
+    <target>（含子目录）</target>
+</phrase>
+<phrase>
+    <source>WebDAV directory: %1%2</source>
+    <target>WebDAV 目录: %1%2</target>
+</phrase>
+<phrase>
+    <source>HTTP client is not available.</source>
+    <target>HTTP client 不可用。</target>
+</phrase>
+<phrase>
+    <source>Invalid WebDAV directory URL: %1</source>
+    <target>WebDAV 目录 URL 无效：%1</target>
+</phrase>
+<phrase>
+    <source>Subdirectory enumeration failed, skipped: %1</source>
+    <target>子目录枚举失败，跳过：%1</target>
+</phrase>
+<phrase>
+    <source>Malformed WebDAV response (invalid XML).</source>
+    <target>畸形的 WebDAV 响应（XML 无效）</target>
+</phrase>
+<phrase>
+    <source>Request canceled: %1</source>
+    <target>请求已取消：%1</target>
+</phrase>
+<phrase>
+    <source>Response too large, skipped: %1</source>
+    <target>响应体太大，跳过：%1</target>
+</phrase>
+<phrase>
+    <source>Authentication failed (401): %1</source>
+    <target></target>
+</phrase>
+<phrase>
+    <source>Access denied (403): %1</source>
+    <target></target>
+</phrase>
+<phrase>
+    <source>Not found (404): %1</source>
+    <target></target>
+</phrase>
+<phrase>
+    <source>Server error (HTTP %1): %2</source>
+    <target></target>
+</phrase>
+<phrase>
+    <source>Unexpected response (HTTP %1): %2</source>
+    <target></target>
+</phrase>
+<phrase>
+    <source>Request failed (network error): %1</source>
+    <target></target>
 </phrase>
 </QPH>
