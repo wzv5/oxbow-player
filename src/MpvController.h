@@ -61,6 +61,8 @@ class MpvController : public QObject {
     void durationChanged(const QString &path, double seconds);
     void pauseChanged(bool paused);
     void volumeChanged(double volume);
+    // N38：静音开关（mute 属性，FLAG）
+    void muteChanged(bool muted);
     // R3：音量上限（mpv volume-max 属性）推送，MainWindow 接到后同步滑条量程
     void volumeMaxChanged(double newMax);
     // items 为 QVariantMap 列表，键：filename / title / current

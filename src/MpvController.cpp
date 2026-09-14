@@ -9,6 +9,7 @@ enum ObservedProperty {
     PropDuration, // duration（B18：双通道 observe 半程，留守）
     PropPause,
     PropVolume,
+    PropMute, // N38：静音开关（紧邻音量）
     PropPlaylistPos,
     PropPlaylist,
     PropIdleActive,
@@ -210,6 +211,7 @@ MpvController::MpvController(mpv_handle *mpv, QObject *parent) : QObject(parent)
     mpv_observe_property(m_mpv, PropDuration, "duration", MPV_FORMAT_DOUBLE);
     mpv_observe_property(m_mpv, PropPause, "pause", MPV_FORMAT_FLAG);
     mpv_observe_property(m_mpv, PropVolume, "volume", MPV_FORMAT_DOUBLE);
+    mpv_observe_property(m_mpv, PropMute, "mute", MPV_FORMAT_FLAG); // N38
     mpv_observe_property(m_mpv, PropPlaylistPos, "playlist-pos", MPV_FORMAT_INT64);
     mpv_observe_property(m_mpv, PropPlaylist, "playlist", MPV_FORMAT_NODE);
     mpv_observe_property(m_mpv, PropIdleActive, "idle-active", MPV_FORMAT_FLAG);
@@ -372,6 +374,10 @@ void MpvController::handlePropertyChange(const mpv_event *event) {
     case PropVolume:
         if (prop->format == MPV_FORMAT_DOUBLE && prop->data)
             emit volumeChanged(*static_cast<double *>(prop->data));
+        break;
+    case PropMute:
+        if (prop->format == MPV_FORMAT_FLAG && prop->data)
+            emit muteChanged(*static_cast<int *>(prop->data) != 0);
         break;
     case PropVolumeMax:
         // R3：音量上限推送；NONE（不可能）按 0 不发射，滑条量程保持现有值

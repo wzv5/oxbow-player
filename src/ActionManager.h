@@ -18,6 +18,7 @@ class ActionManager : public QObject {
         NextFile,
         VolumeUp,
         VolumeDown,
+        Mute, // N38：静音开关（勾选态由 mpv 推送驱动，只作显示）
         SeekForward,
         SeekBackward, // 隐绑定：无菜单实体，仅键盘触发（N6）
         SpeedUp,

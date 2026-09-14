@@ -46,6 +46,8 @@ class MainWindow : public QMainWindow {
     // N6：速度控制（读改写 speed 属性，钳制 0.25~8）
     void changeSpeed(double delta);
     void resetSpeed();
+    // N38：静音状态联动单一出口（菜单勾选 + 图标按钮同一处刷新，不播报 OSD）
+    void applyMuteState(bool muted);
     // 统一播放入口：整表载入 → 跳转 index → seekTo>0 时经挂起机制恢复进度。
     // N30：keepPaused 为真时载入后保持暂停（四步式在 stop 前读到的 pause 状态），
     // 使暂停态下的刷新 / 排序 / 移除无效项不误起播
@@ -152,6 +154,9 @@ class MainWindow : public QMainWindow {
     int m_volumeMax = 130;     // R3：音量上限，mpv 默认 130；运行时由 applyVolumeMax 同步
     int m_volumeWheelStep = 1; // 滚轮每格步长
     int m_volumeKeyStep = 5;   // 方向键每格步长
+    // N38：静音——菜单项与音量行图标按钮共用同一 QAction（勾选态由 mpv 推送驱动）
+    QAction *m_muteAction = nullptr;
+    QToolButton *m_muteButton = nullptr;
     QPushButton *m_playButton = nullptr;
     QLabel *m_timeLabel = nullptr;
     QPushButton *m_playlistToggle = nullptr;

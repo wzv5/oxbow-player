@@ -14,6 +14,8 @@ ActionManager::ActionManager(QWidget *host) : m_host(host) {
     // N5：全局音量步进（播放列表经 ShortcutOverride 认领导航键豁免）
     declareAction(Id::VolumeUp, tr("Volume &Up"), Qt::Key_Up);
     declareAction(Id::VolumeDown, tr("Volume &Down"), Qt::Key_Down);
+    // N38：静音开关；勾选态由 mpv 的 mute 属性推送驱动，命令不读勾选态
+    declareAction(Id::Mute, tr("&Mute"), Qt::Key_M, true);
     // N6：速度控制三动作，助记符与快捷键同字母
     declareAction(Id::SpeedUp, tr("&Speed Up"), Qt::Key_C);
     declareAction(Id::SpeedDown, tr("Speed Down"), Qt::Key_X);

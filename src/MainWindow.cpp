@@ -234,7 +234,16 @@ QWidget *MainWindow::createLeftArea() {
     m_volumeSlider->installEventFilter(this); // N5：滚轮调节走统一入口
     seekLayout->addWidget(m_progressSlider, 1);
     seekLayout->addSpacing(8);
-    seekLayout->addWidget(new QLabel(tr("Volume")));
+    // N38：原 "Volume" 文本标签改图标按钮——点击切换静音，图标态经 mpv 推送驱动；
+    // 与 Play 菜单静音项共用同一 QAction 实例（bindButton 统一接线）
+    m_muteButton = new QToolButton;
+    m_muteButton->setAutoRaise(true);
+    m_muteButton->setFixedSize(24, 24);
+    m_muteButton->setToolTip(tr("Mute"));
+    m_muteButton->setIcon(style()->standardIcon(QStyle::SP_MediaVolume)); // 初值：未静音
+    m_muteAction = m_actions->action(ActionManager::Id::Mute);
+    bindButton(m_muteButton, m_muteAction);
+    seekLayout->addWidget(m_muteButton);
     seekLayout->addWidget(m_volumeSlider);
     layout->addWidget(seekRow);
 
@@ -270,12 +279,26 @@ QWidget *MainWindow::createLeftArea() {
     m_playlistToggle->setFixedSize(36, 36);
     m_playlistToggle->setCheckable(true);
 
-    // 控制行按钮不接受焦点（C2）：Space 归全局快捷键，避免焦点按钮被 Space 二次触发
-    for (QPushButton *b : {m_playButton, stopButton, prevButton, nextButton, m_streamButton,
-                           settingsButton, m_playlistToggle}) {
+    // 控制行按钮与音量行静音按钮不接受焦点（C2）：Space 归全局快捷键，
+    // 避免焦点按钮被 Space 二次触发（N38：静音按钮并入本组）
+    QAbstractButton *noFocusButtons[] = {m_playButton,     stopButton,     prevButton,
+                                         nextButton,       m_streamButton, settingsButton,
+                                         m_playlistToggle, m_muteButton};
+    for (QAbstractButton *b : noFocusButtons) {
         b->setFocusPolicy(Qt::NoFocus);
         // 点击控制按钮时把焦点重置到主窗口
-        connect(b, &QPushButton::pressed, [] {
+        connect(b, &QAbstractButton::pressed, [] {
+            if (auto *fw = QApplication::focusWidget())
+                fw->clearFocus();
+        });
+    }
+
+    // N38：进度条 / 音量条同样不接受焦点——同理把焦点留空，方向键恒为全局音量模式，
+    // 滑条不被键盘单独驱动；滑条的按下信号名与按钮不同（sliderPressed），故另起一组
+    QAbstractSlider *noFocusSliders[] = {m_progressSlider, m_volumeSlider};
+    for (QAbstractSlider *s : noFocusSliders) {
+        s->setFocusPolicy(Qt::NoFocus);
+        connect(s, &QAbstractSlider::sliderPressed, s, [] {
             if (auto *fw = QApplication::focusWidget())
                 fw->clearFocus();
         });
@@ -357,6 +380,15 @@ void MainWindow::createMenus() {
     playMenu->addAction(act(AM::Id::VolumeDown));
     connect(act(AM::Id::VolumeDown), &QAction::triggered, this,
             [this] { changeVolume(-m_volumeKeyStep); });
+    // N38：静音——命令取 mpv 实时属性读改写（勾选态只作显示，不参与判定）；
+    // OSD 与 B14 音量同构：用户动作路径直显，不入 #1/#2/#3 合并队列
+    m_muteAction = act(AM::Id::Mute);
+    playMenu->addAction(m_muteAction);
+    connect(m_muteAction, &QAction::triggered, this, [this] {
+        const bool target = !m_controller->propertyFlag(QStringLiteral("mute"), false);
+        m_controller->setProperty(QStringLiteral("mute"), target);
+        showOsd(target ? tr("Mute: On") : tr("Mute: Off"));
+    });
     // N6：速度控制组
     playMenu->addSeparator();
     playMenu->addAction(act(AM::Id::SpeedUp));
@@ -478,6 +510,8 @@ void MainWindow::connectController() {
         m_volumeSlider->setValue(int(v + 0.5));
         // B14：推送仅同步滑条，OSD 已移至用户动作统一入口 applyVolume 直显
     });
+    // N38：静音推送仅作状态联动（勾选 + 图标），OSD 同 B14 由用户动作路径直显
+    connect(m_controller, &MpvController::muteChanged, this, &MainWindow::applyMuteState);
     // R3：音量上限（mpv volume-max）推送，同步滑条量程
     connect(m_controller, &MpvController::volumeMaxChanged, this,
             [this](double v) { applyVolumeMax(qRound(v)); });
@@ -1473,6 +1507,16 @@ void MainWindow::applyVolume(int value) {
 // UI 不在此处回写，由 volumeChanged 观察回流刷新（防环已有 QSignalBlocker）
 void MainWindow::changeVolume(int delta) { applyVolume(m_volumeSlider->value() + delta); }
 
+// N38：静音状态联动单一出口——菜单勾选与图标按钮同一处刷新，两者共用同一
+// QAction 实例故天然同源。勾选态经 QSignalBlocker 直写，不回触发；本函数不播报
+// OSD（OSD 由用户动作路径直显，与 B14 音量同构），故启动与恢复期均无 OSD 调用点
+void MainWindow::applyMuteState(bool muted) {
+    QSignalBlocker blocker(m_muteAction);
+    m_muteAction->setChecked(muted);
+    m_muteButton->setIcon(
+        style()->standardIcon(muted ? QStyle::SP_MediaVolumeMuted : QStyle::SP_MediaVolume));
+}
+
 // B11：正在播放的真实文件名（含后缀不含路径），标题与 OSD #2 同源。
 // 列表镜像优先——playlist-pos 推送早于新文件装载完成，此刻读 filename 属性
 // 会拿到上一个文件的残留值（概率性错名根因）；本地镜像顺序与 mpv 恒一致，
@@ -1724,6 +1768,9 @@ void MainWindow::saveSettings() {
     // toDouble() 得 0 会把音量误存为 0
     settings.setValue(QStringLiteral("volume"), m_volumeSlider->value());
 
+    // N38：静音同音量——读 UI 缓存（勾选态）而非实时查 mpv；无条件写键
+    settings.setValue(QStringLiteral("mute"), m_muteAction->isChecked());
+
     // 播放列表面板可见性
     settings.setValue(QStringLiteral("playlistExpanded"), m_playlist->isVisible());
 
@@ -1762,6 +1809,13 @@ void MainWindow::restoreSettings() {
         QSignalBlocker blocker(m_volumeSlider);
         m_volumeSlider->setValue(int(vol + 0.5));
     }
+
+    // N38：静音恢复——以 mpv 侧 mute 属性当前值为准：属性为真则跟随不下发，
+    // 为假则以 ini 为准下发（无键即默认未静音）；判定不问属性来源（mpv.conf /
+    // 命令行 / 其它脚本同效）。此处必须实时读属性：恢复早于事件线程启动，尚无推送
+    if (!m_controller->propertyFlag(QStringLiteral("mute"), false))
+        m_controller->setProperty(QStringLiteral("mute"),
+                                  settings.value(QStringLiteral("mute"), false).toBool());
 
     // N10：窗口几何/最大化不再恢复，INI 遗留键
     // （windowMaximized/windowWidth/windowHeight）读侧删除后自然忽略
