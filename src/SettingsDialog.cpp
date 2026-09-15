@@ -845,7 +845,7 @@ void SettingsDialog::applyFallback(const SettingItem *item) {
 }
 
 void SettingsDialog::applyToControls() {
-    // 构造期回填必须包裹在 m_blockApply 守卫内，防止回填过程触发 valueChanged
+    // 回填必须包裹在 m_blockApply 守卫内，防止回填过程触发 valueChanged
     // 污染 m_pending
     m_blockApply = true;
 
@@ -1049,6 +1049,15 @@ bool SettingsDialog::applyAll() {
         // 接收方按键过滤，无关 ini 变更零成本
         if (!changedIniKeys.isEmpty())
             emit pluginIniKeysChanged(changedIniKeys);
+
+        // N41：Apply 成功后立即重读回填，显示后端实际状态（mpv 归一化 / 下发
+        // 失败 / INI 写盘失败均如实呈现）。放在 ini 键变更信号之后：接收方若
+        // 也动了 INI，重读正好一并收进来。重读复用完整回填路径（内部自带
+        // m_blockApply 守卫），随后以重读结果重建已应用快照并刷新按钮状态——
+        // 重读后 pending 与快照恒等，不会出现"重读后立刻可应用"的抖动
+        applyToControls();
+        m_appliedSnapshot = m_pending;
+        updateApplyButtonState();
     }
     return ok;
 }

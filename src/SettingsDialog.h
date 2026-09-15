@@ -53,9 +53,9 @@ class SettingsDialog : public QDialog {
     // 各分类页面与控件（含可选备注行），构建后统一做一次联动刷新
     void buildUi();
 
-    // 入参回填（构造期一次性）：无依赖项从后端读取；依赖项按主控状态分流——
-    // 选中→启用并回填，未选中→禁用落 fallback 不读后端。整段用 m_blockApply
-    // 守护，避免构造期 valueChanged 污染 m_pending
+    // 完整回填（构造期与 N41 Apply 成功后共用）：无依赖项从后端读取；依赖项
+    // 按主控状态分流——选中→启用并回填，未选中→禁用落 fallback 不读后端。
+    // 整段用 m_blockApply 守护，避免回填触发 valueChanged 污染 m_pending
     void applyToControls();
 
     // 单项回填：从后端（INI / mpv）读取并写入控件与 m_pending，按 kind × 后端分派
