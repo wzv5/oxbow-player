@@ -280,8 +280,8 @@ const QList<SettingCategory> &settingCatalog() {
                   .widget = WidgetKind::LineEdit,
                   .mpvKeys = {"af"}}, // 默认空：不设置过滤器的语义由 mpv 属性空值表达
              }},
-        // ⑤ 网络 —— N35：远端元数据浏览链路（HttpEntity 惰性 HEAD、WebDAV 枚举）
-        // 所用 client 的缺省参数（写 mpv-qt.ini）；N37 起并列 mpv 侧播放证书开关
+        // ⑤ 网络 —— N35：远端浏览链路（WebDAV 枚举）所用 client 的缺省参数（写 mpv-qt.ini）；N37
+        // 起并列 mpv 侧播放证书开关
         // （写 mpv.conf + 下发 tls-verify）——两条链路的证书校验各自独立，
         // 只关一侧就会出现"能列出、播不了"（或反之），两开关互不联动
         {.title = QT_TRANSLATE_NOOP("SettingsDialog", "Network"),

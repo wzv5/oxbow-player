@@ -18,7 +18,7 @@ struct FileMeta {
 // cachedFileMeta() / cachedMediaMeta() 对此类实体恒返回 nullptr。
 class PlaylistProvider; // 前向声明：实体头不依赖提供者头
 class PlaylistWidget;   // N32：预读结果注入的第二个授权对象（见 setFileMeta 注）
-class ServiceRegistry;  // N35：服务注册表（HttpEntity 经此现查 client）
+class ServiceRegistry;  // N35：服务注册表（基类统一持有，供未来远端实体取用）
 
 class PlaylistEntity {
     // N29 注入口的唯一授权对象。友元不继承：派生提供者不可直接访问，
@@ -109,8 +109,8 @@ class PlaylistEntity {
         m_titleSet = true;
     }
 
-    // ——N35 服务注册表（基类统一持有，供子类求值现查 client）——
-    // 构造注入：HttpEntity 必传非空（构造内断言）；本地 / 兜底实体沿用缺省空。
+    // ——N35 服务注册表（基类统一持有，供子类按需取用）——
+    // 构造注入：http(s) 实体必传非空（构造内断言）；本地 / 兜底实体沿用缺省空。
     // clone 经拷贝构造携带同一实例；注册表身份恒定，重装配只覆盖其内部实例
     const std::shared_ptr<ServiceRegistry> &registry() const { return m_registry; }
 
@@ -122,8 +122,9 @@ class PlaylistEntity {
     void setFileMeta(const FileMeta &meta);
     void setMediaMeta(const MediaMeta &meta);
 
-    // N35 修订 2：同步求值（远端 HEAD 阻塞至完成/超时，无取消通道，取消为
-    // 结果静默丢弃——见变更记录）；仅预读任务与对话框任务线程调用
+    // N35 修订 2：同步求值（可能阻塞至完成 / 超时，无取消通道，取消为
+    // 结果静默丢弃——见变更记录）；仅预读任务与对话框任务线程调用。
+    // N39：实体是否具备求值能力由能力位表达，无能力者恒走静态空回落
     virtual FileMeta computeFileMeta() const = 0;
     virtual MediaMeta computeMediaMeta() const = 0;
     virtual QIcon computeIcon() const = 0;

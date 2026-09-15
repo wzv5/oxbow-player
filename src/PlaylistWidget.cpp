@@ -1932,10 +1932,11 @@ void PlaylistWidget::copyPathToClipboard(const QString &path) {
     QApplication::clipboard()->setText(path);
 }
 
-// N35 重写：判定只看能力位——需任一元数据（supportsFileMeta 或 supportsMediaMeta）
-// 统一走异步；两者皆不支持只显示文件路径。刷新语义为"最新属性而非缓存"：任务线程
-// 经求值转发重读（eval 即重读，不读缓存不落缓存），GUI 续作经注入口写回实体缓存后
-// 用同一套行构建渲染——任务内不得直接调共享实体的 fileMeta() / mediaMeta()
+// N35 重写：判定看能力位；N39 变更：两类元数据一律追加缓存命中判定，已有值即不
+// 重读（理由见函数内注释）。两者皆不求值只显示文件路径与已有值（N39 起以缓存值
+// 渲染）。任务线程经求值转发重读（eval 即重读，不读缓存不落缓存），GUI 续作经
+// 注入口写回实体缓存后用同一套行构建渲染——任务内不得直接调
+// 共享实体的 fileMeta() / mediaMeta()
 // （命中前写缓存与 GUI 绘制并发读写即 data race，N32 纪律），求值转发 + GUI 写回
 // 是唯一合法形状。pending 态 General 组只放文件路径行，空一行后显示"正在读取元数据"。
 // N35 修订 2：同步求值 + 结果静默丢弃——关闭对话框置 closed 旗（事件非轮询），
@@ -1943,8 +1944,24 @@ void PlaylistWidget::copyPathToClipboard(const QString &path) {
 // MediaInfoHelper::available()（supportsMediaMeta 内含，N32 前提）
 void PlaylistWidget::showPropertiesDialog(const PlaylistEntity::Ptr &entityPtr) {
     const PlaylistEntity &entity = *entityPtr;
-    const bool needFileMeta = entity.supportsFileMeta();
-    const bool needMediaMeta = entity.supportsMediaMeta();
+    // N39 变更：两类元数据一律"已有值即不重读"——判定除能力位外还看缓存命中，
+    // File 与 Media 同口径（不可改一半留一半，否则同一对话框内语义冲突）。
+    // 直接动因在 File 侧：无自主求值途径的实体（WebDavEntity）其 computeFileMeta()
+    // 恒空，若照旧强制重读，结果经注入口写回会把枚举时注入的 size / modified
+    // 覆盖成未知。两类均以缓存值为初值装进 result（GUI 线程读取，任务线程不得读
+    // 实体缓存，N32 纪律）：需重读的那一类由任务覆盖，其余原样渲染——渲染恒取
+    // result，调用点无需区分"求值过的"与"走缓存的"
+    const bool needFileMeta = entity.supportsFileMeta() && entity.cachedFileMeta() == nullptr;
+    const bool needMediaMeta = entity.supportsMediaMeta() && entity.cachedMediaMeta() == nullptr;
+    struct PropResult {
+        FileMeta fm;
+        MediaInfoHelper::Data mm;
+    };
+    const auto result = std::make_shared<PropResult>();
+    if (const FileMeta *c = entity.cachedFileMeta())
+        result->fm = *c;
+    if (const PlaylistEntity::MediaMeta *c = entity.cachedMediaMeta())
+        result->mm = *c;
 
     auto timeText = [](const QDateTime &dt) {
         return dt.isValid() ? dt.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")) : QString();
@@ -2216,9 +2233,10 @@ void PlaylistWidget::showPropertiesDialog(const PlaylistEntity::Ptr &entityPtr) 
         dialog.resize(520, qMin(lineCount * 22 + 40, 600));
     };
 
-    // ——分支一：两者皆不支持（未知实体）→ 只显示文件路径，同步出框——
+    // ——分支一：无需求值（不支持，或两类皆已缓存）→ 同步出框——
     if (!needFileMeta && !needMediaMeta) {
-        renderDocument(FileMeta{}, nullptr, /*pending=*/false);
+        renderDocument(result->fm, &result->mm,
+                       /*pending=*/false); // N39：恒取 result（已装缓存值）
         dialog.exec();
         return;
     }
@@ -2232,11 +2250,6 @@ void PlaylistWidget::showPropertiesDialog(const PlaylistEntity::Ptr &entityPtr) 
     const auto closed = std::make_shared<std::atomic_bool>(false);
     connect(&dialog, &QDialog::finished, &dialog, [closed] { closed->store(true); });
 
-    struct PropResult {
-        FileMeta fm;
-        MediaInfoHelper::Data mm;
-    };
-    const auto result = std::make_shared<PropResult>();
     const PlaylistEntity::Ptr ent = entityPtr; // 实体本体由共享计数副本保活
 
     // 续作（GUI）：经注入口写回（唯一合法写点）+ 重渲染。按引用捕获
@@ -2251,7 +2264,8 @@ void PlaylistWidget::showPropertiesDialog(const PlaylistEntity::Ptr &entityPtr) 
         if (needMediaMeta)
             ent->setMediaMeta(result->mm);
         repaintAllLists(); // 写回影响行绘制（时长列回落实体缓存元数据）
-        renderDocument(result->fm, needMediaMeta ? &result->mm : nullptr, /*pending=*/false);
+        // N39：渲染恒取 result——未求值的那一类仍是发起时装填的缓存值
+        renderDocument(result->fm, &result->mm, /*pending=*/false);
     };
     auto *watcher = new QFutureWatcher<void>(&dialog); // parent = 对话框：随框销毁
     connect(watcher, &QFutureWatcher<void>::finished, &dialog, finishRender);

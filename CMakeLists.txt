@@ -50,6 +50,7 @@ add_library(mpvqtcore MODULE
     src/LocalFileEntity.h
     src/HttpEntity.cpp
     src/HttpEntity.h
+    src/WebDavEntity.h
     src/ServiceRegistry.h
     src/TraversalPolicy.h
     src/PlaylistProvider.cpp
@@ -179,6 +180,7 @@ if(MPVQT_BUILD_TESTS)
         src/LocalFileEntity.h
         src/HttpEntity.cpp
         src/HttpEntity.h
+        src/WebDavEntity.h
         src/ServiceRegistry.h
         src/TraversalPolicy.h
         src/MediaInfoHelper.cpp

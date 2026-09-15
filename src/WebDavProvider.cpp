@@ -6,6 +6,7 @@
 #include "ServiceRegistry.h"
 #include "TraversalPolicy.h"
 #include "Util.h"
+#include "WebDavEntity.h"
 
 namespace {
 // PROPFIND 请求体：只取本篇解释的四个属性（RFC 4918 子集）；前缀用 d: 惯例，
@@ -79,7 +80,7 @@ QString WebDavProvider::describe() const {
 // 记 warning 并跳过该子树，其余照常返回；单目录体超 maxBodyBytes 同走 warning
 std::expected<PlaylistProvider::Enumeration, QString> WebDavProvider::enumerate() const {
     // 装配错误：HttpClient 启动期必已 provide（N35 §2.3），永不命中；
-    // 断言守候 + fail-safe（同 HttpEntity 求值口径）
+    // 断言守候 + fail-safe（枚举不发请求即整次失败）
     const std::shared_ptr<HttpClient> client =
         registry() ? registry()->resolve<HttpClient>() : nullptr;
     if (!client) {
@@ -181,9 +182,8 @@ std::expected<PlaylistProvider::Enumeration, QString> WebDavProvider::enumerate(
         }
 
         // 文件条目：扩展名过滤（取显示名的后缀，大小写不敏感；空清单 = 不过滤）
-        // → 造 HttpEntity → 已取得的 size / modified 经注入口零成本写入（零额外
-        // 请求）。两者皆缺不注入——留空惰性 HEAD 回退路，不把"PROPFIND 未提供"
-        // 钉死为"值未知"
+        // → 造 WebDavEntity（具备文件级元数据能力）→ 已取得的 size / modified
+        // 经注入口零成本写入（零额外请求）。两者皆缺不注入，即值未知
         for (const DavEntry &entry : listing->files) {
             if (!m_extensions.isEmpty()) {
                 // 经 Util::playUrlFileName 单次解码（剥 query / fragment → 末段 →
@@ -196,7 +196,10 @@ std::expected<PlaylistProvider::Enumeration, QString> WebDavProvider::enumerate(
                 if (!m_extensions.contains(name.mid(dot + 1).toLower()))
                     continue;
             }
-            auto entity = PlaylistEntity::fromPlayUrl(entry.playUrl, registry());
+            // N39：直接构造 WebDavEntity，不经工厂——工厂对 http(s) 只产无元数据
+            // 能力的 HttpEntity（收编 / 静态表重载的落点）。二者对网络路径的
+            // 加工等价（resolveLocalPath 对网络路径原样返回），故绕过工厂无损
+            auto entity = std::make_shared<WebDavEntity>(entry.playUrl, registry());
             if (entry.size || entry.modified) {
                 FileMeta fm;
                 fm.size = entry.size;

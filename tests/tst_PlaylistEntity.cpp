@@ -83,7 +83,7 @@ class TestPlaylistEntity : public QObject {
     void factoryDispatchesHttpWithRegistry();
     // N35 HttpEntity 往返不变式：fromPlayUrl(e->playUrl(), registry)->playUrl() 相等
     void httpEntityRoundtrip();
-    // N35 HttpEntity 能力位与元数据回落（不触碰网络：不调 fileMeta()）
+    // N39 HttpEntity 能力位与元数据回落（两类能力位均为假，无网络求值）
     void httpEntityCapabilities();
     // N35 显示名：percent-decode + query/fragment 剥离；空末段回退基类行为
     void httpEntityDisplayName();
@@ -166,13 +166,15 @@ void TestPlaylistEntity::httpEntityCapabilities() {
     auto e = PlaylistEntity::fromPlayUrl(QStringLiteral("https://example.com/a.mp4"), registry);
     QVERIFY(!e->isLocalFile());
     QVERIFY(e->exists()); // 不可判定，恒 true（不参与失效清理）
-    QVERIFY(e->supportsFileMeta());
+    // N39：两类能力位均为假——HttpEntity 已无任何取得元数据的途径（惰性 HEAD 已删），
+    // fileMeta() 因此可安全调用（静态空回落，不触碰网络）
+    QVERIFY(!e->supportsFileMeta());
     QVERIFY(!e->supportsMediaMeta());
-    // 支持媒体元数据为假：媒体侧静态空回落，cached 恒 nullptr
+    QVERIFY(!e->fileMeta().size.has_value());
+    QVERIFY(!e->fileMeta().modified.has_value());
+    QVERIFY(e->cachedFileMeta() == nullptr);
     QVERIFY(!e->mediaMeta().duration.has_value());
     QVERIFY(e->cachedMediaMeta() == nullptr);
-    // 支持文件元数据为真但未求值：cached nullptr（不调 fileMeta()，避免触发 HEAD）
-    QVERIFY(e->cachedFileMeta() == nullptr);
 
     // clone：身份一致，类型不变
     auto c = e->clone();
@@ -180,7 +182,7 @@ void TestPlaylistEntity::httpEntityCapabilities() {
     QCOMPARE(c->playUrl(), e->playUrl());
     QVERIFY(!c->isLocalFile());
     QVERIFY(c->exists());
-    QVERIFY(c->supportsFileMeta());
+    QVERIFY(!c->supportsFileMeta());
     QVERIFY(!c->supportsMediaMeta());
 }
 
