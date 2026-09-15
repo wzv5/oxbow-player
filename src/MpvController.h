@@ -92,8 +92,10 @@ class MpvController : public QObject {
     void mpvShutdown();
 
   public:
-    // 当前视频尺寸（N3）：当场重读 width/height 属性，不走缓存；
-    // 返回 QSize(0,0) 表示无视频
+    // 当前视频尺寸（N40）：经统一取值路径当场读取——先 video-out-params/w、/h
+    // （滤镜后输出尺寸，F1），不可读回退 width、height（F3②：可用时机互补），
+    // 仍不可读或读得 0 返回 QSize(0,0) 表示无视频。纯读，不写去重状态
+    // （本函数会在 GUI 线程被导航器构造期调用）
     QSize videoSize() const;
 
     // B17：启动事件线程（阻塞 mpv_wait_event(-1)）。必须在 wid 等嵌入相关
@@ -109,9 +111,15 @@ class MpvController : public QObject {
     // B18：生命周期事件分派（均在事件线程执行）
     void handleStartFile();  // START_FILE：刷新当前文件缓存
     void handleFileLoaded(); // FILE_LOADED：以缓存为归属键主动读 5 项属性并发射
+    // N40：视频尺寸取值与发布（均在事件线程执行；videoSize() 复用同一取值路径）
+    QSize readVideoSize() const; // 取值收口：out 优先、width/height 回退、皆不可读判无视频
+    void publishVideoSize();     // 去重收口：与上次已发布值比对，不同才写入并 emit
 
-    mpv_handle *m_mpv;              // 由 mpv 拥有，插件不销毁
-    int m_videoW = 0, m_videoH = 0; // width/height 两属性合并缓存（N1）
+    mpv_handle *m_mpv; // 由 mpv 拥有，插件不销毁
+    // N40：上次已发布的视频尺寸——去重收口的比对基准（不再是从前"width/height
+    // 两属性合并缓存"）；仅事件线程读写（去重收口与 idle-active 兜底），
+    // videoSize() 纯读不经过它
+    int m_videoW = 0, m_videoH = 0;
     // B18：当前文件路径缓存——START_FILE 时写入，FILE_LOADED / duration
     // observe 推送读取作为归属键；仅事件线程读写，无需加锁
     QString m_currentFile;

@@ -25,6 +25,8 @@ class MainWindow : public QMainWindow {
     void closeEvent(QCloseEvent *event) override;
     void moveEvent(QMoveEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
+    // N40 变更：还原最大化时按当前视频重新适配（跟随全屏退出重适配逻辑）
+    void changeEvent(QEvent *event) override;
     // A20：启动几何收口的一次性触发点（首次 show 时外框几何与所在屏才可靠）
     void showEvent(QShowEvent *event) override;
     // N3：占位符几何跟随 + 视频区单击/双击分流
@@ -81,7 +83,7 @@ class MainWindow : public QMainWindow {
     void toggleFullscreen();
     void syncVideoGeometry();
     // N10：普通态窗口尺寸自适应视频（videoSizeChanged 直连触发，
-    // 物理像素 1:1、工作区钳制、最小移动收回）
+    // 物理像素 1:1、工作区钳制、最小移动收回；尺寸事实源经 N40 改滤镜后输出尺寸）
     void adaptWindowSizeToVideo(int videoW, int videoH);
     // A20：播放列表显隐几何联动——左 pane 宽度不变、主窗口向右扩展，
     // 空间不足先压视频区触底再压播放列表宽度（实测值写回记忆）
@@ -140,14 +142,16 @@ class MainWindow : public QMainWindow {
     QWidget *m_videoWidget = nullptr;
     // N3：布局槽位占位符，普通态视频区几何的锚点；最小尺寸约束在此
     QWidget *m_videoPlaceholder = nullptr;
-    // B16：视频尺寸适配缓冲——videoSizeChanged 突发（width/height 独立推送）经
-    // 单发定时器合并，仅以最后一次一致对触发一次自适应（见 connectController）
+    // N40：最近一次收到的视频尺寸发布值——去重收口后每次都是一致对、
+    // 只在真实变化时到达，不再需要合并缓冲定时器；仅退出全屏的重适配路径取用
     int m_pendingVideoW = 0;
     int m_pendingVideoH = 0;
-    QTimer m_videoAdaptTimer;
     // B16：全屏期间若切换了视频（videoSizeChanged 被守卫跳过），退出普通态时
     // 需按当前视频尺寸重新适配；同一视频则维持 N10"全屏退出不重新适配"语义
     bool m_refitAfterFullscreen = false;
+    // N40 变更：最大化期间若切换了视频（适配被 isMaximized 守卫拦下），还原
+    // 最大化时按当前视频尺寸重新适配——跟随全屏退出重适配的同款语义
+    bool m_refitAfterMaximize = false;
     ChapterSlider *m_progressSlider = nullptr; // N15：进度条（带章节/书签标记层）
     QSlider *m_volumeSlider = nullptr;
     // N5：音量调节配置（INI 键 volumeMax / volumeWheelStep / volumeKeyStep）

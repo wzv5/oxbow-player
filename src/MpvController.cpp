@@ -17,8 +17,8 @@ enum ObservedProperty {
     PropVideoZoom,
     PropVideoPanX,
     PropVideoPanY,
-    PropWidth,
-    PropHeight,
+    // N40：width / height 两属性观察已移除，视频尺寸改由 VIDEO_RECONFIG
+    // 事件驱动主动读取（见 publishVideoSize），
     // R3：音量上限（mpv 自管 volume-max 属性，运行时推送驱动 MainWindow 滑条量程）
     PropVolumeMax,
     // B18：metadata / file-format / track-list / chapter-list 四项文件级
@@ -180,6 +180,12 @@ class MpvController::EventThread : public QThread {
             case MPV_EVENT_FILE_LOADED:
                 m_ctrl->handleFileLoaded();
                 break;
+            case MPV_EVENT_VIDEO_RECONFIG:
+                // N40：视频尺寸变化的主触发源（F2：覆盖起播配置、分辨率变化、
+                // 滤镜变化、视频消失）。事件到达 ≠ 尺寸变了（F3① 同一变化会
+                // 触发多次、前几次仍读旧值），取值与去重收口在 publishVideoSize
+                m_ctrl->publishVideoSize();
+                break;
             case MPV_EVENT_SHUTDOWN:
                 emit m_ctrl->mpvShutdown();
                 return;
@@ -218,8 +224,7 @@ MpvController::MpvController(mpv_handle *mpv, QObject *parent) : QObject(parent)
     mpv_observe_property(m_mpv, PropVideoZoom, "video-zoom", MPV_FORMAT_DOUBLE);
     mpv_observe_property(m_mpv, PropVideoPanX, "video-pan-x", MPV_FORMAT_DOUBLE);
     mpv_observe_property(m_mpv, PropVideoPanY, "video-pan-y", MPV_FORMAT_DOUBLE);
-    mpv_observe_property(m_mpv, PropWidth, "width", MPV_FORMAT_INT64);
-    mpv_observe_property(m_mpv, PropHeight, "height", MPV_FORMAT_INT64);
+    // N40：width / height 不再观察——属性报解码尺寸且独立推送，改事件驱动（见 publishVideoSize）
     // R3：音量上限观测，启动后立即推送当前值（mpv 默认 130）
     mpv_observe_property(m_mpv, PropVolumeMax, "volume-max", MPV_FORMAT_DOUBLE);
     // B18：metadata / file-format / track-list / chapter-list 改 FILE_LOADED
@@ -276,10 +281,40 @@ void MpvController::handleFileLoaded() {
 // 窄类型接收宽写入会踩坏相邻栈槽——B19 即 int 接 INT64，第二次写入的高 4 字节
 // 把 w 覆成 0，导航器播种恒判"无视频"。新增调用点务必按此表核对。
 QSize MpvController::videoSize() const {
+    // N40：公开入口与事件侧发布共用同一条取值路径（纯读，不写去重状态）
+    return readVideoSize();
+}
+
+// N40：视频尺寸取值收口（F1/F3②/F5）——先读 video-out-params/w、/h（滤镜后
+// 输出尺寸，与实际渲染一致）；不可读回退 width、height（覆盖"起播早期 out
+// 未就绪"，两属性可用时机互补）；仍不可读或读得 0 判定无视频（0,0）。
+// 只读 /w、/h 帧尺寸，绝不读 /dw、/dh 显示尺寸（F7：随显示侧参数漂移）
+QSize MpvController::readVideoSize() const {
     int64_t w = 0, h = 0;
-    mpv_get_property(m_mpv, "width", MPV_FORMAT_INT64, &w);
-    mpv_get_property(m_mpv, "height", MPV_FORMAT_INT64, &h);
+    const bool outOk = mpv_get_property(m_mpv, "video-out-params/w", MPV_FORMAT_INT64, &w) == 0 &&
+                       mpv_get_property(m_mpv, "video-out-params/h", MPV_FORMAT_INT64, &h) == 0;
+    if (!outOk || w <= 0 || h <= 0) {
+        w = 0;
+        h = 0;
+        mpv_get_property(m_mpv, "width", MPV_FORMAT_INT64, &w);
+        mpv_get_property(m_mpv, "height", MPV_FORMAT_INT64, &h);
+        if (w <= 0 || h <= 0)
+            return QSize(0, 0); // 无视频（或读值时机不完整，按无视频口径处理）
+    }
     return QSize(int(w), int(h));
+}
+
+// N40：视频尺寸发布收口（事件线程）——所有触发源（VIDEO_RECONFIG 主触发、
+// idle-active 假转真兜底）汇入此处：读值 → 与上次已发布值比对 → 不同才
+// 写入并 emit。F3① 决定去重非做不可：一次 vf 变化会来多次 reconfig、前几次
+// 读到的还是旧值，不去重会连带产生多次多余的窗口适配
+void MpvController::publishVideoSize() {
+    const QSize size = readVideoSize();
+    if (size.width() == m_videoW && size.height() == m_videoH)
+        return;
+    m_videoW = size.width();
+    m_videoH = size.height();
+    emit videoSizeChanged(m_videoW, m_videoH);
 }
 
 void MpvController::command(const QString &cmd) {
@@ -396,8 +431,13 @@ void MpvController::handlePropertyChange(const mpv_event *event) {
             emit playlistChanged(parsePlaylist(static_cast<mpv_node *>(prop->data)));
         break;
     case PropIdleActive:
-        if (prop->format == MPV_FORMAT_FLAG && prop->data)
-            emit idleActive(*static_cast<int *>(prop->data) != 0);
+        if (prop->format == MPV_FORMAT_FLAG && prop->data) {
+            const bool active = *static_cast<int *>(prop->data) != 0;
+            if (active)
+                publishVideoSize(); // N40：假转真兜底——覆盖停止/清空/起播前空闲等不经 reconfig
+                                    // 的路径
+            emit idleActive(active);
+        }
         break;
     case PropVideoZoom:
         if (prop->format == MPV_FORMAT_DOUBLE && prop->data)
@@ -417,21 +457,10 @@ void MpvController::handlePropertyChange(const mpv_event *event) {
         else if (prop->format == MPV_FORMAT_NONE)
             emit videoPanYChanged(0.0);
         break;
-    case PropWidth:
-    case PropHeight: {
-        // 尺寸两属性独立推送，合并缓存后成对上报；任一侧失效按 0 处理
-        const int value = (prop->format == MPV_FORMAT_INT64 && prop->data)
-                              ? int(*static_cast<int64_t *>(prop->data))
-                              : 0;
-        if (int(event->reply_userdata) == PropWidth)
-            m_videoW = value;
-        else
-            m_videoH = value;
-        emit videoSizeChanged(m_videoW, m_videoH);
-        break;
-    }
-    // B18：PropMetadata / PropFileFormat / PropTrackList / PropChapterList
-    // 分支已随 observe 移除，改由 handleFileLoaded 主动读
+    // N40：PropWidth / PropHeight 分支已随 observe 移除，视频尺寸改由
+    // publishVideoSize 统一取值发布；B18：PropMetadata / PropFileFormat /
+    // PropTrackList / PropChapterList 分支已随 observe 移除，改由
+    // handleFileLoaded 主动读
     default:
         break;
     }

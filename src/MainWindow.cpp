@@ -676,18 +676,17 @@ void MainWindow::connectController() {
         updateChapterSlider();
     });
 
-    // N10/B16：起播拿到分辨率即适配窗口。videoSizeChanged 由 mpv 的 width/height
-    // 两独立属性分别推送合并触发，单次装载会产生中间对（如 (1920,288) 先于 (1920,1080)）；
-    // 经单发定时器合并突发，仅以最后一次一致对触发一次自适应（B16 草案）
-    m_videoAdaptTimer.setSingleShot(true);
-    connect(&m_videoAdaptTimer, &QTimer::timeout, this,
-            [this] { adaptWindowSizeToVideo(m_pendingVideoW, m_pendingVideoH); });
+    // N10/B16/N40：起播拿到分辨率即适配窗口。尺寸信号经控制器去重收口（事件驱动 +
+    // 与上次已发布值比对），只在真实变化时到达、且每次都是一致对——原"单发定时器
+    // 合并两属性突发"的适配缓冲已随之删除，此处直连触发
     connect(m_controller, &MpvController::videoSizeChanged, this, [this](int w, int h) {
         m_pendingVideoW = w;
         m_pendingVideoH = h;
         if (m_fullscreen && w > 0 && h > 0)
             m_refitAfterFullscreen = true;
-        m_videoAdaptTimer.start(0);
+        else if (isMaximized() && w > 0 && h > 0)
+            m_refitAfterMaximize = true; // N40 变更：还原最大化时重适配（跟随全屏逻辑）
+        adaptWindowSizeToVideo(w, h);    // (0,0) 与全屏/最大化在入口内守卫，无动作
     });
     // 停止态步进以选中 tab 为基准，切换 tab 需刷新启停（A16）
     connect(m_playlist, &QTabWidget::currentChanged, this,
@@ -1200,6 +1199,29 @@ void MainWindow::resizeEvent(QResizeEvent *event) {
     syncVideoGeometry();
 }
 
+// N40 变更：还原最大化时按当前视频重新适配（跟随全屏退出重适配逻辑）。
+// 最大化期间的尺寸推送被 adaptWindowSizeToVideo 的 isMaximized 守卫拦下、
+// 只更新 pending 与 m_refitAfterMaximize；此处捕获"最大化 → 普通态"的还原
+// 瞬间补触发。singleShot(0) 与全屏退出路径同款：等还原几何落定后按最近
+// 一次发布的尺寸（pending）适配
+void MainWindow::changeEvent(QEvent *event) {
+    QMainWindow::changeEvent(event);
+    if (event->type() != QEvent::WindowStateChange || m_fullscreen)
+        return;
+    // m_fullscreen 守卫：从最大化进入覆盖式全屏会先 setWindowState(NoState)，
+    // 该转移同样表现为"最大化 → 普通态"，须排除；退出全屏时 m_fullscreen
+    // 已先置假，但旧态是 NoState（全屏无最大化标志），不会误入本分支
+    auto *stateEvent = static_cast<QWindowStateChangeEvent *>(event);
+    const bool wasMaximized = stateEvent->oldState() & Qt::WindowMaximized;
+    const bool nowNormal =
+        !(windowState() & (Qt::WindowMaximized | Qt::WindowFullScreen | Qt::WindowMinimized));
+    if (wasMaximized && nowNormal && m_refitAfterMaximize) {
+        m_refitAfterMaximize = false;
+        QTimer::singleShot(0, this,
+                           [this] { adaptWindowSizeToVideo(m_pendingVideoW, m_pendingVideoH); });
+    }
+}
+
 // A20：启动几何收口的触发点——首次 show 时 frameGeometry() 与 screen() 才可靠
 // （构造期二者均不可信，N1⑥ 同类）。最小化恢复、A18 全屏退出的 show() 都会
 // 再触发本事件，必须一次性守卫：重复执行会把窗口越推越大、把位置反复拉回居中
@@ -1328,7 +1350,10 @@ void MainWindow::toggleFullscreen() {
         // 恢复普通态后按当前视频尺寸重新适配（最大化分支不走此路，保持全屏宽度）
         if (m_refitAfterFullscreen) {
             m_refitAfterFullscreen = false;
-            m_videoAdaptTimer.start(0); // 复用合并定时器，布局落定后以当前 pending 触发
+            // N40：适配缓冲定时器已删，零延迟转发语义等价改走 singleShot——
+            // 布局落定后按最近一次收到的发布值（pending）触发
+            QTimer::singleShot(
+                0, this, [this] { adaptWindowSizeToVideo(m_pendingVideoW, m_pendingVideoH); });
         }
         m_controller->setProperty(QStringLiteral("video-zoom"), m_savedZoom);
         m_controller->setProperty(QStringLiteral("video-pan-x"), m_savedPanX);
