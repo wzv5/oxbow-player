@@ -37,8 +37,10 @@
 #include <QFormLayout>
 #include <QFuture>
 #include <QFutureWatcher>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHash>
+#include <QHeaderView>
 #include <QHelpEvent>
 #include <QIODevice>
 #include <QIcon>

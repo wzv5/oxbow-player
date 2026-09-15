@@ -81,6 +81,8 @@ add_library(mpvqtcore MODULE
     src/MpvConf.h
     src/SettingsDialog.cpp
     src/SettingsDialog.h
+    src/FilterListWidget.cpp
+    src/FilterListWidget.h
 )
 
 # mpv/client.h 已内置在仓库根目录的 mpv/ 下
@@ -185,6 +187,8 @@ if(MPVQT_BUILD_TESTS)
         src/TraversalPolicy.h
         src/MediaInfoHelper.cpp
         src/MediaInfoHelper.h
+        src/FilterListWidget.cpp
+        src/FilterListWidget.h
         src/Util.cpp
         src/Util.h
         src/HttpClient.cpp
@@ -222,4 +226,5 @@ if(MPVQT_BUILD_TESTS)
     mpvqt_add_test(DirProvider)
     mpvqt_add_test(WebDavProvider)
     mpvqt_add_test(Util)
+    mpvqt_add_test(FilterList)
 endif()

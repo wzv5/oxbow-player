@@ -3,6 +3,7 @@
 #include "SettingsDialog.h"
 
 #include "Constants.h"
+#include "FilterListWidget.h"
 #include "MpvConf.h"
 #include "MpvController.h"
 #include "Util.h"
@@ -12,7 +13,14 @@
 // 声明引用本类型（成员函数签名需要同一实体），匿名命名空间类型无法与之统一；
 // 仅本翻译单元定义与使用，无 ODR 顾虑。
 
-enum class WidgetKind { Combo, EditableCombo, SpinBox, CheckBox, LineEdit }; // CheckBox 预留
+enum class WidgetKind {
+    Combo,
+    EditableCombo,
+    SpinBox,
+    CheckBox,
+    LineEdit,
+    FilterList
+}; // CheckBox 预留
 
 // mpv 属性类型提示（仅 mpv 后端有意义，INI 后端忽略）。决定读回路径取原生值的
 // 方式与写路径的 typed set；数值属性永不信任 mpv 的字符串化——读原生类型后用
@@ -49,6 +57,8 @@ struct SettingItem {
     QString dependsOn;                 // 可选：指向某 CheckBox 项 id（单层依赖，禁用不回填）
     MpvType mpvType = MpvType::String; // mpv 属性类型提示（默认 String；INI 后端忽略；
                                        // 带 choices 的 CheckBox 固定 String）
+    // FilterList 专用（N42）：预设菜单数据源；其余控件忽略
+    std::function<QList<FilterPreset>()> filterPresets;
 };
 
 struct SettingCategory {
@@ -195,13 +205,70 @@ QList<SettingChoice> loopChoices() {
     };
 }
 
-// 硬件解码：标量项（可编辑下拉），choices 仅作快选预设，逻辑值即文本本身
+// 硬件解码：标量项（可编辑下拉），choices 仅作快选预设，逻辑值即文本本身。
+// auto-copy（N42）：把解码帧拷回系统内存——视频滤镜（vf）在原生硬解下不可用
+// （硬件帧无法进 libavfilter 软件滤镜链），copy 模式是启用滤镜的标准解法
 QList<SettingChoice> hwdecPresets() {
-    return {{QStringLiteral("auto")},
-            {QStringLiteral("auto-safe")},
-            {QStringLiteral("d3d11va")},
-            {QStringLiteral("dxva2")},
-            {QStringLiteral("no")}};
+    return {{QStringLiteral("auto")},      {QStringLiteral("auto-safe")},
+            {QStringLiteral("auto-copy")}, {QStringLiteral("d3d11va")},
+            {QStringLiteral("dxva2")},     {QStringLiteral("no")}};
+}
+
+// N42：滤镜预置（插入模板，一组条目整体追加为勾选态新条目；name 为可翻译的
+// @name: 标签，插入时挂到首条，Custom 不挂）。数据与设置目录同处一文件，翻译
+// 上下文归属 SettingsDialog；清单为冻结规格的初始值，具体条目与参数属实施期
+// 细节，改预设只改此处。
+// label 与 name 一律套 QT_TRANSLATE_NOOP：两者的翻译点都在 FilterListWidget 侧
+// （经 QCoreApplication::translate 按变量翻译），lupdate 无法从变量提取原文，
+// 缺此标记则 .ts 不收录、译文永不生效
+QList<FilterPreset> audioFilterPresets() {
+    return {{QT_TRANSLATE_NOOP("SettingsDialog", "Loudness Normalization (Streaming, -14 LUFS)"),
+             QT_TRANSLATE_NOOP("SettingsDialog", "Loudness14"),
+             {QStringLiteral("loudnorm=I=-14:TP=-1:LRA=11")}},
+            {QT_TRANSLATE_NOOP("SettingsDialog", "Loudness Normalization (EBU R128, -23 LUFS)"),
+             QT_TRANSLATE_NOOP("SettingsDialog", "Loudness23"),
+             {QStringLiteral("loudnorm=I=-23:TP=-1:LRA=11")}},
+            {QT_TRANSLATE_NOOP("SettingsDialog", "Resample 48k"),
+             QT_TRANSLATE_NOOP("SettingsDialog", "Resample48k"),
+             {QStringLiteral("aresample=48000")}},
+            {QT_TRANSLATE_NOOP("SettingsDialog", "Dynamic Range Compression"),
+             QT_TRANSLATE_NOOP("SettingsDialog", "DRC"),
+             {QStringLiteral("dynaudnorm=f=250:g=15")}},
+            {QT_TRANSLATE_NOOP("SettingsDialog", "Volume Boost (+6 dB)"),
+             QT_TRANSLATE_NOOP("SettingsDialog", "VolumeBoost"),
+             {QStringLiteral("volume=6dB")}},
+            {QT_TRANSLATE_NOOP("SettingsDialog", "Custom"), nullptr, {QString()}}};
+}
+
+QList<FilterPreset> videoFilterPresets() {
+    // 90° 旋转用 transpose=clock 而非 rotate=PI/2：libavfilter 的 rotate 保持帧
+    // 尺寸原地旋转（内容被裁、video-out-params 宽高不更新，窗口自适应失效），
+    // transpose 才交换宽高
+    return {{QT_TRANSLATE_NOOP("SettingsDialog", "Deinterlace"),
+             QT_TRANSLATE_NOOP("SettingsDialog", "Deinterlace"),
+             {QStringLiteral("bwdif")}},
+            {QT_TRANSLATE_NOOP("SettingsDialog", "Denoise"),
+             QT_TRANSLATE_NOOP("SettingsDialog", "Denoise"),
+             {QStringLiteral("hqdn3d")}},
+            {QT_TRANSLATE_NOOP("SettingsDialog", "Sharpen"),
+             QT_TRANSLATE_NOOP("SettingsDialog", "Sharpen"),
+             {QStringLiteral("unsharp=5:5:1.0")}},
+            {QT_TRANSLATE_NOOP("SettingsDialog", "Deband"),
+             QT_TRANSLATE_NOOP("SettingsDialog", "Deband"),
+             {QStringLiteral("deband")}},
+            {QT_TRANSLATE_NOOP("SettingsDialog", "Rotate 90°"),
+             QT_TRANSLATE_NOOP("SettingsDialog", "Rotate90"),
+             {QStringLiteral("transpose=clock")}},
+            {QT_TRANSLATE_NOOP("SettingsDialog", "Flip Horizontally"),
+             QT_TRANSLATE_NOOP("SettingsDialog", "FlipH"),
+             {QStringLiteral("hflip")}},
+            {QT_TRANSLATE_NOOP("SettingsDialog", "Flip Vertically"),
+             QT_TRANSLATE_NOOP("SettingsDialog", "FlipV"),
+             {QStringLiteral("vflip")}},
+            {QT_TRANSLATE_NOOP("SettingsDialog", "Scale"),
+             QT_TRANSLATE_NOOP("SettingsDialog", "Scale1080p"),
+             {QStringLiteral("scale=1920:1080")}},
+            {QT_TRANSLATE_NOOP("SettingsDialog", "Custom"), nullptr, {QString()}}};
 }
 
 // N37：播放侧证书开关（mpv tls-verify）的两态映射（N33 §2.1）。勾选"忽略"对应
@@ -271,14 +338,33 @@ const QList<SettingCategory> &settingCatalog() {
                   .mpvKeys = {"hwdec"},
                   .choices = hwdecPresets,
                   .fallback = "auto"},
+                 // N42：视频滤镜列表（与音频页同构）。备注两条合一（原生硬解下 CPU
+                 // 滤镜不可用——mpv 非 copy 硬解不自动回读硬件帧，需 copy 模式或
+                 // 软解；尺寸类滤镜的导航器已知不一致——修正属 N40，按已知项口径
+                 // 如实告知，不承诺修好）
+                 {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Video Filters"),
+                  .widget = WidgetKind::FilterList,
+                  .mpvKeys = {"vf"},
+                  .note = QT_TRANSLATE_NOOP(
+                      "SettingsDialog",
+                      "To use video filters, set Hardware Decoding to a copy mode "
+                      "(auto-copy) or no; changing it during playback may require stop "
+                      "and play to take effect"),
+                  .filterPresets = videoFilterPresets},
              }},
         // ④ 音频 —— mpv 选项
         {.title = QT_TRANSLATE_NOOP("SettingsDialog", "Audio"),
          .items =
              {
+                 // N42：原单行文本框升级为滤镜列表编辑器（空值语义不变：无滤镜）
                  {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Audio Filters"),
-                  .widget = WidgetKind::LineEdit,
-                  .mpvKeys = {"af"}}, // 默认空：不设置过滤器的语义由 mpv 属性空值表达
+                  .widget = WidgetKind::FilterList,
+                  .mpvKeys = {"af"},
+                  .note = QT_TRANSLATE_NOOP(
+                      "SettingsDialog",
+                      "loudnorm works internally at 192 kHz in dynamic mode and raises the "
+                      "output sample rate; add aresample=48000 when a fixed rate is needed"),
+                  .filterPresets = audioFilterPresets},
              }},
         // ⑤ 网络 —— N35：远端浏览链路（WebDAV 枚举）所用 client 的缺省参数（写 mpv-qt.ini）；N37
         // 起并列 mpv 侧播放证书开关
@@ -414,6 +500,21 @@ void validateCatalog() {
                     qWarning("SettingsDialog: mpv SpinBox item [%d/%d] must declare "
                              "MpvType::Int or Double",
                              ci, ii);
+                if (item.widget == WidgetKind::FilterList) {
+                    // N42：滤镜列表恰管辖一个 key、String 型下发；INI 后端无意义
+                    if (item.mpvKeys.size() != 1)
+                        qWarning("SettingsDialog: FilterList item [%d/%d] must govern "
+                                 "exactly one key",
+                                 ci, ii);
+                    if (item.mpvType != MpvType::String)
+                        qWarning("SettingsDialog: FilterList item [%d/%d] must declare "
+                                 "MpvType::String",
+                                 ci, ii);
+                    if (!item.iniKey.isEmpty())
+                        qWarning("SettingsDialog: FilterList item [%d/%d] must be an mpv "
+                                 "item, not INI",
+                                 ci, ii);
+                }
                 if (item.widget == WidgetKind::Combo) {
                     // mpv 枚举项必须有且仅有一个占位项（R3 §3.7 语义依赖）
                     int placeholders = 0;
@@ -618,20 +719,35 @@ void SettingsDialog::buildUi() {
                 control = edit;
                 break;
             }
+            case WidgetKind::FilterList: {
+                // N42：滤镜列表编辑器，分组框为根——标题即目录项 label，不再单出
+                // QLabel；预设数据源取自目录项
+                auto *fl = new FilterListWidget(
+                    tr(item->label),
+                    item->filterPresets ? item->filterPresets() : QList<FilterPreset>{}, page);
+                connect(fl, &FilterListWidget::changed, this,
+                        [this, item] { onControlChanged(item); });
+                control = fl;
+                break;
+            }
             }
 
             m_controls.insert(item, control);
-            if (item->widget != WidgetKind::CheckBox) {
+            if (item->widget != WidgetKind::CheckBox && item->widget != WidgetKind::FilterList) {
                 // 标签与控件同行；QFormLayout 保证各标签列左对齐到最宽标签
                 form->addRow(new QLabel(tr(item->label)), control);
             } else {
-                form->addRow(control); // 标签并入复选框，独占整行
+                // 标签并入复选框 / 分组框标题，独占整行
+                form->addRow(control);
             }
 
             // 可选备注行：灰色小字（取 Disabled 文本色，随主题自适应），空则不占位；
-            // 单参数 addRow 跨两列展示
+            // 单参数 addRow 跨两列展示。必须开 wordWrap：QLabel 不换行时
+            // minimumSizeHint ≈ 整行文本宽度，长备注会把对话框最小宽度撑爆
+            // （N42 长备注实测撑到无法拖拽缩小）
             if (item->note && *item->note) { // 非空指针且有内容才显示
                 auto *note = new QLabel(tr(item->note));
+                note->setWordWrap(true);
                 QPalette pal = note->palette();
                 pal.setColor(QPalette::WindowText,
                              pal.color(QPalette::Disabled, QPalette::WindowText));
@@ -812,6 +928,14 @@ void SettingsDialog::fillItemFromBackend(const SettingItem *item) {
             m_pending[item] = v;
             break;
         }
+        case WidgetKind::FilterList: {
+            // N42：node 结构化读（绕开转义串），映射为条目列表整体重建；pending
+            // 存编译串（与 Apply 下发串同源），快照比对与 dirty 判定按串进行
+            auto *fl = static_cast<FilterListWidget *>(w);
+            fl->setEntries(m_controller->filterEntries(item->mpvKeys[0]));
+            m_pending[item] = fl->compiledString();
+            break;
+        }
         }
     }
 }
@@ -839,6 +963,10 @@ void SettingsDialog::applyFallback(const SettingItem *item) {
         break;
     case WidgetKind::CheckBox:
         static_cast<QCheckBox *>(w)->setChecked(item->fallback.toBool());
+        break;
+    case WidgetKind::FilterList:
+        // 禁用落兜底：空列表 = 无滤镜（空值语义，与 mpv 属性空值口径一致）
+        static_cast<FilterListWidget *>(w)->setEntries({});
         break;
     }
     m_pending[item] = readControlValue(w);
@@ -914,6 +1042,8 @@ QVariant SettingsDialog::readControlValue(QWidget *control) const {
         return edit->text();
     if (auto *box = qobject_cast<QCheckBox *>(control))
         return box->isChecked();
+    if (auto *fl = qobject_cast<FilterListWidget *>(control))
+        return fl->compiledString(); // N42：逻辑值即编译串（与下发 / conf 写同源）
     return {};
 }
 
@@ -949,6 +1079,7 @@ bool SettingsDialog::applyAll() {
     bool ok = true;
     bool mpvConfDirty = false;
     QStringList changedIniKeys; // N35：本轮实际写入的 ini 键（应用成功后随信号发出）
+    QStringList failedMpvKeys;  // N42：String 下发失败的 key（合并为一条提示）
     for (auto it = m_pending.begin(); it != m_pending.end(); ++it) {
         const SettingItem *item = it.key();
         if (!item)
@@ -1013,6 +1144,7 @@ bool SettingsDialog::applyAll() {
             // 按 mpvType 走 typed set 下发；conf 写用字符串形式（mpv.conf 本就是文本格式） ===
             const QString k = item->mpvKeys[0];
             QString confValue;
+            bool setOk = true;
             switch (item->mpvType) {
             case MpvType::Flag:
                 confValue = val.toBool() ? QStringLiteral("yes") : QStringLiteral("no");
@@ -1028,8 +1160,15 @@ bool SettingsDialog::applyAll() {
                 break;
             case MpvType::String:
                 confValue = val.toString();
-                m_controller->setProperty(k, confValue);
+                setOk = m_controller->setProperty(k, confValue);
                 break;
+            }
+            // N42：String 下发失败按项级跳过——不写该项 conf（避免污染持久配置），
+            // key 记入合并提示；其余项照常，ok 仍以 conf 提交结果为准；N41 重读
+            // 随后把失败项控件拉回后端真值（重读后 pending == 快照，无假 dirty）
+            if (!setOk) {
+                failedMpvKeys << k;
+                continue;
             }
             if (m_confCache) {
                 m_confCache->setGlobal(k, confValue);
@@ -1037,6 +1176,11 @@ bool SettingsDialog::applyAll() {
             }
         }
     }
+    if (!failedMpvKeys.isEmpty())
+        QMessageBox::warning(this, tr("Settings"),
+                             tr("Failed to apply the following mpv options: %1\n"
+                                "These values were not written to mpv.conf.")
+                                 .arg(failedMpvKeys.join(QStringLiteral(", "))));
     if (mpvConfDirty && m_confCache)
         ok &= m_confCache->commit();
     // 应用完成：更新快照为当前已应用值；Apply 按钮随之禁用

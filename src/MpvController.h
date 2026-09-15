@@ -4,6 +4,9 @@
 
 #include <mpv/client.h>
 
+// N42：滤镜列表条目模型（定义见 FilterListWidget.h，随控件收口）
+struct FilterEntry;
+
 // 对 mpv client API 的 Qt 化封装：UI 只与本类交互，不直接触碰 mpv_handle。
 // mpv 客户端 API 本身线程安全（client.h "Multithreading"），唯一例外是
 // mpv_wait_event 仅单线程可调（本类由 EventThread 专职调用，B17）。
@@ -17,16 +20,24 @@ class MpvController : public QObject {
     void command(const QString &cmd);
     void command(const QStringList &args);
 
-    void setProperty(const QString &name, const QString &value);
-    void setProperty(const QString &name, int value);
-    void setProperty(const QString &name, double value);
-    void setProperty(const QString &name, bool value);
+    // N42：String 型 set 改判返回值——下发失败（顶层语法错误 / 未知滤镜名等，
+    // mpv 保持原值不清理）由调用方决定不写 conf；既有调用点忽略返回值，零波及。
+    // 维护者裁决：四个重载返回值统一（bool = 是否写入成功）
+    bool setProperty(const QString &name, const QString &value);
+    bool setProperty(const QString &name, int value);
+    bool setProperty(const QString &name, double value);
+    bool setProperty(const QString &name, bool value);
     QString propertyString(const QString &name);
     // 实时读属性（N3）：失败返 fallback；pause 等标志属性必须走 FLAG 格式
     double propertyDouble(const QString &name, double fallback);
     bool propertyFlag(const QString &name, bool fallback);
     // 实时读整型属性（R4 类型化回填）：失败返 fallback
     qint64 propertyInt64(const QString &name, qint64 fallback);
+    // N42：滤镜链结构化读（af / vf object settings list）。MPV_FORMAT_NODE 读出
+    // 链表逐项映射为条目（enabled 直取，text 由 label + name + params 序列化，
+    // 规则见 FilterListWidget::quoteParamValue）；不可读 / 失败返回空列表。GUI 线程直读
+    // （与 propertyString 同一线程口径，client API 除 wait_event 外线程安全）
+    QList<FilterEntry> filterEntries(const QString &name);
 
     // N13：轨道信息（track-list 解析产物）
     struct TrackInfo {

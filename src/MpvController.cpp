@@ -2,6 +2,8 @@
 
 #include "MpvController.h"
 
+#include "FilterListWidget.h"
+
 namespace {
 
 enum ObservedProperty {
@@ -153,6 +155,79 @@ QList<MpvController::ChapterInfo> parseChapterList(const mpv_node *node) {
                 info.time = double(v->u.int64);
         }
         result.append(info);
+    }
+    return result;
+}
+
+// N42：af / vf node 链表 → 条目列表。结构化读彻底绕开转义串解析（F4）；
+// text 序列化：[@label:] + name [+ "=" 参数串]——位置参数（键 @n）按 n 升序
+// 置于最前、命名参数随后按 key 排序（QMap 有序，F13），值经引号选择
+// （[...] 配平优先、不配平回退 %n%，FilterListWidget::quoteParamValue）
+QList<FilterEntry> parseFilterNode(const mpv_node *node) {
+    QList<FilterEntry> result;
+    if (!node || node->format != MPV_FORMAT_NODE_ARRAY)
+        return result;
+    mpv_node_list *list = node->u.list;
+    for (int i = 0; i < list->num; ++i) {
+        const mpv_node *entry = &list->values[i];
+        if (entry->format != MPV_FORMAT_NODE_MAP)
+            continue;
+        QString name;
+        QString label;
+        QList<QPair<int, QString>> positional; // 后缀 n → 值（键 "@0"/"@1"/...）
+        QMap<QString, QString> named;
+        bool enabled = true;
+        mpv_node_list *map = entry->u.list;
+        for (int j = 0; j < map->num; ++j) {
+            const QString key = QString::fromUtf8(map->keys[j]);
+            const mpv_node *v = &map->values[j];
+            if (key == QLatin1String("enabled") && v->format == MPV_FORMAT_FLAG)
+                enabled = v->u.flag != 0;
+            else if (key == QLatin1String("label") && v->format == MPV_FORMAT_STRING)
+                label = QString::fromUtf8(v->u.string);
+            else if (key == QLatin1String("name") && v->format == MPV_FORMAT_STRING)
+                name = QString::fromUtf8(v->u.string);
+            else if (key == QLatin1String("params") && v->format == MPV_FORMAT_NODE_MAP) {
+                mpv_node_list *pm = v->u.list;
+                for (int k = 0; k < pm->num; ++k) {
+                    const QString pk = QString::fromUtf8(pm->keys[k]);
+                    const QString pv = (pm->values[k].format == MPV_FORMAT_STRING)
+                                           ? QString::fromUtf8(pm->values[k].u.string)
+                                           : QString();
+                    if (pk.startsWith(u'@')) {
+                        bool ok = false;
+                        const int n = pk.mid(1).toInt(&ok);
+                        // max 加括号：规避 windows.h 的 min/max 宏污染
+                        positional.append({ok ? n : (std::numeric_limits<int>::max)(), pv});
+                    } else {
+                        named.insert(pk, pv);
+                    }
+                }
+            }
+        }
+        if (name.isEmpty())
+            continue; // 无名残缺条目：node 读侧不该出现，防御性跳过
+        std::sort(positional.begin(), positional.end(),
+                  [](const QPair<int, QString> &a, const QPair<int, QString> &b) {
+                      return a.first < b.first;
+                  });
+        QString text;
+        if (!label.isEmpty())
+            text = u'@' + label + u':';
+        text += name;
+        if (!positional.isEmpty() || !named.isEmpty()) {
+            QStringList params;
+            for (const auto &p : positional)
+                params.append(FilterListWidget::quoteParamValue(p.second));
+            for (auto it = named.cbegin(); it != named.cend(); ++it)
+                params.append(it.key() + u'=' + FilterListWidget::quoteParamValue(it.value()));
+            text += u'=';
+            text += params.join(u':');
+        }
+        FilterEntry item;
+        item.enabled = enabled;
+        item.text = text;
+        result.append(item);
     }
     return result;
 }
@@ -336,28 +411,41 @@ void MpvController::command(const QStringList &args) {
     mpv_command(m_mpv, argv.data());
 }
 
-void MpvController::setProperty(const QString &name, const QString &value) {
-    mpv_set_property_string(m_mpv, name.toUtf8().constData(), value.toUtf8().constData());
+bool MpvController::setProperty(const QString &name, const QString &value) {
+    // N42：返回实际写入结果——失败（顶层语法错误 / 未知滤镜名等）时 mpv 保持
+    // 原值不清理（F5），调用方据其决定不写 conf
+    return mpv_set_property_string(m_mpv, name.toUtf8().constData(), value.toUtf8().constData()) ==
+           0;
 }
 
-void MpvController::setProperty(const QString &name, int value) {
+bool MpvController::setProperty(const QString &name, int value) {
     int64_t v = value;
-    mpv_set_property(m_mpv, name.toUtf8().constData(), MPV_FORMAT_INT64, &v);
+    return mpv_set_property(m_mpv, name.toUtf8().constData(), MPV_FORMAT_INT64, &v) == 0;
 }
 
-void MpvController::setProperty(const QString &name, double value) {
-    mpv_set_property(m_mpv, name.toUtf8().constData(), MPV_FORMAT_DOUBLE, &value);
+bool MpvController::setProperty(const QString &name, double value) {
+    return mpv_set_property(m_mpv, name.toUtf8().constData(), MPV_FORMAT_DOUBLE, &value) == 0;
 }
 
-void MpvController::setProperty(const QString &name, bool value) {
+bool MpvController::setProperty(const QString &name, bool value) {
     int v = value ? 1 : 0;
-    mpv_set_property(m_mpv, name.toUtf8().constData(), MPV_FORMAT_FLAG, &v);
+    return mpv_set_property(m_mpv, name.toUtf8().constData(), MPV_FORMAT_FLAG, &v) == 0;
 }
 
 QString MpvController::propertyString(const QString &name) {
     char *s = mpv_get_property_string(m_mpv, name.toUtf8().constData());
     QString result = s ? QString::fromUtf8(s) : QString();
     mpv_free(s);
+    return result;
+}
+
+QList<FilterEntry> MpvController::filterEntries(const QString &name) {
+    QList<FilterEntry> result;
+    mpv_node node;
+    if (mpv_get_property(m_mpv, name.toUtf8().constData(), MPV_FORMAT_NODE, &node) != 0)
+        return result; // 失败 / 不可读 → 空列表（调用方按空滤镜链呈现）
+    result = parseFilterNode(&node);
+    mpv_free_node_contents(&node);
     return result;
 }
 
