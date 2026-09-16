@@ -124,6 +124,12 @@ class MainWindow : public QMainWindow {
     void switchToTrack(const MpvController::TrackInfo &t);
     void disableSubtitles();
 
+    // N43：播放菜单的滤镜子菜单（视频在前）——条目与启用态在播放菜单弹出时
+    // 按 af / vf 属性实时重建；点击条目翻转其启用位并整串下发（运行期态，
+    // 不写 conf）
+    void rebuildFilterMenus();
+    void toggleFilterEntry(const QString &property, int index);
+
     // N15：章节与书签
     void rebuildChapterMenu();
     void updateChapterMenuState();
@@ -232,6 +238,10 @@ class MainWindow : public QMainWindow {
     QMenu *m_audioStreamMenu = nullptr;
     QMenu *m_subStreamMenu = nullptr;
     QPushButton *m_streamButton = nullptr; // ♪ 流选择按钮
+
+    // ---- N43：滤镜子菜单（条目弹出时按属性实时重建，不作缓存）----
+    QMenu *m_videoFilterMenu = nullptr;
+    QMenu *m_audioFilterMenu = nullptr;
 
     // ---- N15：章节与书签 ----
     QMenu *m_chapterMenu = nullptr;

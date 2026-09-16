@@ -7,6 +7,7 @@
 #include "BookmarkManager.h"
 #include "ChapterSlider.h"
 #include "Constants.h"
+#include "FilterListWidget.h"
 #include "MpvController.h"
 #include "NavigatorPanel.h"
 #include "PlaylistWidget.h"
@@ -397,6 +398,15 @@ void MainWindow::createMenus() {
     connect(act(AM::Id::SpeedDown), &QAction::triggered, this, [this] { changeSpeed(-0.25); });
     playMenu->addAction(act(AM::Id::SpeedReset));
     connect(act(AM::Id::SpeedReset), &QAction::triggered, this, &MainWindow::resetSpeed);
+    // N43：视频/音频滤镜子菜单（视频在前，与流选择组同序），位于速度组与流选择组
+    // 之间。重建挂父菜单的 aboutToShow——子菜单被禁用时不可能被展开、自身
+    // aboutToShow 永不触发，靠它自己翻转不了"从无滤镜到有滤镜"的启用态
+    playMenu->addSeparator();
+    m_videoFilterMenu = playMenu->addMenu(tr("Video Filters"));
+    m_audioFilterMenu = playMenu->addMenu(tr("Audio Filters"));
+    m_videoFilterMenu->setEnabled(false);
+    m_audioFilterMenu->setEnabled(false);
+    connect(playMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildFilterMenus);
     // N13：视频/音频/字幕流三子菜单（视频在前），无流时整菜单禁用
     playMenu->addSeparator();
     m_videoStreamMenu = playMenu->addMenu(tr("Video"));
@@ -2124,6 +2134,42 @@ void MainWindow::switchToTrack(const MpvController::TrackInfo &t) {
 void MainWindow::disableSubtitles() {
     m_controller->setProperty(QStringLiteral("sid"), QStringLiteral("no"));
     showOsd(tr("Subtitle: None"));
+}
+
+// ---- N43：播放菜单的滤镜子菜单 ----
+
+// 弹出时整体重建（挂父菜单 Play 的 aboutToShow，见 createMenus）：条目与勾选态
+// 每次按属性实时读重算，故菜单打开时所见即当前生效状态；无条目则整菜单禁用
+void MainWindow::rebuildFilterMenus() {
+    auto rebuild = [this](QMenu *menu, const QString &property) {
+        if (!menu)
+            return;
+        menu->clear();
+        const QList<FilterEntry> entries = m_controller->filterEntries(property);
+        const int count = int(entries.size());
+        for (int i = 0; i < count; ++i) {
+            QAction *a = menu->addAction(FilterListWidget::entryDisplayText(entries[i].text));
+            a->setCheckable(true);
+            a->setChecked(entries[i].enabled);
+            connect(a, &QAction::triggered, this,
+                    [this, property, i] { toggleFilterEntry(property, i); });
+        }
+        menu->setEnabled(count > 0);
+    };
+    rebuild(m_videoFilterMenu, QStringLiteral("vf"));
+    rebuild(m_audioFilterMenu, QStringLiteral("af"));
+}
+
+// 点击条目：翻转启用位后整串重写——禁停位就是编译串上的 ! 前缀，与设置对话框
+// 共用 compileEntries 一条写侧链路（不用 mpv 的 af/vf toggle 命令：那套语义是
+// 运行期增删链上滤镜，会与 ! 位这一唯一启停真相分叉）。只改运行期属性，不写
+// conf——持久配置的唯一写入口仍是设置对话框的 Apply
+void MainWindow::toggleFilterEntry(const QString &property, int index) {
+    QList<FilterEntry> entries = m_controller->filterEntries(property);
+    if (index < 0 || index >= int(entries.size()))
+        return; // 菜单弹出后链路被外部改动：按下标找不到对应条目则不动
+    entries[index].enabled = !entries[index].enabled;
+    m_controller->setProperty(property, FilterListWidget::compileEntries(entries));
 }
 
 // ---- N15：章节与书签 ----

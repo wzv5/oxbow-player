@@ -183,6 +183,19 @@ bool FilterListWidget::hasTopLevelComma(const QString &text) {
     return topLevelCharPos(text, 0, u',') >= 0;
 }
 
+// N43：菜单显示文案，口径见头文件。标签前缀定位复用 labelColonPos（与编译侧插 !、
+// 粘贴侧剥 ! 同一规则），故此处不再重复"@ 开头 + 顶层冒号"的扫描
+QString FilterListWidget::entryDisplayText(const QString &text) {
+    const qsizetype colon = labelColonPos(text);
+    if (colon < 0)
+        return text; // 无标签前缀：省略名称部分，只显示条目全文
+    const QString name = text.mid(1, colon - 1);
+    const QString params = text.mid(colon + 1);
+    if (name.isEmpty() || params.isEmpty())
+        return text; // 畸形条目（@:… / @ln:）：原样显示，不产生空段
+    return name + QStringLiteral(": ") + params;
+}
+
 // ——控件——
 
 FilterListWidget::FilterListWidget(const QString &title, const QList<FilterPreset> &presets,

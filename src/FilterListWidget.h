@@ -76,6 +76,13 @@ class FilterListWidget : public QGroupBox {
     // 条目分隔符，值中的逗号必须用引号包裹
     static bool hasTopLevelComma(const QString &text);
 
+    // N43：菜单显示文案——`名称: 参数`（半角冒号 + 一个空格）。名称 = 条目的
+    // @label: 标签前缀（预置插入时挂的 @<预置名>:），参数 = 该前缀之后的条目
+    // 全文（name 与 = 之后的参数串）；无标签前缀时省略名称部分、原样返回条目
+    // 全文。标签前缀定位与编译 / 粘贴侧同源（labelColonPos），不另起扫描；
+    // 前缀后无正文的畸形条目（@ln:）同样原样返回，不产生空尾段
+    static QString entryDisplayText(const QString &text);
+
     // 当前条目列表（勾选态 → enabled，列 2 文本 → text）
     QList<FilterEntry> entries() const;
     // 整体重建条目（回填 / 粘贴整串）：不发 changed()（回填在 m_blockApply 守护内
