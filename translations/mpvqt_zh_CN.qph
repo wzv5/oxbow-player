@@ -473,6 +473,14 @@
     <target>静音: 关闭</target>
 </phrase>
 <phrase>
+    <source>Video Filters</source>
+    <target>视频滤镜</target>
+</phrase>
+<phrase>
+    <source>Audio Filters</source>
+    <target>音频滤镜</target>
+</phrase>
+<phrase>
     <source>Media files (%1);;All files (*)</source>
     <target>媒体文件 (%1);;所有文件 (*)</target>
 </phrase>
@@ -799,24 +807,12 @@ Video rendering is performed by mpv; this plugin only provides the graphical int
     <target>响度均衡（流媒体，-14 LUFS）</target>
 </phrase>
 <phrase>
-    <source>Loudness14</source>
-    <target>响度均衡14</target>
-</phrase>
-<phrase>
     <source>Loudness Normalization (EBU R128, -23 LUFS)</source>
     <target>响度均衡（EBU R128，-23 LUFS）</target>
 </phrase>
 <phrase>
-    <source>Loudness23</source>
-    <target>响度均衡23</target>
-</phrase>
-<phrase>
     <source>Resample 48k</source>
     <target>重采样 48k</target>
-</phrase>
-<phrase>
-    <source>Resample48k</source>
-    <target>重采样48k</target>
 </phrase>
 <phrase>
     <source>Dynamic Range Compression</source>
@@ -883,10 +879,6 @@ Video rendering is performed by mpv; this plugin only provides the graphical int
     <target>缩放</target>
 </phrase>
 <phrase>
-    <source>Scale1080p</source>
-    <target>缩放1080p</target>
-</phrase>
-<phrase>
     <source>Ignore</source>
     <target></target>
 </phrase>
@@ -925,6 +917,22 @@ Video rendering is performed by mpv; this plugin only provides the graphical int
 <phrase>
     <source>Loop Playback</source>
     <target>循环播放</target>
+</phrase>
+<phrase>
+    <source>Loudness</source>
+    <target>响度均衡</target>
+</phrase>
+<phrase>
+    <source>Resample</source>
+    <target>重采样</target>
+</phrase>
+<phrase>
+    <source>For adjusting volume</source>
+    <target>用于调整音量</target>
+</phrase>
+<phrase>
+    <source>For directory enumeration including subdirectories</source>
+    <target>用于包含子目录的目录枚举</target>
 </phrase>
 <phrase>
     <source>Video</source>
