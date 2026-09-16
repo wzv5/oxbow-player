@@ -223,13 +223,13 @@ QList<SettingChoice> hwdecPresets() {
 // 缺此标记则 .ts 不收录、译文永不生效
 QList<FilterPreset> audioFilterPresets() {
     return {{QT_TRANSLATE_NOOP("SettingsDialog", "Loudness Normalization (Streaming, -14 LUFS)"),
-             QT_TRANSLATE_NOOP("SettingsDialog", "Loudness14"),
+             QT_TRANSLATE_NOOP("SettingsDialog", "Loudness"),
              {QStringLiteral("loudnorm=I=-14:TP=-1:LRA=11")}},
             {QT_TRANSLATE_NOOP("SettingsDialog", "Loudness Normalization (EBU R128, -23 LUFS)"),
-             QT_TRANSLATE_NOOP("SettingsDialog", "Loudness23"),
+             QT_TRANSLATE_NOOP("SettingsDialog", "Loudness"),
              {QStringLiteral("loudnorm=I=-23:TP=-1:LRA=11")}},
             {QT_TRANSLATE_NOOP("SettingsDialog", "Resample 48k"),
-             QT_TRANSLATE_NOOP("SettingsDialog", "Resample48k"),
+             QT_TRANSLATE_NOOP("SettingsDialog", "Resample"),
              {QStringLiteral("aresample=48000")}},
             {QT_TRANSLATE_NOOP("SettingsDialog", "Dynamic Range Compression"),
              QT_TRANSLATE_NOOP("SettingsDialog", "DRC"),
@@ -266,7 +266,7 @@ QList<FilterPreset> videoFilterPresets() {
              QT_TRANSLATE_NOOP("SettingsDialog", "FlipV"),
              {QStringLiteral("vflip")}},
             {QT_TRANSLATE_NOOP("SettingsDialog", "Scale"),
-             QT_TRANSLATE_NOOP("SettingsDialog", "Scale1080p"),
+             QT_TRANSLATE_NOOP("SettingsDialog", "Scale"),
              {QStringLiteral("scale=1920:1080")}},
             {QT_TRANSLATE_NOOP("SettingsDialog", "Custom"), nullptr, {QString()}}};
 }
@@ -301,28 +301,26 @@ const QList<SettingCategory> &settingCatalog() {
                   .widget = WidgetKind::Combo,
                   .iniKey = "volumeWheelStep",
                   .choices = stepChoices,
-                  .fallback = 2}, // 维护者指定：滚轮步进默认 2
+                  .fallback = 2, // 维护者指定：滚轮步进默认 2
+                  .note = QT_TRANSLATE_NOOP("SettingsDialog", "For adjusting volume")},
                  {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Arrow Key Step"),
                   .widget = WidgetKind::Combo,
                   .iniKey = "volumeKeyStep",
                   .choices = stepChoices,
-                  .fallback = 5}, // 对齐现版：miss 兜底 5 而非第 0 项
+                  .fallback = 5, // 对齐现版：miss 兜底 5 而非第 0 项
+                  .note = QT_TRANSLATE_NOOP("SettingsDialog", "For adjusting volume")},
                  {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Recursive Depth Limit"),
                   .widget = WidgetKind::SpinBox,
                   .iniKey = "recursiveDepthLimit",
                   .fallback = App::recursiveDepthLimitDefault(),
-                  .range = {0, App::recursiveDepthLimitMax()}},
+                  .range = {0, App::recursiveDepthLimitMax()},
+                  .note = QT_TRANSLATE_NOOP("SettingsDialog",
+                                            "For directory enumeration including subdirectories")},
              }},
         // ② 播放 —— mpv 选项（写 mpv.conf + 下发）
         {.title = QT_TRANSLATE_NOOP("SettingsDialog", "Playback"),
          .items =
              {
-                 {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Max Volume"),
-                  .widget = WidgetKind::SpinBox,
-                  .mpvKeys = {"volume-max"},
-                  .fallback = 130,
-                  .range = {100, 1000},
-                  .mpvType = MpvType::Double},
                  {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Loop Playback"),
                   .widget = WidgetKind::Combo,
                   .mpvKeys = {"loop-file", "loop-playlist"},
@@ -356,6 +354,12 @@ const QList<SettingCategory> &settingCatalog() {
         {.title = QT_TRANSLATE_NOOP("SettingsDialog", "Audio"),
          .items =
              {
+                 {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Max Volume"),
+                  .widget = WidgetKind::SpinBox,
+                  .mpvKeys = {"volume-max"},
+                  .fallback = 130,
+                  .range = {100, 1000},
+                  .mpvType = MpvType::Double},
                  // N42：原单行文本框升级为滤镜列表编辑器（空值语义不变：无滤镜）
                  {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Audio Filters"),
                   .widget = WidgetKind::FilterList,

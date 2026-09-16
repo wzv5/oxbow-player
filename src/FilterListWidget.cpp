@@ -233,7 +233,9 @@ FilterListWidget::FilterListWidget(const QString &title, const QList<FilterPrese
     buttons->setSpacing(4);
 
     m_addButton = new QToolButton(this);
-    m_addButton->setText(tr("Add Filter"));
+    m_addButton->setText(
+        QStringLiteral("\u271A")); // U+271A 转义写法：Qt 无内置 add 图标，单色字符与主题无关
+    m_addButton->setToolTip(tr("Add Filter"));
     m_addButton->setPopupMode(QToolButton::InstantPopup);
     QMenu *presetMenu = new QMenu(m_addButton);
     for (const FilterPreset &preset : m_presets) {
