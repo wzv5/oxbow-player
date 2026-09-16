@@ -169,6 +169,30 @@
     <target>子目录不可读，跳过：%1</target>
 </phrase>
 <phrase>
+    <source>Add Filter</source>
+    <target>添加滤镜</target>
+</phrase>
+<phrase>
+    <source>Remove selected entries</source>
+    <target>移除选中项</target>
+</phrase>
+<phrase>
+    <source>Move up</source>
+    <target>上移</target>
+</phrase>
+<phrase>
+    <source>Move down</source>
+    <target>下移</target>
+</phrase>
+<phrase>
+    <source>Copy String</source>
+    <target>复制整串</target>
+</phrase>
+<phrase>
+    <source>Paste String</source>
+    <target>粘贴整串</target>
+</phrase>
+<phrase>
     <source>Request timed out (total limit %1 ms)</source>
     <target></target>
 </phrase>
@@ -771,6 +795,98 @@ Video rendering is performed by mpv; this plugin only provides the graphical int
     <target>列表循环</target>
 </phrase>
 <phrase>
+    <source>Loudness Normalization (Streaming, -14 LUFS)</source>
+    <target>响度均衡（流媒体，-14 LUFS）</target>
+</phrase>
+<phrase>
+    <source>Loudness14</source>
+    <target>响度均衡14</target>
+</phrase>
+<phrase>
+    <source>Loudness Normalization (EBU R128, -23 LUFS)</source>
+    <target>响度均衡（EBU R128，-23 LUFS）</target>
+</phrase>
+<phrase>
+    <source>Loudness23</source>
+    <target>响度均衡23</target>
+</phrase>
+<phrase>
+    <source>Resample 48k</source>
+    <target>重采样 48k</target>
+</phrase>
+<phrase>
+    <source>Resample48k</source>
+    <target>重采样48k</target>
+</phrase>
+<phrase>
+    <source>Dynamic Range Compression</source>
+    <target>动态范围压缩</target>
+</phrase>
+<phrase>
+    <source>DRC</source>
+    <target>动态范围压缩</target>
+</phrase>
+<phrase>
+    <source>Volume Boost (+6 dB)</source>
+    <target>音量放大（+6 dB）</target>
+</phrase>
+<phrase>
+    <source>VolumeBoost</source>
+    <target>音量放大</target>
+</phrase>
+<phrase>
+    <source>Custom</source>
+    <target>自定义</target>
+</phrase>
+<phrase>
+    <source>Deinterlace</source>
+    <target>反交错</target>
+</phrase>
+<phrase>
+    <source>Denoise</source>
+    <target>降噪</target>
+</phrase>
+<phrase>
+    <source>Sharpen</source>
+    <target>锐化</target>
+</phrase>
+<phrase>
+    <source>Deband</source>
+    <target>去色带</target>
+</phrase>
+<phrase>
+    <source>Rotate 90°</source>
+    <target>旋转 90°</target>
+</phrase>
+<phrase>
+    <source>Rotate90</source>
+    <target>旋转90度</target>
+</phrase>
+<phrase>
+    <source>Flip Horizontally</source>
+    <target>水平翻转</target>
+</phrase>
+<phrase>
+    <source>FlipH</source>
+    <target>水平翻转</target>
+</phrase>
+<phrase>
+    <source>Flip Vertically</source>
+    <target>垂直翻转</target>
+</phrase>
+<phrase>
+    <source>FlipV</source>
+    <target>垂直翻转</target>
+</phrase>
+<phrase>
+    <source>Scale</source>
+    <target>缩放</target>
+</phrase>
+<phrase>
+    <source>Scale1080p</source>
+    <target>缩放1080p</target>
+</phrase>
+<phrase>
     <source>Ignore</source>
     <target></target>
 </phrase>
@@ -819,12 +935,24 @@ Video rendering is performed by mpv; this plugin only provides the graphical int
     <target>硬件解码</target>
 </phrase>
 <phrase>
+    <source>Video Filters</source>
+    <target>视频滤镜</target>
+</phrase>
+<phrase>
+    <source>To use video filters, set Hardware Decoding to a copy mode (auto-copy) or no; changing it during playback may require stop and play to take effect</source>
+    <target>要使用视频滤镜，请将“硬件解码”设置为 copy 模式（auto-copy）或 no；可能需要停止播放后重新播放才能生效</target>
+</phrase>
+<phrase>
     <source>Audio</source>
     <target>音频</target>
 </phrase>
 <phrase>
     <source>Audio Filters</source>
     <target>音频滤镜</target>
+</phrase>
+<phrase>
+    <source>loudnorm works internally at 192 kHz in dynamic mode and raises the output sample rate; add aresample=48000 when a fixed rate is needed</source>
+    <target>loudnorm 在动态模式下内部以 192 kHz 运行，并会提高输出采样率；若需要固定采样率，请添加 aresample=48000</target>
 </phrase>
 <phrase>
     <source>Network</source>
@@ -849,6 +977,12 @@ Video rendering is performed by mpv; this plugin only provides the graphical int
 <phrase>
     <source>Settings</source>
     <target>设置</target>
+</phrase>
+<phrase>
+    <source>Failed to apply the following mpv options: %1
+These values were not written to mpv.conf.</source>
+    <target>应用以下 mpv 选项失败：%1
+这些值未被写入 mpv.conf。</target>
 </phrase>
 <phrase>
     <source>Local static list</source>
