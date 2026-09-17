@@ -161,6 +161,13 @@ class TestDirProvider : public QObject {
     // 同样识别不出被拒目录（它被当成空目录静默处理），非仅"测试造不出来"；
     // 已知不修，见主仓 AGENTS.md 持久陷阱。该用例仅在可 chmod 的平台执行
     void unreadableSubdirectoryYieldsWarning();
+    // N44：参数定形的静态纯函数——normalizeRoot（相对转绝对、转原生分隔符、
+    // 网络/流原样、幂等），取值与"未变更"判定共用同一出口
+    void normalizeRootShapesInputAndIsIdempotent();
+    // N44：validateInput 三条（空 / 网络流 / 不存在）与合法目录通过
+    void validateInputCoversEmptyStreamMissingAndValid();
+    // N44：parseExtensions 口径（空白分隔、去前导点、转小写、去重保序、空表）
+    void parseExtensionsNormalizesTokens();
 };
 
 void TestDirProvider::symlinkLoopToRootIsPruned() {
@@ -379,6 +386,65 @@ void TestDirProvider::unreadableSubdirectoryYieldsWarning() {
                                                   QFile::ExeOwner | QFile::ReadUser |
                                                   QFile::WriteUser | QFile::ExeUser));
 #endif
+}
+
+// N44：normalizeRoot 是页内取值与 hasChanges 判定的唯一出口——幂等是硬要求，
+// 已规范形态再定形必须结果不变，否则"原样回显 + 未改动"会被误判成有改动
+void TestDirProvider::normalizeRootShapesInputAndIsIdempotent() {
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    const QString absolute = QDir::toNativeSeparators(tmp.path());
+
+    // 相对路径转绝对（基于进程 CWD，只断言结果为绝对路径）
+    const QString relative = QDir::current().relativeFilePath(tmp.path());
+    QVERIFY(QDir(DirProvider::normalizeRoot(relative)).isAbsolute());
+
+    // 转原生分隔符：正斜杠输入收敛为原生形态
+    const QString forward = QString(tmp.path()).replace(QLatin1Char('\\'), QLatin1Char('/'));
+    QCOMPARE(DirProvider::normalizeRoot(forward), absolute);
+
+    // 空输入（含纯空白）原样为空
+    QVERIFY(DirProvider::normalizeRoot(QString()).isEmpty());
+    QVERIFY(DirProvider::normalizeRoot(QStringLiteral("   ")).isEmpty());
+
+    // 网络 / 流路径原样（不绝对化、不转分隔符）
+    const QString stream = QStringLiteral("http://host/dav/");
+    QCOMPARE(DirProvider::normalizeRoot(stream), stream);
+
+    // 幂等：定形结果再定形不变（存量回显的未变更判定依赖此性质）
+    QCOMPARE(DirProvider::normalizeRoot(absolute), absolute);
+    QCOMPARE(DirProvider::normalizeRoot(stream), stream);
+}
+
+// N44：三条校验顺序与重构前一致；入参是控件原始文本（函数内部自行定形）
+void TestDirProvider::validateInputCoversEmptyStreamMissingAndValid() {
+    // 空 ⇒ 报错
+    QVERIFY(DirProvider::validateInput(QString()).has_value());
+    // 网络 / 流路径 ⇒ 拒绝（本地目录列表不支持）
+    QVERIFY(DirProvider::validateInput(QStringLiteral("http://host/dav/")).has_value());
+    QVERIFY(DirProvider::validateInput(QStringLiteral("ftp://host/dir/")).has_value());
+    // 目录不存在 ⇒ 报错（并带出路径）
+    const QString missing = QDir::temp().filePath(QStringLiteral("mpvqt-n44-missing-dir"));
+    QVERIFY(!QDir(missing).exists());
+    const auto missingError = DirProvider::validateInput(missing);
+    QVERIFY(missingError.has_value());
+    QVERIFY(missingError->contains(QStringLiteral("mpvqt-n44-missing-dir")));
+    // 合法目录 ⇒ 通过
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    QVERIFY(!DirProvider::validateInput(tmp.path()).has_value());
+}
+
+// N44：扩展名编辑区文本 → 规范清单；空表即不过滤
+void TestDirProvider::parseExtensionsNormalizesTokens() {
+    QCOMPARE(DirProvider::parseExtensions(QStringLiteral("MP4 .mkv   avi avi .TS")),
+             QStringList({QStringLiteral("mp4"), QStringLiteral("mkv"), QStringLiteral("avi"),
+                          QStringLiteral("ts")}));
+    // 单条与空文本
+    QCOMPARE(DirProvider::parseExtensions(QStringLiteral(".WebM")),
+             QStringList({QStringLiteral("webm")}));
+    QVERIFY(DirProvider::parseExtensions(QString()).isEmpty());
+    QVERIFY(DirProvider::parseExtensions(QStringLiteral("  \t ")).isEmpty());
 }
 
 // 一类一可执行（R5）：自带 main（QTEST_GUILESS_MAIN），无 GUI 依赖

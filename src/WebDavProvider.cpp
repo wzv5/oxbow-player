@@ -3,6 +3,7 @@
 #include "WebDavProvider.h"
 
 #include "Constants.h"
+#include "ProviderSettingsPage.h"
 #include "ServiceRegistry.h"
 #include "TraversalPolicy.h"
 #include "Util.h"
@@ -43,19 +44,6 @@ QString stripTrailingSlash(QString s) {
     return s;
 }
 
-// 目录条目补尾斜杠（RFC 4918 §5.2 / §8.3 为 SHOULD 级——服务器生成的集合 URL SHOULD
-// 带尾斜杠、客户端 SHOULD 用带斜杠形式，非 MUST，故现实服务端常省略）。
-// 以 QUrl 改 path 而非串尾硬拼（URL 可能带 query / fragment），形态仍经
-// Util::nativePath 收口。补齐后它作下一跳 PROPFIND 的基 URL 才成立——否则
-// QUrl::resolved 会把末段当文件名替换掉，整层目录的路径都少一段
-QString ensureTrailingSlash(const QString &url) {
-    QUrl u(url, QUrl::ParsingMode::TolerantMode);
-    const QString path = u.path(QUrl::ComponentFormattingOption::FullyEncoded);
-    if (path.endsWith(QLatin1Char('/')))
-        return url;
-    u.setPath(path + QLatin1Char('/'), QUrl::ParsingMode::StrictMode);
-    return Util::nativePath(u.toString(QUrl::ComponentFormattingOption::FullyEncoded));
-}
 } // namespace
 
 WebDavProvider::WebDavProvider(const QString &rootUrl, const QString &user, const QString &password,
@@ -64,14 +52,182 @@ WebDavProvider::WebDavProvider(const QString &rootUrl, const QString &user, cons
     : PlaylistProvider(registry), m_rootUrl(rootUrl), m_user(user), m_password(password),
       m_recursive(recursive), m_extensions(extensions) {}
 
-PlaylistProvider::Type WebDavProvider::type() const { return Type::WebDav; }
+// WebDAV 目录的参数页（N44 §2.5.3）：URL 行 + 用户名行 + 密码行 + 递归 + 扩展名行，
+// 内容与重构前的 WebDAV 参数区逐项一致；原 16px 左缩进取消（四行布局下参数区
+// 不再挂在某个单选之下）。页面类只在本文件可见，经 createWebDavSettingsPage 产出
+class WebDavSettingsPage : public ProviderSettingsPage {
+    Q_OBJECT
+  public:
+    WebDavSettingsPage(const WebDavProvider *seed, const std::shared_ptr<ServiceRegistry> &registry,
+                       QWidget *parent)
+        : ProviderSettingsPage(parent), m_seed(seed), m_registry(registry) {
+        auto *layout = new QVBoxLayout(this);
+        layout->setContentsMargins(0, 0, 0, 0);
+        auto *form = new QFormLayout;
+        form->setContentsMargins(0, 0, 0, 0);
 
-QString WebDavProvider::describe() const {
-    const QString suffix =
-        m_recursive ? trText(QT_TRANSLATE_NOOP("WebDavProvider", " (with subdirectories)"))
-                    : QString();
-    return trText(QT_TRANSLATE_NOOP("WebDavProvider", "WebDAV directory: %1%2"))
-        .arg(m_rootUrl, suffix);
+        m_urlEdit = new QLineEdit;
+        form->addRow(tr("URL"), m_urlEdit);
+        m_userEdit = new QLineEdit;
+        form->addRow(tr("Username"), m_userEdit);
+        m_passwordEdit = new QLineEdit;
+        m_passwordEdit->setEchoMode(QLineEdit::EchoMode::Password);
+        form->addRow(tr("Password"), m_passwordEdit);
+
+        m_recursiveCheck = new QCheckBox(tr("Include Subdirectories"));
+        form->addRow(m_recursiveCheck); // 单控件行：占第 1 列起、跨两列
+
+        m_extensionsEdit = new QLineEdit;
+        auto *extRow = new QHBoxLayout;
+        extRow->addWidget(m_extensionsEdit, 1);
+        auto *extResetBtn = new QPushButton(QStringLiteral("↺"));
+        extResetBtn->setToolTip(tr("Reset to default extension list"));
+        extResetBtn->setFixedWidth(28);
+        extRow->addWidget(extResetBtn);
+        // 说明文字移到编辑框下方单独一行（原在标题的括号里），灰色显示：
+        // 标题只写 Filter，扩展名这一层含义由本行说明承担
+        auto *extNote =
+            new QLabel(tr("Space-separated file extensions; leave empty for no filter"));
+        // 不开 wordWrap：备注按单行计入宽度，由它把表单区（进而对话框）撑宽。
+        // 开换行会让 QLabel 变成"用高度换宽度"，布局反而不为它撑宽、把它压到折行
+        extNote->setEnabled(false); // 禁用态即取调色板的灰，跟随主题不硬编码颜色
+        // 备注右侧留 12px：它是本列最宽的一项，不留就会直接贴住窗口右边
+        auto *noteRow = new QHBoxLayout;
+        noteRow->addWidget(extNote);
+        noteRow->addSpacing(12);
+        auto *extField = new QVBoxLayout;
+        extField->addLayout(extRow);
+        extField->addLayout(noteRow);
+        form->addRow(tr("Filter"), extField);
+
+        layout->addLayout(form);
+        // 同目录页：把被拉伸出来的余量压到内容之下，避免行间距被均摊撑大
+        layout->addStretch(1);
+
+        // 回填：rootUrl 已含尾斜杠，URL 框原样回显；无回显来源（新建 / 换类型）
+        // 时扩展名框预填全局默认清单
+        if (m_seed) {
+            m_urlEdit->setText(m_seed->rootUrl());
+            m_userEdit->setText(m_seed->user());
+            m_passwordEdit->setText(m_seed->password());
+            m_recursiveCheck->setChecked(m_seed->recursive());
+            m_extensionsEdit->setText(m_seed->extensions().join(QLatin1Char(' ')));
+        } else {
+            m_extensionsEdit->setText(App::defaultMediaExtensions().join(QLatin1Char(' ')));
+        }
+
+        // 复位：预填默认清单（不校验、可继续编辑）
+        connect(extResetBtn, &QPushButton::clicked, this, [this] {
+            m_extensionsEdit->setText(App::defaultMediaExtensions().join(QLatin1Char(' ')));
+        });
+    }
+
+    std::optional<QString> validate() const override {
+        return WebDavProvider::validateInput(m_urlEdit->text());
+    }
+
+    bool hasChanges() const override {
+        return !m_seed || urlValue() != m_seed->rootUrl() || userValue() != m_seed->user() ||
+               passwordValue() != m_seed->password() ||
+               m_recursiveCheck->isChecked() != m_seed->recursive() ||
+               extensionsValue() != m_seed->extensions();
+    }
+
+    std::shared_ptr<PlaylistProvider> build() const override {
+        return std::make_shared<WebDavProvider>(urlValue(), userValue(), passwordValue(),
+                                                m_recursiveCheck->isChecked(), extensionsValue(),
+                                                m_registry);
+    }
+
+  private:
+    // 取规范化参数值（hasChanges 与 build 共用同一出口）
+    QString urlValue() const { return WebDavProvider::normalizeRootUrl(m_urlEdit->text()); }
+    QString userValue() const { return m_userEdit->text().trimmed(); }
+    // 密码不 trim——首尾空格可能是有效字符
+    QString passwordValue() const { return m_passwordEdit->text(); }
+    QStringList extensionsValue() const {
+        return WebDavProvider::parseExtensions(m_extensionsEdit->text());
+    }
+
+    const WebDavProvider *m_seed = nullptr;
+    std::shared_ptr<ServiceRegistry> m_registry;
+    QLineEdit *m_urlEdit = nullptr;
+    QLineEdit *m_userEdit = nullptr;
+    QLineEdit *m_passwordEdit = nullptr;
+    QCheckBox *m_recursiveCheck = nullptr;
+    QLineEdit *m_extensionsEdit = nullptr;
+};
+
+ProviderSettingsPage *createWebDavSettingsPage(const PlaylistProvider *seed,
+                                               const std::shared_ptr<ServiceRegistry> &registry,
+                                               QWidget *parent) {
+    // 同类型由调用方（对话框）保证：seed 非空即本类型
+    return new WebDavSettingsPage(seed ? static_cast<const WebDavProvider *>(seed) : nullptr,
+                                  registry, parent);
+}
+
+QString WebDavProvider::typeKey() const { return QLatin1String(kWebDavProviderKey); }
+
+QString WebDavProvider::displayName() {
+    return QCoreApplication::translate("WebDavProvider", kWebDavProviderName);
+}
+
+QString WebDavProvider::normalizeRootUrl(const QString &text) {
+    // URL 的来源处（N37 §3.1 第 1 条）：trim → 经 Util::nativePath 规范化（网络分支）
+    // → 补尾斜杠
+    QString normalized = text.trimmed();
+    if (normalized.isEmpty())
+        return normalized;
+    normalized = Util::nativePath(normalized);
+    // 尾斜杠补在 path 上：基目录语义只对路径成立，直接补在串尾会把分隔符塞进
+    // query（"…/dav?token=1/"）。query / fragment 原样保留在后
+    const qsizetype q = normalized.indexOf(QLatin1Char('?'));
+    const qsizetype f = normalized.indexOf(QLatin1Char('#'));
+    qsizetype cut = normalized.size();
+    if (q >= 0)
+        cut = qMin(cut, q);
+    if (f >= 0)
+        cut = qMin(cut, f);
+    QString head = normalized.left(cut);
+    if (!head.endsWith(QLatin1Char('/')))
+        head += QLatin1Char('/');
+    return head + normalized.mid(cut);
+}
+
+std::optional<QString> WebDavProvider::validateInput(const QString &rawUrl) {
+    // 入参是控件原始文本，内部先定形——不存在"必须先定形"的前置条件
+    const QString url = normalizeRootUrl(rawUrl);
+    if (url.isEmpty())
+        return trText(QT_TRANSLATE_NOOP("WebDavProvider", "Please enter a directory URL."));
+    // 只要求可解析且 scheme ∈ {http, https}；不得内嵌 userinfo（提示改用用户名 /
+    // 密码栏，避免凭据出现两个来源）。不做连通性探测——交由异步枚举，失败即
+    // 占位行 + 右键刷新重试（N37 口径不变）
+    const QUrl parsed(url, QUrl::ParsingMode::TolerantMode);
+    if (!parsed.isValid() || (parsed.scheme().toLower() != QLatin1String("http") &&
+                              parsed.scheme().toLower() != QLatin1String("https")))
+        return trText(
+            QT_TRANSLATE_NOOP("WebDavProvider", "Directory URL must be a valid http(s) URL."));
+    if (!parsed.userName(QUrl::ComponentFormattingOption::FullyDecoded).isEmpty() ||
+        !parsed.password(QUrl::ComponentFormattingOption::FullyDecoded).isEmpty())
+        return trText(QT_TRANSLATE_NOOP("WebDavProvider",
+                                        "Directory URL must not embed credentials; "
+                                        "use the username and password fields instead."));
+    return std::nullopt;
+}
+
+QStringList WebDavProvider::parseExtensions(const QString &text) {
+    // 与 DirProvider::parseExtensions 同口径（N44 §2.3：两份实现为已知并接受的代价）
+    QStringList out;
+    for (const QString &token :
+         text.split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts)) {
+        QString ext = token;
+        while (ext.startsWith(QLatin1Char('.')))
+            ext.remove(0, 1);
+        ext = ext.toLower();
+        if (!ext.isEmpty() && !out.contains(ext))
+            out << ext;
+    }
+    return out;
 }
 
 // 枚举：N32 统一后的 QtConcurrent 任务内逐层 DFS 顺序推进（在途至多 1 条请求，
@@ -217,7 +373,7 @@ bool WebDavProvider::supportsModify() const { return false; }
 bool WebDavProvider::supportsSort() const { return true; }
 
 void WebDavProvider::saveSettings(QSettings &settings) const {
-    settings.setValue(QStringLiteral("provider"), QStringLiteral("webdav"));
+    writeProviderKey(settings); // N44：类型键经基类取 typeKey()，不再写字面量
     settings.setValue(QStringLiteral("davUrl"), m_rootUrl);
     settings.setValue(QStringLiteral("davUser"), m_user);
     settings.setValue(QStringLiteral("davPassword"), m_password);
@@ -228,7 +384,7 @@ void WebDavProvider::saveSettings(QSettings &settings) const {
     settings.setValue(QStringLiteral("sortAscending"), sortAscending());
 }
 
-std::shared_ptr<WebDavProvider>
+std::shared_ptr<PlaylistProvider>
 WebDavProvider::load(QSettings &settings, const std::shared_ptr<ServiceRegistry> &registry) {
     auto provider = std::make_shared<WebDavProvider>(
         settings.value(QStringLiteral("davUrl")).toString(),
@@ -343,10 +499,11 @@ WebDavProvider::parseMultistatus(const QByteArray &body, const QUrl &baseUrl, co
 
         // 目录条目补尾斜杠（服务端常省略）：它只作下一跳 PROPFIND 的基 URL，
         // 尾斜杠是"基目录"语义的前提（自条目判定用 stripTrailingSlash，补齐与否
-        // 对跳过判定等价）
+        // 对跳过判定等价）。N44：同语义合并进 normalizeRootUrl——本处入参已是
+        // resolveEntryUrl 产出的规范串，结果与原实现逐字相同
         if (isCollection)
             out.collections.push_back(
-                {ensureTrailingSlash(entry.playUrl), entry.size, entry.modified});
+                {WebDavProvider::normalizeRootUrl(entry.playUrl), entry.size, entry.modified});
         else
             out.files.push_back(std::move(entry));
     };
@@ -405,3 +562,7 @@ QString WebDavProvider::davRequestError(const HttpClient::Response &resp, const 
     return trText(QT_TRANSLATE_NOOP("WebDavProvider", "Request failed (network error): %1"))
         .arg(target);
 }
+
+// N44：本文件定义了 Q_OBJECT 类（WebDavSettingsPage），CMake AUTOMOC 要求显式包含
+// 同名 .moc（否则 configure 期直接报错），按源文件名而非类名
+#include "WebDavProvider.moc"

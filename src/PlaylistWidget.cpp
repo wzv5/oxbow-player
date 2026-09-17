@@ -9,8 +9,8 @@
 #include "MediaInfoHelper.h"
 #include "MpvController.h"
 #include "PlaylistDelegate.h"
+#include "ProviderCatalog.h"
 #include "ServiceRegistry.h"
-#include "StaticProvider.h"
 #include "TraversalPolicy.h"
 #include "Util.h"
 
@@ -139,7 +139,9 @@ QListWidget *PlaylistWidget::createList() {
     connect(list, &QListWidget::itemDoubleClicked, this, &PlaylistWidget::onItemDoubleClicked);
     // N9：每个 tab 出生即配静态提供者（默认 tab 同样，仅持久化侧跳过）；
     // N35：registry 随构造注入（基类持有）；m_registry 于初始化列表创建，恒非空
-    m_providerOf.emplace(list, std::make_shared<StaticProvider>(m_registry));
+    // N44：默认 tab 的提供者出生点——经登记表第 0 项（默认提供者），
+    // 视图层不再认识具体提供者类型
+    m_providerOf.emplace(list, createDefaultProvider(m_registry));
     return list;
 }
 

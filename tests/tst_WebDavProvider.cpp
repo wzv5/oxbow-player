@@ -70,6 +70,13 @@ class TestWebDavProvider : public QObject {
     // propstat/prop + 目录自条目带双 propstat（404 属性块）+ collection 内联
     // 重声明 xmlns + <D:status> 元素——防"flat 扫描 / 下吞包裹层"回归
     void rcloneShapedResponse();
+    // N44：URL 定形静态纯函数——trim、补尾斜杠、尾斜杠只补在 path 上、幂等。
+    // 合并后枚举侧"给 collection 补尾斜杠"同用此函数
+    void normalizeRootUrlShapesInputAndIsIdempotent();
+    // N44：validateInput 三条（空 / 非 http(s) / 内嵌 userinfo）与合法 URL 通过
+    void validateInputCoversEmptySchemeAndCredentials();
+    // N44：parseExtensions 口径（与目录页同形，两份实现）
+    void parseExtensionsNormalizesTokens();
 };
 
 void TestWebDavProvider::normalEntriesPrefixed() {
@@ -366,6 +373,61 @@ void TestWebDavProvider::rcloneShapedResponse() {
     const auto &mp4 = result->files.at(2);
     QCOMPARE(mp4.playUrl, QStringLiteral("http://u:pw@server/test2.mp4"));
     QCOMPARE(*mp4.size, qint64(7195105));
+}
+
+// N44：URL 定形是页内取值与 hasChanges 判定的唯一出口；幂等是硬要求——
+// 已定形的 URL 再定形必须结果不变，否则回显未改动会被误判成有改动
+void TestWebDavProvider::normalizeRootUrlShapesInputAndIsIdempotent() {
+    // 补尾斜杠（基目录语义）
+    QCOMPARE(WebDavProvider::normalizeRootUrl(QStringLiteral("http://host/dav")),
+             QStringLiteral("http://host/dav/"));
+    // trim
+    QCOMPARE(WebDavProvider::normalizeRootUrl(QStringLiteral("  http://host/dav  ")),
+             QStringLiteral("http://host/dav/"));
+    // 尾斜杠只补在 path 上：不塞进 query / fragment
+    QCOMPARE(WebDavProvider::normalizeRootUrl(QStringLiteral("http://host/dav?token=1")),
+             QStringLiteral("http://host/dav/?token=1"));
+    QCOMPARE(WebDavProvider::normalizeRootUrl(QStringLiteral("http://host/dav#frag")),
+             QStringLiteral("http://host/dav/#frag"));
+    // 已有尾斜杠不重复补
+    QCOMPARE(WebDavProvider::normalizeRootUrl(QStringLiteral("http://host/dav/")),
+             QStringLiteral("http://host/dav/"));
+    // 空输入（含纯空白）原样为空
+    QVERIFY(WebDavProvider::normalizeRootUrl(QString()).isEmpty());
+    QVERIFY(WebDavProvider::normalizeRootUrl(QStringLiteral("   ")).isEmpty());
+    // 幂等：定形结果再定形不变
+    const QString shaped = WebDavProvider::normalizeRootUrl(QStringLiteral("http://host/dav"));
+    QCOMPARE(WebDavProvider::normalizeRootUrl(shaped), shaped);
+    const QString withQuery =
+        WebDavProvider::normalizeRootUrl(QStringLiteral("http://host/dav?token=1"));
+    QCOMPARE(WebDavProvider::normalizeRootUrl(withQuery), withQuery);
+}
+
+// N44：三条校验与重构前逐条一致；不做连通性探测（N37 口径不变）
+void TestWebDavProvider::validateInputCoversEmptySchemeAndCredentials() {
+    // 空 ⇒ 报错
+    QVERIFY(WebDavProvider::validateInput(QString()).has_value());
+    // 非 http(s) ⇒ 报错（含无 scheme 的裸主机名）
+    QVERIFY(WebDavProvider::validateInput(QStringLiteral("ftp://host/dav/")).has_value());
+    QVERIFY(WebDavProvider::validateInput(QStringLiteral("host/dav")).has_value());
+    // 内嵌 userinfo ⇒ 报错（凭据只走用户名 / 密码栏，避免两个来源）
+    QVERIFY(WebDavProvider::validateInput(QStringLiteral("http://u:pw@host/dav/")).has_value());
+    // 合法 http(s) ⇒ 通过
+    QVERIFY(!WebDavProvider::validateInput(QStringLiteral("http://host/dav/")).has_value());
+    QVERIFY(!WebDavProvider::validateInput(QStringLiteral("https://host/dav/")).has_value());
+    // 入参可以是未定形的原始文本（函数内部自行定形）
+    QVERIFY(!WebDavProvider::validateInput(QStringLiteral("https://host/dav")).has_value());
+}
+
+// N44：扩展名编辑区文本 → 规范清单；空表即不过滤
+void TestWebDavProvider::parseExtensionsNormalizesTokens() {
+    QCOMPARE(WebDavProvider::parseExtensions(QStringLiteral("MP4 .mkv   avi avi .TS")),
+             QStringList({QStringLiteral("mp4"), QStringLiteral("mkv"), QStringLiteral("avi"),
+                          QStringLiteral("ts")}));
+    QCOMPARE(WebDavProvider::parseExtensions(QStringLiteral(".WebM")),
+             QStringList({QStringLiteral("webm")}));
+    QVERIFY(WebDavProvider::parseExtensions(QString()).isEmpty());
+    QVERIFY(WebDavProvider::parseExtensions(QStringLiteral("  \t ")).isEmpty());
 }
 
 // 一类一可执行（R5）：自带 main（QTEST_GUILESS_MAIN），无 GUI 依赖

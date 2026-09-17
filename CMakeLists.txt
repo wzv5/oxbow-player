@@ -55,6 +55,10 @@ add_library(mpvqtcore MODULE
     src/TraversalPolicy.h
     src/PlaylistProvider.cpp
     src/PlaylistProvider.h
+    src/ProviderCatalog.cpp
+    src/ProviderCatalog.h
+    src/ProviderSettingsPage.cpp
+    src/ProviderSettingsPage.h
     src/ListSettingsDialog.cpp
     src/ListSettingsDialog.h
     src/StaticProvider.cpp
@@ -172,6 +176,10 @@ if(MPVQT_BUILD_TESTS)
         src/WebDavProvider.h
         src/PlaylistProvider.cpp
         src/PlaylistProvider.h
+        src/ProviderCatalog.cpp
+        src/ProviderCatalog.h
+        src/ProviderSettingsPage.cpp
+        src/ProviderSettingsPage.h
         src/StaticProvider.cpp
         src/StaticProvider.h
         src/MpvConf.cpp

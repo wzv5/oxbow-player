@@ -13,10 +13,6 @@ class QSettings;
 // 序列化（存什么、怎么存）完全由具体提供者决定——含各自的排序键读写
 class PlaylistProvider {
   public:
-    // N27：仅用于列表设置对话框的回显 / 构造与 INI 序列化，不再参与任何行为分支
-    // （行为一律由 supportsModify / supportsSort 能力位决定）
-    enum class Type { Static, Dir, WebDav };
-
     using EntityList = PlaylistEntity::List;
 
     // N37：枚举结果——条目 + 非致命警告。warnings 为"部分来源失败 / 被跳过"的可读
@@ -34,9 +30,12 @@ class PlaylistProvider {
 
     virtual ~PlaylistProvider();
 
-    virtual Type type() const = 0;
-    // UI 展示描述（列表设置对话框回显）
-    virtual QString describe() const = 0;
+    // 类型键（N44）：提供者类型的唯一身份，取值即各提供者头文件的键常量
+    // （kXxxProviderKey）。INI 的 provider 键写侧经 writeProviderKey 取它、
+    // 读侧经登记表条目比对它，两侧共用同一点定义。
+    // 取代原 Type 枚举 + type()：类型身份不再需要一处集中维护的枚举，
+    // 新增提供者不必回改基类
+    virtual QString typeKey() const = 0;
     // 枚举条目（同步）：内容唯一来源。返回 expected——成功带实体有序表与警告
     // （空目录成功返回空表，与失败区分；N37 起部分来源失败随 warnings 回传），
     // 失败带错误文案
@@ -60,8 +59,9 @@ class PlaylistProvider {
     // ——INI 序列化：完全委托实现——写 provider 类型键、自身参数与排序键
     virtual void saveSettings(QSettings &settings) const = 0;
 
-    // 工厂：按 group 内 provider 键分派到对应实现的 load；
-    // static 或缺失键 → 静态提供者。registry 转交对应实现（缺省空）
+    // 工厂：按 group 内 provider 键经登记表（ProviderCatalog）分派到对应实现的
+    // load；键缺失 / 未知 → 回落登记表第 0 项（默认提供者，现状即静态）。
+    // registry 转交对应实现（缺省空）
     // N28：直接产出 shared_ptr——提供者所有权模型即共享（视图容器 + 枚举线程），
     // 调用点无需再经 unique_ptr 中间形态转换
     static std::shared_ptr<PlaylistProvider> load(QSettings &settings,
@@ -79,6 +79,11 @@ class PlaylistProvider {
     std::shared_ptr<ServiceRegistry> m_registry; // N35：服务注册表（基类统一持有）
 
   protected:
+    // 写 INI 的 provider 键（N44）：取值即 typeKey()。各提供者 saveSettings 首行
+    // 调用它——写侧（typeKey()）与读侧（登记表条目）共用同一点定义的键常量，
+    // 杜绝"键写错导致重启后退化为默认提供者"的静默失败
+    void writeProviderKey(QSettings &settings) const;
+
     // 子类经此取构造期注入的注册表（enumerate 造实体时转交 fromPlayUrl）
     const std::shared_ptr<ServiceRegistry> &registry() const { return m_registry; }
 
