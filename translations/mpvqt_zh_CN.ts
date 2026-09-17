@@ -190,34 +190,78 @@
 <context>
     <name>DirProvider</name>
     <message>
-        <location filename="../src/DirProvider.cpp" line="58"/>
-        <source> (with subdirectories)</source>
-        <translation>（含子目录）</translation>
-    </message>
-    <message>
-        <location filename="../src/DirProvider.cpp" line="60"/>
-        <source>Local directory: %1%2</source>
-        <translation>本地目录：%1%2</translation>
-    </message>
-    <message>
-        <location filename="../src/DirProvider.cpp" line="70"/>
+        <location filename="../src/DirProvider.cpp" line="223"/>
         <source>No directory bound.</source>
         <translation>没有绑定目录。</translation>
     </message>
     <message>
-        <location filename="../src/DirProvider.cpp" line="74"/>
+        <location filename="../src/DirProvider.cpp" line="198"/>
+        <location filename="../src/DirProvider.cpp" line="227"/>
         <source>Directory does not exist: %1</source>
         <translation>目录不存在：%1</translation>
     </message>
     <message>
-        <location filename="../src/DirProvider.cpp" line="77"/>
+        <location filename="../src/DirProvider.cpp" line="190"/>
+        <source>Please select a bound directory.</source>
+        <translation>请选择绑定目录。</translation>
+    </message>
+    <message>
+        <location filename="../src/DirProvider.cpp" line="195"/>
+        <source>Local directory lists do not support network or stream paths.</source>
+        <translation>本地目录列表不支持网络或流路径。</translation>
+    </message>
+    <message>
+        <location filename="../src/DirProvider.cpp" line="230"/>
         <source>Directory is not readable: %1</source>
         <translation>目录不可读：%1</translation>
     </message>
     <message>
-        <location filename="../src/DirProvider.cpp" line="159"/>
+        <location filename="../src/DirProvider.cpp" line="310"/>
         <source>Subdirectory is not readable, skipped: %1</source>
         <translation>子目录不可读，跳过：%1</translation>
+    </message>
+    <message>
+        <location filename="../src/DirProvider.h" line="7"/>
+        <source>Local Directory</source>
+        <translation>本地目录</translation>
+    </message>
+</context>
+<context>
+    <name>DirSettingsPage</name>
+    <message>
+        <location filename="../src/DirProvider.cpp" line="72"/>
+        <source>Browse…</source>
+        <translation>浏览…</translation>
+    </message>
+    <message>
+        <location filename="../src/DirProvider.cpp" line="75"/>
+        <source>Path</source>
+        <translation>路径</translation>
+    </message>
+    <message>
+        <location filename="../src/DirProvider.cpp" line="77"/>
+        <source>Include Subdirectories</source>
+        <translation>包含子目录</translation>
+    </message>
+    <message>
+        <location filename="../src/DirProvider.cpp" line="84"/>
+        <source>Reset to default extension list</source>
+        <translation>恢复默认扩展名清单</translation>
+    </message>
+    <message>
+        <location filename="../src/DirProvider.cpp" line="90"/>
+        <source>Space-separated file extensions; leave empty for no filter</source>
+        <translation>空格分割的文件扩展名，留空不过滤</translation>
+    </message>
+    <message>
+        <location filename="../src/DirProvider.cpp" line="101"/>
+        <source>Filter</source>
+        <translation>过滤器</translation>
+    </message>
+    <message>
+        <location filename="../src/DirProvider.cpp" line="150"/>
+        <source>Select Directory</source>
+        <translation>选择目录</translation>
     </message>
 </context>
 <context>
@@ -365,136 +409,43 @@
 <context>
     <name>ListSettingsDialog</name>
     <message>
-        <location filename="../src/ListSettingsDialog.cpp" line="32"/>
-        <location filename="../src/ListSettingsDialog.cpp" line="246"/>
-        <location filename="../src/ListSettingsDialog.cpp" line="250"/>
-        <location filename="../src/ListSettingsDialog.cpp" line="255"/>
-        <location filename="../src/ListSettingsDialog.cpp" line="262"/>
-        <location filename="../src/ListSettingsDialog.cpp" line="269"/>
-        <location filename="../src/ListSettingsDialog.cpp" line="275"/>
-        <location filename="../src/ListSettingsDialog.cpp" line="286"/>
-        <location filename="../src/ListSettingsDialog.cpp" line="292"/>
-        <location filename="../src/ListSettingsDialog.cpp" line="298"/>
+        <location filename="../src/ListSettingsDialog.cpp" line="12"/>
+        <location filename="../src/ListSettingsDialog.cpp" line="94"/>
+        <location filename="../src/ListSettingsDialog.cpp" line="98"/>
+        <location filename="../src/ListSettingsDialog.cpp" line="103"/>
+        <location filename="../src/ListSettingsDialog.cpp" line="112"/>
         <source>List Settings</source>
         <translation>列表设置</translation>
     </message>
     <message>
-        <location filename="../src/ListSettingsDialog.cpp" line="37"/>
+        <location filename="../src/ListSettingsDialog.cpp" line="22"/>
         <source>List Name</source>
         <translation>列表名称</translation>
     </message>
     <message>
-        <location filename="../src/ListSettingsDialog.cpp" line="39"/>
-        <source>List Provider</source>
-        <translation>列表提供者</translation>
-    </message>
-    <message>
-        <location filename="../src/ListSettingsDialog.cpp" line="41"/>
-        <source>Local Static List</source>
-        <translation>本地静态列表</translation>
-    </message>
-    <message>
-        <location filename="../src/ListSettingsDialog.cpp" line="44"/>
-        <source>Local Directory</source>
-        <translation>本地目录</translation>
-    </message>
-    <message>
-        <location filename="../src/ListSettingsDialog.cpp" line="47"/>
-        <source>Browse…</source>
-        <translation>浏览…</translation>
-    </message>
-    <message>
-        <location filename="../src/ListSettingsDialog.cpp" line="50"/>
-        <location filename="../src/ListSettingsDialog.cpp" line="85"/>
-        <source>Include Subdirectories</source>
-        <translation>包含子目录</translation>
-    </message>
-    <message>
         <location filename="../src/ListSettingsDialog.cpp" line="56"/>
-        <location filename="../src/ListSettingsDialog.cpp" line="90"/>
-        <source>Reset to default extension list</source>
-        <translation>恢复默认扩展名清单</translation>
+        <source>List Type</source>
+        <translation>列表类型</translation>
     </message>
     <message>
-        <location filename="../src/ListSettingsDialog.cpp" line="64"/>
-        <location filename="../src/ListSettingsDialog.cpp" line="100"/>
-        <source>Media extensions (space-separated; leave empty for no filter):</source>
-        <translation>媒体扩展名（空格分隔，留空不过滤）：</translation>
-    </message>
-    <message>
-        <location filename="../src/ListSettingsDialog.cpp" line="71"/>
-        <source>WebDAV Directory</source>
-        <translation>WebDAV 目录</translation>
-    </message>
-    <message>
-        <location filename="../src/ListSettingsDialog.cpp" line="74"/>
-        <source>Directory URL</source>
-        <translation>目录 URL</translation>
-    </message>
-    <message>
-        <location filename="../src/ListSettingsDialog.cpp" line="78"/>
-        <source>Username</source>
-        <translation>用户名</translation>
-    </message>
-    <message>
-        <location filename="../src/ListSettingsDialog.cpp" line="83"/>
-        <source>Password</source>
-        <translation>密码</translation>
-    </message>
-    <message>
-        <location filename="../src/ListSettingsDialog.cpp" line="237"/>
-        <source>Select Directory</source>
-        <translation>选择目录</translation>
-    </message>
-    <message>
-        <location filename="../src/ListSettingsDialog.cpp" line="246"/>
+        <location filename="../src/ListSettingsDialog.cpp" line="94"/>
         <source>List name cannot be empty.</source>
         <translation>列表名称不能为空。</translation>
     </message>
     <message>
-        <location filename="../src/ListSettingsDialog.cpp" line="249"/>
+        <location filename="../src/ListSettingsDialog.cpp" line="97"/>
         <source>Default</source>
         <translation>默认</translation>
     </message>
     <message>
-        <location filename="../src/ListSettingsDialog.cpp" line="251"/>
+        <location filename="../src/ListSettingsDialog.cpp" line="99"/>
         <source>Cannot use the name of the default list.</source>
         <translation>不能使用默认列表的名称。</translation>
     </message>
     <message>
-        <location filename="../src/ListSettingsDialog.cpp" line="256"/>
+        <location filename="../src/ListSettingsDialog.cpp" line="104"/>
         <source>This name is already used by another list.</source>
         <translation>该名称已被其他列表使用。</translation>
-    </message>
-    <message>
-        <location filename="../src/ListSettingsDialog.cpp" line="262"/>
-        <source>Please select a bound directory.</source>
-        <translation>请选择绑定目录。</translation>
-    </message>
-    <message>
-        <location filename="../src/ListSettingsDialog.cpp" line="270"/>
-        <source>Local directory provider does not support network or stream paths.</source>
-        <translation>本地目录提供者不支持网络/流路径。</translation>
-    </message>
-    <message>
-        <location filename="../src/ListSettingsDialog.cpp" line="276"/>
-        <source>Directory does not exist: %1</source>
-        <translation>目录不存在：%1</translation>
-    </message>
-    <message>
-        <location filename="../src/ListSettingsDialog.cpp" line="286"/>
-        <source>Please enter a directory URL.</source>
-        <translation>请输入目录 URL。</translation>
-    </message>
-    <message>
-        <location filename="../src/ListSettingsDialog.cpp" line="293"/>
-        <source>Directory URL must be a valid http(s) URL.</source>
-        <translation>目录 URL 必须是有效的 http(s) URL。</translation>
-    </message>
-    <message>
-        <location filename="../src/ListSettingsDialog.cpp" line="299"/>
-        <source>Directory URL must not embed credentials; use the username and password fields instead.</source>
-        <translation>目录 URL 不能内嵌用户凭证，使用“用户名”和“密码”字段代替。</translation>
     </message>
 </context>
 <context>
@@ -769,288 +720,288 @@ Video rendering is performed by mpv; this plugin only provides the graphical int
     <name>PlaylistWidget</name>
     <message>
         <location filename="../src/PlaylistWidget.cpp" line="31"/>
-        <location filename="../src/PlaylistWidget.cpp" line="2095"/>
-        <location filename="../src/PlaylistWidget.cpp" line="2117"/>
-        <location filename="../src/PlaylistWidget.cpp" line="2138"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2097"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2119"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2140"/>
         <source>Default</source>
         <translation>默认</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="1101"/>
+        <location filename="../src/PlaylistWidget.cpp" line="1103"/>
         <source>…and %1 more</source>
         <translation></translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="1103"/>
+        <location filename="../src/PlaylistWidget.cpp" line="1105"/>
         <source>Enumeration Warnings</source>
         <translation>枚举警告</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="1912"/>
+        <location filename="../src/PlaylistWidget.cpp" line="1914"/>
         <source>&lt;Load failed&gt;</source>
         <translation>&lt;加载失败&gt;</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="1978"/>
-        <location filename="../src/PlaylistWidget.cpp" line="2436"/>
+        <location filename="../src/PlaylistWidget.cpp" line="1980"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2438"/>
         <source>Properties</source>
         <translation>属性</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2062"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2064"/>
         <source>File Path</source>
         <translation>文件路径</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2064"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2066"/>
         <source>Format</source>
         <translation>文件格式</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2066"/>
-        <location filename="../src/PlaylistWidget.cpp" line="2382"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2068"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2384"/>
         <source>File Size</source>
         <translation>文件大小</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2070"/>
-        <location filename="../src/PlaylistWidget.cpp" line="2380"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2072"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2382"/>
         <source>Created</source>
         <translation>创建时间</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2075"/>
-        <location filename="../src/PlaylistWidget.cpp" line="2381"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2077"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2383"/>
         <source>Modified</source>
         <translation>修改时间</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2078"/>
-        <location filename="../src/PlaylistWidget.cpp" line="2383"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2080"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2385"/>
         <source>Duration</source>
         <translation>总时长</translation>
-    </message>
-    <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2095"/>
-        <location filename="../src/PlaylistWidget.cpp" line="2117"/>
-        <location filename="../src/PlaylistWidget.cpp" line="2138"/>
-        <source>Yes</source>
-        <translation>是</translation>
     </message>
     <message>
         <location filename="../src/PlaylistWidget.cpp" line="2097"/>
         <location filename="../src/PlaylistWidget.cpp" line="2119"/>
         <location filename="../src/PlaylistWidget.cpp" line="2140"/>
-        <location filename="../src/PlaylistWidget.cpp" line="2173"/>
-        <source>Title</source>
-        <translation>标题</translation>
+        <source>Yes</source>
+        <translation>是</translation>
     </message>
     <message>
         <location filename="../src/PlaylistWidget.cpp" line="2099"/>
         <location filename="../src/PlaylistWidget.cpp" line="2121"/>
         <location filename="../src/PlaylistWidget.cpp" line="2142"/>
-        <source>Language</source>
-        <translation>语言</translation>
+        <location filename="../src/PlaylistWidget.cpp" line="2175"/>
+        <source>Title</source>
+        <translation>标题</translation>
     </message>
     <message>
         <location filename="../src/PlaylistWidget.cpp" line="2101"/>
         <location filename="../src/PlaylistWidget.cpp" line="2123"/>
         <location filename="../src/PlaylistWidget.cpp" line="2144"/>
+        <source>Language</source>
+        <translation>语言</translation>
+    </message>
+    <message>
+        <location filename="../src/PlaylistWidget.cpp" line="2103"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2125"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2146"/>
         <source>Codec</source>
         <translation>编码</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2104"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2106"/>
         <source>Resolution</source>
         <translation>分辨率</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2106"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2108"/>
         <source>Frame Rate</source>
         <translation>帧率</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2108"/>
-        <location filename="../src/PlaylistWidget.cpp" line="2129"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2110"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2131"/>
         <source>Bitrate</source>
         <translation>码率</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2111"/>
-        <location filename="../src/PlaylistWidget.cpp" line="2132"/>
-        <location filename="../src/PlaylistWidget.cpp" line="2147"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2113"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2134"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2149"/>
         <source>Size</source>
         <translation>大小</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2125"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2127"/>
         <source>Channels</source>
         <translation>通道数</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2127"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2129"/>
         <source>Sample Rate</source>
         <translation>采样率</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2175"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2177"/>
         <source>Album</source>
         <translation>专辑</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2177"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2179"/>
         <source>Author</source>
         <translation>作者</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2179"/>
-        <location filename="../src/PlaylistWidget.cpp" line="2384"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2181"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2386"/>
         <source>Released</source>
         <translation>发行时间</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2181"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2183"/>
         <source>General</source>
         <translation>常规</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2183"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2185"/>
         <source>Video #%1</source>
         <translation>视频 #%1</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2185"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2187"/>
         <source>Audio #%1</source>
         <translation>音频 #%1</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2187"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2189"/>
         <source>Subtitle #%1</source>
         <translation>字幕 #%1</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2188"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2190"/>
         <source>Tags</source>
         <translation>标签</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2195"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2197"/>
         <source>Chapters</source>
         <translation>章节</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2213"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2215"/>
         <source>Reading metadata...</source>
         <translation>正在读取元数据 ...</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2317"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2319"/>
         <source>New Playlist</source>
         <translation>新建播放列表</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2318"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2320"/>
         <source>Delete Current List</source>
         <translation>删除当前列表</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2319"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2321"/>
         <source>List Settings…</source>
         <translation>列表设置…</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2372"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2374"/>
         <source>Add Files…</source>
         <translation>添加文件…</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2375"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2377"/>
         <source>Sort</source>
         <translation>排序</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2377"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2379"/>
         <source>File Name</source>
         <translation>文件名</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2378"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2380"/>
         <source>File Name (Numeric)</source>
         <translation>文件名（数字化）</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2379"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2381"/>
         <source>Extension</source>
         <translation>扩展名</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2414"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2416"/>
         <source>Ascending</source>
         <translation>正序</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2415"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2417"/>
         <source>Descending</source>
         <translation>反序</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2424"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2426"/>
         <source>Remove</source>
         <translation>移除</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2425"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2427"/>
         <source>Remove Selected</source>
         <translation>移除选中</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2426"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2428"/>
         <source>Clear Current List</source>
         <translation>清空当前列表</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2428"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2430"/>
         <source>Remove Invalid</source>
         <translation>移除失效项</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2429"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2431"/>
         <source>Remove Duplicates</source>
         <translation>移除重复项</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2431"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2433"/>
         <source>Refresh</source>
         <translation>刷新</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2434"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2436"/>
         <source>Open File Location</source>
         <translation>打开文件位置</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2435"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2437"/>
         <source>Copy File Path</source>
         <translation>复制文件路径</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2489"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2491"/>
         <source>Add Files</source>
         <translation>添加文件</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2490"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2492"/>
         <source>Media files (%1);;All files (*)</source>
         <translation>媒体文件 (%1);;所有文件 (*)</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2589"/>
         <location filename="../src/PlaylistWidget.cpp" line="2591"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2593"/>
         <source>Playlist </source>
         <translation>播放列表</translation>
     </message>
     <message>
-        <location filename="../src/PlaylistWidget.cpp" line="2600"/>
+        <location filename="../src/PlaylistWidget.cpp" line="2602"/>
         <source>Playlist %1</source>
         <translation>播放列表 %1</translation>
     </message>
@@ -1332,83 +1283,139 @@ These values were not written to mpv.conf.</source>
 <context>
     <name>StaticProvider</name>
     <message>
+        <location filename="../src/StaticProvider.h" line="8"/>
+        <source>Static</source>
+        <translation>静态</translation>
+    </message>
+</context>
+<context>
+    <name>StaticSettingsPage</name>
+    <message>
         <location filename="../src/StaticProvider.cpp" line="18"/>
-        <source>Local static list</source>
-        <translation>本地静态列表</translation>
+        <source>No configuration required.</source>
+        <translation>无需配置。</translation>
     </message>
 </context>
 <context>
     <name>WebDavProvider</name>
     <message>
-        <location filename="../src/WebDavProvider.cpp" line="71"/>
-        <source> (with subdirectories)</source>
-        <translation>（含子目录）</translation>
+        <location filename="../src/WebDavProvider.cpp" line="201"/>
+        <source>Please enter a directory URL.</source>
+        <translation>请输入目录 URL。</translation>
     </message>
     <message>
-        <location filename="../src/WebDavProvider.cpp" line="73"/>
-        <source>WebDAV directory: %1%2</source>
-        <translation>WebDAV 目录: %1%2</translation>
+        <location filename="../src/WebDavProvider.cpp" line="209"/>
+        <source>Directory URL must be a valid http(s) URL.</source>
+        <translation>目录 URL 必须是有效的 http(s) URL。</translation>
     </message>
     <message>
-        <location filename="../src/WebDavProvider.cpp" line="89"/>
+        <location filename="../src/WebDavProvider.cpp" line="212"/>
+        <source>Directory URL must not embed credentials; use the username and password fields instead.</source>
+        <translation>目录 URL 不能内嵌用户凭证，使用“用户名”和“密码”字段代替。</translation>
+    </message>
+    <message>
+        <location filename="../src/WebDavProvider.cpp" line="245"/>
         <source>HTTP client is not available.</source>
         <translation>HTTP client 不可用。</translation>
     </message>
     <message>
-        <location filename="../src/WebDavProvider.cpp" line="103"/>
+        <location filename="../src/WebDavProvider.cpp" line="259"/>
         <source>Invalid WebDAV directory URL: %1</source>
         <translation>WebDAV 目录 URL 无效：%1</translation>
     </message>
     <message>
-        <location filename="../src/WebDavProvider.cpp" line="153"/>
-        <location filename="../src/WebDavProvider.cpp" line="164"/>
+        <location filename="../src/WebDavProvider.cpp" line="309"/>
+        <location filename="../src/WebDavProvider.cpp" line="320"/>
         <source>Subdirectory enumeration failed, skipped: %1</source>
         <translation>子目录枚举失败，跳过：%1</translation>
     </message>
     <message>
-        <location filename="../src/WebDavProvider.cpp" line="373"/>
+        <location filename="../src/WebDavProvider.cpp" line="530"/>
         <source>Malformed WebDAV response (invalid XML).</source>
         <translation>畸形的 WebDAV 响应（XML 无效）</translation>
     </message>
     <message>
-        <location filename="../src/WebDavProvider.cpp" line="382"/>
+        <location filename="../src/WebDavProvider.cpp" line="539"/>
         <source>Request canceled: %1</source>
         <translation>请求已取消：%1</translation>
     </message>
     <message>
-        <location filename="../src/WebDavProvider.cpp" line="386"/>
+        <location filename="../src/WebDavProvider.cpp" line="543"/>
         <source>Response too large, skipped: %1</source>
         <translation>响应体太大，跳过：%1</translation>
     </message>
     <message>
-        <location filename="../src/WebDavProvider.cpp" line="389"/>
+        <location filename="../src/WebDavProvider.cpp" line="546"/>
         <source>Authentication failed (401): %1</source>
         <translation></translation>
     </message>
     <message>
-        <location filename="../src/WebDavProvider.cpp" line="392"/>
+        <location filename="../src/WebDavProvider.cpp" line="549"/>
         <source>Access denied (403): %1</source>
         <translation></translation>
     </message>
     <message>
-        <location filename="../src/WebDavProvider.cpp" line="394"/>
+        <location filename="../src/WebDavProvider.cpp" line="551"/>
         <source>Not found (404): %1</source>
         <translation></translation>
     </message>
     <message>
-        <location filename="../src/WebDavProvider.cpp" line="396"/>
+        <location filename="../src/WebDavProvider.cpp" line="553"/>
         <source>Server error (HTTP %1): %2</source>
         <translation></translation>
     </message>
     <message>
-        <location filename="../src/WebDavProvider.cpp" line="401"/>
+        <location filename="../src/WebDavProvider.cpp" line="558"/>
         <source>Unexpected response (HTTP %1): %2</source>
         <translation></translation>
     </message>
     <message>
-        <location filename="../src/WebDavProvider.cpp" line="405"/>
+        <location filename="../src/WebDavProvider.cpp" line="562"/>
         <source>Request failed (network error): %1</source>
         <translation></translation>
+    </message>
+    <message>
+        <location filename="../src/WebDavProvider.h" line="11"/>
+        <source>WebDAV Directory</source>
+        <translation>WebDAV 目录</translation>
+    </message>
+</context>
+<context>
+    <name>WebDavSettingsPage</name>
+    <message>
+        <location filename="../src/WebDavProvider.cpp" line="70"/>
+        <source>URL</source>
+        <translation>URL</translation>
+    </message>
+    <message>
+        <location filename="../src/WebDavProvider.cpp" line="72"/>
+        <source>Username</source>
+        <translation>用户名</translation>
+    </message>
+    <message>
+        <location filename="../src/WebDavProvider.cpp" line="75"/>
+        <source>Password</source>
+        <translation>密码</translation>
+    </message>
+    <message>
+        <location filename="../src/WebDavProvider.cpp" line="77"/>
+        <source>Include Subdirectories</source>
+        <translation>包含子目录</translation>
+    </message>
+    <message>
+        <location filename="../src/WebDavProvider.cpp" line="84"/>
+        <source>Reset to default extension list</source>
+        <translation>恢复默认扩展名清单</translation>
+    </message>
+    <message>
+        <location filename="../src/WebDavProvider.cpp" line="90"/>
+        <source>Space-separated file extensions; leave empty for no filter</source>
+        <translation>空格分割的文件扩展名，留空不过滤</translation>
+    </message>
+    <message>
+        <location filename="../src/WebDavProvider.cpp" line="101"/>
+        <source>Filter</source>
+        <translation>过滤器</translation>
     </message>
 </context>
 </TS>

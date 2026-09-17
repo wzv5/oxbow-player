@@ -145,14 +145,6 @@
     <target>确定清空所有书签？</target>
 </phrase>
 <phrase>
-    <source> (with subdirectories)</source>
-    <target>（含子目录）</target>
-</phrase>
-<phrase>
-    <source>Local directory: %1%2</source>
-    <target>本地目录：%1%2</target>
-</phrase>
-<phrase>
     <source>No directory bound.</source>
     <target>没有绑定目录。</target>
 </phrase>
@@ -161,12 +153,52 @@
     <target>目录不存在：%1</target>
 </phrase>
 <phrase>
+    <source>Please select a bound directory.</source>
+    <target>请选择绑定目录。</target>
+</phrase>
+<phrase>
+    <source>Local directory lists do not support network or stream paths.</source>
+    <target>本地目录列表不支持网络或流路径。</target>
+</phrase>
+<phrase>
     <source>Directory is not readable: %1</source>
     <target>目录不可读：%1</target>
 </phrase>
 <phrase>
     <source>Subdirectory is not readable, skipped: %1</source>
     <target>子目录不可读，跳过：%1</target>
+</phrase>
+<phrase>
+    <source>Local Directory</source>
+    <target>本地目录</target>
+</phrase>
+<phrase>
+    <source>Browse…</source>
+    <target>浏览…</target>
+</phrase>
+<phrase>
+    <source>Path</source>
+    <target>路径</target>
+</phrase>
+<phrase>
+    <source>Include Subdirectories</source>
+    <target>包含子目录</target>
+</phrase>
+<phrase>
+    <source>Reset to default extension list</source>
+    <target>恢复默认扩展名清单</target>
+</phrase>
+<phrase>
+    <source>Space-separated file extensions; leave empty for no filter</source>
+    <target>空格分割的文件扩展名，留空不过滤</target>
+</phrase>
+<phrase>
+    <source>Filter</source>
+    <target>过滤器</target>
+</phrase>
+<phrase>
+    <source>Select Directory</source>
+    <target>选择目录</target>
 </phrase>
 <phrase>
     <source>Add Filter</source>
@@ -285,52 +317,8 @@
     <target>列表名称</target>
 </phrase>
 <phrase>
-    <source>List Provider</source>
-    <target>列表提供者</target>
-</phrase>
-<phrase>
-    <source>Local Static List</source>
-    <target>本地静态列表</target>
-</phrase>
-<phrase>
-    <source>Local Directory</source>
-    <target>本地目录</target>
-</phrase>
-<phrase>
-    <source>Browse…</source>
-    <target>浏览…</target>
-</phrase>
-<phrase>
-    <source>Include Subdirectories</source>
-    <target>包含子目录</target>
-</phrase>
-<phrase>
-    <source>Reset to default extension list</source>
-    <target>恢复默认扩展名清单</target>
-</phrase>
-<phrase>
-    <source>Media extensions (space-separated; leave empty for no filter):</source>
-    <target>媒体扩展名（空格分隔，留空不过滤）：</target>
-</phrase>
-<phrase>
-    <source>WebDAV Directory</source>
-    <target>WebDAV 目录</target>
-</phrase>
-<phrase>
-    <source>Directory URL</source>
-    <target>目录 URL</target>
-</phrase>
-<phrase>
-    <source>Username</source>
-    <target>用户名</target>
-</phrase>
-<phrase>
-    <source>Password</source>
-    <target>密码</target>
-</phrase>
-<phrase>
-    <source>Select Directory</source>
-    <target>选择目录</target>
+    <source>List Type</source>
+    <target>列表类型</target>
 </phrase>
 <phrase>
     <source>List name cannot be empty.</source>
@@ -347,30 +335,6 @@
 <phrase>
     <source>This name is already used by another list.</source>
     <target>该名称已被其他列表使用。</target>
-</phrase>
-<phrase>
-    <source>Please select a bound directory.</source>
-    <target>请选择绑定目录。</target>
-</phrase>
-<phrase>
-    <source>Local directory provider does not support network or stream paths.</source>
-    <target>本地目录提供者不支持网络/流路径。</target>
-</phrase>
-<phrase>
-    <source>Directory does not exist: %1</source>
-    <target>目录不存在：%1</target>
-</phrase>
-<phrase>
-    <source>Please enter a directory URL.</source>
-    <target>请输入目录 URL。</target>
-</phrase>
-<phrase>
-    <source>Directory URL must be a valid http(s) URL.</source>
-    <target>目录 URL 必须是有效的 http(s) URL。</target>
-</phrase>
-<phrase>
-    <source>Directory URL must not embed credentials; use the username and password fields instead.</source>
-    <target>目录 URL 不能内嵌用户凭证，使用“用户名”和“密码”字段代替。</target>
 </phrase>
 <phrase>
     <source>Cancel</source>
@@ -993,16 +957,24 @@ These values were not written to mpv.conf.</source>
 这些值未被写入 mpv.conf。</target>
 </phrase>
 <phrase>
-    <source>Local static list</source>
-    <target>本地静态列表</target>
+    <source>Static</source>
+    <target>静态</target>
 </phrase>
 <phrase>
-    <source> (with subdirectories)</source>
-    <target>（含子目录）</target>
+    <source>No configuration required.</source>
+    <target>无需配置。</target>
 </phrase>
 <phrase>
-    <source>WebDAV directory: %1%2</source>
-    <target>WebDAV 目录: %1%2</target>
+    <source>Please enter a directory URL.</source>
+    <target>请输入目录 URL。</target>
+</phrase>
+<phrase>
+    <source>Directory URL must be a valid http(s) URL.</source>
+    <target>目录 URL 必须是有效的 http(s) URL。</target>
+</phrase>
+<phrase>
+    <source>Directory URL must not embed credentials; use the username and password fields instead.</source>
+    <target>目录 URL 不能内嵌用户凭证，使用“用户名”和“密码”字段代替。</target>
 </phrase>
 <phrase>
     <source>HTTP client is not available.</source>
@@ -1051,5 +1023,37 @@ These values were not written to mpv.conf.</source>
 <phrase>
     <source>Request failed (network error): %1</source>
     <target></target>
+</phrase>
+<phrase>
+    <source>WebDAV Directory</source>
+    <target>WebDAV 目录</target>
+</phrase>
+<phrase>
+    <source>URL</source>
+    <target>URL</target>
+</phrase>
+<phrase>
+    <source>Username</source>
+    <target>用户名</target>
+</phrase>
+<phrase>
+    <source>Password</source>
+    <target>密码</target>
+</phrase>
+<phrase>
+    <source>Include Subdirectories</source>
+    <target>包含子目录</target>
+</phrase>
+<phrase>
+    <source>Reset to default extension list</source>
+    <target>恢复默认扩展名清单</target>
+</phrase>
+<phrase>
+    <source>Space-separated file extensions; leave empty for no filter</source>
+    <target>空格分割的文件扩展名，留空不过滤</target>
+</phrase>
+<phrase>
+    <source>Filter</source>
+    <target>过滤器</target>
 </phrase>
 </QPH>
