@@ -24,6 +24,9 @@ class PlaylistProvider {
         QString id; // 提供者内稳定，作为 parent 路径段
         QString title;
         std::optional<FileMeta> meta; // 复用 FileMeta，供容器参与排序
+        // N47：该层完整路径（纯展示，供属性对话框 / 复制 / 打开；空 = 未知）。
+        // 本地为绝对路径，WebDAV 为无凭据完整 URL；不参与排序、寻址与持久化
+        QString path;
     };
     struct Enumeration {
         QList<Container> containers;

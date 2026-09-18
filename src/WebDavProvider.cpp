@@ -515,6 +515,9 @@ WebDavProvider::enumerate(const QStringList &parent) const {
         for (const DavEntry &dir : listing->collections) {
             Container c;
             c.id = containerId(dir.playUrl);
+            // N47：该层完整 URL（无凭据，纯展示，供属性对话框 / 复制；打开仅本地）——
+            // 与 id 同串，语义正交（身份 vs 展示）
+            c.path = c.id;
             // title 取解码可读名：collection 的 playUrl 恒以尾斜杠结尾
             // （normalizeRootUrl 补齐），playUrlFileName 对以 / 结尾的 URL 返回
             // 空串（末段为空），须先剥尾斜杠再取解码名

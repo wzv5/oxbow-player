@@ -535,6 +535,30 @@ PlaylistEntity::Ptr PlaylistWidget::entityPtrAt(QListWidget *list, int row) cons
     return candidate;
 }
 
+// N47：行容器的按值副本——容器行按"容器序 == 容器行序"定位容器下标（占位 /
+// 上一级行不占位，与 entityPtrAt 同形），并与行 ContainerRole 交叉校验
+// （不变式被破坏即拒绝）；按值返回，跨菜单嵌套事件循环持有安全
+std::optional<PlaylistProvider::Container> PlaylistWidget::containerAt(QListWidget *list,
+                                                                       int row) const {
+    if (!list || row < 0 || row >= list->count())
+        return std::nullopt;
+    const Level *lvl = findLevel(list, browsePathIdsOf(list));
+    if (!lvl)
+        return std::nullopt;
+    int idx = 0;
+    for (int i = 0; i < row; ++i) {
+        if (isContainerRow(list->item(i)))
+            ++idx;
+    }
+    const auto &containers = lvl->containers;
+    if (idx >= int(containers.size()))
+        return std::nullopt;
+    const auto &candidate = containers.at(idx);
+    if (candidate.id != list->item(row)->data(ContainerRole).toString())
+        return std::nullopt; // 容器/行序不变式被破坏：宁可拒绝也不返回错乱容器
+    return candidate;
+}
+
 // 按行序批量删除实体（rows 必须降序；须在删行前调用）。
 // 单遍自顶向下计实体行数定位各行容器下标（实体序 == 实体行序，占位 / 容器 /
 // 上一级行不占位——N45 §2.4.3），随后按容器下标降序批量 erase
@@ -3141,6 +3165,78 @@ void PlaylistWidget::showPropertiesDialog(const PlaylistEntity::Ptr &entityPtr) 
     dialog.exec();
 }
 
+// N47：容器属性对话框——同步即时（容器数据枚举时已齐，无异步求值、无 pending 态、
+// 无媒体流分组）。渲染视觉语言与实体属性对话框一致（只读文本框、制表对齐、
+// 三色体系），数据逻辑独立实现，不动 showPropertiesDialog
+void PlaylistWidget::showContainerPropertiesDialog(const PlaylistProvider::Container &container,
+                                                   const QString &fallbackPath) {
+    auto timeText = [](const QDateTime &dt) {
+        return dt.isValid() ? dt.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")) : QString();
+    };
+
+    struct Row {
+        QString prop;
+        QString value;
+    };
+    QList<Row> rows;
+    rows.append({tr("Name"), container.title});
+    // 路径行恒有内容：path 缺失回退相对路径（§2.2），缺省两者皆空才省略
+    const QString path = !container.path.isEmpty() ? container.path : fallbackPath;
+    if (!path.isEmpty())
+        rows.append({tr("Path"), path});
+    if (container.meta) {
+        if (container.meta->created.has_value()) {
+            const QString t = timeText(*container.meta->created);
+            if (!t.isEmpty())
+                rows.append({tr("Created"), t});
+        }
+        if (container.meta->modified.has_value()) {
+            const QString t = timeText(*container.meta->modified);
+            if (!t.isEmpty())
+                rows.append({tr("Modified"), t});
+        }
+    }
+    // 大小行一律不显示（§2.2）：目录大小无统计意义，WebDAV 恒未知
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Properties"));
+    auto *view = new QTextEdit(&dialog);
+    view->setReadOnly(true);
+    view->setFrameShape(QFrame::NoFrame);
+    view->setLineWrapMode(QTextEdit::NoWrap);
+
+    auto *layout = new QVBoxLayout(&dialog);
+    layout->setContentsMargins(12, 12, 12, 12);
+    layout->addWidget(view);
+
+    view->clear();
+    { // 键列统一停靠宽度（与实体属性对话框同值）
+        QTextOption opt = view->document()->defaultTextOption();
+        opt.setTabStopDistance(100.0);
+        view->document()->setDefaultTextOption(opt);
+    }
+    QTextCursor cur(view->document());
+    // 配色与实体属性对话框一致：属性名蓝、属性值灰
+    QTextCharFormat nameFmt;
+    nameFmt.setForeground(QColor(0x19, 0x76, 0xD2));
+    QTextCharFormat valueFmt;
+    valueFmt.setForeground(QColor(0x60, 0x60, 0x60));
+    for (const Row &row : rows) {
+        cur.setCharFormat(nameFmt);
+        cur.insertText(row.prop + QStringLiteral(":"));
+        cur.setCharFormat(valueFmt);
+        cur.insertText(QStringLiteral("\t"));
+        cur.insertText(row.value);
+        cur.insertBlock();
+    }
+
+    // 光标归位到文档开头，避免打开时选区残留
+    view->setTextCursor(QTextCursor(view->document()));
+
+    dialog.resize(520, qMin(int(rows.size()) * 22 + 40, 600));
+    dialog.exec();
+}
+
 void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
     if (m_busy)
         return; // N19：忙时右键菜单禁用（表头/主体同守卫）
@@ -3208,10 +3304,12 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
             m_menuTargetRow = row;
         }
     }
-    // N19/N45：占位行与容器行 / 上一级行不是文件——命中即视为空目标
-    // （复制/属性/定位全禁用，仅保留刷新与排序；容器行按 §2.4.3 禁用播放/属性/复制路径）
+    // N19/N45：占位行 / 上一级行不是文件——命中即视为空目标
+    // （复制/属性/定位全禁用，仅保留刷新与排序）。
+    // N47：容器行不再视为空目标（属性 / 复制 / 本地打开按 §2.4 启停）
     if (m_menuTargetList && m_menuTargetRow >= 0 &&
-        !isEntityRow(m_menuTargetList->item(m_menuTargetRow))) {
+        !isEntityRow(m_menuTargetList->item(m_menuTargetRow)) &&
+        !isContainerRow(m_menuTargetList->item(m_menuTargetRow))) {
         m_menuTargetList = nullptr;
         m_menuTargetRow = -1;
     }
@@ -3221,6 +3319,19 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
     PlaylistEntity::Ptr targetEntity =
         m_menuTargetList ? entityPtrAt(m_menuTargetList, m_menuTargetRow) : nullptr;
     const QString targetUrl = targetEntity ? targetEntity->playUrl() : QString();
+    // N47：容器目标的按值副本（实体行为空；菜单 exec 期间持有安全，见 containerAt）。
+    // 展示路径取 path，缺失回退相对路径（标题拼接，与 tooltip 同口径，§2.2）；
+    // 复制 / 打开只用 path 本体，不用回退值
+    const std::optional<PlaylistProvider::Container> targetContainer =
+        m_menuTargetList ? containerAt(m_menuTargetList, m_menuTargetRow) : std::nullopt;
+    const QString containerPath = targetContainer ? targetContainer->path : QString();
+    QString containerFallback;
+    if (targetContainer) {
+        QStringList titles;
+        for (const PathSeg &seg : m_browsePath.value(m_menuTargetList))
+            titles << seg.title;
+        containerFallback = relativePathText(titles + QStringList{targetContainer->title});
+    }
 
     // 弹层父指针挂顶层窗口（原因见表头菜单分支注释）
     QMenu menu(window());
@@ -3290,8 +3401,8 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
     QAction *locatePlayingAction = menu.addAction(tr("Locate Playing Item"));
     menu.addSeparator();
 
-    QAction *openLocationAction = menu.addAction(tr("Open File Location"));
-    QAction *copyPathAction = menu.addAction(tr("Copy File Path"));
+    QAction *openLocationAction = menu.addAction(tr("Reveal in File Explorer"));
+    QAction *copyPathAction = menu.addAction(tr("Copy Path"));
     QAction *propsAction = menu.addAction(tr("Properties"));
 
     // ——启用条件——
@@ -3310,13 +3421,20 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
     removeSelAction->setEnabled(hasList && !list->selectedItems().isEmpty());
     clearAction->setEnabled(itemCount > 0);
 
-    // N26：启用真值统一绑定实体（占位 / 容器 / 上一级行已在命中检测时挡掉，此处指针即真相）
+    // N26：启用真值统一绑定实体（占位 / 上一级行已在命中检测时挡掉，此处指针即真相）。
+    // N47：容器目标绑定容器副本——属性恒启用；复制需 path 非空；打开需本地且存在
     const bool hasTarget = targetEntity != nullptr;
+    // 本地形态判定看 path 本体（目录绝对路径天然本地，WebDAV 完整 URL 天然网络），
+    // 不引入提供者身份接口；存在性以点击时刻为准
+    const bool containerLocalExists = targetContainer && !containerPath.isEmpty() &&
+                                      !Util::isNetworkStreamPath(containerPath) &&
+                                      QDir(containerPath).exists();
     // 能力位取代字符串前缀猜测——定位仅对本地存在项启用
-    openLocationAction->setEnabled(targetEntity && targetEntity->isLocalFile() &&
-                                   targetEntity->exists());
-    copyPathAction->setEnabled(hasTarget);
-    propsAction->setEnabled(hasTarget);
+    openLocationAction->setEnabled(
+        (targetEntity && targetEntity->isLocalFile() && targetEntity->exists()) ||
+        containerLocalExists);
+    copyPathAction->setEnabled(hasTarget || (targetContainer && !containerPath.isEmpty()));
+    propsAction->setEnabled(hasTarget || targetContainer.has_value());
 
     // N45 §2.9："定位到正在播放"启停——正播中、当前即播放 tab、且显示层非队列根层
     const bool mpvPlaying = m_mpv && !m_mpv->propertyFlag(QStringLiteral("idle-active"), true) &&
@@ -3362,11 +3480,16 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
     } else if (chosen == locatePlayingAction) {
         revealPlayingItem(); // N45 §2.9：手动归位（不动 mpv 队列）
     } else if (chosen == openLocationAction) {
-        Util::openFileLocation(targetUrl, this);
+        // N47：容器目标打开其 path（本地目录本身）；实体走原 playUrl
+        Util::openFileLocation(targetContainer ? containerPath : targetUrl, this);
     } else if (chosen == copyPathAction) {
-        copyPathToClipboard(targetUrl);
+        // N47：容器目标复制其 path（无凭据形态）；实体走原 playUrl
+        copyPathToClipboard(targetContainer ? containerPath : targetUrl);
     } else if (chosen == propsAction) {
-        showPropertiesDialog(targetEntity); // N35：传共享计数副本（异步对话框持有实体）
+        if (targetContainer)
+            showContainerPropertiesDialog(*targetContainer, containerFallback);
+        else if (targetEntity)
+            showPropertiesDialog(targetEntity); // N35：传共享计数副本（异步对话框持有实体）
     } else if (chosen == removeSelAction && list && modifiable) {
         QList<int> rows;
         for (QListWidgetItem *sel : list->selectedItems())

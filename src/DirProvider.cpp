@@ -341,6 +341,9 @@ DirProvider::enumerate(const QStringList &parent) const {
             Container c;
             c.id = fi.fileName();
             c.title = fi.fileName();
+            // N47：该层绝对路径（纯展示，供属性对话框 / 复制 / 打开；
+            // 原生分隔符，B15 显示口径）
+            c.path = Util::nativePath(fi.absoluteFilePath());
             // 顺手取得的目录元数据经 optional 带出，供容器参与日期 / 大小排序
             c.meta = LocalFileEntity::fileMetaFrom(fi);
             out.containers.push_back(std::move(c));

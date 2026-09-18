@@ -446,6 +446,9 @@ class PlaylistWidget : public QTabWidget {
     // 行实体的共享计数副本：跨嵌套事件循环（右键菜单 exec）持有，
     // 防菜单期间回刷收编重建表致悬空；行无实体返回 nullptr
     PlaylistEntity::Ptr entityPtrAt(QListWidget *list, int row) const;
+    // N47：行容器的按值副本：跨嵌套事件循环（右键菜单 exec）持有，防菜单期间
+    // 刷新重建层致悬空；行无容器返回 nullopt（Container 为小值类型，按值拷贝）
+    std::optional<PlaylistProvider::Container> containerAt(QListWidget *list, int row) const;
     // 按行序批量删除实体（rows 必须降序；须在删行前调用）。
     // 单遍前缀计数定位各行容器下标后降序批量 erase，避免逐行 O(n·k) 重扫
     void eraseEntitiesAt(QListWidget *list, const QList<int> &rows);
@@ -495,6 +498,10 @@ class PlaylistWidget : public QTabWidget {
     // N35：改收共享计数副本——异步属性对话框跨嵌套事件循环持有实体，
     // 求值转发取回的值经注入口写回该实体（关闭即取消）
     void showPropertiesDialog(const PlaylistEntity::Ptr &entity);
+    // N47：容器属性对话框（同步即时，无异步求值）：独立实现，只沿用视觉语言；
+    // fallbackPath 为 path 缺失时的回退相对路径（§2.2）
+    void showContainerPropertiesDialog(const PlaylistProvider::Container &container,
+                                       const QString &fallbackPath);
     void copyPathToClipboard(const QString &path);
 
     // ——N35 服务注册表装配——
