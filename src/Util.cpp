@@ -444,6 +444,29 @@ bool Util::isOrderedSubsequence(const QStringList &sub, const QStringList &full)
     return true;
 }
 
+// N49：图标淡化。合成底取素材最大可用尺寸——源分辨率不低于最终显示尺寸
+// （16px × 最大缩放率），后续由 QIcon 下采样显示不会糊；透明度经
+// QPainter::setOpacity 施加，与缩放无关，故随后缩放不丢效果
+QIcon Util::fadedIcon(const QIcon &icon, qreal opacity) {
+    if (icon.isNull())
+        return icon; // 空图标原样返回：不做兜底，与"资源缺失即空图标"同口径
+    QSize size;
+    for (const QSize &s : icon.availableSizes()) {
+        if (s.width() > size.width())
+            size = s;
+    }
+    if (!size.isValid() || size.isEmpty())
+        size = QSize(64, 64); // 无可用尺寸（理论不可达）：按素材规格兜一个合成底
+    const QPixmap src = icon.pixmap(size);
+    QPixmap out(src.size());
+    out.fill(Qt::transparent);
+    QPainter p(&out);
+    p.setOpacity(opacity);
+    p.drawPixmap(0, 0, src);
+    p.end();
+    return QIcon(out);
+}
+
 QString resolveLocalPath(const QString &path) {
     if (path.isEmpty())
         return path;

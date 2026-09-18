@@ -113,6 +113,16 @@ endif()
 target_precompile_headers(mpvqtcore PRIVATE src/pch.h)
 set_target_properties(mpvqtcore PROPERTIES PREFIX "" OUTPUT_NAME "mpvqtcore")
 
+# N49：图标素材内嵌为资源（icons/<包名>/<语义键>.png → :/icons/<包名>/<语义键>.png）。
+# 与 qt_add_translations 生成的资源并存；静态构建下随二进制内嵌，无外部文件与部署路径问题
+qt_add_resources(mpvqtcore "icons"
+    PREFIX "/icons"
+    BASE "icons"
+    FILES
+        icons/icons8/locate-playing.png
+        icons/icons8/search.png
+)
+
 qt_add_translations(mpvqtcore MERGE_QT_TRANSLATIONS
     LUPDATE_OPTIONS -no-obsolete
     TS_FILES translations/mpvqt_zh_CN.ts

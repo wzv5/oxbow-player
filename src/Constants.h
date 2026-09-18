@@ -25,6 +25,20 @@ inline QStringList defaultMediaExtensions() {
             QStringLiteral("wav"),  QStringLiteral("m4a")};
 }
 
+// ——N49 图标包——
+// 素材落在 icons/<包名>/<语义键>.png，包目录即"一套图"的替换单元。
+// 各包按同一批语义键名整理文件——跨包的文件名差异在整理入库时吸收，
+// 代码不做"语义键 → 包内文件名"映射表，换包即换目录
+inline QString defaultIconPack() { return QStringLiteral("icons8"); }
+inline QString iconLocatePlaying() { return QStringLiteral("locate-playing"); }
+inline QString iconSearch() { return QStringLiteral("search"); }
+// 解析单点：语义键 → 资源路径。将来加"图标包"设置项时只改 defaultIconPack 的取值来源
+inline QString iconPath(const QString &key) {
+    return QStringLiteral(":/icons/%1/%2.png").arg(defaultIconPack(), key);
+}
+// 搜索框装饰图标的 alpha（半透明呈现，改值即改观感，§2.2）
+inline qreal searchIconOpacity() { return 0.5; }
+
 // 播放列表展开宽度默认值（客户区像素，A20）：展开时主窗口向右扩展该宽度；用户拖动过 splitter
 // 把手则用进程内记忆宽度。 实测 win11 下 322 宽度正好可以让 16:9 的视频在最大化时播放区无黑边。
 inline int playlistDefaultWidth() { return 322; }

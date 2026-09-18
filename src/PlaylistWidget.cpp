@@ -36,6 +36,51 @@ PlaylistWidget::PlaylistWidget(const QString &configFile, QWidget *parent)
     // N45：直写即层入缓存（层在缓存即"已加载"，§2.5）
     ensureLevel(defTab, {});
     connect(this, &QTabWidget::currentChanged, this, &PlaylistWidget::onTabChanged);
+    // ——N49 底部工具条：面板级常驻，全 tab 共享一行，不随 tab 切换重建——
+    // 创建顺序：各列表之后、遮罩之前——工具条自然压在页面栈之上，遮罩仍最后创建并置顶
+    m_stack =
+        findChild<QStackedWidget *>(); // 内部页面栈（QTabWidget 唯一的 QStackedWidget 子控件）
+    m_bottomBar = new QWidget(this);
+    // 底色取 base（与列表视口同色——工具条在视觉上并入内容区，内容区整体再与主窗口
+    // 底色区分）。样式表背景即不透明底，同样盖住样式画的 tab pane 边框线（§2.1）；
+    // 颜色取调色板角色以适应浅深主题，写法沿用 LoadingOverlay 的 QFrame#N19InfoPanel
+    // 先例。列表自身的 StyledPanel 边框即列表与工具条之间的分隔，不再额外画线
+    m_bottomBar->setObjectName(QStringLiteral("PlaylistBottomBar"));
+    m_bottomBar->setStyleSheet(
+        QStringLiteral("QWidget#PlaylistBottomBar { background-color: palette(base); }"));
+    auto *barLayout = new QHBoxLayout(m_bottomBar);
+    // 四周留 2、控件间距 2（默认边距约 9、默认间距约 6 对 16px 图标与 24px 条目行高
+    // 明显过大）。整行高 = 控件高 + 4 = 28（条目行 24）
+    barLayout->setContentsMargins(2, 2, 2, 2);
+    barLayout->setSpacing(2);
+    m_locateButton = new QToolButton(m_bottomBar);
+    // 24 与条目行高相等，也与主窗口音量行的静音按钮同尺寸。**边框保留**：静音按钮可以
+    // 免边框（autoRaise）是因为"音量图标即按钮"已是公认习惯，定位按钮没有这层共识，
+    // 边框是它"可点"的唯一标识
+    m_locateButton->setFixedSize(24, 24);
+    // C2：不保留焦点（与主窗口控制行按钮同一处理）——否则点完按钮后按空格会再次触发
+    // 定位，而不是走全局暂停
+    m_locateButton->setFocusPolicy(Qt::NoFocus);
+    // 不设 iconSize 时 QToolButton 取样式的工具栏图标度量（常为 24px 而非 16px），
+    // 钉死之后"素材按 4 倍给"才是硬保证（§2.1）
+    m_locateButton->setIconSize(QSize(16, 16));
+    m_locateButton->setIcon(QIcon(App::iconPath(App::iconLocatePlaying())));
+    m_locateButton->setToolTip(tr("Locate Playing Item")); // §2.8：由被删的右键菜单项平移而来
+    connect(m_locateButton, &QToolButton::clicked, this, &PlaylistWidget::locatePlayingItem);
+    m_searchBox = new QLineEdit(m_bottomBar);
+    m_searchBox->setPlaceholderText(tr("Search"));
+    m_searchBox->setClearButtonEnabled(true);
+    // 框内右侧装饰图标：Qt 为其预留位置（文字不压图、长文本滚动也不盖图），与清除
+    // 按钮并存时排在清除按钮左侧。只作标识——不接 triggered、不设 tooltip、不置灰，
+    // 点击无行为；半透明由 App::searchIconOpacity() 单点控制（§2.2）
+    m_searchBox->addAction(
+        Util::fadedIcon(QIcon(App::iconPath(App::iconSearch())), App::searchIconOpacity()),
+        QLineEdit::TrailingPosition);
+    // §2.7：焦点在搜索框时认领按键（与列表同为 ShortcutOverride 认领，同一实现）
+    m_searchBox->installEventFilter(this);
+    connect(m_searchBox, &QLineEdit::returnPressed, this, &PlaylistWidget::searchNextInCurrentList);
+    barLayout->addWidget(m_locateButton);
+    barLayout->addWidget(m_searchBox, 1); // 搜索框以伸展因子占满余量
     // N19：遮罩最后创建并置顶；延迟显示定时器可取消
     m_overlay = new LoadingOverlay(this);
     m_overlay->raise();
@@ -55,6 +100,8 @@ PlaylistWidget::PlaylistWidget(const QString &configFile, QWidget *parent)
             m_job.onAbandon();
         abandonJob();
     });
+    reserveBottomBarSpace(); // N49：让位初算（幂等，此后由各重算点维护）
+    updateBottomBarState();  // N49：按钮启用态初值
 }
 
 // N32：析构不再等待。任务体只捕获入参副本（提供者 shared_ptr / 实体快照），不持 this；
@@ -65,10 +112,11 @@ PlaylistWidget::PlaylistWidget(const QString &configFile, QWidget *parent)
 // 最坏延后一条）。
 // m_pendingTab 必须先清零：abandonJob 内的 setBusy(false) 会 flushPendingTab，
 // 那会在析构中途经 onTabChanged 再起一个新任务。m_pendingReveal 同理——
-// setBusy(false) 的延后归位消费会触碰列表
+// setBusy(false) 的延后归位消费会触碰列表；N49 的 m_pendingLocate 同族
 PlaylistWidget::~PlaylistWidget() {
     m_pendingTab = -1;
     m_pendingReveal = false;
+    m_pendingLocate = false;
     abandonJob();
 }
 
@@ -172,6 +220,14 @@ bool PlaylistWidget::eventFilter(QObject *watched, QEvent *event) {
         default:
             break;
         }
+    }
+    // N49 §2.7：焦点在搜索框时认领无修饰键的按键——全局单键动作（空格暂停、
+    // ↑↓ 音量等）不再触发，文本输入与行内编辑照常。只认领无修饰键者是有意的：
+    // 认领全部会挡掉主菜单的组合键，组合键放行也让 QLineEdit 自带的编辑键
+    // （Ctrl+A / C / V）不受影响
+    if (event->type() == QEvent::ShortcutOverride && watched == m_searchBox) {
+        if (static_cast<QKeyEvent *>(event)->modifiers() == Qt::NoModifier)
+            event->accept();
     }
     return QTabWidget::eventFilter(watched, event);
 }
@@ -638,6 +694,8 @@ int PlaylistWidget::playingRowOf(const QListWidget *list) const {
 // ——提供者可为播放注入凭据（WebDAV），而通用 http 项的实体 playUrl 本身可能带凭据，
 // 只剥回显一侧会让它们恒失配、被误判为外部变更而反复整表收编
 void PlaylistWidget::setPlaylist(const QVariantList &items) {
+    // N49：回刷入口是正播态的最新真相（覆盖停止 / 起播 / 外部变更收编），在此刷新按钮态
+    updateBottomBarState();
     QStringList pushed;
     QList<bool> current;
     pushed.reserve(items.size());
@@ -1190,6 +1248,7 @@ int PlaylistWidget::indexOfName(const QString &name) const {
 void PlaylistWidget::onTabChanged(int index) {
     if (index < 0)
         return;
+    updateBottomBarState(); // N49：切 tab 后刷新定位按钮启用态
     QListWidget *list = listAt(index);
     if (!list)
         return;
@@ -1302,6 +1361,7 @@ int PlaylistWidget::currentSelectedEntityIndex() const {
 // N45 §2.1：同步目标转移即"要播的东西 = 该 tab 当前浏览层"——队列根在此重锚
 // （早退前执行：播放中 tab 换层双击也要换队列根）
 void PlaylistWidget::markPlayingTab(int tabIndex) {
+    updateBottomBarState(); // N49：同步目标转移后刷新定位按钮启用态
     if (QListWidget *list = listAt(tabIndex))
         m_queueRoot[list] = m_browsePath.value(list);
     if (tabIndex == m_playingTab)
@@ -2780,6 +2840,14 @@ void PlaylistWidget::setBusy(bool on) {
         m_overlayTimer.stop();
         m_overlay->finish();
         flushPendingTab();
+        // N49：延后的手动定位补执行（同样在 flushPendingTab 之后：若排队切 tab 起了
+        // 新任务，m_busy 复真，locatePlayingItem 会再次置旗延后，由那一轮的 busy 结束
+        // 消费）。先于 m_pendingReveal：手动定位含自动归位的全部效果，两者同时待办时
+        // 只执行手动那一次
+        if (m_pendingLocate && !m_busy) {
+            m_pendingLocate = false;
+            locatePlayingItem();
+        }
         // N45：延后的切曲归位补执行（在 flushPendingTab 之后：若排队切 tab 起了
         // 新任务，m_busy 复真，归位再次延后，由那一轮的 busy 结束消费）。
         // 归位自身不起任务（队列根层常驻缓存，缓存命中即同步换入）
@@ -2787,6 +2855,11 @@ void PlaylistWidget::setBusy(bool on) {
             m_pendingReveal = false;
             revealPlayingItem();
         }
+        // N49：忙时结束一并刷新定位按钮启用态——setListsEnabled(true) 只是把工具条
+        // 整体恢复可用，按钮自身的 enabled 仍停留在进入忙时前的旧值；若在途期间停止
+        // 播放，按钮会以"可点"的样子留到下一次切 tab 或回刷才纠正。放在延后消费之后，
+        // 免得定位刚改过的状态又被覆盖
+        updateBottomBarState();
     }
 }
 
@@ -2795,6 +2868,9 @@ void PlaylistWidget::setListsEnabled(bool on) {
     for (int i = 0; i < count(); ++i)
         if (QListWidget *l = listAt(i))
             l->setEnabled(on);
+    // N49：工具条随列表一并禁用（与遮罩覆盖构成双保险，沿用列表的既有做法）
+    if (m_bottomBar)
+        m_bottomBar->setEnabled(on);
 }
 
 void PlaylistWidget::armOverlay(LoadingOverlay::Mode mode, int total) {
@@ -2808,8 +2884,144 @@ void PlaylistWidget::armOverlay(LoadingOverlay::Mode mode, int total) {
 
 void PlaylistWidget::resizeEvent(QResizeEvent *event) {
     QTabWidget::resizeEvent(event);
+    reserveBottomBarSpace(); // N49：本控件尺寸变化，工具条高度与 stack 的 y 都需重算
     if (m_overlay)
         m_overlay->setGeometry(rect()); // 遮罩贴合播放列表全域（含 tab 栏）
+}
+
+// ——N49 底部工具条——
+
+// 让位：把内部页面栈压到"让出底部一行"的高度，工具条摆到底部通栏。
+// 不装布局——基类 QTabWidget 自己是这一层的几何管理者（tab 栏与页面栈的几何由私有
+// setUpLayout 经样式子元素矩形算出后直接 setGeometry），在这一层装布局就得复刻那套
+// 算法并与基类争同一个 stack 的几何；改用最大高度约束：setGeometry 尊重 min/max 是
+// 文档保证的行为，故基类每一次内部重排都被自动钳住。
+// 基类重排恒发生在约束更新之前（resizeEvent 先调基类；insertTab / removeTab 先
+// setUpLayout 后回调虚函数），故更新约束之后须主动补一次几何——否则既有几何仍停留在
+// 旧约束下：窗口放大时矮一截、tab 栏换行增高时底边压进工具条。
+// 入参全取自当前状态，且只改 stack 的高度、不改其 y 偏移，故本函数幂等、可任意重复调用
+void PlaylistWidget::reserveBottomBarSpace() {
+    if (!m_bottomBar || !m_stack)
+        return;                                     // 页面栈取不到时整个让位静默跳过，不引入崩溃面
+    const int h = m_bottomBar->sizeHint().height(); // 不设固定高度：随样式 / 字体自适应
+    m_bottomBar->setGeometry(0, height() - h, width(), h);
+    const int want = qMax(height() - h - m_stack->y(), 0);
+    m_stack->setMaximumHeight(want);
+    if (m_stack->height() != want)
+        m_stack->setGeometry(m_stack->x(), m_stack->y(), m_stack->width(), want);
+}
+
+// 三个补算点一律在基类处理之后（与 Qt 内部让位机制的触发点对齐）
+void PlaylistWidget::tabInserted(int index) {
+    QTabWidget::tabInserted(index);
+    reserveBottomBarSpace(); // 增删列表会改 tab 栏高度，进而改 stack 的 y 偏移
+}
+
+void PlaylistWidget::tabRemoved(int index) {
+    QTabWidget::tabRemoved(index);
+    reserveBottomBarSpace();
+}
+
+bool PlaylistWidget::event(QEvent *event) {
+    const bool handled = QTabWidget::event(event);
+    // StyleChange 可能改字体与边框，进而改工具条高度与 stack 的 y 偏移
+    if (event->type() == QEvent::StyleChange)
+        reserveBottomBarSpace();
+    return handled;
+}
+
+// 正播中判据（§2.4）：按钮启用态与定位入口的守卫共用，判据只此一份
+bool PlaylistWidget::hasPlayingItem() const {
+    return m_mpv && !m_mpv->propertyFlag(QStringLiteral("idle-active"), true) &&
+           !m_mpv->propertyString(QStringLiteral("path")).isEmpty();
+}
+
+// 按钮启用态刷新（§2.4）：漏刷只影响灰态——定位入口幂等无副作用（切 tab 与归位皆幂等）
+void PlaylistWidget::updateBottomBarState() {
+    if (m_locateButton)
+        m_locateButton->setEnabled(hasPlayingItem());
+}
+
+// 手动定位唯一入口（§2.4）：切到在播 tab 并把在播项选中滚动可见。
+// 与 revealPlayingItem 分开的理由：后者在"显示层已是队列根层"这一分支上**故意**早退
+// （每次切曲不打断用户的滚动位置），而手动定位必须补选中与滚动，两条入口各自保留语义
+void PlaylistWidget::locatePlayingItem() {
+    if (m_busy) {
+        m_pendingLocate = true; // last-wins：定位幂等，多次触发一次执行
+        return;
+    }
+    if (!hasPlayingItem())
+        return;
+    if (currentIndex() != m_playingTab)
+        setCurrentIndex(m_playingTab); // 切 tab 可能经 onTabChanged 起异步加载
+    if (m_busy) {                      // 切完复查：加载在途则延后，由 busy 结束补执行
+        m_pendingLocate = true;
+        return;
+    }
+    QListWidget *list = listAt(m_playingTab);
+    if (!list)
+        return;
+    if (displayedIdsOf(list) == queueRootIdsOf(list))
+        restorePlayingState(list, m_playingTab); // 已是队列根层：只补选中与滚动，不重建行
+    else
+        revealQueueRoot(list); // 下钻后的子层：归位队列根层（内部已含选中与滚动）
+}
+
+// 可匹配行谓词（§2.5）：容器行参与——它是列表里实际显示的名字，也是层级浏览下最想跳转
+// 的目标；"上一级"行是导航件不是内容、失败占位行本身不可选且文案是错误提示，两者都不参与
+bool PlaylistWidget::isSearchableRow(const QListWidgetItem *item) {
+    return item && !isPlaceholderRow(item) && !isParentLinkRow(item);
+}
+
+// 搜索推进（§2.5）：只按行的显示名做包含匹配、不区分大小写；查询串不变时反复回车继续
+// 找后续匹配项；末尾回绕；回绕与全表无命中都"叮"一声；全程不改列表内容
+void PlaylistWidget::searchNextInCurrentList() {
+    if (m_busy)
+        return;
+    QListWidget *list = listAt(currentIndex());
+    const QString query = m_searchBox ? m_searchBox->text() : QString();
+    if (query.isEmpty() || !list) {
+        m_search = {}; // 空串回车不动作：不回绕、不发声、不报错
+        return;
+    }
+    // 锚点有效性校验：查询串相同、同一张表、行号在范围内、且该行名字仍包含查询串
+    // （末条即"行内容未变"这一层校验）。任一项不成立即视为新查询，从头开始——这是
+    // "首行起搜"与"列表被重建 / 切过 tab 后不误用旧锚点"的同一套判据
+    const bool resume = m_search.query == query && m_search.anchorList.data() == list &&
+                        m_search.anchorRow >= 0 && m_search.anchorRow < list->count() &&
+                        list->item(m_search.anchorRow)->text().contains(query, Qt::CaseInsensitive);
+    const int last = list->count() - 1;
+    const int wrapEnd = resume ? m_search.anchorRow : last;
+    int hit = -1;
+    for (int row = resume ? m_search.anchorRow + 1 : 0; row <= last; ++row) {
+        QListWidgetItem *item = list->item(row);
+        if (isSearchableRow(item) && item->text().contains(query, Qt::CaseInsensitive)) {
+            hit = row;
+            break;
+        }
+    }
+    if (hit < 0) {
+        // 只有"顺着往下直接命中的那一段"不发声：一旦进入回绕段（没能在锚点之后找到）
+        // 就响一声，故回绕命中与全表无命中都响、且同一次回车至多一声
+        QApplication::beep();
+        if (resume) { // 新查询的第一段已是整表一趟，无需再扫
+            for (int row = 0; row <= wrapEnd; ++row) {
+                QListWidgetItem *item = list->item(row);
+                if (isSearchableRow(item) && item->text().contains(query, Qt::CaseInsensitive)) {
+                    hit = row;
+                    break;
+                }
+            }
+        }
+    }
+    if (hit < 0)
+        return; // 全表无命中：选中与滚动一概不动，锚点保持原值（下次回车等价重试）
+    QListWidgetItem *item = list->item(hit);
+    list->setCurrentItem(item); // 不夺焦——焦点留在搜索框，故可连按回车
+    list->scrollToItem(item, QListWidget::PositionAtCenter);
+    m_search.query = query;
+    m_search.anchorList = list;
+    m_search.anchorRow = hit;
 }
 
 // ——N19 失败占位——
@@ -3275,6 +3487,11 @@ void PlaylistWidget::showContainerPropertiesDialog(const PlaylistProvider::Conta
 void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
     if (m_busy)
         return; // N19：忙时右键菜单禁用（表头/主体同守卫）
+    // N49 §2.7：工具条区域不弹任何菜单——它既不在 tab 栏几何内、也不是列表主体，
+    // 不早退就会在面板底部弹出一整套列表主体菜单，落点与语义都不对。
+    // 搜索框内右键由 QLineEdit 自身的原生编辑菜单消费，事件不冒泡到本类，无需处理
+    if (m_bottomBar && m_bottomBar->geometry().contains(event->pos()))
+        return;
     // N9：按右键落点分区——tab 表头与列表主体各自独立菜单。
     // 区域判定用几何（覆盖表头空白区与两侧滚动箭头）：箭头控件是 QTabBar 的
     // 子按钮，按控件类型判定会误入主体菜单分支
@@ -3431,9 +3648,7 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
     QAction *removeDupAction = removeMenu->addAction(tr("Remove Duplicates"));
 
     QAction *refreshAction = menu.addAction(tr("Refresh"));
-    // N45 §2.9：手动归位入口——一键回到队列根层并滚到正播项，不改变 mpv 队列；
-    // 无正播项或已在队列根层时禁用
-    QAction *locatePlayingAction = menu.addAction(tr("Locate Playing Item"));
+    // N49：原"Locate Playing Item"项已上移为底部工具条的定位按钮，此处不再列该项
     menu.addSeparator();
 
     QAction *openLocationAction = menu.addAction(tr("Reveal in File Explorer"));
@@ -3471,12 +3686,6 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
     copyPathAction->setEnabled(hasTarget || (targetContainer && !containerPath.isEmpty()));
     propsAction->setEnabled(hasTarget || targetContainer.has_value());
 
-    // N45 §2.9："定位到正在播放"启停——正播中、当前即播放 tab、且显示层非队列根层
-    const bool mpvPlaying = m_mpv && !m_mpv->propertyFlag(QStringLiteral("idle-active"), true) &&
-                            !m_mpv->propertyString(QStringLiteral("path")).isEmpty();
-    locatePlayingAction->setEnabled(isPlayingTab && browsePathIdsOf(list) != queueRootIdsOf(list) &&
-                                    mpvPlaying);
-
     // N26：依赖实体能力的排序项按本层支持者启用；其余排序项不受影响
     if (list) {
         const QStringList layerIds = browsePathIdsOf(list);
@@ -3512,8 +3721,6 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
             addFiles(files);
     } else if (chosen == refreshAction) {
         refreshCurrentTab();
-    } else if (chosen == locatePlayingAction) {
-        revealPlayingItem(); // N45 §2.9：手动归位（不动 mpv 队列）
     } else if (chosen == openLocationAction) {
         // N47：容器目标打开其 path（本地目录本身）；实体走原 playUrl
         Util::openFileLocation(targetContainer ? containerPath : targetUrl, this);

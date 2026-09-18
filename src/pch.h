@@ -67,6 +67,7 @@
 #include <QObject>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPixmap>
 #include <QPointer>
 #include <QPromise>
 #include <QPushButton>

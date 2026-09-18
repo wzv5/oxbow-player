@@ -171,6 +171,10 @@ class PlaylistWidget : public QTabWidget {
     void dropEvent(QDropEvent *event) override;
     void contextMenuEvent(QContextMenuEvent *event) override;
     void resizeEvent(QResizeEvent *event) override; // N19：遮罩几何跟随
+    // N49：让位的三个补算点——基类在内部重排之后才回调虚函数，正是补算时机
+    bool event(QEvent *event) override;   // StyleChange：样式改字体与边框，h 与 y 都变
+    void tabInserted(int index) override; // 增删列表会改 tab 栏高度，进而改 stack 的 y
+    void tabRemoved(int index) override;
 
   private slots:
     void onItemDoubleClicked(QListWidgetItem *item);
@@ -251,6 +255,14 @@ class PlaylistWidget : public QTabWidget {
         QFutureWatcher<void> *watcher = nullptr;
         std::function<void()> onAbandon; // 取消时执行（仅可取消批次）：搬走已算批次注入缓存
         bool active() const { return watcher != nullptr; }
+    };
+
+    // N49 §2.5：搜索状态——上次执行的查询串、上次命中所在的列表与行号。
+    // 三者合起来即"下一次回车能否接着往下走"的全部判据：任一不符即按新查询从头起搜
+    struct SearchState {
+        QString query;
+        QPointer<QListWidget> anchorList; // 删 tab 后自动置空，不悬空
+        int anchorRow = -1;               // -1 = 无锚点（新查询从首行起搜）
     };
 
     // 单个 tab 的播放记忆（默认 tab 仅进程内有效，持久化时跳过索引 0）。
@@ -418,6 +430,19 @@ class PlaylistWidget : public QTabWidget {
     void setBusy(bool on);
     void flushPendingTab();
     void setListsEnabled(bool on);
+    // ——N49 底部工具条——
+    // 让位：压住内部页面栈的最大高度并把工具条摆到底部（含主动几何修正，§2.3）
+    void reserveBottomBarSpace();
+    // 正播中判据（按钮启用态与定位入口的守卫共用）：mpv 已注入、非空闲、path 非空
+    bool hasPlayingItem() const;
+    // 手动定位唯一入口：切到在播 tab 并把在播项选中滚动可见；忙时延后（§2.4）
+    void locatePlayingItem();
+    // 按钮启用态刷新（漏刷只影响灰态：定位入口幂等无副作用）
+    void updateBottomBarState();
+    // 搜索推进：在当前 tab 的当前显示层按显示名包含匹配，末尾回绕（§2.5）
+    void searchNextInCurrentList();
+    // 可匹配行谓词：容器行参与；"上一级"行与失败占位行不参与（§2.5）
+    static bool isSearchableRow(const QListWidgetItem *item);
     void armOverlay(LoadingOverlay::Mode mode, int total);
     // ——N32 上下文采集（到用到处才采）——
     // 行序 key 序列（比对用；占位行跳过）
@@ -562,6 +587,15 @@ class PlaylistWidget : public QTabWidget {
     bool m_pendingReveal = false; // N45：忙时延后的切曲归位（last-wins，busy 结束补执行）
     // N37：枚举警告累积（仅 Ok 批次写入；Discarded 在 onLoadFinished 首行早退不写），
     // 唯一出口第⑤步复位后弹框，弹完即清（§3.5）
+    // ——N49 底部工具条（面板级常驻：全 tab 共享一行，不随 tab 切换重建）——
+    QWidget *m_bottomBar = nullptr;
+    QToolButton *m_locateButton = nullptr;
+    QLineEdit *m_searchBox = nullptr;
+    // 内部页面栈缓存（QTabWidget 唯一的 QStackedWidget 子控件）；取不到时整个让位
+    // 静默跳过，不引入崩溃面
+    QStackedWidget *m_stack = nullptr;
+    SearchState m_search;
+    bool m_pendingLocate = false; // 忙时延后的手动定位（与 m_pendingTab / m_pendingReveal 同族）
     QStringList m_enumWarnings;
     LoadingOverlay *m_overlay = nullptr;
     LoadingOverlay::Mode m_overlayMode = LoadingOverlay::Mode::Loading;
