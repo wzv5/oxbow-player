@@ -556,6 +556,10 @@ void MainWindow::connectController() {
             const int pt = m_playlist->playingTabIndex();
             if (pt >= 0)
                 m_playlist->recordPlayback(pt, pos, switchedItem ? 0.0 : m_timePos);
+            // N45 §2.9：切曲归位——手动上一 / 下一与自动续播一律把浏览路径归位到
+            // 队列根层并滚动到正播项（仅实际换条目时；两次切曲之间可自由浏览）
+            if (switchedItem && pt >= 0)
+                m_playlist->revealPlayingItem();
             // 启动后首次检测到播放（如命令行参数打开文件）：切换到正在播放的 tab
             if (!m_startupPlaybackCheckDone) {
                 m_startupPlaybackCheckDone = true;
@@ -745,21 +749,23 @@ void MainWindow::togglePause() {
         // 有播放记忆（含默认 tab 的进程内记忆）→ 从记忆项与进度续播；
         // 无记忆 → 选中行优先，否则第一项；不兜底旧播放列表。
         // N9：路径+序号双存解析（序号校验失败按路径寻位）
+        // N45 §2.9：先锚定队列根 = 当前浏览层（双击层即队列层），再取队列内容与
+        // 续播定位——mpv 侧语义一律实体序
         const int cur = m_playlist->currentIndex();
-        const QStringList files = m_playlist->filesOf(cur);
+        m_playlist->markPlayingTab(cur);
+        const QStringList files = m_playlist->queueFilesOf(cur);
         if (files.isEmpty())
             return;
         const double restoreTime = m_playlist->lastTimePosOf(cur);
-        int row = m_playlist->resolveResumeRow(cur);
-        if (row < 0) {
-            row = m_playlist->currentSelectedRow();
-            if (row < 0 || row >= files.size())
-                row = 0;
+        int idx = m_playlist->resumeEntityIndexOf(cur);
+        if (idx < 0) {
+            idx = m_playlist->currentSelectedEntityIndex();
+            if (idx < 0 || idx >= files.size())
+                idx = 0;
         }
         // 载入即转移同步目标：mpv 列表回刷写进当前 tab，关闭时 lastTabName 随之正确；
         // 续播进度经统一入口的挂起 seek 机制恢复
-        m_playlist->markPlayingTab(cur);
-        onPlayRequested(files, row, restoreTime > 0.0 ? restoreTime : -1.0);
+        onPlayRequested(files, idx, restoreTime > 0.0 ? restoreTime : -1.0);
         return;
     }
     m_controller->command({QStringLiteral("cycle"), QStringLiteral("pause")});
@@ -803,13 +809,15 @@ void MainWindow::playlistNext() {
 }
 
 // 停止态的上一个/下一个（A9/A16）：以当前选中列表为基准步进并开始播放。
-// 起点：有记忆取记忆项，否则第 0 项；列表循环开启时首尾互绕，非循环越界无动作
+// 起点：有记忆取记忆项，否则第 0 项；列表循环开启时首尾互绕，非循环越界无动作。
+// N45 §2.9：先锚定队列根 = 当前浏览层，再按队列根层实体序步进
 void MainWindow::stepStopped(bool next) {
     const int cur = m_playlist->currentIndex();
-    const QStringList files = m_playlist->filesOf(cur);
+    m_playlist->markPlayingTab(cur);
+    const QStringList files = m_playlist->queueFilesOf(cur);
     if (files.isEmpty())
         return;
-    int base = m_playlist->resolveResumeRow(cur);
+    int base = m_playlist->resumeEntityIndexOf(cur);
     if (base < 0 || base >= files.size())
         base = 0;
     int target = base + (next ? 1 : -1);
@@ -821,7 +829,6 @@ void MainWindow::stepStopped(bool next) {
     } else if (target < 0 || target >= files.size()) {
         return;
     }
-    m_playlist->markPlayingTab(cur);
     onPlayRequested(files, target, -1.0);
 }
 
@@ -835,21 +842,22 @@ void MainWindow::updateNavigationActions() {
     if (m_playlistPos >= 0) {
         // 播放/暂停态：以 mpv 实际列表为准（长度取正在播放 tab 的镜像）
         const int pt = m_playlist->playingTabIndex();
-        const int count = pt >= 0 ? m_playlist->filesOf(pt).size() : m_playlistPos + 1;
+        const int count = pt >= 0 ? m_playlist->queueFilesOf(pt).size() : m_playlistPos + 1;
         prevAction->setEnabled(loop || m_playlistPos > 0);
         nextAction->setEnabled(loop || m_playlistPos < count - 1);
         return;
     }
 
-    // 停止态：以当前选中 tab 为准；空列表无视 LOOP 双禁用
+    // 停止态：以当前选中 tab 为准；空列表无视 LOOP 双禁用。
+    // N45：基准按队列根层实体序（resumeEntityIndexOf）
     const int cur = m_playlist->currentIndex();
-    const QStringList files = m_playlist->filesOf(cur);
+    const QStringList files = m_playlist->queueFilesOf(cur);
     if (files.isEmpty()) {
         prevAction->setEnabled(false);
         nextAction->setEnabled(false);
         return;
     }
-    int base = m_playlist->resolveResumeRow(cur);
+    int base = m_playlist->resumeEntityIndexOf(cur);
     if (base < 0 || base >= files.size())
         base = 0; // 与 stepStopped 起点归一规则一致
     prevAction->setEnabled(loop || base > 0);
@@ -1561,7 +1569,7 @@ void MainWindow::applyMuteState(bool muted) {
 QString MainWindow::playingFilename() {
     const int pt = m_playlist->playingTabIndex();
     if (pt >= 0 && m_playlistPos >= 0) {
-        const QStringList files = m_playlist->filesOf(pt);
+        const QStringList files = m_playlist->queueFilesOf(pt);
         if (m_playlistPos < files.size()) {
             // 解后为空（如以 / 结尾的 URL）回退属性兜底，与 HttpEntity 显示名的
             // 空串回退同哲学——两侧不出现空白标题
@@ -1581,7 +1589,7 @@ void MainWindow::updateNowPlayingUi() {
         return; // 停止态无"正在播放"可言
     QString filename = playingFilename();
     const int pt = m_playlist->playingTabIndex();
-    const int total = pt >= 0 ? m_playlist->filesOf(pt).size() : m_playlistPos + 1;
+    const int total = pt >= 0 ? m_playlist->queueFilesOf(pt).size() : m_playlistPos + 1;
     if (!filename.isEmpty())
         setWindowTitle(filename); // N8 Part1：标题跟随真实文件名
     else
@@ -2291,7 +2299,7 @@ void MainWindow::jumpToFileTime(const QString &path, double time) {
     auto findInTab = [&](int tabIdx) -> int {
         if (tabIdx < 0 || tabIdx >= m_playlist->count())
             return -1;
-        const QStringList files = m_playlist->filesOf(tabIdx);
+        const QStringList files = m_playlist->queueFilesOf(tabIdx);
         for (int i = 0; i < files.size(); ++i)
             if (Util::normalizePathForMatch(files[i]) == norm)
                 return i;
@@ -2330,7 +2338,7 @@ void MainWindow::jumpToFileTime(const QString &path, double time) {
             }
         } else {
             // 跨列表跳转：复用 onPlayRequested 整表载入（与双击条目同路径）
-            const QStringList files = m_playlist->filesOf(targetTab);
+            const QStringList files = m_playlist->queueFilesOf(targetTab);
             m_playlist->markPlayingTab(targetTab);
             m_playlist->requestTab(targetTab); // N19：忙时排队
             onPlayRequested(files, targetRow, time);

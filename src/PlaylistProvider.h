@@ -15,10 +15,18 @@ class PlaylistProvider {
   public:
     using EntityList = PlaylistEntity::List;
 
-    // N37：枚举结果——条目 + 非致命警告。warnings 为"部分来源失败 / 被跳过"的可读
+    // ——N37：枚举结果——条目 + 非致命警告。warnings 为"部分来源失败 / 被跳过"的可读
     // 文案（条目已产出，不判整次失败）；unexpected 语义不变：来源整体不可用，
-    // 视图进占位行
+    // 视图进占位行。
+    // N45：增容器数组。容器组恒在实体组之前是模型不变式（不是显示偏好），
+    // 两数组顺序完备：显示序 = containers 序接 entities 序
+    struct Container {
+        QString id; // 提供者内稳定，作为 parent 路径段
+        QString title;
+        std::optional<FileMeta> meta; // 复用 FileMeta，供容器参与排序
+    };
     struct Enumeration {
+        QList<Container> containers;
         EntityList entities;
         QStringList warnings;
     };
@@ -38,8 +46,13 @@ class PlaylistProvider {
     virtual QString typeKey() const = 0;
     // 枚举条目（同步）：内容唯一来源。返回 expected——成功带实体有序表与警告
     // （空目录成功返回空表，与失败区分；N37 起部分来源失败随 warnings 回传），
-    // 失败带错误文案
-    virtual std::expected<Enumeration, QString> enumerate() const = 0;
+    // 失败带错误文案。
+    // N45：parent 为相对根的路径段序列（不含根本身），空即根层——决定枚举哪一层。
+    // 契约：视图只对提供者自己返回过的容器 id 发起非空 parent 调用；平铺形态的
+    // 提供者收到非空 parent 属调用方违约——Q_ASSERT 守候，release 降级返回空结果
+    // （照 fromPlayUrl 对"http 加空 registry"的既有先例），不得静默忽略。
+    // 提供者不产出"上一级"项，该行由视图合成
+    virtual std::expected<Enumeration, QString> enumerate(const QStringList &parent = {}) const = 0;
     // 视图 → 提供者内容回传（只读引用）。基类默认实现忽略——不可修改的提供者
     // 不参与回传。回传是内容落盘的唯一入口：savePlaylists 对可修改提供者逐个回传
     // 后随即序列化，回传与落盘不得拆开（N27）。

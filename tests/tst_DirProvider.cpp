@@ -112,10 +112,13 @@ std::shared_ptr<ServiceRegistry> registryWithDepth(int depth) {
 }
 
 // 枚举并抽出 playUrl（统一分隔符后升序）——集合语义，便于逐层比对。
-// N37：enumerate 返回类型改为 Enumeration，取 entities 字段（warnings 非本套件关注点）
+// N37：enumerate 返回类型改为 Enumeration，取 entities 字段（warnings 非本套件关注点）。
+// N45：构造参数由 bool recursive 改为浏览模式枚举——本套件既有深度 / 环用例
+// 全部对应"仅文件（含子目录）"模式
 std::expected<QStringList, QString> enumerateUrls(const QString &root, int depth) {
     // 递归开、扩展名只认 mp4：与本轮被测的遍历口径对齐
-    DirProvider provider(root, true, {QStringLiteral("mp4")}, registryWithDepth(depth));
+    DirProvider provider(root, DirProvider::BrowseMode::FilesRecursive, {QStringLiteral("mp4")},
+                         registryWithDepth(depth));
     const auto result = provider.enumerate();
     if (!result.has_value())
         return std::unexpected(result.error());
@@ -129,6 +132,24 @@ std::expected<QStringList, QString> enumerateUrls(const QString &root, int depth
 
 // 期望值同款归一：playUrl 经加工为原生分隔符，比较前统一
 QString norm(const QString &path) { return QDir::fromNativeSeparators(path); }
+
+// N45：枚举结果的实体 playUrl（保持产出序，不排序——初始排序用例按序断言）
+QStringList entityUrlsInOrder(const std::expected<PlaylistProvider::Enumeration, QString> &r) {
+    QStringList urls;
+    if (r.has_value())
+        for (const auto &e : r->entities)
+            urls << norm(e->playUrl());
+    return urls;
+}
+
+// N45：枚举结果的容器 id 列（保持产出序）
+QStringList containerIdsInOrder(const std::expected<PlaylistProvider::Enumeration, QString> &r) {
+    QStringList ids;
+    if (r.has_value())
+        for (const auto &c : r->containers)
+            ids << c.id;
+    return ids;
+}
 } // namespace
 
 class TestDirProvider : public QObject {
@@ -168,6 +189,22 @@ class TestDirProvider : public QObject {
     void validateInputCoversEmptyStreamMissingAndValid();
     // N44：parseExtensions 口径（空白分隔、去前导点、转小写、去重保序、空表）
     void parseExtensionsNormalizesTokens();
+    // N45：browseModeFromInt 取值域映射与域外降级（默认分层浏览）
+    void browseModeFromIntCoversDomainAndDegrades();
+    // N45：resolveLayerPath 逐段拼接（空序列即根、多段嵌套）
+    void resolveLayerPathJoinsSegments();
+    // N45：分层浏览——子目录产容器、空目录照样是容器、扩展名只过滤文件不过滤
+    // 子目录、容器组 / 实体组各自按数字化初始排序
+    void layeredEnumerateProducesSortedContainersAndEntities();
+    // N45：分层浏览——非空 parent 进入子目录层（容器 id 逐段拼回 root 可达）
+    void layeredEnumerateWithParentEntersSubdirectory();
+    // N45：仅文件模式——只列举根内文件（子目录一概不进，平铺现状逐字保留）
+    void filesOnlyModeListsRootFilesOnly();
+    // N45：提供者初始排序——文件名数字化（1/2/10 序而非字典序）
+    void providerInitialSortIsNumeric();
+    // N45：分层模式下"子目录不可读"不再是 warnings，目录仍作为容器显示
+    // （仅可 chmod 平台执行，理由同 unreadableSubdirectoryYieldsWarning）
+    void layeredUnreadableSubdirectoryIsStillAContainer();
 };
 
 void TestDirProvider::symlinkLoopToRootIsPruned() {
@@ -371,7 +408,7 @@ void TestDirProvider::unreadableSubdirectoryYieldsWarning() {
     if (QDir(sub).isReadable())
         QSKIP("权限剥夺未生效，无法构造不可读子目录场景");
 
-    DirProvider provider(root, true, {QStringLiteral("mp4")},
+    DirProvider provider(root, DirProvider::BrowseMode::FilesRecursive, {QStringLiteral("mp4")},
                          registryWithDepth(App::recursiveDepthLimitMax()));
     const auto result = provider.enumerate();
     // N37：不再整次失败——根内文件照常收录，子目录失败随 warnings 回传
@@ -445,6 +482,184 @@ void TestDirProvider::parseExtensionsNormalizesTokens() {
              QStringList({QStringLiteral("webm")}));
     QVERIFY(DirProvider::parseExtensions(QString()).isEmpty());
     QVERIFY(DirProvider::parseExtensions(QStringLiteral("  \t ")).isEmpty());
+}
+
+// N45：取值域内三个值逐一映射；域外（损坏 / 未知）降级 Layered——INI 新键缺失
+// 读到 0 亦即 Layered（新建列表默认）
+void TestDirProvider::browseModeFromIntCoversDomainAndDegrades() {
+    using BM = DirProvider::BrowseMode;
+    QCOMPARE(DirProvider::browseModeFromInt(0), BM::Layered);
+    QCOMPARE(DirProvider::browseModeFromInt(1), BM::FilesOnly);
+    QCOMPARE(DirProvider::browseModeFromInt(2), BM::FilesRecursive);
+    QCOMPARE(DirProvider::browseModeFromInt(-1), BM::Layered);
+    QCOMPARE(DirProvider::browseModeFromInt(3), BM::Layered);
+    QCOMPARE(DirProvider::browseModeFromInt(99), BM::Layered);
+}
+
+// N45：parent 段序列逐段拼回 root；空序列即根本身且原样返回（不 cleanPath，
+// 形态稳定是幂等前提）
+void TestDirProvider::resolveLayerPathJoinsSegments() {
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    const QString root = tmp.path();
+
+    // 空序列：原样返回
+    QCOMPARE(DirProvider::resolveLayerPath(root, {}), root);
+    // 单段与多段：以 '/' 连接（QDir::filePath 的连接符，QDir/QFileInfo 均可解析）
+    QCOMPARE(DirProvider::resolveLayerPath(root, {QStringLiteral("sub")}),
+             QDir(root).filePath(QStringLiteral("sub")));
+    QCOMPARE(DirProvider::resolveLayerPath(root, {QStringLiteral("sub"), QStringLiteral("lvl2")}),
+             QDir(root).filePath(QStringLiteral("sub/lvl2")));
+
+    // 与真实文件系统对齐：拼出的路径就是分层枚举可达的目录（先建两层再断言）
+    const QString sub = DirProvider::resolveLayerPath(root, {QStringLiteral("sub")});
+    const QString lvl2 =
+        DirProvider::resolveLayerPath(root, {QStringLiteral("sub"), QStringLiteral("lvl2")});
+    QVERIFY(QDir().mkpath(lvl2)); // mkpath 逐层创建，sub 随之而来
+    QVERIFY(QDir(sub).exists());
+    QVERIFY(QDir(lvl2).exists());
+}
+
+// N45 §2.11：分层浏览——子目录产容器（含无命中媒体的空目录）、扩展名清单只
+// 过滤文件不过滤子目录；容器组 / 实体组各自按文件名数字化排好初始序
+void TestDirProvider::layeredEnumerateProducesSortedContainersAndEntities() {
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    const QString root = tmp.path();
+    const QString a = makeMedia(root, QStringLiteral("a.mp4"));
+    const QString sub = makeDir(root, QStringLiteral("sub"));
+    const QString b = makeMedia(sub, QStringLiteral("b.mp4"));
+    const QString empty = makeDir(root, QStringLiteral("empty"));
+    QVERIFY(!a.isEmpty());
+    QVERIFY(!sub.isEmpty());
+    QVERIFY(!b.isEmpty());
+    QVERIFY(!empty.isEmpty());
+    // 非媒体文件不产实体，但不影响它所在目录之外的世界
+    QVERIFY(!makeMedia(root, QStringLiteral("notes.txt")).isEmpty());
+
+    DirProvider provider(root, DirProvider::BrowseMode::Layered, {QStringLiteral("mp4")},
+                         registryWithDepth(App::recursiveDepthLimitDefault()));
+    const auto result = provider.enumerate();
+    if (!result.has_value())
+        QFAIL(qPrintable(result.error()));
+
+    // 容器组：空目录照样在（深层内容经由它抵达），扩展名清单不筛目录；
+    // 两个容器按数字化初始序（"empty" < "sub"）
+    QCOMPARE(containerIdsInOrder(result),
+             QStringList({QStringLiteral("empty"), QStringLiteral("sub")}));
+    for (const auto &c : result->containers) {
+        QVERIFY(c.id == QStringLiteral("empty") || c.id == QStringLiteral("sub"));
+        QCOMPARE(c.title, c.id);     // 目录容器的 title 即目录名
+        QVERIFY(c.meta.has_value()); // 目录元数据带出，供日期 / 大小排序
+    }
+    // 实体组：只含根层命中扩展名的文件，b.mp4 不上浮（分层的立身之本）
+    QCOMPARE(entityUrlsInOrder(result), QStringList({norm(a)}));
+    QVERIFY(result->warnings.isEmpty());
+}
+
+// N45：非空 parent 进入子目录层——resolveLayerPath 拼回的目录即枚举目标
+void TestDirProvider::layeredEnumerateWithParentEntersSubdirectory() {
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    const QString root = tmp.path();
+    const QString sub = makeDir(root, QStringLiteral("sub"));
+    const QString b = makeMedia(sub, QStringLiteral("b.mp4"));
+    const QString lvl2 = makeDir(sub, QStringLiteral("lvl2"));
+    const QString c = makeMedia(lvl2, QStringLiteral("c.mp4"));
+    QVERIFY(!sub.isEmpty());
+    QVERIFY(!b.isEmpty());
+    QVERIFY(!lvl2.isEmpty());
+    QVERIFY(!c.isEmpty());
+
+    DirProvider provider(root, DirProvider::BrowseMode::Layered, {QStringLiteral("mp4")},
+                         registryWithDepth(App::recursiveDepthLimitDefault()));
+    const auto result = provider.enumerate({QStringLiteral("sub")});
+    if (!result.has_value())
+        QFAIL(qPrintable(result.error()));
+    // 只见该层：b.mp4 为实体，lvl2 为容器；根层 a 类文件不出现，c 不上浮
+    QCOMPARE(containerIdsInOrder(result), QStringList({QStringLiteral("lvl2")}));
+    QCOMPARE(entityUrlsInOrder(result), QStringList({norm(b)}));
+
+    // 叶子层：容器空、实体为该层文件
+    const auto leaf = provider.enumerate({QStringLiteral("sub"), QStringLiteral("lvl2")});
+    if (!leaf.has_value())
+        QFAIL(qPrintable(leaf.error()));
+    QVERIFY(leaf->containers.isEmpty());
+    QCOMPARE(entityUrlsInOrder(leaf), QStringList({norm(c)}));
+}
+
+// N45 §2.11："仅文件"是现状 recursive = false 的逐字保留——只收根内文件
+void TestDirProvider::filesOnlyModeListsRootFilesOnly() {
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    const Tree t = buildTree(tmp.path());
+    QVERIFY(!t.a.isEmpty());
+    QVERIFY(!t.b.isEmpty());
+
+    DirProvider provider(tmp.path(), DirProvider::BrowseMode::FilesOnly, {QStringLiteral("mp4")},
+                         registryWithDepth(App::recursiveDepthLimitMax()));
+    const auto result = provider.enumerate();
+    if (!result.has_value())
+        QFAIL(qPrintable(result.error()));
+    QVERIFY(result->containers.isEmpty()); // 平铺形态永不产容器
+    QCOMPARE(entityUrlsInOrder(result), QStringList({norm(t.a)}));
+    QVERIFY(result->warnings.isEmpty());
+}
+
+// N45 §2.7：提供者初始排序——文件名数字化（1 / 2 / 10），非字典序（1 / 10 / 2）；
+// 与视图 SortKey::None 显示序逐项一致由验收交叉核对
+void TestDirProvider::providerInitialSortIsNumeric() {
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    const QString f1 = makeMedia(tmp.path(), QStringLiteral("1.mp4"));
+    const QString f2 = makeMedia(tmp.path(), QStringLiteral("2.mp4"));
+    const QString f10 = makeMedia(tmp.path(), QStringLiteral("10.mp4"));
+    QVERIFY(!f1.isEmpty());
+    QVERIFY(!f2.isEmpty());
+    QVERIFY(!f10.isEmpty());
+
+    DirProvider provider(tmp.path(), DirProvider::BrowseMode::FilesOnly, {QStringLiteral("mp4")},
+                         registryWithDepth(App::recursiveDepthLimitMax()));
+    const auto result = provider.enumerate();
+    if (!result.has_value())
+        QFAIL(qPrintable(result.error()));
+    QCOMPARE(entityUrlsInOrder(result), QStringList({norm(f1), norm(f2), norm(f10)}));
+}
+
+// N45 §2.11：分层模式下"子目录不可读"不再是同层 warnings——该目录仍作为
+// 容器显示，进入它时整次枚举失败（Windows 恒 isReadable，仅可 chmod 平台执行）
+void TestDirProvider::layeredUnreadableSubdirectoryIsStillAContainer() {
+#ifdef Q_OS_WIN
+    QSKIP("Windows 下 Qt 默认不查 NTFS ACL，QDir::isReadable() 恒为真，场景构造不出"
+          "（已知不修，见 AGENTS.md 持久陷阱）");
+#else
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    const QString root = tmp.path();
+    const QString a = makeMedia(root, QStringLiteral("a.mp4"));
+    const QString sub = makeDir(root, QStringLiteral("sub"));
+    QVERIFY(!a.isEmpty());
+    QVERIFY(!sub.isEmpty());
+
+    QFile::setPermissions(sub, QFile::Permissions());
+    if (QDir(sub).isReadable())
+        QSKIP("权限剥夺未生效，无法构造不可读子目录场景");
+
+    DirProvider provider(root, DirProvider::BrowseMode::Layered, {QStringLiteral("mp4")},
+                         registryWithDepth(App::recursiveDepthLimitMax()));
+    const auto result = provider.enumerate();
+    if (!result.has_value())
+        QFAIL(qPrintable(result.error()));
+    // 子目录仍作为容器显示，且不产生任何 warning（与递归模式的 N37 语义相反）
+    QCOMPARE(containerIdsInOrder(result), QStringList({QStringLiteral("sub")}));
+    QCOMPARE(entityUrlsInOrder(result), QStringList({norm(a)}));
+    QVERIFY(result->warnings.isEmpty());
+
+    // 恢复权限位，让 QTemporaryDir 的递归清理得以完成
+    QFile::setPermissions(sub, QFile::Permissions(QFile::ReadOwner | QFile::WriteOwner |
+                                                  QFile::ExeOwner | QFile::ReadUser |
+                                                  QFile::WriteUser | QFile::ExeUser));
+#endif
 }
 
 // 一类一可执行（R5）：自带 main（QTEST_GUILESS_MAIN），无 GUI 依赖

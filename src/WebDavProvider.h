@@ -36,7 +36,7 @@ class WebDavProvider : public PlaylistProvider {
                    const std::shared_ptr<ServiceRegistry> &registry);
 
     QString typeKey() const override;
-    std::expected<Enumeration, QString> enumerate() const override;
+    std::expected<Enumeration, QString> enumerate(const QStringList &parent = {}) const override;
     bool supportsModify() const override;
     // 显式 true：内容以枚举为准不可增删，但可排序并持久化规则（与目录表同形）
     bool supportsSort() const override;

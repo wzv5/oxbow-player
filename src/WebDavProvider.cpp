@@ -233,8 +233,15 @@ QStringList WebDavProvider::parseExtensions(const QString &text) {
 // 枚举：N32 统一后的 QtConcurrent 任务内逐层 DFS 顺序推进（在途至多 1 条请求，
 // 顺序推进不设取消通道——孤儿任务跑完整轮 DFS，结果按代际身份静默丢弃）。
 // 失败语义（§3.5）：根请求失败 → 整次 unexpected 进占位；子目录请求失败 →
-// 记 warning 并跳过该子树，其余照常返回；单目录体超 maxBodyBytes 同走 warning
-std::expected<PlaylistProvider::Enumeration, QString> WebDavProvider::enumerate() const {
+// 记 warning 并跳过该子树，其余照常返回；单目录体超 maxBodyBytes 同走 warning。
+// N45：签名适配——WebDAV 分层浏览归 N46，本实现保持平铺、不产容器；
+// 非空 parent 属调用方违约，Q_ASSERT 守候，release 降级返回空结果
+std::expected<PlaylistProvider::Enumeration, QString>
+WebDavProvider::enumerate(const QStringList &parent) const {
+    if (!parent.isEmpty()) {
+        Q_ASSERT(false);
+        return Enumeration{};
+    }
     // 装配错误：HttpClient 启动期必已 provide（N35 §2.3），永不命中；
     // 断言守候 + fail-safe（枚举不发请求即整次失败）
     const std::shared_ptr<HttpClient> client =
@@ -365,7 +372,7 @@ std::expected<PlaylistProvider::Enumeration, QString> WebDavProvider::enumerate(
             entities.push_back(std::move(entity));
         }
     }
-    return Enumeration{std::move(entities), std::move(warnings)};
+    return Enumeration{{}, std::move(entities), std::move(warnings)};
 }
 
 bool WebDavProvider::supportsModify() const { return false; }

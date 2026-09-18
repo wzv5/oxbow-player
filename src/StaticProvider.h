@@ -22,7 +22,7 @@ class StaticProvider : public PlaylistProvider {
     explicit StaticProvider(const std::shared_ptr<ServiceRegistry> &registry);
 
     QString typeKey() const override;
-    std::expected<Enumeration, QString> enumerate() const override;
+    std::expected<Enumeration, QString> enumerate(const QStringList &parent = {}) const override;
     void setItems(const EntityList &entities) override;
     bool supportsModify() const override;
     // supportsSort 不覆写：沿用基类默认（可修改即允许排序）

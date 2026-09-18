@@ -65,13 +65,20 @@ void StaticProvider::setItems(const EntityList &entities) {
 
 // 现场造实体后移交视图（静态列表永成功，警告恒空）；N29 起不预热元数据，
 // 按需经预读骨架供给。registry 经基类转交 fromPlayUrl：持久化的 http 条目
-// 重载后仍得 HttpEntity
-std::expected<PlaylistProvider::Enumeration, QString> StaticProvider::enumerate() const {
+// 重载后仍得 HttpEntity。
+// N45：静态保持平铺、不产容器——非空 parent 属调用方违约，Q_ASSERT 守候，
+// release 降级返回空结果（不得静默忽略，否则视图侧 bug 会被吞掉）
+std::expected<PlaylistProvider::Enumeration, QString>
+StaticProvider::enumerate(const QStringList &parent) const {
+    if (!parent.isEmpty()) {
+        Q_ASSERT(false);
+        return Enumeration{};
+    }
     EntityList entities;
     entities.reserve(m_urls.size());
     for (const QString &url : m_urls)
         entities.push_back(PlaylistEntity::fromPlayUrl(url, registry()));
-    return Enumeration{std::move(entities), {}}; // 静态列表无警告
+    return Enumeration{{}, std::move(entities), {}}; // 静态列表无警告
 }
 
 bool StaticProvider::supportsModify() const { return true; }
