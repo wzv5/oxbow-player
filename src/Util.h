@@ -64,8 +64,43 @@ QString trimTrailingZeros(const QString &fixed);
 // N37：http(s) 路径改走匹配形态收敛（scheme/host 归小写、去默认端口、unreserved
 // 转义解码、其余转义十六进制统一大写），吃掉同一 URL 的等价书写差异；其余网络
 // 协议（rtsp / srt / edl 等）维持 N35 既有形态（分隔符归一、不转小写）。
+// N48：http(s) 分支先剥凭据（stripUrlCredentials）再收敛——键恒为无凭据形态，
+// 凭据只在请求与播放两个使用点注入。
 // 禁止用于 UI 显示或向 mpv 传递。
 QString normalizePathForMatch(const QString &path);
+
+// 是否 http(s) URL（仅面向前缀串判定，不解析）。串前缀 + scheme 归小写，
+// 与 isNetworkStreamPath 同款：不用 QUrl::scheme()——它会把 Windows 盘符 "C:\dir"
+// 误判为 scheme。
+// "URL 语义只对 http(s) 生效"这一判据的唯一持有者：normalizePathForMatch /
+// nativePath / playUrlFileName 的网络分支、stripUrlCredentials、WebDAV 条目的 scheme
+// 白名单（N48）共用。N48 由匿名命名空间改为公开——判据持有者已跨文件，多份同口径
+// 拷贝必然漂移
+bool isHttpUrl(const QString &path);
+
+// N48：剥除 http(s) URL authority 中的 userinfo 段，其余字节逐字不动。
+// 非 http(s)、无 "://"、authority 为空、无 userinfo 的输入一律恒等返回（幂等）。
+// 纯字符串实现（禁用 QUrl）：产出参与跨来源逐字节比对（实体 playUrl / mpv 回显），
+// 经 QUrl 重序列化会在 userinfo 之外的段产生偏差，致比对失配。
+// 用于匹配形态、回显比对、书签展示路径与用户可见文案。
+// 禁止用于喂 mpv——喂 mpv 走提供者的 playbackUrl。
+QString stripUrlCredentials(const QString &url);
+
+// N48：与 stripUrlCredentials 成对的插入侧——在 http(s) URL 的 authority 起点插入
+// `凭据段@`（authority 定位内核两处共用，偏移规则只此一份）。encodedCredentials 为**已编码**
+// 的 `user` 或 `user:pass`（不含尾随 '@'，不得含字面 '@'；编码形态由调用方决定，约定与
+// QUrl 的 userinfo 序列化一致），插入是纯字符串拼接——其余字节逐字不动，故
+// strip(insert(u, c)) == u 构造性成立。
+// 入参先剥一次凭据（带 userinfo 的串绝不产出双段）；凭据段为空、非 http(s)、无 "://"、
+// authority 为空一律原样返回（绝不注入）。
+// 只用于"喂 mpv 的播放形态"（提供者 playbackUrl）：实体 playUrl 与持久化恒无凭据。
+QString insertUrlCredentials(const QString &url, const QString &encodedCredentials);
+
+// N48：URL 的 path 段结束下标——首个 '?' 或 '#'（无则 size()）。纯字符串运算，不解析
+// 也不校验：query / fragment 语义由调用方按 URL 语境赋予（本地路径里的 '?' / '#' 是普通
+// 字符，不得误用）。两处产出共用同一分界口径：显示名取末段（playUrlFileName）与基 URL
+// 的尾斜杠补位（WebDavProvider::normalizeRootUrl）
+qsizetype urlPathEnd(const QString &url);
 
 // Qt 来源路径：本地路径转原生分隔符；http(s) URL 经 QUrl 规范化（FullyEncoded，
 // scheme/host 归小写、转义形态定型），解析失败退回原串；其余网络协议原样返回

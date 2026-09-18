@@ -72,6 +72,15 @@ class PlaylistProvider {
     // 预留实现须显式覆写 false）
     virtual bool supportsSort() const { return supportsModify(); }
 
+    // ——N48：喂 mpv 的播放形态（实体 playUrl → 实际下发给 mpv 的串）——
+    // 默认恒等：内容原样下发（本地文件、静态表、通用 http 项皆如此）。
+    // WebDavProvider 重写为在 URL 的 userinfo 段注入当前凭据——凭据只在"PROPFIND 请求"
+    // 与"喂 mpv 播放"两个使用点注入，实体 playUrl / 持久化 / 各项比对恒为无凭据形态。
+    // 该产出只喂 mpv（不进实体、不落盘、不参与比对），故允许经 QUrl 取编码形态；
+    // 反向的剥离（回显比对、落键）走 Util::stripUrlCredentials 的纯字符串实现。
+    // 视图层经 PlaylistWidget::playbackFiles 统一调用（视图不含具体提供者头文件）
+    virtual QString playbackUrl(const QString &playUrl) const { return playUrl; }
+
     // ——INI 序列化：完全委托实现——写 provider 类型键、自身参数与排序键
     virtual void saveSettings(QSettings &settings) const = 0;
 

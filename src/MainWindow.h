@@ -51,9 +51,11 @@ class MainWindow : public QMainWindow {
     // N38：静音状态联动单一出口（菜单勾选 + 图标按钮同一处刷新，不播报 OSD）
     void applyMuteState(bool muted);
     // 统一播放入口：整表载入 → 跳转 index → seekTo>0 时经挂起机制恢复进度。
+    // N48：tab 为内容所属列表——在途快照（noteLocalPush）取无凭据的 files，下发的
+    // loadfile 取 playbackFiles(tab, files)（提供者可注入凭据）
     // N30：keepPaused 为真时载入后保持暂停（四步式在 stop 前读到的 pause 状态），
     // 使暂停态下的刷新 / 排序 / 移除无效项不误起播
-    void onPlayRequested(const QStringList &files, int index, double seekTo,
+    void onPlayRequested(const QStringList &files, int tab, int index, double seekTo,
                          bool keepPaused = false);
     void onFilesAdded(const QStringList &files);
     void onRemoveRequested(QList<int> rows);

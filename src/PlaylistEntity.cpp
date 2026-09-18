@@ -30,11 +30,10 @@ PlaylistEntity::Ptr PlaylistEntity::fromPlayUrl(const QString &playUrl,
     const QString url = Util::resolveLocalPath(playUrl);
     if (Util::isNetworkStreamPath(url)) {
         // N35 前缀分派：http(s) → HttpEntity（需非空 registry）；其余网络 / 流
-        // 路径仍落 UnknownEntity 兜底。串前缀判定与 isNetworkStreamPath 同风格，
-        // 天然免疫 QUrl::scheme() 误判 Windows 盘符
-        const bool isHttp = url.startsWith(QStringLiteral("http://"), Qt::CaseInsensitive) ||
-                            url.startsWith(QStringLiteral("https://"), Qt::CaseInsensitive);
-        if (!isHttp)
+        // 路径仍落 UnknownEntity 兜底。N48：判据改用 Util::isHttpUrl（唯一持有者，
+        // 串前缀 + scheme 归小写，天然免疫 QUrl::scheme() 误判 Windows 盘符）——
+        // 原内联前缀判定是同一判据的第三份拷贝
+        if (!Util::isHttpUrl(url))
             return std::make_shared<UnknownEntity>(url, registry);
         if (!registry) {
             // http(s) + 空 registry 属调用错误（registry 必填，正常调用点恒非空）；

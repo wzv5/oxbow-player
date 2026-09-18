@@ -66,6 +66,10 @@ class PlaylistWidget : public QTabWidget {
     // 两出口均返回实体序的 playUrl 序列（跳过占位行 / 容器行 / "上一级"行）
     QStringList queueFilesOf(int tabIndex) const;        // 队列根层（mpv 队列的内容基准）
     QStringList currentLayerFilesOf(int tabIndex) const; // 当前显示层（入队单位）
+    // N48：喂 mpv 的播放形态——逐项经该 tab 提供者的 playbackUrl 映射（视图中不含
+    // 具体提供者头文件，凭据访问只走基类接口）。providerAt(tab) 为空原样返回。
+    // 只用于下发 mpv 的 loadfile 循环；在途快照 / 比对 / 落盘一律取无凭据形态
+    QStringList playbackFiles(int tabIndex, const QStringList &files) const;
     // 续播记忆在队列根层的实体序（-1 无）：序号校验优先、失败按路径取首命中。
     // mpv 侧语义（四步式重推、停止态步进起点）一律取本值，不得用行序充数（§2.4.2）
     int resumeEntityIndexOf(int tabIndex) const;
@@ -140,8 +144,11 @@ class PlaylistWidget : public QTabWidget {
   signals:
     // 请求整表载入并播放 files 中第 index 个；seekTo > 0 时就绪后恢复到该进度
     // （N4 四步式的进度恢复与此同一通道；发出前已将 tab 标记为正在播放列表）。
+    // N48：tab 为内容所属列表——MainWindow 据此经 playbackFiles(tab, files) 取喂 mpv
+    // 的播放形态（凭据注入在提供者侧）；files 本身恒为无凭据形态（快照/比对/落盘基准）。
     // N30：keepPaused 为真时载入后保持暂停（四步式在 stop 前读到的 pause 状态）
-    void playRequested(const QStringList &files, int index, double seekTo, bool keepPaused = false);
+    void playRequested(const QStringList &files, int tab, int index, double seekTo,
+                       bool keepPaused = false);
     // 当前 tab 收到新文件（菜单添加或拖放）
     void filesAdded(const QStringList &files);
     // "正在播放"tab 请求移除指定行 / 清空（需同步到 mpv 播放列表，由 MainWindow 执行；

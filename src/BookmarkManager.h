@@ -16,7 +16,8 @@ class BookmarkManager : public QObject {
 
     QStringList allFiles() const { return m_order; }
     QList<Bookmark> bookmarks(const QString &path) const;
-    // UI 展示用：归一化键 → 首见原始路径（保留大小写/分隔符形态）
+    // UI 展示用：归一化键 → 首见原始路径（保留大小写/分隔符形态；N48：凭据段不保留
+    // ——新增书签在入库前剥除 userinfo，load 不为已有值做处理）
     QString displayPath(const QString &normalizedKey) const {
         return m_displayOf.value(normalizedKey, normalizedKey);
     }

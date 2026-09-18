@@ -239,31 +239,56 @@ QString convergeUrlEscapes(const QString &s) {
     return out;
 }
 
+// N48：authority 段定位（URL 结构）——"://" 之后至首个 '/' / '?' / '#' 之间即 authority
+// （query / fragment 不在此段）。剥离（stripUrlCredentials）/ 插入（insertUrlCredentials）
+// 与收敛（convergeHttpUrlForm）共用同一内核：定位规则必须逐字一致，各写一遍必然漂移。
+// 入参是裸串、类型上看不出域，故名字带 Url（与仓库既有的"域 + 动作"命名同款）。
+// authStart 为 authority 起始下标、authEnd 为 path / query / fragment 起点，
+// 两者相等即 authority 为空。找不到 "://" 返回 false（调用方原样返回）
+bool locateUrlAuthority(const QString &url, int *authStart, int *authEnd) {
+    const int schemeEnd = url.indexOf(QStringLiteral("://"));
+    if (schemeEnd < 0)
+        return false;
+    const int start = schemeEnd + 3;
+    int end = start;
+    while (end < url.size()) {
+        const QChar c = url.at(end);
+        if (c == u'/' || c == u'?' || c == u'#')
+            break;
+        ++end;
+    }
+    *authStart = start;
+    *authEnd = end;
+    return true;
+}
+
+// N48：authority 段 → userinfo（含尾随 '@'，无 '@' 即空串）与 host[:port]。
+// userinfo 内的 '@' 必为编码形态，字面 '@' 是合法分隔符，故取最后一个。
+// 入参是裸串（类型上看不出域），故名字带 Url；与 HttpClient 的 userInfoOf 不是一回事——
+// 那一个收 QUrl（域由类型自明）、做的是 userinfo 段内部 user:pass 的切分（带解码），
+// 本函数做的是 authority 段的切分
+QString splitUrlAuthority(const QString &authority, QString *hostPort) {
+    const int at = authority.lastIndexOf(u'@');
+    *hostPort = at >= 0 ? authority.mid(at + 1) : authority;
+    return at >= 0 ? authority.left(at + 1) : QString();
+}
+
 // N37：http(s) URL 的规范形态内核——scheme / host 归小写、去默认端口
 // （http 80 / https 443），userinfo 原样保留（大小写敏感，不解析），其余整段过
 // 编码收敛。纯字符串操作，无解析失败路径；找不到 "://" 时原样返回。
 // 入口形态（nativePath）与匹配形态（normalizePathForMatch）共用同一内核——
-// "入口即规范"，服务端以等价书写指向同一文件时归一为同一 playUrl，不产出重复条目
+// "入口即规范"，服务端以等价书写指向同一文件时归一为同一 playUrl，不产出重复条目。
+// N48：userinfo 透传段保留——匹配形态在调用本函数之前已剥凭据（此处对匹配路径即
+// 死代码），而入口形态不承担去凭据职责；撤掉透传等于让 nativePath 也变成剥凭据
 QString convergeHttpUrlForm(const QString &url) {
-    const int schemeEnd = url.indexOf(QStringLiteral("://"));
-    if (schemeEnd < 0)
+    int authStart = 0;
+    int authEnd = 0;
+    if (!locateUrlAuthority(url, &authStart, &authEnd))
         return url;
-    const QString scheme = url.left(schemeEnd).toLower();
-    // authority 终止于首个 '/'、'?' 或 '#'（query / fragment 不在此段）
-    const int authStart = schemeEnd + 3;
-    int authEnd = authStart;
-    while (authEnd < url.size()) {
-        const QChar c = url.at(authEnd);
-        if (c == u'/' || c == u'?' || c == u'#')
-            break;
-        ++authEnd;
-    }
-    // userinfo 原样保留（最后一个 '@' 之前的部分；userinfo 内的 '@' 必为编码形态，
-    // 字面 '@' 是合法分隔符）
+    const QString scheme = url.left(authStart - 3).toLower();
     const QString authority = url.mid(authStart, authEnd - authStart);
-    const int at = authority.lastIndexOf(u'@');
-    const QString userinfo = at >= 0 ? authority.left(at + 1) : QString();
-    QString hostPort = at >= 0 ? authority.mid(at + 1) : authority;
+    QString hostPort;
+    const QString userinfo = splitUrlAuthority(authority, &hostPort);
     // host[:port]：用最后一个 ':' 且其后为纯数字判定端口（IPv6 字面量带方括号，
     // 其 ':' 后非纯数字，不误判；裸 IPv6 authority 本就非法——须方括号，不构成
     // 误判场景）
@@ -291,9 +316,11 @@ QString convergeHttpUrlForm(const QString &url) {
 }
 } // namespace
 
-namespace {
 // N37：URL 形态处理仅对 http(s) 生效——percent / URL 语义只对 URI 路径成立，
-// 其余网络协议（rtsp / srt / udp / edl 等）不参与 URL 规范化与编码收敛
+// 其余网络协议（rtsp / srt / udp / edl 等）不参与 URL 规范化与编码收敛。
+// N48：由匿名命名空间改为公开谓词——判据的持有者已不止本文件的四个调用点（提供者的
+// 条目 scheme 白名单、将来的远端来源分派等），多份同口径拷贝必然漂移；它是纯读判定、
+// 不参与任何比对产出，公开的代价远小于重复维护
 bool isHttpUrl(const QString &path) {
     const int schemeEnd = path.indexOf(QStringLiteral("://"));
     if (schemeEnd < 0)
@@ -301,7 +328,59 @@ bool isHttpUrl(const QString &path) {
     const QString scheme = path.left(schemeEnd).toLower();
     return scheme == QLatin1String("http") || scheme == QLatin1String("https");
 }
-} // namespace
+
+// N48：剥除 http(s) URL authority 中的 userinfo 段，其余字节逐字不动。纯字符串
+// 实现，禁用 QUrl——产出一旦经 QUrl 重序列化，除 userinfo 之外的段也可能变形，
+// 而本函数产出要参与跨来源逐字节比对（实体 playUrl / mpv 回显），多动一个字节就把
+// 正常推送误判为外部变更。非 http(s)、无 "://"、authority 为空、无 userinfo 的输入
+// 一律恒等返回（幂等，对称剥离会重复施加）。跨场景共用：匹配形态、回显比对、书签
+// 展示路径、用户可见文案。禁止用于喂 mpv——喂 mpv 走提供者的 playbackUrl（N48 §2.4）
+QString stripUrlCredentials(const QString &url) {
+    if (!isHttpUrl(url))
+        return url;
+    int authStart = 0;
+    int authEnd = 0;
+    if (!locateUrlAuthority(url, &authStart, &authEnd) || authEnd <= authStart)
+        return url;
+    const QString authority = url.mid(authStart, authEnd - authStart);
+    QString hostPort;
+    if (splitUrlAuthority(authority, &hostPort).isEmpty())
+        return url;
+    return url.left(authStart) + hostPort + url.mid(authEnd);
+}
+
+// N48：与 stripUrlCredentials 成对的插入侧——在 URL 的 authority 起点插入 `凭据段@`。
+// 插入动作与前者的删除动作共用同一 authority 定位内核（`://` 偏移的规则只此一份），
+// 其余字节取自原串，故 strip(insert(u, c)) == u 构造性成立。入参先剥一次凭据：带
+// userinfo 的串绝不产出双段。encodedCredentials 的编码形态由调用方决定（约定与 QUrl 的
+// userinfo 序列化一致，见 WebDavProvider::playbackUrl），本函数只做拼接
+QString insertUrlCredentials(const QString &url, const QString &encodedCredentials) {
+    // 凭据段内不得有字面 '@'——那会与定界符混同（userinfo 内的 '@' 必为编码形态）
+    Q_ASSERT(!encodedCredentials.contains(QLatin1Char('@')));
+    if (encodedCredentials.isEmpty() || !isHttpUrl(url))
+        return url;
+    const QString clean = stripUrlCredentials(url);
+    int authStart = 0;
+    int authEnd = 0;
+    if (!locateUrlAuthority(clean, &authStart, &authEnd) || authEnd <= authStart)
+        return url; // 无 "://" 或 authority 为空：绝不注入（避免产出 http://u:p@/path）
+    return clean.left(authStart) + encodedCredentials + QLatin1Char('@') + clean.mid(authStart);
+}
+
+// N48：URL 的 path 段结束下标——首个 '?' 或 '#'（无则 size()）。纯字符串运算，不解析也
+// 不校验：query / fragment 的语义由调用方按 URL 语境赋予（本地路径里的 '?' / '#' 是
+// 普通字符，调用方不得误用）。两处产出共用同一"分界"口径——显示名取末段
+// （playUrlFileName）与基 URL 的尾斜杠补位（WebDavProvider::normalizeRootUrl）
+qsizetype urlPathEnd(const QString &url) {
+    qsizetype cut = url.size();
+    const qsizetype q = url.indexOf(QLatin1Char('?'));
+    const qsizetype f = url.indexOf(QLatin1Char('#'));
+    if (q >= 0)
+        cut = qMin(cut, q);
+    if (f >= 0)
+        cut = qMin(cut, f);
+    return cut;
+}
 
 QString normalizePathForMatch(const QString &path) {
     // 本地路径先相对→绝对（基于进程 CWD，不访问文件系统），再统一分隔符；
@@ -310,9 +389,12 @@ QString normalizePathForMatch(const QString &path) {
     if (Util::isNetworkStreamPath(abs)) {
         // N37：URL 编码收敛仅对 http(s)（与 playUrlFileName 同口径——URL 语义只对
         // URI 路径成立）；其余网络协议维持 N35 既有形态（分隔符归一、不转小写）。
-        // 收敛是"两侧各落一次 key"，按协议族划分后每族内单调性依旧成立
+        // 收敛是"两侧各落一次 key"，按协议族划分后每族内单调性依旧成立。
+        // N48：http(s) 先剥凭据再收敛——键（书签 / 时长 / 续播 / mpv path 落键）恒为
+        // 无凭据形态，改密后既有记忆继续有效；剥离只让原本不等的形态相等，故单调性
+        // 保持
         if (isHttpUrl(abs))
-            return convergeHttpUrlForm(abs);
+            return convergeHttpUrlForm(stripUrlCredentials(abs));
         return QDir::fromNativeSeparators(abs);
     }
     QString p = QDir::fromNativeSeparators(abs);
@@ -406,14 +488,9 @@ QDateTime parseReleaseDate(const QString &s) {
 // nativePath / normalizePathForMatch 的网络分支同口径）
 QString playUrlFileName(const QString &playUrl) {
     if (isHttpUrl(playUrl)) {
-        const qsizetype cutA = playUrl.indexOf(QLatin1Char('?'));
-        const qsizetype cutB = playUrl.indexOf(QLatin1Char('#'));
-        qsizetype cut = playUrl.size();
-        if (cutA >= 0)
-            cut = qMin(cut, cutA);
-        if (cutB >= 0)
-            cut = qMin(cut, cutB);
-        const QString spec = playUrl.left(cut);
+        // N48：query / fragment 的分界走共用内核（与 WebDavProvider::normalizeRootUrl
+        // 的尾斜杠补位是同一口径）
+        const QString spec = playUrl.left(urlPathEnd(playUrl));
         const qsizetype slash = spec.lastIndexOf(QLatin1Char('/'));
         const QString lastSeg = slash >= 0 ? spec.mid(slash + 1) : spec;
         return QUrl::fromPercentEncoding(lastSeg.toUtf8());

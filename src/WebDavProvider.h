@@ -27,10 +27,12 @@ class ProviderSettingsPage;
 // 不持 client、不读 INI——HttpClient 由 N35 的 provideHttpServices() 按 INI 装配，
 // 身份恒定、重装配即覆盖，超时与证书改动下一次枚举即生效。
 //
-// 路径纪律（承 B15 / N37 §3.1）：条目 URL 的构造点是本提供者的枚举体（解析纯函数）——
-// 以 rootUrl 为基 QUrl::resolved() 展开 href、setUserName / setPassword 写入凭据，
+// 路径纪律（承 B15 / N37 §3.1，N48 修订）：条目 URL 的构造点是本提供者的枚举体
+// （解析纯函数）——以 rootUrl 为基 QUrl::resolved() 展开 href、**剥除 userinfo**，
 // 再经 Util::nativePath 收口取编码形态输出；此后 playUrl 全链路只读转发，任何环节
 // 不得再改（匹配经 normalizePathForMatch 落键，setPlaylist 收编判定原串）。
+// 凭据只在两个使用点注入：PROPFIND 请求 URL（enumerate 内逐请求注入）与喂 mpv
+// 播放（playbackUrl）——二者都不进实体、不落盘。
 class WebDavProvider : public PlaylistProvider {
   public:
     // N46 §2.1：浏览模式（三选一）。枚举值序即参数页下拉框的选项序，亦即 INI 的
@@ -43,7 +45,7 @@ class WebDavProvider : public PlaylistProvider {
     };
 
     // rootUrl 为参数页来源处定形的 URL（trim → nativePath → 补尾斜杠，见
-    // normalizeRootUrl）；user / password 可空，皆空则凭据不随 URL 走。
+    // normalizeRootUrl）；user / password 可空，皆空则请求与播放都不注入凭据。
     // registry 必填（经基类持有）
     WebDavProvider(const QString &rootUrl, const QString &user, const QString &password,
                    BrowseMode mode, const QStringList &extensions,
@@ -54,6 +56,10 @@ class WebDavProvider : public PlaylistProvider {
     bool supportsModify() const override;
     // 显式 true：内容以枚举为准不可增删，但可排序并持久化规则（与目录表同形）
     bool supportsSort() const override;
+    // N48：喂 mpv 的播放形态——在 URL 的 authority 起点插入 `编码后user:编码后pass@`
+    // （凭据皆空恒等返回）。条目恒无 userinfo（resolveEntryUrl 恒剥），故这是凭据进入
+    // 播放链的唯一入口；产出只喂 mpv，不进实体、不落盘、不参与比对
+    QString playbackUrl(const QString &playUrl) const override;
 
     // 当前语言下的显示名（无译文时即英文源）；登记表以函数指针引用（N44）
     static QString displayName();
@@ -79,10 +85,11 @@ class WebDavProvider : public PlaylistProvider {
     // INI 的 int 取值 → 浏览模式：取值域外（损坏 / 未知值）降级 Layered
     // （新建列表默认，§2.1），不做旧键兼容。与 DirProvider 同名函数各自持有
     static BrowseMode browseModeFromInt(int value);
-    // collection 条目的 playUrl（resolveEntryUrl 带凭据形态）→ 容器 id：剥除
-    // userinfo 的无凭据形态，编码形态与尾斜杠原样保留——与以空凭据调用
-    // resolveEntryUrl 解析同一 href 的产出逐字一致（N46 §2.4）。id 恒无凭据：
-    // 持久化进 queueRoot 的 INI 不携带凭据，请求侧由 enumerate 无条件重写当前凭据
+    // collection 条目的 playUrl → 容器 id：剥除 userinfo 的无凭据形态，编码形态与
+    // 尾斜杠原样保留。N48 起条目 playUrl 已恒无 userinfo（resolveEntryUrl 恒剥），
+    // 故对现产出即恒等变换；剥离动作保留（id 是持久化进 queueRoot 与请求基 URL 的
+    // 身份，形态恒定是硬要求）。id 恒无凭据：持久化进 queueRoot 的 INI 不携带凭据，
+    // 请求侧由 enumerate 逐请求重写当前凭据
     static QString containerId(const QString &playUrl);
 
     QString rootUrl() const { return m_rootUrl; }
@@ -97,8 +104,8 @@ class WebDavProvider : public PlaylistProvider {
                                                   const std::shared_ptr<ServiceRegistry> &registry);
 
     // ——multistatus 解析纯函数（N37 §3.2，本篇唯一"自己写"的部分）——
-    // 单个条目的解析产出：playUrl 为定形后的完整 URL（resolved + 凭据 +
-    // Util::nativePath，构造确定性——同一 href 两次解析得同一串）
+    // 单个条目的解析产出：playUrl 为定形后的完整 URL（resolved → 剥 userinfo →
+    // Util::nativePath，构造确定性——同一 href 两次解析得同一串；N48 起恒无凭据）
     struct DavEntry {
         QString playUrl;
         std::optional<qint64> size;        // getcontentlength（缺失 = 值未知）
@@ -108,25 +115,28 @@ class WebDavProvider : public PlaylistProvider {
     struct DavListing {
         QList<DavEntry> files;
         QList<DavEntry> collections;
+        // N48：非 http(s) href 的跳过告警（每次解析至多一条、合并条数）。条目恒为
+        // http(s) 是本提供者的不变式（凭据的注入与剥离都只对 http(s) 生效），故
+        // 跨协议 href 不产出条目，向用户回传可读说明
+        QStringList warnings;
     };
-    // 入参：XML 体、基 URL（请求 URL，已含凭据与尾斜杠——基目录语义的前提）、
-    // 原始凭据（绝对 href 不继承基 userinfo，须重写）。解析失败（非法 XML）返回
-    // unexpected；目录自条目（与基 URL 等价，尾斜杠不计）在此跳过。
+    // 入参：XML 体、基 URL（请求 URL，已含当前凭据与尾斜杠——基目录语义与相对 href
+    // 展开的前提）。N48：不再收凭据形参——条目恒剥 userinfo，凭据只用于请求与播放。
+    // 解析失败（非法 XML）返回 unexpected；目录自条目（与基 URL 等价，尾斜杠不计，
+    // 比较在无凭据形态下进行）在此跳过；非 http(s) 的 href 跳过并记 warnings。
     // 只解释 RFC 4918 的一个子集：response 下的 href / resourcetype（是否含
     // collection）/ getcontentlength / getlastmodified（属性经 propstat / prop
     // 包裹层下探取得），元素按命名空间 + local name 匹配（DAV: 前缀不可依赖），
     // 未识别元素一律忽略。XML 解析交 QXmlStreamReader（QtCore 内建，无新增链接依赖）
     static std::expected<DavListing, QString> parseMultistatus(const QByteArray &body,
-                                                               const QUrl &baseUrl,
-                                                               const QString &user,
-                                                               const QString &password);
+                                                               const QUrl &baseUrl);
 
   private:
-    // 条目 URL 构造（解析与枚举共用）：href 相对基解析（绝对 href 直接采用）→
-    // 凭据无条件重写（皆空即剥除 href 自带的 userinfo）→ Util::nativePath 收口
-    // 取编码形态。§3.1 第 1 条的"URL 在入口处构造一次"
-    static QString resolveEntryUrl(const QUrl &baseUrl, const QString &href, const QString &user,
-                                   const QString &password);
+    // 条目 URL 构造（解析与枚举共用）：href 相对基解析（绝对 href 直接采用）→ 恒剥
+    // 解析结果的 userinfo（相对 href 的 userinfo 继承自基 URL、绝对 href 的来自 href
+    // 自身，两者一并剥）→ Util::nativePath 收口取编码形态。§3.1 第 1 条的"URL 在入口处
+    // 构造一次"，N48 起产出恒无凭据
+    static QString resolveEntryUrl(const QUrl &baseUrl, const QString &href);
 
     // HTTP 状态码与网络失败 → 可读文案（英文源 + tr()，不透传 HttpClient 的 error）
     static QString davRequestError(const HttpClient::Response &resp, const QUrl &url);

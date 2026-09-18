@@ -5,12 +5,17 @@
 // 空 userinfo）/ collection href 缺尾斜杠被补齐。
 // N46 增补：容器 id 的无凭据形态构造（containerId）与浏览模式 INI 取值
 // （browseModeFromInt）。
+// N48 增补：条目恒无凭据（解析侧期望由"嵌入"改为"剥离"，自条目判定在带凭据基
+// URL 下仍须跳过）、playbackUrl 注入与剥离的往返不变式、非 http(s) href 跳过并
+// 合并告警。
 // 一类一可执行（R5）：ctest --test-dir build -C Debug -R WebDavProvider 跑本套件。
 
 #include "pch.h"
 
 #include <QtTest/QtTest>
 
+#include "ServiceRegistry.h"
+#include "Util.h"
 #include "WebDavProvider.h"
 
 namespace {
@@ -26,10 +31,17 @@ QUrl baseUrlWithCreds() {
     return url;
 }
 
-// 无凭据的期望形态（凭据皆空则不设）
+// N48：带凭据的提供者实例（枚举路径不参与，凭据只用于 playbackUrl）
+std::shared_ptr<WebDavProvider> providerWith(const QString &user, const QString &password) {
+    return std::make_shared<WebDavProvider>(kBase, user, password,
+                                            WebDavProvider::BrowseMode::Layered, QStringList(),
+                                            std::make_shared<ServiceRegistry>());
+}
+
+// 无凭据的期望形态（条目恒无凭据，凭据皆空则不设）
 QString expectUrl(const QString &path) { return kBase + path; }
 
-// 带凭据的期望形态（resolveEntryUrl 统一重写凭据）
+// 带凭据的期望形态（containerId 的入参形态：剥离前的串）
 QString expectUrlAuth(const QString &path) {
     return QStringLiteral("http://u:pw@server/dav/") + path;
 }
@@ -47,7 +59,7 @@ class TestWebDavProvider : public QObject {
     void emptyMultistatusYieldsNothing();
     // 无 resourcetype：按普通文件处理（非 collection）
     void noResourcetypeIsFile();
-    // 绝对 href：直接采用，凭据统一重写
+    // 绝对 href：直接采用（N48：凭据不进条目）
     void absoluteHrefAdopted();
     // 无凭据：绝对 href 自带的 userinfo 须被剥除（凭据来源唯一——皆空即无凭据）
     void absoluteHrefCredentialsStrippedWhenNoCreds();
@@ -84,6 +96,13 @@ class TestWebDavProvider : public QObject {
     void containerIdStripsCredentialsKeepsTrailingSlash();
     // N46：浏览模式的 INI int 取值映射，取值域外降级分层浏览（新建列表默认）
     void browseModeFromIntMapsAndFallsBack();
+    // N48：喂 mpv 的播放形态——authority 起点注入凭据，strip(embed(u)) == u 往返
+    // 不变式（含分隔符 / 空格 / 非 ASCII / sub-delims 类字符的凭据），空凭据恒等、
+    // path 中的 '@' 不受影响、非 http(s) 不注入
+    void playbackUrlInjectsAndRoundTrips();
+    // N48：非 http(s) 的 href 不产出条目（实体与容器皆无）并回传一条合并告警——
+    // 条目恒 http(s) 是凭据注入与剥离对称成立的前提
+    void nonHttpHrefSkippedWithMergedWarning();
 };
 
 void TestWebDavProvider::normalEntriesPrefixed() {
@@ -104,20 +123,19 @@ void TestWebDavProvider::normalEntriesPrefixed() {
                             "</D:prop></D:propstat>"
                             "</D:response>"
                             "</D:multistatus>";
-    const auto result =
-        WebDavProvider::parseMultistatus(body, baseUrlWithCreds(), kUser, kPassword);
+    const auto result = WebDavProvider::parseMultistatus(body, baseUrlWithCreds());
     if (!result.has_value())
         QFAIL(qPrintable(result.error()));
     QCOMPARE(result->files.size(), 1);
     QCOMPARE(result->collections.size(), 1);
-    QCOMPARE(result->files.first().playUrl, expectUrlAuth(QStringLiteral("a%20b.mp4")));
+    QCOMPARE(result->files.first().playUrl, expectUrl(QStringLiteral("a%20b.mp4")));
     QVERIFY(result->files.first().size.has_value());
     QCOMPARE(*result->files.first().size, qint64(1234));
     // HTTP 日期解析正确（UTC 时刻恒定，本地时区无关）
     QVERIFY(result->files.first().modified.has_value());
     QCOMPARE(result->files.first().modified->toUTC(),
              QDateTime(QDate(2026, 9, 13), QTime(10, 0), QTimeZone::UTC));
-    QCOMPARE(result->collections.first().playUrl, expectUrlAuth(QStringLiteral("sub/")));
+    QCOMPARE(result->collections.first().playUrl, expectUrl(QStringLiteral("sub/")));
 }
 
 void TestWebDavProvider::normalEntriesPrefixless() {
@@ -137,20 +155,18 @@ void TestWebDavProvider::normalEntriesPrefixless() {
                             "</prop></propstat>"
                             "</response>"
                             "</multistatus>";
-    const auto result =
-        WebDavProvider::parseMultistatus(body, baseUrlWithCreds(), kUser, kPassword);
+    const auto result = WebDavProvider::parseMultistatus(body, baseUrlWithCreds());
     if (!result.has_value())
         QFAIL(qPrintable(result.error()));
     QCOMPARE(result->files.size(), 1);
     QCOMPARE(result->collections.size(), 1);
-    QCOMPARE(result->files.first().playUrl, expectUrlAuth(QStringLiteral("c.mp4")));
+    QCOMPARE(result->files.first().playUrl, expectUrl(QStringLiteral("c.mp4")));
     QCOMPARE(*result->files.first().size, qint64(7));
 }
 
 void TestWebDavProvider::emptyMultistatusYieldsNothing() {
     const QByteArray body = "<?xml version=\"1.0\"?><D:multistatus xmlns:D=\"DAV:\"/>";
-    const auto result =
-        WebDavProvider::parseMultistatus(body, baseUrlWithCreds(), kUser, kPassword);
+    const auto result = WebDavProvider::parseMultistatus(body, baseUrlWithCreds());
     if (!result.has_value())
         QFAIL(qPrintable(result.error()));
     QVERIFY(result->files.isEmpty());
@@ -162,13 +178,12 @@ void TestWebDavProvider::noResourcetypeIsFile() {
                             "<D:multistatus xmlns:D=\"DAV:\">"
                             "<D:response><D:href>/dav/bare.mkv</D:href></D:response>"
                             "</D:multistatus>";
-    const auto result =
-        WebDavProvider::parseMultistatus(body, baseUrlWithCreds(), kUser, kPassword);
+    const auto result = WebDavProvider::parseMultistatus(body, baseUrlWithCreds());
     if (!result.has_value())
         QFAIL(qPrintable(result.error()));
     QCOMPARE(result->files.size(), 1);
     QVERIFY(result->collections.isEmpty());
-    QCOMPARE(result->files.first().playUrl, expectUrlAuth(QStringLiteral("bare.mkv")));
+    QCOMPARE(result->files.first().playUrl, expectUrl(QStringLiteral("bare.mkv")));
     // 未提供的属性 = 值未知
     QVERIFY(!result->files.first().size.has_value());
     QVERIFY(!result->files.first().modified.has_value());
@@ -181,13 +196,13 @@ void TestWebDavProvider::absoluteHrefAdopted() {
                             "<D:href>http://other-svc/media/x.mp4</D:href>"
                             "</D:response>"
                             "</D:multistatus>";
-    const auto result =
-        WebDavProvider::parseMultistatus(body, baseUrlWithCreds(), kUser, kPassword);
+    const auto result = WebDavProvider::parseMultistatus(body, baseUrlWithCreds());
     if (!result.has_value())
         QFAIL(qPrintable(result.error()));
     QCOMPARE(result->files.size(), 1);
-    // 绝对 href 直接采用（不继承基路径），凭据统一重写为参数凭据
-    QCOMPARE(result->files.first().playUrl, QStringLiteral("http://u:pw@other-svc/media/x.mp4"));
+    // 绝对 href 直接采用（不继承基路径）；N48：凭据不进条目——即便提供者配了凭据，
+    // 条目的 userinfo 也必须为空（凭据只在请求与播放时注入）
+    QCOMPARE(result->files.first().playUrl, QStringLiteral("http://other-svc/media/x.mp4"));
 }
 
 void TestWebDavProvider::absoluteHrefCredentialsStrippedWhenNoCreds() {
@@ -198,9 +213,10 @@ void TestWebDavProvider::absoluteHrefCredentialsStrippedWhenNoCreds() {
         "</D:multistatus>";
     // 提供者无凭据：href 自带的 userinfo 必须被剥除，不进 playUrl（不落盘 /
     // 不回刷）——顺带钉死"对已有 userinfo 的 URL，空串赋值即清空且不残留空段"
-    // 这一 Qt 行为（与 noCredsKeepsUrlClean 成对：本无 userinfo 时不得凭空写入）
+    // 这一 Qt 行为（与 noCredsKeepsUrlClean 成对：本无 userinfo 时不得凭空写入）。
+    // N48：剥离已与"提供者是否配了凭据"无关（条目恒无凭据），本用例守住 href 侧
     QUrl base(QStringLiteral("http://server/dav/"), QUrl::ParsingMode::TolerantMode);
-    const auto result = WebDavProvider::parseMultistatus(body, base, QString(), QString());
+    const auto result = WebDavProvider::parseMultistatus(body, base);
     if (!result.has_value())
         QFAIL(qPrintable(result.error()));
     QCOMPARE(result->files.size(), 1);
@@ -215,7 +231,7 @@ void TestWebDavProvider::noCredsKeepsUrlClean() {
                             "<D:response><D:href>/dav/a.mp4</D:href></D:response>"
                             "</D:multistatus>";
     QUrl base(kBase, QUrl::ParsingMode::TolerantMode); // 基无凭据
-    const auto result = WebDavProvider::parseMultistatus(body, base, QString(), QString());
+    const auto result = WebDavProvider::parseMultistatus(body, base);
     if (!result.has_value())
         QFAIL(qPrintable(result.error()));
     QCOMPARE(result->files.size(), 1);
@@ -231,14 +247,13 @@ void TestWebDavProvider::collectionHrefWithoutTrailingSlashIsNormalized() {
         "<D:propstat><D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop>"
         "</D:propstat></D:response>"
         "</D:multistatus>";
-    const auto result =
-        WebDavProvider::parseMultistatus(body, baseUrlWithCreds(), kUser, kPassword);
+    const auto result = WebDavProvider::parseMultistatus(body, baseUrlWithCreds());
     if (!result.has_value())
         QFAIL(qPrintable(result.error()));
     QVERIFY(result->files.isEmpty());
     QCOMPARE(result->collections.size(), 1);
     // 补齐尾斜杠：它作下一跳 PROPFIND 的基 URL，缺斜杠时 resolved 会丢一层目录
-    QCOMPARE(result->collections.first().playUrl, expectUrlAuth(QStringLiteral("sub/")));
+    QCOMPARE(result->collections.first().playUrl, expectUrl(QStringLiteral("sub/")));
 }
 
 void TestWebDavProvider::noNamespaceFallback() {
@@ -251,12 +266,11 @@ void TestWebDavProvider::noNamespaceFallback() {
         "<propstat><prop><getcontentlength>5</getcontentlength></prop></propstat>"
         "</response>"
         "</multistatus>";
-    const auto result =
-        WebDavProvider::parseMultistatus(body, baseUrlWithCreds(), kUser, kPassword);
+    const auto result = WebDavProvider::parseMultistatus(body, baseUrlWithCreds());
     if (!result.has_value())
         QFAIL(qPrintable(result.error()));
     QCOMPARE(result->files.size(), 1);
-    QCOMPARE(result->files.first().playUrl, expectUrlAuth(QStringLiteral("x.mp4")));
+    QCOMPARE(result->files.first().playUrl, expectUrl(QStringLiteral("x.mp4")));
     QCOMPARE(*result->files.first().size, qint64(5));
 }
 
@@ -266,14 +280,13 @@ void TestWebDavProvider::percentEncodedHrefPreserved() {
         "<D:multistatus xmlns:D=\"DAV:\">"
         "<D:response><D:href>/dav/%E4%B8%AD%E6%96%87%20name.mp4</D:href></D:response>"
         "</D:multistatus>";
-    const auto result =
-        WebDavProvider::parseMultistatus(body, baseUrlWithCreds(), kUser, kPassword);
+    const auto result = WebDavProvider::parseMultistatus(body, baseUrlWithCreds());
     if (!result.has_value())
         QFAIL(qPrintable(result.error()));
     QCOMPARE(result->files.size(), 1);
     // playUrl 恒为编码形态（显示名由实体层 percent-decode，不在解析层做）
     QCOMPARE(result->files.first().playUrl,
-             expectUrlAuth(QStringLiteral("%E4%B8%AD%E6%96%87%20name.mp4")));
+             expectUrl(QStringLiteral("%E4%B8%AD%E6%96%87%20name.mp4")));
 }
 
 void TestWebDavProvider::selfEntriesSkipped() {
@@ -285,8 +298,7 @@ void TestWebDavProvider::selfEntriesSkipped() {
         "</D:propstat></D:response>"
         "<D:response><D:href>/dav</D:href></D:response>"
         "</D:multistatus>";
-    const auto result =
-        WebDavProvider::parseMultistatus(body, baseUrlWithCreds(), kUser, kPassword);
+    const auto result = WebDavProvider::parseMultistatus(body, baseUrlWithCreds());
     if (!result.has_value())
         QFAIL(qPrintable(result.error()));
     // 两种自条目写法（带 / 不带尾斜杠）都不产出
@@ -297,8 +309,7 @@ void TestWebDavProvider::selfEntriesSkipped() {
 void TestWebDavProvider::invalidXmlIsUnexpected() {
     // 未闭合的根元素：hasError 命中，返回 unexpected
     const QByteArray body = "<D:multistatus xmlns:D=\"DAV:\"><D:response>";
-    const auto result =
-        WebDavProvider::parseMultistatus(body, baseUrlWithCreds(), kUser, kPassword);
+    const auto result = WebDavProvider::parseMultistatus(body, baseUrlWithCreds());
     QVERIFY(!result.has_value());
     QVERIFY(!result.error().isEmpty());
 }
@@ -314,8 +325,7 @@ void TestWebDavProvider::malformedPropsAreUnknown() {
                             "</D:prop></D:propstat>"
                             "</D:response>"
                             "</D:multistatus>";
-    const auto result =
-        WebDavProvider::parseMultistatus(body, baseUrlWithCreds(), kUser, kPassword);
+    const auto result = WebDavProvider::parseMultistatus(body, baseUrlWithCreds());
     if (!result.has_value())
         QFAIL(qPrintable(result.error()));
     QCOMPARE(result->files.size(), 1);
@@ -362,7 +372,7 @@ void TestWebDavProvider::rcloneShapedResponse() {
                             "<D:resourcetype></D:resourcetype></D:prop>"
                             "<D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>"
                             "</D:multistatus>";
-    const auto result = WebDavProvider::parseMultistatus(body, base, kUser, kPassword);
+    const auto result = WebDavProvider::parseMultistatus(body, base);
     if (!result.has_value())
         QFAIL(qPrintable(result.error()));
     // 目录自条目（href "/"）跳过；其余 3 条全为文件，无子目录误判
@@ -370,15 +380,14 @@ void TestWebDavProvider::rcloneShapedResponse() {
     QVERIFY(result->collections.isEmpty());
     // 属性自 propstat/prop 包裹层正确取得；自条目的 404 属性块（空
     // getcontentlength）不误产出
-    QCOMPARE(result->files.first().playUrl,
-             QStringLiteral("http://u:pw@server/dump-media-info.lua"));
+    QCOMPARE(result->files.first().playUrl, QStringLiteral("http://server/dump-media-info.lua"));
     QCOMPARE(*result->files.first().size, qint64(2683));
     QVERIFY(result->files.first().modified.has_value());
     const auto &mkv = result->files.at(1);
-    QCOMPARE(mkv.playUrl, QStringLiteral("http://u:pw@server/test1.mkv"));
+    QCOMPARE(mkv.playUrl, QStringLiteral("http://server/test1.mkv"));
     QCOMPARE(*mkv.size, qint64(7067475));
     const auto &mp4 = result->files.at(2);
-    QCOMPARE(mp4.playUrl, QStringLiteral("http://u:pw@server/test2.mp4"));
+    QCOMPARE(mp4.playUrl, QStringLiteral("http://server/test2.mp4"));
     QCOMPARE(*mp4.size, qint64(7195105));
 }
 
@@ -437,9 +446,10 @@ void TestWebDavProvider::parseExtensionsNormalizesTokens() {
     QVERIFY(WebDavProvider::parseExtensions(QStringLiteral("  \t ")).isEmpty());
 }
 
-// N46 §2.4：容器 id = collection 条目 playUrl 的无凭据形态。同一 href 的无凭据
-// 解析与带凭据解析只差 userinfo 段，故剥除 userinfo 即与以空凭据调用
-// resolveEntryUrl 逐字一致；编码形态（%20 / 中文）与 collection 尾斜杠原样保留
+// N46 §2.4：容器 id = collection 条目 playUrl 的无凭据形态。N48 起条目 playUrl 已恒
+// 无凭据（resolveEntryUrl 恒剥），本函数对现产出即恒等；剥离动作仍保留（id 是持久化
+// 进 queueRoot 与作请求基 URL 的身份，形态恒定是硬要求）。编码形态（%20 / 中文）与
+// collection 尾斜杠原样保留
 void TestWebDavProvider::containerIdStripsCredentialsKeepsTrailingSlash() {
     // 带凭据 playUrl → 剥 userinfo，尾斜杠保留
     QCOMPARE(WebDavProvider::containerId(expectUrlAuth(QStringLiteral("sub/"))),
@@ -468,6 +478,76 @@ void TestWebDavProvider::browseModeFromIntMapsAndFallsBack() {
     QCOMPARE(WebDavProvider::browseModeFromInt(-1), BM::Layered);
     QCOMPARE(WebDavProvider::browseModeFromInt(3), BM::Layered);
     QCOMPARE(WebDavProvider::browseModeFromInt(99), BM::Layered);
+}
+
+// N48：喂 mpv 的播放形态——authority 起点插入 `编码后user:编码后pass@`，剥离即还原
+// （往返不变式构造性成立、剥离幂等，§2.5 的对称施加会重复剥）。凭据皆空恒等返回
+void TestWebDavProvider::playbackUrlInjectsAndRoundTrips() {
+    // 空凭据：恒等（不注入、不产出空 userinfo 段）
+    const auto plain = providerWith(QString(), QString());
+    QCOMPARE(plain->playbackUrl(expectUrl(QStringLiteral("a.mp4"))),
+             expectUrl(QStringLiteral("a.mp4")));
+
+    // 含分隔符 / 空格 / 非 ASCII / sub-delims 的凭据：注入后剥离必须逐字还原
+    const QString clean = expectUrl(QStringLiteral("sub/a%20b.mp4"));
+    const auto tricky = providerWith(QStringLiteral("u@x"), QStringLiteral("p:w@ss/word+!$&=% 中"));
+    const QString played = tricky->playbackUrl(clean);
+    QVERIFY(played != clean);
+    QVERIFY(played.startsWith(QStringLiteral("http://")));
+    QVERIFY(played.endsWith(QStringLiteral("@server/dav/sub/a%20b.mp4")));
+    QCOMPARE(Util::stripUrlCredentials(played), clean);
+    // 注入段的编码形态与既有 QUrl 路径逐字相同（对拍：同一 URL 走 setUserName /
+    // setPassword + FullyEncoded，比 prefix 到首个 '@' 为止的编码字节）
+    {
+        const QString u = QStringLiteral("u@x");
+        const QString p = QStringLiteral("p:w@ss/word+!$&=% 中");
+        QUrl ref(clean, QUrl::ParsingMode::TolerantMode);
+        ref.setUserName(u);
+        ref.setPassword(p);
+        const QString refStr = ref.toString(QUrl::ComponentFormattingOption::FullyEncoded);
+        QCOMPARE(played.left(played.indexOf(QLatin1Char('@')) + 1),
+                 refStr.left(refStr.indexOf(QLatin1Char('@')) + 1));
+    }
+    // 幂等：再剥一次结果不变（比较形态在回显侧与本地侧各剥一次）
+    QCOMPARE(Util::stripUrlCredentials(Util::stripUrlCredentials(played)),
+             Util::stripUrlCredentials(played));
+
+    // path 中的 '@' 不受影响：定位规则只作用于 authority 段
+    const QString atPath = expectUrl(QStringLiteral("a@b.mp4"));
+    QCOMPARE(Util::stripUrlCredentials(tricky->playbackUrl(atPath)), atPath);
+
+    // query 中的 '@' 同理（authority 终止于 '?'）
+    const QString atQuery = expectUrl(QStringLiteral("a.mp4?token=x@y"));
+    QCOMPARE(Util::stripUrlCredentials(tricky->playbackUrl(atQuery)), atQuery);
+
+    // 非 http(s) 入参不注入（条目恒 http(s) 由解析侧保证，此处为同口径的守）
+    QCOMPARE(tricky->playbackUrl(QStringLiteral("rtsp://host/live")),
+             QStringLiteral("rtsp://host/live"));
+}
+
+// N48：非 http(s) 的 href 不产出条目（实体与容器皆无）并回传一条合并告警
+void TestWebDavProvider::nonHttpHrefSkippedWithMergedWarning() {
+    const QByteArray body =
+        "<?xml version=\"1.0\"?>"
+        "<D:multistatus xmlns:D=\"DAV:\">"
+        "<D:response><D:href>rtsp://cam/stream1</D:href></D:response>"
+        "<D:response><D:href>ftp://host/a.mp4</D:href></D:response>"
+        "<D:response><D:href>rtsp://cam/dir/</D:href>"
+        "<D:propstat><D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop>"
+        "</D:propstat></D:response>"
+        "<D:response><D:href>/dav/ok.mp4</D:href></D:response>"
+        "</D:multistatus>";
+    const auto result = WebDavProvider::parseMultistatus(body, baseUrlWithCreds());
+    if (!result.has_value())
+        QFAIL(qPrintable(result.error()));
+    // 跨协议条目一律跳过（文件与 collection 皆不产出），http(s) 条目照常
+    QCOMPARE(result->files.size(), 1);
+    QCOMPARE(result->files.first().playUrl, expectUrl(QStringLiteral("ok.mp4")));
+    QVERIFY(result->collections.isEmpty());
+    // 同层同类合并为一条（含首个示例 URL，且不含凭据——文案进消息框）
+    QCOMPARE(result->warnings.size(), 1);
+    QVERIFY(result->warnings.first().contains(QStringLiteral("rtsp://cam/stream1")));
+    QVERIFY(!result->warnings.first().contains(QLatin1Char('@')));
 }
 
 // 一类一可执行（R5）：自带 main（QTEST_GUILESS_MAIN），无 GUI 依赖

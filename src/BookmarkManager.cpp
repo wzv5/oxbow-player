@@ -71,11 +71,16 @@ void BookmarkManager::addBookmark(const QString &rawPath, double time, const QSt
         return;
     // 键归一化（与仓/跳转匹配口径一致）；原始路径供展示
     const QString key = Util::normalizePathForMatch(rawPath);
+    // N48：展示路径不留凭据——rawPath 取自 mpv 的 path，播放 WebDAV 时是带凭据的
+    // 播放形态，原样落盘会让密码与 davPassword 并列存进同一个 INI、"展示保原样"
+    // 的例外仅此一项。只约束写侧：load 不为已有值做任何处理（旧数据的兼容问题
+    // 已知且接受，不做清理）
+    const QString display = Util::stripUrlCredentials(rawPath);
     auto it = m_data.find(key);
     if (it == m_data.end()) {
         m_data[key] = QList<Bookmark>{{time, title}};
         m_order.append(key);
-        m_displayOf[key] = rawPath;
+        m_displayOf[key] = display;
     } else {
         it->append({time, title});
         std::stable_sort(it->begin(), it->end(),

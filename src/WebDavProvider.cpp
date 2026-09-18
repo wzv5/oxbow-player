@@ -43,9 +43,10 @@ bool isDavElement(QXmlStreamReader &xml, const QString &localName) {
     return xml.name() == localName;
 }
 
-// 目录自条目判定：与请求 URL 逐段等价（尾斜杠不计——服务端对 collection 的
-// href 可带可不带尾斜杠）。比较 FullyEncoded 串形态，两侧同源同形
-QString stripTrailingSlash(QString s) {
+// 条目 URL 的尾斜杠剥离：比较两侧同形用（服务端对 collection 的 href 可带可不带尾斜杠，
+// 尾斜杠不计才等价）与 title 取名用。入参是条目 playUrl / 请求 URL 串，故名字带 Url——
+// 尾斜杠在该语境下只对 URL 有意义（本地路径由 QDir 处理）
+QString stripUrlTrailingSlash(QString s) {
     while (s.endsWith(QLatin1Char('/')))
         s.chop(1);
     return s;
@@ -188,6 +189,27 @@ QString WebDavProvider::displayName() {
     return QCoreApplication::translate("WebDavProvider", kWebDavProviderName);
 }
 
+// N48：喂 mpv 的播放形态——把当前凭据注入 URL 的 userinfo 段。凭据的编码形态取自
+// QUrl：今天凭据形态本就是 setUserName / setPassword 的产出，取其 userInfo(FullyEncoded)
+// 即"与既有路径逐字相同"，不必复刻 Qt 的编码表；插入动作交 Util::insertUrlCredentials 的纯
+// 字符串拼接（authority 定位与插入规则在 Util 内单点，本函数不再碰任何偏移），其余字节
+// 原样保留，故往返不变式 strip(embed(u)) == u 构造性成立。凭据皆空、解析失败、非 http(s)、
+// 无 authority 一律恒等返回（绝不注入，避免产出 http://u:p@/path 之类垃圾串）
+QString WebDavProvider::playbackUrl(const QString &playUrl) const {
+    if (m_user.isEmpty() && m_password.isEmpty())
+        return playUrl;
+    // 解析走剥过的串（入参恒无 userinfo，§2.3；此处兜住将来形态变化），凭据写入后取编码形态
+    QUrl url(Util::stripUrlCredentials(playUrl), QUrl::ParsingMode::TolerantMode);
+    if (!url.isValid())
+        return playUrl;
+    url.setUserName(m_user);
+    url.setPassword(m_password);
+    const QString userinfo = url.userInfo(QUrl::ComponentFormattingOption::FullyEncoded);
+    if (userinfo.isEmpty())
+        return playUrl;
+    return Util::insertUrlCredentials(playUrl, userinfo);
+}
+
 QString WebDavProvider::normalizeRootUrl(const QString &text) {
     // URL 的来源处（N37 §3.1 第 1 条）：trim → 经 Util::nativePath 规范化（网络分支）
     // → 补尾斜杠
@@ -196,14 +218,9 @@ QString WebDavProvider::normalizeRootUrl(const QString &text) {
         return normalized;
     normalized = Util::nativePath(normalized);
     // 尾斜杠补在 path 上：基目录语义只对路径成立，直接补在串尾会把分隔符塞进
-    // query（"…/dav?token=1/"）。query / fragment 原样保留在后
-    const qsizetype q = normalized.indexOf(QLatin1Char('?'));
-    const qsizetype f = normalized.indexOf(QLatin1Char('#'));
-    qsizetype cut = normalized.size();
-    if (q >= 0)
-        cut = qMin(cut, q);
-    if (f >= 0)
-        cut = qMin(cut, f);
+    // query（"…/dav?token=1/"）。query / fragment 原样保留在后。
+    // N48：query / fragment 的分界走 Util::urlPathEnd（与显示名取末段同一口径）
+    const qsizetype cut = Util::urlPathEnd(normalized);
     QString head = normalized.left(cut);
     if (!head.endsWith(QLatin1Char('/')))
         head += QLatin1Char('/');
@@ -260,12 +277,12 @@ WebDavProvider::BrowseMode WebDavProvider::browseModeFromInt(int value) {
     return BrowseMode::Layered;
 }
 
-// N46 §2.4：collection 条目 playUrl（resolveEntryUrl 带凭据形态）→ 容器 id。
-// 同一 href 的无凭据解析与带凭据解析只差 userinfo 段，故剥除 userinfo 即与
-// resolveEntryUrl(基, href, "", "") 逐字一致；对已有 userinfo 的 URL，空串赋值
-// 是清空、不留空段（既有用例 absoluteHrefCredentialsStrippedWhenNoCreds 实证的
-// Qt 行为）。编码形态与尾斜杠原样保留；id 恒无凭据——持久化进 queueRoot 的
-// INI 不携带凭据
+// N46 §2.4：collection 条目 playUrl → 容器 id。N48 起条目 playUrl 已恒无 userinfo
+// （resolveEntryUrl 恒剥），故剥离动作对现产出即恒等变换，仍予保留——id 是持久化进
+// queueRoot 与作请求基 URL 的身份，形态恒定是硬要求；对万一带 userinfo 的入参，
+// 空串赋值是清空、不留空段（既有用例 absoluteHrefCredentialsStrippedWhenNoCreds
+// 实证的 Qt 行为）。编码形态与尾斜杠原样保留；id 恒无凭据——持久化进 queueRoot 的
+// INI 不携带凭据，请求侧由 enumerate 逐请求注入当前凭据
 QString WebDavProvider::containerId(const QString &playUrl) {
     QUrl url(playUrl, QUrl::ParsingMode::TolerantMode);
     if (!url.userInfo().isEmpty()) {
@@ -354,14 +371,19 @@ WebDavProvider::enumerate(const QStringList &parent) const {
         return std::unexpected(
             trText(QT_TRANSLATE_NOOP("WebDavProvider", "Invalid WebDAV directory URL: %1"))
                 .arg(baseText));
-    // 凭据随 URL 走，经 N34 §2.5 的"URL userinfo 优先"生效（Basic 预置头省一次
-    // 401 往返，Digest / NTLM 由 authenticationRequired 兜底）。容器 id 恒为
-    // 无凭据形态，此处无条件重写当前凭据——凭据来源唯一（N46 §2.4）。漏写即
-    // 请求无凭据，401 在本层请求直接失败
-    if (!m_user.isEmpty() || !m_password.isEmpty()) {
-        rootUrl.setUserName(m_user);
-        rootUrl.setPassword(m_password);
-    }
+    // N48：请求 URL 的凭据逐请求注入——任务 URL（rootUrl / 容器 id）恒为无凭据形态，
+    // 注入只作用于请求副本，不进实体、不落盘。凭据随 URL 走，经 N34 §2.5 的"URL
+    // userinfo 优先"生效（Basic 预置头省一次 401 往返，Digest / NTLM 由
+    // authenticationRequired 兜底）。根请求与 DFS 子目录请求同一条规则：漏注入即该次
+    // 请求 401（DFS 子项原先靠条目 playUrl 自带凭据，条目转干净后该通路不再成立）
+    auto requestUrlOf = [this](const QUrl &taskUrl) {
+        QUrl req = taskUrl;
+        if (!m_user.isEmpty() || !m_password.isEmpty()) {
+            req.setUserName(m_user);
+            req.setPassword(m_password);
+        }
+        return req;
+    };
 
     // 文件条目 → 实体（两分支共用）：扩展名过滤（取显示名的后缀，大小写不敏感；
     // 空清单 = 不过滤）→ 造 WebDavEntity（具备文件级元数据能力）→ 已取得的
@@ -423,8 +445,9 @@ WebDavProvider::enumerate(const QStringList &parent) const {
         QStringList warnings;
         while (!stack.isEmpty()) {
             const DavTask task = stack.takeLast();
+            const QUrl reqUrl = requestUrlOf(task.url);
             HttpClient::Request req;
-            req.url = task.url; // 绝对 URL：与注册表 client 的缺省 baseUrl 解绑
+            req.url = reqUrl; // 绝对 URL：与注册表 client 的缺省 baseUrl 解绑
             req.method = QByteArrayLiteral("PROPFIND");
             req.body = kPropfindBody;
             req.contentType = QByteArrayLiteral("application/xml");
@@ -451,7 +474,7 @@ WebDavProvider::enumerate(const QStringList &parent) const {
                 continue;
             }
 
-            const auto listing = parseMultistatus(resp.body, task.url, m_user, m_password);
+            const auto listing = parseMultistatus(resp.body, reqUrl);
             if (!listing) {
                 // 解析失败与请求失败同语义：根即整次失败，子目录记 warning 跳过
                 if (task.depth == 0)
@@ -462,6 +485,8 @@ WebDavProvider::enumerate(const QStringList &parent) const {
                                 .arg(listing.error());
                 continue;
             }
+            // N48：本层的跳过告警（非 http(s) href）随该层产出向上汇总
+            warnings << listing->warnings;
 
             // 子目录：depth + 1 > maxDepth 即静默截断不再深入（截断是配置使然，
             // 不是错误，不记 warning——与 N36 §2.2 同口径）；已访问过的目录静默跳过
@@ -483,8 +508,9 @@ WebDavProvider::enumerate(const QStringList &parent) const {
 
     // ——分层浏览 / 仅文件：单次 PROPFIND，逐层懒加载（N46 §2.2）。
     // 层缓存与"返回上一层不重枚举"由 N45 §2.5 的视图机制承担
+    const QUrl reqUrl = requestUrlOf(rootUrl);
     HttpClient::Request req;
-    req.url = rootUrl; // 绝对 URL：与注册表 client 的缺省 baseUrl 解绑
+    req.url = reqUrl; // 绝对 URL + 当前凭据：与注册表 client 的缺省 baseUrl 解绑
     req.method = QByteArrayLiteral("PROPFIND");
     req.body = kPropfindBody;
     req.contentType = QByteArrayLiteral("application/xml");
@@ -498,13 +524,15 @@ WebDavProvider::enumerate(const QStringList &parent) const {
     const bool ok =
         (resp.status == 207 || resp.status == 200) && !resp.canceled && resp.error.isEmpty();
     if (!ok)
-        return std::unexpected(davRequestError(resp, rootUrl));
+        return std::unexpected(davRequestError(resp, reqUrl));
 
-    const auto listing = parseMultistatus(resp.body, rootUrl, m_user, m_password);
+    const auto listing = parseMultistatus(resp.body, reqUrl);
     if (!listing)
         return std::unexpected(listing.error());
 
     Enumeration out;
+    // N48：本层的跳过告警（非 http(s) href）
+    out.warnings = listing->warnings;
     if (m_browseMode == BrowseMode::Layered) {
         // 目录层 → 容器（视图侧模型不变式：容器组恒在实体组之前，两数组天然有序）。
         // id 为无凭据完整编码 URL（N46 §2.4）；title 取解码可读名；meta 只填
@@ -521,7 +549,7 @@ WebDavProvider::enumerate(const QStringList &parent) const {
             // title 取解码可读名：collection 的 playUrl 恒以尾斜杠结尾
             // （normalizeRootUrl 补齐），playUrlFileName 对以 / 结尾的 URL 返回
             // 空串（末段为空），须先剥尾斜杠再取解码名
-            c.title = Util::playUrlFileName(stripTrailingSlash(dir.playUrl));
+            c.title = Util::playUrlFileName(stripUrlTrailingSlash(dir.playUrl));
             if (dir.modified) {
                 FileMeta fm;
                 fm.modified = dir.modified;
@@ -568,34 +596,27 @@ WebDavProvider::load(QSettings &settings, const std::shared_ptr<ServiceRegistry>
     return provider;
 }
 
-QString WebDavProvider::resolveEntryUrl(const QUrl &baseUrl, const QString &href,
-                                        const QString &user, const QString &password) {
+QString WebDavProvider::resolveEntryUrl(const QUrl &baseUrl, const QString &href) {
     // href → 条目 URL：绝对 href 直接采用，相对 href 按基解析（基的尾斜杠让
     // "基目录"语义成立）。URL 的解析与形态交 QUrl 与 nativePath，不自行拼串
     QUrl resolved = baseUrl.resolved(QUrl(href, QUrl::ParsingMode::TolerantMode));
-    // 凭据重写：绝对 href 不继承基 userinfo，凭据来源必须唯一（皆空即无凭据，
-    // 恶意 / 畸形报文夹带的凭据不进 playUrl）。
-    // 注意不得无条件 setUserName("") / setPassword("")——若 href 本无 userinfo，
-    // 空串赋值会把该段标记为 present 且空，序列化产出 "http://:@host/…" 这种
-    // 既非标准也不简洁的形态（N37 实施修订：严格规范化只落在 key，playUrl 只求
-    // 标准与简洁）。故：有凭据即写入；皆空时**仅在 href 自带 userinfo 时**才以
-    // 空串赋值剥除（对已有 userinfo 的 URL，空串赋值是清空、不留空段——既有用例
+    // N48：凭据不进条目——恒剥解析结果的 userinfo。相对 href 的 userinfo 继承自基
+    // 请求 URL、绝对 href 的来自 href 自身（恶意 / 畸形报文夹带），两者一并剥。
+    // 注意不得无条件 setUserName("") / setPassword("")——若本无 userinfo，空串赋值
+    // 会把该段标记为 present 且空，序列化产出 "http://:@host/…" 这种既非标准也不
+    // 简洁的形态；故仅在确有 userinfo 时以空串赋值清空（不留空段，既有用例
     // absoluteHrefCredentialsStrippedWhenNoCreds 已实证该 Qt 行为）
-    if (!user.isEmpty() || !password.isEmpty()) {
-        resolved.setUserName(user);
-        resolved.setPassword(password);
-    } else if (!resolved.userInfo().isEmpty()) {
+    if (!resolved.userInfo().isEmpty()) {
         resolved.setUserName(QString());
         resolved.setPassword(QString());
     }
     // 经 Util::nativePath 收口取编码形态输出——即"入口处构造一次"（§3.1 第 1 条）；
-    // 此后 playUrl 全链路只读转发
+    // 此后 playUrl 全链路只读转发，凭据只在请求与播放时注入
     return Util::nativePath(resolved.toString(QUrl::ComponentFormattingOption::FullyEncoded));
 }
 
 std::expected<WebDavProvider::DavListing, QString>
-WebDavProvider::parseMultistatus(const QByteArray &body, const QUrl &baseUrl, const QString &user,
-                                 const QString &password) {
+WebDavProvider::parseMultistatus(const QByteArray &body, const QUrl &baseUrl) {
     DavListing out;
     QXmlStreamReader xml(body);
     // 层级化解析（readNextStartElement 的语义是"读到任一结束元素即返回 false"，
@@ -603,6 +624,9 @@ WebDavProvider::parseMultistatus(const QByteArray &body, const QUrl &baseUrl, co
     // 绝不跨层 continue——跨层会让循环在子元素的 </...> 处提前退出）。
     // 前置约定：各辅助 lambda 被调用时，reader 停在对应元素的起始标签上；
     // 返回时其结束标签已被消费。
+    // N48：非 http(s) href 的跳过计数与首个示例（收尾时合并为一条 warning）
+    int skippedNonHttp = 0;
+    QString skippedSample;
     auto parseProp = [&](bool &isCollection, std::optional<qint64> &size,
                          std::optional<QDateTime> &modified) {
         while (xml.readNextStartElement()) {
@@ -658,18 +682,30 @@ WebDavProvider::parseMultistatus(const QByteArray &body, const QUrl &baseUrl, co
             return;
 
         DavEntry entry;
-        entry.playUrl = resolveEntryUrl(baseUrl, href, user, password);
+        entry.playUrl = resolveEntryUrl(baseUrl, href);
         entry.size = size;
         entry.modified = modified;
 
-        // 目录自条目跳过：与请求 URL 等价（尾斜杠不计）者不产出
-        if (stripTrailingSlash(entry.playUrl) ==
-            stripTrailingSlash(
-                Util::nativePath(baseUrl.toString(QUrl::ComponentFormattingOption::FullyEncoded))))
+        // N48：非 http(s) 的 href 不产出条目——条目恒为 http(s) 是凭据注入与剥离
+        // 对称成立的前提（今天的绝对 href 被直接采用，跨协议 href 会以条目身份进入
+        // 播放与浏览链）。文件与 collection 一律跳过；示例 URL 取剥离后的形态
+        // （不含凭据），同层同类只记一条并合并条数，避免畸形报文把警告刷爆
+        if (!Util::isHttpUrl(entry.playUrl)) {
+            ++skippedNonHttp;
+            if (skippedSample.isEmpty())
+                skippedSample = entry.playUrl;
+            return;
+        }
+
+        // 目录自条目跳过：与请求 URL 等价（尾斜杠不计）者不产出。N48：比较在无凭据
+        // 形态下进行——条目串已无凭据，请求基 URL 一侧在此剥除后方可比
+        const QString baseClean = Util::stripUrlCredentials(
+            Util::nativePath(baseUrl.toString(QUrl::ComponentFormattingOption::FullyEncoded)));
+        if (stripUrlTrailingSlash(entry.playUrl) == stripUrlTrailingSlash(baseClean))
             return;
 
         // 目录条目补尾斜杠（服务端常省略）：它只作下一跳 PROPFIND 的基 URL，
-        // 尾斜杠是"基目录"语义的前提（自条目判定用 stripTrailingSlash，补齐与否
+        // 尾斜杠是"基目录"语义的前提（自条目判定用 stripUrlTrailingSlash，补齐与否
         // 对跳过判定等价）。N44：同语义合并进 normalizeRootUrl——本处入参已是
         // resolveEntryUrl 产出的规范串，结果与原实现逐字相同
         if (isCollection)
@@ -699,13 +735,22 @@ WebDavProvider::parseMultistatus(const QByteArray &body, const QUrl &baseUrl, co
     if (xml.hasError())
         return std::unexpected(trText(
             QT_TRANSLATE_NOOP("WebDavProvider", "Malformed WebDAV response (invalid XML).")));
+    // N48：同层同类的跳过合并为一条（示例 URL 取首个，形态已无凭据）——畸形报文
+    // 可能带成百上千条跨协议 href，逐条回传会把视图侧的警告弹框刷爆。
+    // 文案避开复数语法（无 %n 复数机制，单个 / 多个都读得通）
+    if (skippedNonHttp > 0)
+        out.warnings << trText(QT_TRANSLATE_NOOP("WebDavProvider",
+                                                 "Unsupported URL scheme, skipped: %1 (total %2)"))
+                            .arg(skippedSample)
+                            .arg(skippedNonHttp);
     return out;
 }
 
 QString WebDavProvider::davRequestError(const HttpClient::Response &resp, const QUrl &url) {
     // 可读文案（英文源 + tr()）：HTTP 状态码为主脉络，不透传 HttpClient 的 error。
-    // 拼接 URL 供定位（含 userinfo 的完整形态，与其余 UI 呈现同款取舍）
-    const QString target = url.toString(QUrl::FullyEncoded);
+    // 拼接 URL 供定位——N48：先剥凭据，请求 URL 是带凭据形态（含 401 这一最常见的
+    // 失败路径），文案进占位行与警告消息框，凭据不得出现在用户可见文案里
+    const QString target = Util::stripUrlCredentials(url.toString(QUrl::FullyEncoded));
     if (resp.canceled)
         return trText(QT_TRANSLATE_NOOP("WebDavProvider", "Request canceled: %1")).arg(target);
     // 体超限（HttpClient 的 maxBodyBytes）：status 仍是真实状态码（常为 207），

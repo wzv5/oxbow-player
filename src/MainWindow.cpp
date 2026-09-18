@@ -732,7 +732,7 @@ void MainWindow::openFiles() {
     m_playlist->setDefaultTabFiles(files);
     m_playlist->markPlayingTab(0);
     m_playlist->requestTab(0); // Q2 裁决：抢占切换时激活态同步跳到默认 tab（N19 忙时排队）
-    onPlayRequested(files, 0, -1.0);
+    onPlayRequested(files, 0, 0, -1.0);
 }
 
 void MainWindow::playAt(int index) {
@@ -765,7 +765,7 @@ void MainWindow::togglePause() {
         }
         // 载入即转移同步目标：mpv 列表回刷写进当前 tab，关闭时 lastTabName 随之正确；
         // 续播进度经统一入口的挂起 seek 机制恢复
-        onPlayRequested(files, idx, restoreTime > 0.0 ? restoreTime : -1.0);
+        onPlayRequested(files, cur, idx, restoreTime > 0.0 ? restoreTime : -1.0);
         return;
     }
     m_controller->command({QStringLiteral("cycle"), QStringLiteral("pause")});
@@ -829,7 +829,7 @@ void MainWindow::stepStopped(bool next) {
     } else if (target < 0 || target >= files.size()) {
         return;
     }
-    onPlayRequested(files, target, -1.0);
+    onPlayRequested(files, cur, target, -1.0);
 }
 
 // A16：上一/下一动作三路联动启停（矩阵见 specs/A16.md）。
@@ -1677,7 +1677,7 @@ void MainWindow::mousePressEvent(QMouseEvent *event) {
     QMainWindow::mousePressEvent(event);
 }
 
-void MainWindow::onPlayRequested(const QStringList &files, int index, double seekTo,
+void MainWindow::onPlayRequested(const QStringList &files, int tab, int index, double seekTo,
                                  bool keepPaused) {
     // 统一播放入口（N4 合并）：整表载入 → 跳转 index → 挂起恢复进度。
     m_pendingSeekRow = -1; // 丢弃未执行的挂起 seek
@@ -1685,15 +1685,18 @@ void MainWindow::onPlayRequested(const QStringList &files, int index, double see
     if (files.isEmpty())
         return;
     // N25：整表载入是多命令序列（stop→clear→N×append→pos），登记本地在途回显基准，
-    // 使回刷把空列表/部分列表的中间态识别为本变更在途而忽略（files 即本地列表内容）
+    // 使回刷把空列表/部分列表的中间态识别为本变更在途而忽略（files 即本地列表内容）。
+    // N48：登记与下发分离——登记恒取无凭据形态（与回显比对同形态），下发经
+    // playbackFiles 取该 tab 提供者的播放形态（凭据注入只发生在这一处与请求侧）
     m_playlist->noteLocalPush(files);
+    const QStringList playFiles = m_playlist->playbackFiles(tab, files);
     // mpv 的 playlist-clear 会保留当前播放的条目，先 stop 才能真正清空
     m_controller->command({QStringLiteral("stop")});
     m_controller->command({QStringLiteral("playlist-clear")});
     // 全部按原顺序 append（不自动播），最后以 playlist-pos 启动目标条目：
     // 既避免 idle 下 append-play 瞬态播放 file[0]，也保持 mpv 列表顺序与界面一致
-    for (int i = 0; i < files.size(); ++i)
-        m_controller->command({QStringLiteral("loadfile"), files[i], QStringLiteral("append")});
+    for (int i = 0; i < playFiles.size(); ++i)
+        m_controller->command({QStringLiteral("loadfile"), playFiles[i], QStringLiteral("append")});
     if (seekTo > 0.0) {
         // 进度恢复走挂起 seek（与会话恢复同款）：playlist-pos 触发的加载是
         // 异步的，立即 seek 会因文件未就绪而失败；先挂起再启动杜绝竞态，
@@ -1730,7 +1733,10 @@ void MainWindow::onFilesAdded(const QStringList &files) {
     // 其他 tab 为本地列表，双击播放时整体载入。
     if (!m_playlist->currentIsPlayingTab())
         return;
-    for (const QString &file : files)
+    // N48：与 onPlayRequested 同款——下发取该 tab 提供者的播放形态（防御性：现守卫下
+    // 新增项恒属可修改的本地来源，无凭据注入；将来放开远端 tab 增删时形态已正）
+    const QStringList playFiles = m_playlist->playbackFiles(m_playlist->playingTabIndex(), files);
+    for (const QString &file : playFiles)
         m_controller->command({QStringLiteral("loadfile"), file, QStringLiteral("append-play")});
 }
 
@@ -2341,7 +2347,7 @@ void MainWindow::jumpToFileTime(const QString &path, double time) {
             const QStringList files = m_playlist->queueFilesOf(targetTab);
             m_playlist->markPlayingTab(targetTab);
             m_playlist->requestTab(targetTab); // N19：忙时排队
-            onPlayRequested(files, targetRow, time);
+            onPlayRequested(files, targetTab, targetRow, time);
         }
         return;
     }
@@ -2349,7 +2355,7 @@ void MainWindow::jumpToFileTime(const QString &path, double time) {
     m_playlist->setDefaultTabFiles({path});
     m_playlist->markPlayingTab(0);
     m_playlist->requestTab(0); // N19：忙时排队
-    onPlayRequested({path}, 0, time);
+    onPlayRequested({path}, 0, 0, time);
 }
 
 void MainWindow::ensureBookmarkEditor() {

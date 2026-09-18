@@ -60,6 +60,14 @@ class TestUtil : public QObject {
     // ——N37：nativePath 三分支——本地转原生分隔符、http(s) 走 URL 规范化、
     // 其余网络协议原样返回
     void nativePathBranches();
+    // ——N48：stripUrlCredentials（凭据剥离纯函数，匹配 / 比对 / 展示 / 文案共用）——
+    // 仅 http(s) 生效、只删 authority 的 userinfo 段、其余字节逐字不动、幂等
+    void stripUrlCredentialsShapesInput();
+    // ——N48：insertUrlCredentials（剥离的插入侧对偶）——
+    // 拼接插入、入参先剥（绝不产出双段）、凭据段空 / 非 http(s) / 无 authority 恒等
+    void insertUrlCredentialsInsertsOrLeavesAlone();
+    // ——N48：urlPathEnd（显示名取末段与基 URL 尾斜杠补位共用的分界口径）——
+    void urlPathEndFindsSpecBoundary();
 };
 
 void TestUtil::emptyInputYieldsNoSegments() {
@@ -245,9 +253,12 @@ void TestUtil::networkMatchKeyConvergesEquivalentForms() {
     // 组合形态：同一 URL 的多种书写收敛为同一键
     QCOMPARE(Util::normalizePathForMatch(QStringLiteral("HTTPS://Server:443/Dav/%7Euser/%41.mp4")),
              Util::normalizePathForMatch(QStringLiteral("https://server/Dav/~user/A.mp4")));
-    // userinfo 原样保留（大小写敏感，不参与 host 归小写）
+    // N48：userinfo 被剥除——键恒为无凭据形态，改密后既有记忆继续有效
     QCOMPARE(Util::normalizePathForMatch(QStringLiteral("http://u:p@HOST/a.mp4")),
-             Util::normalizePathForMatch(QStringLiteral("http://u:p@host/a.mp4")));
+             QStringLiteral("http://host/a.mp4"));
+    // 同资源不同账号收敛为同一键（身份即资源）
+    QCOMPARE(Util::normalizePathForMatch(QStringLiteral("http://a@host/x")),
+             Util::normalizePathForMatch(QStringLiteral("http://b:pw@host/x")));
 }
 
 void TestUtil::networkMatchKeyKeepsReservedEscapes() {
@@ -314,6 +325,84 @@ void TestUtil::nativePathBranches() {
     // 其余网络协议：原样返回（不被 toNativeSeparators 破坏，也不经 URL 重序列化）
     QCOMPARE(Util::nativePath(QStringLiteral("rtsp://host/live/a b.mp4")),
              QStringLiteral("rtsp://host/live/a b.mp4"));
+}
+
+// N48：凭据剥离纯函数。产出一旦经 QUrl 重序列化，除 userinfo 之外的段也可能变形，
+// 而它要参与跨来源逐字节比对（实体 playUrl / mpv 回显），故钉死"只删 userinfo 段、
+// 其余字节逐字不动"与幂等
+void TestUtil::stripUrlCredentialsShapesInput() {
+    // 常规：删 authority 的 userinfo 段（含尾随 '@'）
+    QCOMPARE(Util::stripUrlCredentials(QStringLiteral("http://u:p@host/dav/a.mp4")),
+             QStringLiteral("http://host/dav/a.mp4"));
+    QCOMPARE(Util::stripUrlCredentials(QStringLiteral("https://u@host:8443/a.mp4")),
+             QStringLiteral("https://host:8443/a.mp4"));
+    // 无 userinfo / 空 authority / 无 "://" / 非 http(s)：恒等返回（绝不凭空写入空段）
+    QCOMPARE(Util::stripUrlCredentials(QStringLiteral("http://host/a.mp4")),
+             QStringLiteral("http://host/a.mp4"));
+    QCOMPARE(Util::stripUrlCredentials(QStringLiteral("http://:@host/a.mp4")),
+             QStringLiteral("http://host/a.mp4"));
+    QCOMPARE(Util::stripUrlCredentials(QStringLiteral("C:/dir/a.mp4")),
+             QStringLiteral("C:/dir/a.mp4"));
+    QCOMPARE(Util::stripUrlCredentials(QStringLiteral("rtsp://u:p@host/live")),
+             QStringLiteral("rtsp://u:p@host/live"));
+    QCOMPARE(Util::stripUrlCredentials(QString()), QString());
+    // path / query 里的 '@' 永不触及（authority 终止于首个 '/' / '?' / '#'）
+    QCOMPARE(Util::stripUrlCredentials(QStringLiteral("http://u:p@host/a@b.mp4")),
+             QStringLiteral("http://host/a@b.mp4"));
+    QCOMPARE(Util::stripUrlCredentials(QStringLiteral("http://u:p@host/a.mp4?t=x@y")),
+             QStringLiteral("http://host/a.mp4?t=x@y"));
+    QCOMPARE(Util::stripUrlCredentials(QStringLiteral("http://u:p@host#f@g")),
+             QStringLiteral("http://host#f@g"));
+    // 其余字节逐字不动：编码形态（hex 大小写 / %20 / %2F）与 host 大小写原样保留
+    QCOMPARE(Util::stripUrlCredentials(QStringLiteral("HTTP://u:p@Host/Dav/%2fa%20b")),
+             QStringLiteral("HTTP://Host/Dav/%2fa%20b"));
+    // authority 内多个 '@'：字面 '@' 是分隔符，取最后一个（userinfo 内的 '@' 必为编码）
+    QCOMPARE(Util::stripUrlCredentials(QStringLiteral("http://u%40x:p@host/a.mp4")),
+             QStringLiteral("http://host/a.mp4"));
+    // 幂等：重复剥离结果不变（比较形态会在回显侧与本地侧各剥一次）
+    const QString once = Util::stripUrlCredentials(QStringLiteral("http://u:p@host/a.mp4"));
+    QCOMPARE(Util::stripUrlCredentials(once), once);
+}
+
+// N48：插入侧与剥离侧成对——插入是纯字符串拼接（其余字节逐字不动），故剥离即还原；
+// 入参先剥，带 userinfo 的串绝不产出双段
+void TestUtil::insertUrlCredentialsInsertsOrLeavesAlone() {
+    const QString clean = QStringLiteral("http://host/dav/a.mp4");
+    QCOMPARE(Util::insertUrlCredentials(clean, QStringLiteral("u:pw")),
+             QStringLiteral("http://u:pw@host/dav/a.mp4"));
+    // 剥离即还原（往返不变式），且 path / query 里的 '@' 不受影响
+    const QString withAt = QStringLiteral("http://host/dav/a@b.mp4?t=x@y");
+    QCOMPARE(Util::stripUrlCredentials(Util::insertUrlCredentials(withAt, QStringLiteral("u:pw"))),
+             withAt);
+    // 入参先剥：已有 userinfo 的串不产出双段
+    QCOMPARE(Util::insertUrlCredentials(QStringLiteral("http://old:cred@host/dav/a.mp4"),
+                                        QStringLiteral("u:pw")),
+             QStringLiteral("http://u:pw@host/dav/a.mp4"));
+    // 凭据段为空：恒等（不产出空 userinfo 段）
+    QCOMPARE(Util::insertUrlCredentials(clean, QString()), clean);
+    // 非 http(s) / 无 "://" / authority 为空：恒等，绝不注入
+    QCOMPARE(Util::insertUrlCredentials(QStringLiteral("rtsp://host/live"), QStringLiteral("u:pw")),
+             QStringLiteral("rtsp://host/live"));
+    QCOMPARE(Util::insertUrlCredentials(QStringLiteral("C:/dir/a.mp4"), QStringLiteral("u:pw")),
+             QStringLiteral("C:/dir/a.mp4"));
+    QCOMPARE(Util::insertUrlCredentials(QStringLiteral("http:///a.mp4"), QStringLiteral("u:pw")),
+             QStringLiteral("http:///a.mp4"));
+}
+
+// N48：path 段与 query / fragment 的分界（首个 '?' 或 '#'；无则 size()）——纯字符串，
+// 不去重、不解析，本地路径里的 '?' / '#' 由调用方负责不误用
+void TestUtil::urlPathEndFindsSpecBoundary() {
+    QCOMPARE(Util::urlPathEnd(QStringLiteral("http://host/dav/a.mp4")), qsizetype(21));
+    QCOMPARE(Util::urlPathEnd(QStringLiteral("http://host/dav?token=1")), qsizetype(15));
+    QCOMPARE(Util::urlPathEnd(QStringLiteral("http://host/dav#frag")), qsizetype(15));
+    // 两者并存取较小者（先出现者）
+    QCOMPARE(Util::urlPathEnd(QStringLiteral("http://host/dav#f?q")), qsizetype(15));
+    QCOMPARE(Util::urlPathEnd(QStringLiteral("http://host/dav?q#f")), qsizetype(15));
+    // 空串 / 无分界：size()
+    QCOMPARE(Util::urlPathEnd(QString()), qsizetype(0));
+    QCOMPARE(Util::urlPathEnd(QStringLiteral("http://host/dav/")), qsizetype(16));
+    // 分界即首字符
+    QCOMPARE(Util::urlPathEnd(QStringLiteral("?q")), qsizetype(0));
 }
 
 // 一类一可执行（R5）：自带 main（QTEST_GUILESS_MAIN）
