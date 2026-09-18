@@ -3,6 +3,8 @@
 // 无前缀两种写法）/ 空 multistatus / 无 resourcetype / 绝对 href / 带百分号编码
 // href / 目录自条目跳过 / 非法 XML / 畸形数值属性 / 无凭据 URL 保持简洁（不出现
 // 空 userinfo）/ collection href 缺尾斜杠被补齐。
+// N46 增补：容器 id 的无凭据形态构造（containerId）与浏览模式 INI 取值
+// （browseModeFromInt）。
 // 一类一可执行（R5）：ctest --test-dir build -C Debug -R WebDavProvider 跑本套件。
 
 #include "pch.h"
@@ -77,6 +79,11 @@ class TestWebDavProvider : public QObject {
     void validateInputCoversEmptySchemeAndCredentials();
     // N44：parseExtensions 口径（与目录页同形，两份实现）
     void parseExtensionsNormalizesTokens();
+    // N46：容器 id = collection playUrl 的无凭据形态——剥 userinfo、编码形态
+    // 与尾斜杠原样保留，持久化进 queueRoot 不携带凭据（N46 §2.4）
+    void containerIdStripsCredentialsKeepsTrailingSlash();
+    // N46：浏览模式的 INI int 取值映射，取值域外降级分层浏览（新建列表默认）
+    void browseModeFromIntMapsAndFallsBack();
 };
 
 void TestWebDavProvider::normalEntriesPrefixed() {
@@ -428,6 +435,39 @@ void TestWebDavProvider::parseExtensionsNormalizesTokens() {
              QStringList({QStringLiteral("webm")}));
     QVERIFY(WebDavProvider::parseExtensions(QString()).isEmpty());
     QVERIFY(WebDavProvider::parseExtensions(QStringLiteral("  \t ")).isEmpty());
+}
+
+// N46 §2.4：容器 id = collection 条目 playUrl 的无凭据形态。同一 href 的无凭据
+// 解析与带凭据解析只差 userinfo 段，故剥除 userinfo 即与以空凭据调用
+// resolveEntryUrl 逐字一致；编码形态（%20 / 中文）与 collection 尾斜杠原样保留
+void TestWebDavProvider::containerIdStripsCredentialsKeepsTrailingSlash() {
+    // 带凭据 playUrl → 剥 userinfo，尾斜杠保留
+    QCOMPARE(WebDavProvider::containerId(expectUrlAuth(QStringLiteral("sub/"))),
+             expectUrl(QStringLiteral("sub/")));
+    // 无凭据形态输入原样等价（本无 userinfo 不得凭空写入空段）
+    QCOMPARE(WebDavProvider::containerId(expectUrl(QStringLiteral("sub/"))),
+             expectUrl(QStringLiteral("sub/")));
+    // 绝对 href（他主机）同样只剥凭据、URL 原样——id 即解析期构造的 URL
+    QCOMPARE(WebDavProvider::containerId(QStringLiteral("http://evil:pw@other-svc/media/")),
+             QStringLiteral("http://other-svc/media/"));
+    // 编码形态原样保留（中文 / 空格目录名场景）
+    QCOMPARE(
+        WebDavProvider::containerId(expectUrlAuth(QStringLiteral("%E4%B8%AD%E6%96%87%20name/"))),
+        expectUrl(QStringLiteral("%E4%B8%AD%E6%96%87%20name/")));
+    // 产出恒不含 userinfo
+    QVERIFY(!WebDavProvider::containerId(expectUrlAuth(QStringLiteral("sub/")))
+                 .contains(QLatin1Char('@')));
+}
+
+// N46 §2.1：INI 的 int 取值 → 浏览模式；取值域外（损坏 / 未知值）降级 Layered
+void TestWebDavProvider::browseModeFromIntMapsAndFallsBack() {
+    using BM = WebDavProvider::BrowseMode;
+    QCOMPARE(WebDavProvider::browseModeFromInt(0), BM::Layered);
+    QCOMPARE(WebDavProvider::browseModeFromInt(1), BM::FilesOnly);
+    QCOMPARE(WebDavProvider::browseModeFromInt(2), BM::FilesRecursive);
+    QCOMPARE(WebDavProvider::browseModeFromInt(-1), BM::Layered);
+    QCOMPARE(WebDavProvider::browseModeFromInt(3), BM::Layered);
+    QCOMPARE(WebDavProvider::browseModeFromInt(99), BM::Layered);
 }
 
 // 一类一可执行（R5）：自带 main（QTEST_GUILESS_MAIN），无 GUI 依赖

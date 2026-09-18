@@ -26,6 +26,13 @@ const QString kDavNs = QStringLiteral("DAV:");
 // 英文原文（N34/HttpClient 同款约定）
 QString trText(const char *source) { return QCoreApplication::translate("WebDavProvider", source); }
 
+// N46 §2.1：三档浏览模式的源文案（英文可翻译字符串，翻译上下文归属本提供者）。
+// 与 DirProvider（N45 §2.11）的选项文案逐字相同是交叉验收项，两处不得各自措辞
+constexpr char kBrowseLayered[] = QT_TRANSLATE_NOOP("WebDavProvider", "Layered Browsing");
+constexpr char kBrowseFilesOnly[] = QT_TRANSLATE_NOOP("WebDavProvider", "Files Only");
+constexpr char kBrowseFilesRecursive[] =
+    QT_TRANSLATE_NOOP("WebDavProvider", "Files Only (Include Subdirectories)");
+
 bool isDavElement(QXmlStreamReader &xml, const QString &localName) {
     // 命名空间为 DAV:（前缀不可依赖，大小写不敏感）；命名空间缺省（服务端
     // 省略 xmlns 的畸形报文）回退纯 localName 匹配——不同命名空间仍不误匹配，
@@ -47,14 +54,15 @@ QString stripTrailingSlash(QString s) {
 } // namespace
 
 WebDavProvider::WebDavProvider(const QString &rootUrl, const QString &user, const QString &password,
-                               bool recursive, const QStringList &extensions,
+                               BrowseMode mode, const QStringList &extensions,
                                const std::shared_ptr<ServiceRegistry> &registry)
     : PlaylistProvider(registry), m_rootUrl(rootUrl), m_user(user), m_password(password),
-      m_recursive(recursive), m_extensions(extensions) {}
+      m_browseMode(mode), m_extensions(extensions) {}
 
-// WebDAV 目录的参数页（N44 §2.5.3）：URL 行 + 用户名行 + 密码行 + 递归 + 扩展名行，
-// 内容与重构前的 WebDAV 参数区逐项一致；原 16px 左缩进取消（四行布局下参数区
-// 不再挂在某个单选之下）。页面类只在本文件可见，经 createWebDavSettingsPage 产出
+// WebDAV 目录的参数页（N44 §2.5.3）：URL 行 + 用户名行 + 密码行 + 浏览模式 +
+// 扩展名行。N46：原"包含子目录"复选框换为三选一的浏览模式下拉框（单行，与
+// URL / Password 行同构），三档文案与 DirProvider 逐字相同（交叉验收项）。
+// 页面类只在本文件可见，经 createWebDavSettingsPage 产出
 class WebDavSettingsPage : public ProviderSettingsPage {
     Q_OBJECT
   public:
@@ -74,8 +82,13 @@ class WebDavSettingsPage : public ProviderSettingsPage {
         m_passwordEdit->setEchoMode(QLineEdit::EchoMode::Password);
         form->addRow(tr("Password"), m_passwordEdit);
 
-        m_recursiveCheck = new QCheckBox(tr("Include Subdirectories"));
-        form->addRow(m_recursiveCheck); // 单控件行：占第 1 列起、跨两列
+        m_modeCombo = new QComboBox;
+        // 选项序即 BrowseMode 枚举值序（0/1/2），setCurrentIndex 按值直接回填；
+        // 三档文案与 DirProvider 逐字相同（N46 §2.1 交叉验收项）
+        m_modeCombo->addItem(trText(kBrowseLayered));
+        m_modeCombo->addItem(trText(kBrowseFilesOnly));
+        m_modeCombo->addItem(trText(kBrowseFilesRecursive));
+        form->addRow(tr("Browse Mode"), m_modeCombo);
 
         m_extensionsEdit = new QLineEdit;
         auto *extRow = new QHBoxLayout;
@@ -105,14 +118,16 @@ class WebDavSettingsPage : public ProviderSettingsPage {
         layout->addStretch(1);
 
         // 回填：rootUrl 已含尾斜杠，URL 框原样回显；无回显来源（新建 / 换类型）
-        // 时扩展名框预填全局默认清单
+        // 时扩展名框预填全局默认清单、模式落默认分层浏览（下拉框当前项 0 即
+        // 默认，显式置位表达意图）
         if (m_seed) {
             m_urlEdit->setText(m_seed->rootUrl());
             m_userEdit->setText(m_seed->user());
             m_passwordEdit->setText(m_seed->password());
-            m_recursiveCheck->setChecked(m_seed->recursive());
+            m_modeCombo->setCurrentIndex(int(m_seed->browseMode()));
             m_extensionsEdit->setText(m_seed->extensions().join(QLatin1Char(' ')));
         } else {
+            m_modeCombo->setCurrentIndex(int(WebDavProvider::BrowseMode::Layered));
             m_extensionsEdit->setText(App::defaultMediaExtensions().join(QLatin1Char(' ')));
         }
 
@@ -128,15 +143,13 @@ class WebDavSettingsPage : public ProviderSettingsPage {
 
     bool hasChanges() const override {
         return !m_seed || urlValue() != m_seed->rootUrl() || userValue() != m_seed->user() ||
-               passwordValue() != m_seed->password() ||
-               m_recursiveCheck->isChecked() != m_seed->recursive() ||
+               passwordValue() != m_seed->password() || modeValue() != m_seed->browseMode() ||
                extensionsValue() != m_seed->extensions();
     }
 
     std::shared_ptr<PlaylistProvider> build() const override {
         return std::make_shared<WebDavProvider>(urlValue(), userValue(), passwordValue(),
-                                                m_recursiveCheck->isChecked(), extensionsValue(),
-                                                m_registry);
+                                                modeValue(), extensionsValue(), m_registry);
     }
 
   private:
@@ -145,6 +158,9 @@ class WebDavSettingsPage : public ProviderSettingsPage {
     QString userValue() const { return m_userEdit->text().trimmed(); }
     // 密码不 trim——首尾空格可能是有效字符
     QString passwordValue() const { return m_passwordEdit->text(); }
+    WebDavProvider::BrowseMode modeValue() const {
+        return WebDavProvider::browseModeFromInt(m_modeCombo->currentIndex());
+    }
     QStringList extensionsValue() const {
         return WebDavProvider::parseExtensions(m_extensionsEdit->text());
     }
@@ -154,7 +170,7 @@ class WebDavSettingsPage : public ProviderSettingsPage {
     QLineEdit *m_urlEdit = nullptr;
     QLineEdit *m_userEdit = nullptr;
     QLineEdit *m_passwordEdit = nullptr;
-    QCheckBox *m_recursiveCheck = nullptr;
+    QComboBox *m_modeCombo = nullptr;
     QLineEdit *m_extensionsEdit = nullptr;
 };
 
@@ -230,18 +246,90 @@ QStringList WebDavProvider::parseExtensions(const QString &text) {
     return out;
 }
 
-// 枚举：N32 统一后的 QtConcurrent 任务内逐层 DFS 顺序推进（在途至多 1 条请求，
-// 顺序推进不设取消通道——孤儿任务跑完整轮 DFS，结果按代际身份静默丢弃）。
-// 失败语义（§3.5）：根请求失败 → 整次 unexpected 进占位；子目录请求失败 →
-// 记 warning 并跳过该子树，其余照常返回；单目录体超 maxBodyBytes 同走 warning。
-// N45：签名适配——WebDAV 分层浏览归 N46，本实现保持平铺、不产容器；
-// 非空 parent 属调用方违约，Q_ASSERT 守候，release 降级返回空结果
+// N46 §2.1：INI 的 int 取值 → 浏览模式；取值域外（损坏 / 未知值）降级 Layered
+// （新建列表默认），不做旧键兼容。与 DirProvider 同名函数各自持有（§2.1）
+WebDavProvider::BrowseMode WebDavProvider::browseModeFromInt(int value) {
+    switch (value) {
+    case int(BrowseMode::Layered):
+        return BrowseMode::Layered;
+    case int(BrowseMode::FilesOnly):
+        return BrowseMode::FilesOnly;
+    case int(BrowseMode::FilesRecursive):
+        return BrowseMode::FilesRecursive;
+    }
+    return BrowseMode::Layered;
+}
+
+// N46 §2.4：collection 条目 playUrl（resolveEntryUrl 带凭据形态）→ 容器 id。
+// 同一 href 的无凭据解析与带凭据解析只差 userinfo 段，故剥除 userinfo 即与
+// resolveEntryUrl(基, href, "", "") 逐字一致；对已有 userinfo 的 URL，空串赋值
+// 是清空、不留空段（既有用例 absoluteHrefCredentialsStrippedWhenNoCreds 实证的
+// Qt 行为）。编码形态与尾斜杠原样保留；id 恒无凭据——持久化进 queueRoot 的
+// INI 不携带凭据
+QString WebDavProvider::containerId(const QString &playUrl) {
+    QUrl url(playUrl, QUrl::ParsingMode::TolerantMode);
+    if (!url.userInfo().isEmpty()) {
+        url.setUserName(QString());
+        url.setPassword(QString());
+    }
+    return Util::nativePath(url.toString(QUrl::ComponentFormattingOption::FullyEncoded));
+}
+
+// ——提供者初始排序（N45 §2.7，N46 §2.2）：文件名数字化，稳定排序保等键的
+// 服务器枚举序——预切分数字段后按下标排序，避免比较器里 O(n log n) 次重复
+// segmentName。与视图 SortKey::None 显示序逐项一致由规格与验收约束（N45 §2.7），
+// 不共用代码（DirProvider 的同名私有辅助各自持有）
+void WebDavProvider::sortEntitiesByNumericName(EntityList &entities) {
+    const int n = int(entities.size());
+    if (n < 2)
+        return;
+    std::vector<Util::SegmentedName> segs;
+    segs.reserve(n);
+    for (const auto &e : entities)
+        segs.push_back(Util::segmentName(e->fileName()));
+    std::vector<int> order;
+    order.reserve(n);
+    for (int i = 0; i < n; ++i)
+        order.push_back(i);
+    std::stable_sort(order.begin(), order.end(),
+                     [&segs](int a, int b) { return Util::naturalCompare(segs[a], segs[b]) < 0; });
+    EntityList sorted;
+    sorted.reserve(n);
+    for (int i : order)
+        sorted.push_back(std::move(entities[i]));
+    entities = std::move(sorted);
+}
+
+void WebDavProvider::sortContainersByNumericTitle(QList<Container> &containers) {
+    const int n = int(containers.size());
+    if (n < 2)
+        return;
+    std::vector<Util::SegmentedName> segs;
+    segs.reserve(n);
+    for (const Container &c : containers)
+        segs.push_back(Util::segmentName(c.title));
+    std::vector<int> order;
+    order.reserve(n);
+    for (int i = 0; i < n; ++i)
+        order.push_back(i);
+    std::stable_sort(order.begin(), order.end(),
+                     [&segs](int a, int b) { return Util::naturalCompare(segs[a], segs[b]) < 0; });
+    QList<Container> sorted;
+    sorted.reserve(n);
+    for (int i : order)
+        sorted.push_back(std::move(containers[i]));
+    containers = std::move(sorted);
+}
+
+// 枚举：N32 统一后的 QtConcurrent 任务内同步推进（在途至多 1 条请求，
+// 顺序推进不设取消通道——孤儿任务跑完整轮，结果按代际身份静默丢弃）。
+// N46 §2.2：按浏览模式分派——分层浏览与仅文件为单次 PROPFIND（每层即本次枚举
+// 的根请求：请求 / 解析失败 → 整次 unexpected 进占位，体超限随之整层失败）；
+// 仅文件（含子目录）保留逐层 DFS（N37 §3.5 失败语义不变：根失败整次 unexpected，
+// 子目录记 warning 跳过）。两档平铺收到非空 parent 属调用方违约，Q_ASSERT 守候，
+// release 降级返回空结果。提供者初始排序见 §2.2（N45 §2.7）
 std::expected<PlaylistProvider::Enumeration, QString>
 WebDavProvider::enumerate(const QStringList &parent) const {
-    if (!parent.isEmpty()) {
-        Q_ASSERT(false);
-        return Enumeration{};
-    }
     // 装配错误：HttpClient 启动期必已 provide（N35 §2.3），永不命中；
     // 断言守候 + fail-safe（枚举不发请求即整次失败）
     const std::shared_ptr<HttpClient> client =
@@ -251,103 +339,35 @@ WebDavProvider::enumerate(const QStringList &parent) const {
         return std::unexpected(
             trText(QT_TRANSLATE_NOOP("WebDavProvider", "HTTP client is not available.")));
     }
-    // 深度上限：注册表策略快照取用（GUI 线程装配、任务线程只读，N36 修订 1）；
-    // resolve 为空按缺省兜底（同 DirProvider，策略只读且缺省值立即可用）
-    int maxDepth = App::recursiveDepthLimitDefault();
-    if (const auto policy = registry()->resolve<TraversalPolicy>())
-        maxDepth = policy->depthLimit;
+    if (!parent.isEmpty() && m_browseMode != BrowseMode::Layered) {
+        // 平铺形态不产容器，视图永不应以非空 parent 调用本提供者
+        Q_ASSERT(false);
+        return Enumeration{};
+    }
 
-    // 请求基 URL：rootUrl 写入凭据（两者皆空则不设）——凭据随 URL 走，经 N34 §2.5
-    // 的"URL userinfo 优先"生效（Basic 预置头省一次 401 往返，Digest / NTLM 由
-    // authenticationRequired 兜底）。漏写即请求无凭据，401 在根请求直接失败
-    QUrl rootUrl = QUrl(m_rootUrl, QUrl::ParsingMode::TolerantMode);
-    if (!rootUrl.isValid() || !Util::isNetworkStreamPath(m_rootUrl))
+    // 请求基 URL：分层模式非空 parent 时取末段容器 id（N46 §2.4：id 即本层基
+    // URL，前序段只构成祖先链语义），否则 rootUrl。id 与 rootUrl 同一信任来源
+    // （同属应用持久化数据），不做归属校验——解析失败或非网络 URL 按该层失败
+    const QString baseText = parent.isEmpty() ? m_rootUrl : parent.last();
+    QUrl rootUrl = QUrl(baseText, QUrl::ParsingMode::TolerantMode);
+    if (!rootUrl.isValid() || !Util::isNetworkStreamPath(baseText))
         return std::unexpected(
             trText(QT_TRANSLATE_NOOP("WebDavProvider", "Invalid WebDAV directory URL: %1"))
-                .arg(m_rootUrl));
+                .arg(baseText));
+    // 凭据随 URL 走，经 N34 §2.5 的"URL userinfo 优先"生效（Basic 预置头省一次
+    // 401 往返，Digest / NTLM 由 authenticationRequired 兜底）。容器 id 恒为
+    // 无凭据形态，此处无条件重写当前凭据——凭据来源唯一（N46 §2.4）。漏写即
+    // 请求无凭据，401 在本层请求直接失败
     if (!m_user.isEmpty() || !m_password.isEmpty()) {
         rootUrl.setUserName(m_user);
         rootUrl.setPassword(m_password);
     }
 
-    // DFS 栈（先序）：每项为待枚举目录的请求 URL 与自身深度（根为 0，与
-    // DirProvider 的 N36 口径一致）。请求 URL 即基 URL：尾斜杠（davUrl 来源处
-    // 已补、collection 条目在解析侧补齐）是"基目录"语义的前提，否则 resolved
-    // 会把末段当文件名替换掉
-    struct DavTask {
-        QUrl url;
-        int depth;
-    };
-    QList<DavTask> stack;
-    stack.append({rootUrl, 0});
-    // 已访问目录的匹配键集（N37 实施修订，与 DirProvider 的 N36 修订 3 同口径）：
-    // 服务端以符号链接 / 外部挂载让同一目录经多条路径可达（乃至成环）时，无剪枝会
-    // 把同一批文件重复枚举多次——重复行要用户手动清理，且多打一整轮请求。命中即
-    // 静默跳过、不记 warning（防御，不是错误）；根先入集
-    QSet<QString> visited;
-    visited.insert(Util::normalizePathForMatch(
-        rootUrl.toString(QUrl::ComponentFormattingOption::FullyEncoded)));
-
-    EntityList entities;
-    QStringList warnings;
-    while (!stack.isEmpty()) {
-        const DavTask task = stack.takeLast();
-        HttpClient::Request req;
-        req.url = task.url; // 绝对 URL：与注册表 client 的缺省 baseUrl 解绑
-        req.method = QByteArrayLiteral("PROPFIND");
-        req.body = kPropfindBody;
-        req.contentType = QByteArrayLiteral("application/xml");
-        req.headers.append({QByteArrayLiteral("Depth"), QByteArrayLiteral("1")});
-        // 同步阻塞（exec）：枚举任务体不可取消（遮罩 Loading 模式无取消按钮），
-        // 仅任务线程调用——符合 N34 的 exec 使用前提
-        const HttpClient::Response resp = client->exec(req);
-
-        // 成功判定：207 Multi-Status 为 WebDAV 的正常应答，个别服务端回 200；
-        // 其余状态码按失败处理。error 非空亦判失败——HttpClient 的体超限
-        // （maxBodyBytes）语义是"status 为真实状态码（可能是 207）、body 丢弃为空、
-        // error 记文案"，只看状态码会把超限目录当成空目录静默吞掉（N37 §3.2 步骤 5
-        // 要求超限按该目录失败处理）。不透传 error 文案，只作判据
-        const bool ok =
-            (resp.status == 207 || resp.status == 200) && !resp.canceled && resp.error.isEmpty();
-        if (!ok) {
-            const QString message = davRequestError(resp, task.url);
-            if (task.depth == 0)
-                return std::unexpected(message); // 根失败：整次 unexpected 进占位
-            warnings << trText(QT_TRANSLATE_NOOP("WebDavProvider",
-                                                 "Subdirectory enumeration failed, skipped: %1"))
-                            .arg(message);
-            continue;
-        }
-
-        const auto listing = parseMultistatus(resp.body, task.url, m_user, m_password);
-        if (!listing) {
-            // 解析失败与请求失败同语义：根即整次失败，子目录记 warning 跳过
-            if (task.depth == 0)
-                return std::unexpected(listing.error());
-            warnings << trText(QT_TRANSLATE_NOOP("WebDavProvider",
-                                                 "Subdirectory enumeration failed, skipped: %1"))
-                            .arg(listing.error());
-            continue;
-        }
-
-        // 子目录：depth + 1 > maxDepth 即静默截断不再深入（截断是配置使然，
-        // 不是错误，不记 warning——与 N36 §2.2 同口径）；已访问过的目录静默跳过
-        if (m_recursive) {
-            for (const DavEntry &dir : listing->collections) {
-                if (task.depth + 1 > maxDepth)
-                    continue;
-                const QString key = Util::normalizePathForMatch(dir.playUrl);
-                if (visited.contains(key))
-                    continue;
-                visited.insert(key);
-                stack.append({QUrl(dir.playUrl), task.depth + 1});
-            }
-        }
-
-        // 文件条目：扩展名过滤（取显示名的后缀，大小写不敏感；空清单 = 不过滤）
-        // → 造 WebDavEntity（具备文件级元数据能力）→ 已取得的 size / modified
-        // 经注入口零成本写入（零额外请求）。两者皆缺不注入，即值未知
-        for (const DavEntry &entry : listing->files) {
+    // 文件条目 → 实体（两分支共用）：扩展名过滤（取显示名的后缀，大小写不敏感；
+    // 空清单 = 不过滤）→ 造 WebDavEntity（具备文件级元数据能力）→ 已取得的
+    // size / modified 经注入口零成本写入（零额外请求）。两者皆缺不注入，即值未知
+    auto appendFileEntities = [this](const QList<DavEntry> &files, EntityList &entities) {
+        for (const DavEntry &entry : files) {
             if (!m_extensions.isEmpty()) {
                 // 经 Util::playUrlFileName 单次解码（剥 query / fragment → 末段 →
                 // decode）。不得走 QUrl::path()——它默认返回已解码形态，再解一次
@@ -371,8 +391,146 @@ WebDavProvider::enumerate(const QStringList &parent) const {
             }
             entities.push_back(std::move(entity));
         }
+    };
+
+    if (m_browseMode == BrowseMode::FilesRecursive) {
+        // ——仅文件（含子目录）：现状 DFS 逐字保留——
+        // 深度上限：注册表策略快照取用（GUI 线程装配、任务线程只读，N36 修订 1）；
+        // resolve 为空按缺省兜底（同 DirProvider，策略只读且缺省值立即可用）
+        int maxDepth = App::recursiveDepthLimitDefault();
+        if (const auto policy = registry()->resolve<TraversalPolicy>())
+            maxDepth = policy->depthLimit;
+
+        // DFS 栈（先序）：每项为待枚举目录的请求 URL 与自身深度（根为 0，与
+        // DirProvider 的 N36 口径一致）。请求 URL 即基 URL：尾斜杠（davUrl 来源处
+        // 已补、collection 条目在解析侧补齐）是"基目录"语义的前提，否则 resolved
+        // 会把末段当文件名替换掉
+        struct DavTask {
+            QUrl url;
+            int depth;
+        };
+        QList<DavTask> stack;
+        stack.append({rootUrl, 0});
+        // 已访问目录的匹配键集（N37 实施修订，与 DirProvider 的 N36 修订 3 同口径）：
+        // 服务端以符号链接 / 外部挂载让同一目录经多条路径可达（乃至成环）时，无剪枝会
+        // 把同一批文件重复枚举多次——重复行要用户手动清理，且多打一整轮请求。命中即
+        // 静默跳过、不记 warning（防御，不是错误）；根先入集
+        QSet<QString> visited;
+        visited.insert(Util::normalizePathForMatch(
+            rootUrl.toString(QUrl::ComponentFormattingOption::FullyEncoded)));
+
+        EntityList entities;
+        QStringList warnings;
+        while (!stack.isEmpty()) {
+            const DavTask task = stack.takeLast();
+            HttpClient::Request req;
+            req.url = task.url; // 绝对 URL：与注册表 client 的缺省 baseUrl 解绑
+            req.method = QByteArrayLiteral("PROPFIND");
+            req.body = kPropfindBody;
+            req.contentType = QByteArrayLiteral("application/xml");
+            req.headers.append({QByteArrayLiteral("Depth"), QByteArrayLiteral("1")});
+            // 同步阻塞（exec）：枚举任务体不可取消（遮罩 Loading 模式无取消按钮），
+            // 仅任务线程调用——符合 N34 的 exec 使用前提
+            const HttpClient::Response resp = client->exec(req);
+
+            // 成功判定：207 Multi-Status 为 WebDAV 的正常应答，个别服务端回 200；
+            // 其余状态码按失败处理。error 非空亦判失败——HttpClient 的体超限
+            // （maxBodyBytes）语义是"status 为真实状态码（可能是 207）、body 丢弃为空、
+            // error 记文案"，只看状态码会把超限目录当成空目录静默吞掉（N37 §3.2 步骤 5
+            // 要求超限按该目录失败处理）。不透传 error 文案，只作判据
+            const bool ok = (resp.status == 207 || resp.status == 200) && !resp.canceled &&
+                            resp.error.isEmpty();
+            if (!ok) {
+                const QString message = davRequestError(resp, task.url);
+                if (task.depth == 0)
+                    return std::unexpected(message); // 根失败：整次 unexpected 进占位
+                warnings << trText(
+                                QT_TRANSLATE_NOOP("WebDavProvider",
+                                                  "Subdirectory enumeration failed, skipped: %1"))
+                                .arg(message);
+                continue;
+            }
+
+            const auto listing = parseMultistatus(resp.body, task.url, m_user, m_password);
+            if (!listing) {
+                // 解析失败与请求失败同语义：根即整次失败，子目录记 warning 跳过
+                if (task.depth == 0)
+                    return std::unexpected(listing.error());
+                warnings << trText(
+                                QT_TRANSLATE_NOOP("WebDavProvider",
+                                                  "Subdirectory enumeration failed, skipped: %1"))
+                                .arg(listing.error());
+                continue;
+            }
+
+            // 子目录：depth + 1 > maxDepth 即静默截断不再深入（截断是配置使然，
+            // 不是错误，不记 warning——与 N36 §2.2 同口径）；已访问过的目录静默跳过
+            for (const DavEntry &dir : listing->collections) {
+                if (task.depth + 1 > maxDepth)
+                    continue;
+                const QString key = Util::normalizePathForMatch(dir.playUrl);
+                if (visited.contains(key))
+                    continue;
+                visited.insert(key);
+                stack.append({QUrl(dir.playUrl), task.depth + 1});
+            }
+
+            appendFileEntities(listing->files, entities);
+        }
+        sortEntitiesByNumericName(entities);
+        return Enumeration{{}, std::move(entities), std::move(warnings)};
     }
-    return Enumeration{{}, std::move(entities), std::move(warnings)};
+
+    // ——分层浏览 / 仅文件：单次 PROPFIND，逐层懒加载（N46 §2.2）。
+    // 层缓存与"返回上一层不重枚举"由 N45 §2.5 的视图机制承担
+    HttpClient::Request req;
+    req.url = rootUrl; // 绝对 URL：与注册表 client 的缺省 baseUrl 解绑
+    req.method = QByteArrayLiteral("PROPFIND");
+    req.body = kPropfindBody;
+    req.contentType = QByteArrayLiteral("application/xml");
+    req.headers.append({QByteArrayLiteral("Depth"), QByteArrayLiteral("1")});
+    // 同步阻塞（exec）：枚举任务体不可取消（遮罩 Loading 模式无取消按钮），
+    // 仅任务线程调用——符合 N34 的 exec 使用前提
+    const HttpClient::Response resp = client->exec(req);
+
+    // 成功判定与 DFS 分支同口径：207 正常应答（个别服务端回 200），error 非空
+    // 亦判失败（体超限——本层即根请求，整层失败进占位，§2.5）
+    const bool ok =
+        (resp.status == 207 || resp.status == 200) && !resp.canceled && resp.error.isEmpty();
+    if (!ok)
+        return std::unexpected(davRequestError(resp, rootUrl));
+
+    const auto listing = parseMultistatus(resp.body, rootUrl, m_user, m_password);
+    if (!listing)
+        return std::unexpected(listing.error());
+
+    Enumeration out;
+    if (m_browseMode == BrowseMode::Layered) {
+        // 目录层 → 容器（视图侧模型不变式：容器组恒在实体组之前，两数组天然有序）。
+        // id 为无凭据完整编码 URL（N46 §2.4）；title 取解码可读名；meta 只填
+        // modified——getcontentlength 对 collection 语义未定义（服务端普遍缺失 /
+        // 返 0 / 不可信聚合值），size 恒未知，视图按大小排序时容器组组内退化为
+        // 保持初始序（N45 §2.6 未知值末尾规则）
+        out.containers.reserve(listing->collections.size());
+        for (const DavEntry &dir : listing->collections) {
+            Container c;
+            c.id = containerId(dir.playUrl);
+            // title 取解码可读名：collection 的 playUrl 恒以尾斜杠结尾
+            // （normalizeRootUrl 补齐），playUrlFileName 对以 / 结尾的 URL 返回
+            // 空串（末段为空），须先剥尾斜杠再取解码名
+            c.title = Util::playUrlFileName(stripTrailingSlash(dir.playUrl));
+            if (dir.modified) {
+                FileMeta fm;
+                fm.modified = dir.modified;
+                c.meta = fm;
+            }
+            out.containers.push_back(std::move(c));
+        }
+        sortContainersByNumericTitle(out.containers);
+    }
+    appendFileEntities(listing->files, out.entities);
+    sortEntitiesByNumericName(out.entities);
+    return out;
 }
 
 bool WebDavProvider::supportsModify() const { return false; }
@@ -384,7 +542,8 @@ void WebDavProvider::saveSettings(QSettings &settings) const {
     settings.setValue(QStringLiteral("davUrl"), m_rootUrl);
     settings.setValue(QStringLiteral("davUser"), m_user);
     settings.setValue(QStringLiteral("davPassword"), m_password);
-    settings.setValue(QStringLiteral("davRecursive"), m_recursive);
+    // N46：浏览模式一值替代原 davRecursive（不做旧键兼容与迁移，§2.1）
+    settings.setValue(QStringLiteral("davBrowseMode"), int(m_browseMode));
     settings.setValue(QStringLiteral("davExtensions"), m_extensions);
     // 排序规则随提供者持久化（与目录表同形，含 None——显式记录用户未选择规则）
     settings.setValue(QStringLiteral("sortKey"), sortKey());
@@ -397,7 +556,9 @@ WebDavProvider::load(QSettings &settings, const std::shared_ptr<ServiceRegistry>
         settings.value(QStringLiteral("davUrl")).toString(),
         settings.value(QStringLiteral("davUser")).toString(),
         settings.value(QStringLiteral("davPassword")).toString(),
-        settings.value(QStringLiteral("davRecursive")).toBool(),
+        // 新键缺失落默认分层浏览（存量 recursive = true 的 tab 升级后改为逐层
+        // 钻取，破坏性变更已由维护者确认接受，§2.1）
+        browseModeFromInt(settings.value(QStringLiteral("davBrowseMode"), 0).toInt()),
         settings.value(QStringLiteral("davExtensions")).toStringList(), registry);
     provider->setSortRule(settings.value(QStringLiteral("sortKey"), 0).toInt(),
                           settings.value(QStringLiteral("sortAscending"), true).toBool());

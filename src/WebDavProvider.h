@@ -13,7 +13,12 @@ inline constexpr char kWebDavProviderName[] =
 class ProviderSettingsPage;
 
 // WebDAV 目录提供者（N37）：tab 绑定一个 WebDAV 目录 URL，PROPFIND（Depth: 1）
-// 逐层 DFS 枚举其中媒体条目，条目以 http(s) URL 直接喂 mpv 串流播放。
+// 枚举其中媒体条目，条目以 http(s) URL 直接喂 mpv 串流播放。
+// N46：浏览模式三选一——分层浏览（单层 PROPFIND，子目录产容器，容器 id 取该
+// collection 条目的无凭据完整编码 URL，本层请求基 URL 即 id 本身）/ 仅文件
+// （平铺，现状 recursive = false 的逐字保留）/ 仅文件（含子目录）（递归 DFS
+// 拉平，现状 recursive = true 的逐字保留）。提供者返回前按文件名数字化排好
+// 初始序（N45 §2.7）。
 // 枚举、刷新、排序、续播记忆全部复用动态表既有机制——能力位与本地目录表同形
 // （不可增删、可排序），排序规则随提供者持久化。
 //
@@ -28,11 +33,20 @@ class ProviderSettingsPage;
 // 不得再改（匹配经 normalizePathForMatch 落键，setPlaylist 收编判定原串）。
 class WebDavProvider : public PlaylistProvider {
   public:
+    // N46 §2.1：浏览模式（三选一）。枚举值序即参数页下拉框的选项序，亦即 INI 的
+    // 持久化取值（int 不透明存储）。与 DirProvider::BrowseMode 取值同形但各自
+    // 持有、互不共用（§2.1 不抽共用代码）
+    enum class BrowseMode {
+        Layered,        // 分层浏览：单层 PROPFIND，子目录 → 容器（新建列表默认）
+        FilesOnly,      // 仅文件：只列举根内文件，平铺
+        FilesRecursive, // 仅文件（含子目录）：递归 DFS 拉平
+    };
+
     // rootUrl 为参数页来源处定形的 URL（trim → nativePath → 补尾斜杠，见
     // normalizeRootUrl）；user / password 可空，皆空则凭据不随 URL 走。
     // registry 必填（经基类持有）
     WebDavProvider(const QString &rootUrl, const QString &user, const QString &password,
-                   bool recursive, const QStringList &extensions,
+                   BrowseMode mode, const QStringList &extensions,
                    const std::shared_ptr<ServiceRegistry> &registry);
 
     QString typeKey() const override;
@@ -60,10 +74,21 @@ class WebDavProvider : public PlaylistProvider {
     // 空文本 ⇒ 空表（不过滤）
     static QStringList parseExtensions(const QString &text);
 
+    // ——以下两个静态纯函数（N46）：浏览模式的取值与容器 id 的构造——
+    // 单元测试与 enumerate / INI 读取共用同一出口（N44 先例）
+    // INI 的 int 取值 → 浏览模式：取值域外（损坏 / 未知值）降级 Layered
+    // （新建列表默认，§2.1），不做旧键兼容。与 DirProvider 同名函数各自持有
+    static BrowseMode browseModeFromInt(int value);
+    // collection 条目的 playUrl（resolveEntryUrl 带凭据形态）→ 容器 id：剥除
+    // userinfo 的无凭据形态，编码形态与尾斜杠原样保留——与以空凭据调用
+    // resolveEntryUrl 解析同一 href 的产出逐字一致（N46 §2.4）。id 恒无凭据：
+    // 持久化进 queueRoot 的 INI 不携带凭据，请求侧由 enumerate 无条件重写当前凭据
+    static QString containerId(const QString &playUrl);
+
     QString rootUrl() const { return m_rootUrl; }
     QString user() const { return m_user; }
     QString password() const { return m_password; }
-    bool recursive() const { return m_recursive; }
+    BrowseMode browseMode() const { return m_browseMode; }
     QStringList extensions() const { return m_extensions; }
 
     void saveSettings(QSettings &settings) const override;
@@ -106,11 +131,18 @@ class WebDavProvider : public PlaylistProvider {
     // HTTP 状态码与网络失败 → 可读文案（英文源 + tr()，不透传 HttpClient 的 error）
     static QString davRequestError(const HttpClient::Response &resp, const QUrl &url);
 
-    QString m_rootUrl;        // 基目录 URL（含尾斜杠，入口处定形）
-    QString m_user;           // 可空
-    QString m_password;       // 可空；INI 中明文，与既有配置同款
-    bool m_recursive = false; // 是否含子目录（逐层 DFS 平铺）
-    QStringList m_extensions; // 无点小写扩展名；空表表示不过滤
+    // ——提供者初始排序（N45 §2.7，N46 §2.2）——文件名数字化（Util::segmentName +
+    // naturalCompare），稳定排序保等键的服务器枚举序；实体按 fileName、容器按
+    // title。与视图 SortKey::None 显示序逐项一致由规格与验收约束，不共用代码
+    // （DirProvider 的同名私有辅助各自持有）
+    static void sortEntitiesByNumericName(EntityList &entities);
+    static void sortContainersByNumericTitle(QList<Container> &containers);
+
+    QString m_rootUrl;                             // 基目录 URL（含尾斜杠，入口处定形）
+    QString m_user;                                // 可空
+    QString m_password;                            // 可空；INI 中明文，与既有配置同款
+    BrowseMode m_browseMode = BrowseMode::Layered; // 浏览模式（新建默认分层）
+    QStringList m_extensions;                      // 无点小写扩展名；空表表示不过滤
 };
 
 // 参数页工厂（N44）：页面类定义在 WebDavProvider.cpp，本处只声明工厂。
