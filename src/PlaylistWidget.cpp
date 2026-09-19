@@ -1877,14 +1877,22 @@ void PlaylistWidget::onLoadFinished(const JobContext &ctx,
         out.oldKeys = keysOf(list);
     out.snap = captureViewSnapshot(list);
     out.snap.selectFirst = (ctx.intent == Intent::SwitchSource);
-    // N30 行级换入（applyEntitiesToRows）：前导特殊行按层重建（上一级行让开
-    // 第 0 行），实体行逐行换绑保住选中/滚动连续。
-    // N45：跨层换入（首钻成功，显示行原属别层）后选中无连续性可言——按该层
-    // lastSelectedKey 恢复；同层换入不动（行级换绑已保住，恢复反而会打扰）
+    // N30 行级换入（applyEntitiesToRows）只适用于同层换入：它保住的是本层行的选中
+    // 与滚动连续。跨层换入（首钻成功，行对象原属别层）连续性不存在——紧随的
+    // restoreLayerSelection 即按本层记忆改选，行级换入的唯一收益当场作废，只剩
+    // 副作用：行上挂的 PlayingRole 随换绑漏到本层某一行（父层正播行的标记平移到
+    // 本层同实体序位置），而本层非队列根层，restorePlayingState 按 §2.9 守卫不清它
+    // ——表现为子层级把某个不相干文件标成正在播放
+    // N45：跨层换入按层 clear 重建；同层换入不动（行级换绑已保住选中，恢复反而打扰）
     const bool rowsWereElsewhere = (displayedIdsOf(list) != ctx.parent);
-    applyEntitiesToRows(list, std::move(enumeration.entities));
-    if (rowsWereElsewhere)
-        restoreLayerSelection(list, levelOf(list));
+    if (rowsWereElsewhere) {
+        list->clear(); // 毁行在前：行上 EntityRole 是实体裸指针，先动实体仓即悬空
+        lvl.entities = std::move(enumeration.entities);
+        rebuildRowsForLevel(list, lvl, ctx.parent); // 内部 clear 幂等，并落显示层记录
+        restoreLayerSelection(list, lvl);
+    } else {
+        applyEntitiesToRows(list, std::move(enumeration.entities));
+    }
     advanceTab(out, false);
 }
 
