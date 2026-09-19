@@ -46,8 +46,6 @@ QVariantList parsePlaylist(const mpv_node *node) {
             const mpv_node *value = &map->values[j];
             if (key == QLatin1String("filename") && value->format == MPV_FORMAT_STRING)
                 item[QStringLiteral("filename")] = QString::fromUtf8(value->u.string);
-            else if (key == QLatin1String("title") && value->format == MPV_FORMAT_STRING)
-                item[QStringLiteral("title")] = QString::fromUtf8(value->u.string);
             else if (key == QLatin1String("current") && value->format == MPV_FORMAT_FLAG)
                 item[QStringLiteral("current")] = value->u.flag != 0;
         }

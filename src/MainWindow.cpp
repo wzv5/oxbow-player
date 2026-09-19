@@ -1561,11 +1561,13 @@ void MainWindow::applyMuteState(bool muted) {
 }
 
 // B11：正在播放的真实文件名（含后缀不含路径），标题与 OSD #2 同源。
-// 列表镜像优先——playlist-pos 推送早于新文件装载完成，此刻读 filename 属性
+// 列表镜像优先——playlist-pos 推送早于新文件装载完成，此刻读属性
 // 会拿到上一个文件的残留值（概率性错名根因）；本地镜像顺序与 mpv 恒一致，
 // 按 pos 取名为确定性来源。属性仅作镜像缺失时的兜底（如起播早期回刷未达）。
 // N37：WebDAV 条目的 playUrl 为完整 URL，末段经 percent-decode 才是显示名
 // （Util::playUrlFileName，与列表显示名同一出口），否则标题 / OSD 出现 "%XX" 形态
+// N51：兜底不读 mpv 的 filename 属性（basename 语义依赖 mpv 实现），一律以
+// path 为准——转码后仍是条目身份，与主路径共用同一取名出口 playUrlFileName
 QString MainWindow::playingFilename() {
     const int pt = m_playlist->playingTabIndex();
     if (pt >= 0 && m_playlistPos >= 0) {
@@ -1577,7 +1579,7 @@ QString MainWindow::playingFilename() {
                 return name;
         }
     }
-    return m_controller->propertyString(QStringLiteral("filename"));
+    return Util::playUrlFileName(m_controller->propertyString(QStringLiteral("path")));
 }
 
 // N7 #2 + N8 Part1：标题与 OSD #2 同源刷新（B11 镜像取名）。
