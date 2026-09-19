@@ -23,6 +23,17 @@
 //   return HttpClient::take(id);      // 撤销后得 canceled 响应
 //
 // 无取消需求的调用点（属性对话框等同步路径）用 exec 即可。
+//
+// 流式消费面（N50）：request.streaming = true 的作业改为「增量交付」——字节按消费方
+// 节奏取出，不再累积进 Response::body。消费面是三个静态方法（waitHeaders /
+// readBlocking / statusOf），纪律如下：
+//   - 一条流作业只允许【单个】消费者线程做 readBlocking（两个消费者会互相抢字节）；
+//   - 缓冲先于终态：错误终态时若缓冲尚有未交付的字节，先交付完再返 kReadError；
+//   - readBlocking 允许传 -1 长期阻塞（与 mpv stream_cb 的 read 语义一致）。上文那条
+//     「可取消上下文禁传 -1」针对的是无法被唤醒的场景，流式消费面不受其约束：这里的
+//     取消是事件而非轮询——abort() 在锁内落定终态并唤醒，等待者必然醒来。唤醒源共三
+//     条：字节入队、响应头捕获、终态落定。
+//   - stream_cb 的 cancel 由调用方映射到本类的 abort()，可从任意线程调用、不阻塞。
 
 class HttpClient {
   public:
@@ -31,10 +42,13 @@ class HttpClient {
         QString user;         // 原始串（非编码）；空则从请求 URL 的 userinfo 取
         QString password;     // 同上
         int timeoutMs = 5000; // 总时限（毫秒），自 submit 起算（含排队、建连、
-                              // 传输与全部重定向跳）；非正数按 5000 计，见规格 §2.5
+                              // 传输与全部重定向跳）；非正数按 5000 计，见规格 §2.5。
+                              // 流式作业【不生效】：启动窗口由 waitHeaders 的入参承担
         bool ignoreSslErrors = false;
-        int maxRedirects = 5;                   // 自管重定向的跳数上限
-        qint64 maxBodyBytes = 16 * 1024 * 1024; // 正常体上限（字节），超限按失败返回
+        int maxRedirects = 5;                   // 自管重定向的跳数上限。流式作业【不生效】：
+                                                // 流式交 QNAM 自动跟随，跳数用 Qt 默认上限
+        qint64 maxBodyBytes = 16 * 1024 * 1024; // 正常体上限（字节），超限按失败返回。
+                                                // 流式作业【不生效】（水位改用 streamBufferBytes）
     };
 
     struct Request {
@@ -43,7 +57,14 @@ class HttpClient {
         QByteArray body;                              // 空即无请求体
         QByteArray contentType;                       // 有 body 时用（PROPFIND 需要）
         QList<QPair<QByteArray, QByteArray>> headers; // 额外头（Depth 等）
-        bool headersOnly = false;                     // 取到响应头即断
+        bool headersOnly = false;                     // 取到响应头即断（与 streaming 互斥）
+        // N50：流式增量交付。为真时不再累积响应体，字节经 readBlocking 按需取出；
+        // 与 headersOnly 互斥——同时置位按调用错误处理，不发请求。
+        bool streaming = false;
+        // 流式缓冲上界（字节）；<= 0 取内置常量（4MB）。语义是【背压水位】而非体上限：
+        // 队列达水位即停止从 reply 取数，并靠 QNetworkReply::setReadBufferSize 向 socket
+        // 施压；内存上界 ≈ 本值 + Qt 侧零头。仅 streaming 为真时有意义。
+        qint64 streamBufferBytes = 0;
     };
 
     struct Response {
@@ -81,6 +102,28 @@ class HttpClient {
 
     // 任意线程可调；已完成作业的 abort 无效果，结果仍在（先落定者为准）。
     static void abort(const RequestId &id);
+
+    // ——流式消费面（仅对 streaming 作业有意义；N50）——
+    // readBlocking 的哨兵返回码（> 0 为实际取到的字节数）。实现与调用点都不得直写
+    // 字面量 0 / -1 / -2。
+    // kReadEof 只表示「作业无错、非撤销地走完且缓冲已空」；HTTP 状态是否 2xx 另由
+    // 调用方在 waitHeaders 之后用 statusOf 判定（非 2xx 不必然带 error）。
+    static constexpr qint64 kReadEof = 0;     // 终态无错且缓冲已空 = EOF
+    static constexpr qint64 kReadError = -1;  // 错误终态或撤销（原因用 statusOf 取）
+    static constexpr qint64 kReadNoData = -2; // 窗口内无数据：作业仍在途、缓冲仍空
+
+    // 等到响应头到达或作业终态。true = 二者之一；false = 窗口耗尽而作业【仍在途】，
+    // 调用方必须自行 abort 收尾，否则 reply 一直挂着。仅任务线程（断言守候）。
+    static bool waitHeaders(RequestId id, int timeoutMs);
+
+    // 阻塞取字节，与 mpv_stream_cb_read_fn 同形：> 0 为取到的字节数（短读合法，等于
+    // maxBytes 或更少），其余为 kRead* 哨兵。timeoutMs = -1 永久等（默认）；= 0 立即
+    // 取一次不阻塞。仅任务线程（GUI 线程禁用，断言守候）。
+    static qint64 readBlocking(const RequestId &id, char *out, qint64 maxBytes, int timeoutMs = -1);
+
+    // 未终态也可调用：返回已到达的响应头与状态码（body 恒空）；已终态则返回终态响应。
+    // 仅任务线程（断言守候，与 take 同款）。
+    static Response statusOf(const RequestId &id);
 
   private:
     Config m_config; // 构造后不可变的缺省值持有者

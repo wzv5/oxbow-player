@@ -18,9 +18,28 @@
 #     /redir-303/a    303 → Location: /b
 #     /redir-loop/a   301 → Location: 自身（循环跳转）
 #     /redir-slow/a   301 → Location: /slow（abort 落在重定向后一跳用）
+#     /redir-abs/a    301 → Location: http://127.0.0.1:<缺陷端口>/b（跨 origin 重定向：
+#                     端口不同即不同 origin；N50 流式用它验「跨 origin 照常跟随」
+#                     与「凭据不越界」——缺陷端口独立记日志，可直接查该跳有没有带
+#                     Authorization）
+#     /redir-cross-basic/a
+#                     301 → Location: http://127.0.0.1:<专用认证端口>/basic/x（跨 origin
+#                     且落点【需要认证】）。N50 流式的「凭据不越界」判据：落点索要认证
+#                     时不得回填原 origin 的凭据，请求须以 AuthenticationRequired 落终态，
+#                     且落点日志中该跳不得带 Authorization。
+#                     落点必须是【缓存干净的专用 origin】，不能复用认证端口(D)：QNAM 按
+#                     host:port 缓存已成功的 authenticator，认证端口被 Digest 用例认证过，
+#                     同 origin 的新请求会先回放那份缓存凭据，日志上的 auth 标志就不再
+#                     只反映我们的行为（详见 D 端口那段注释与 N50 用例注释）
 #     /slow           sleep 8s 后 200（总时限 / 切片取消用）
 #     /trickle        头立即回、body 50 字节每 100ms 吐 1 字节（总时长 ~5s；
 #                     总时限 vs 闲置超时的区分用：慢速但持续传输也须在总时限处断开）
+#     /trickle-long   同上但更长：body 80 字节每 100ms 吐 1 字节（~8s）。N50 流式用：
+#                     流式作业无总时限、须读满；同端点上的非流式作业会在 5000ms
+#                     总时限处断开，构成计时器分支的对照判据
+#     /notfound       404（N50 流式错误终态用：非 2xx 该落 kReadError）
+#     /truncated      声明 Content-Length: 100000 却只发 4096 字节就关连接（N50 流式
+#                     「缓冲先于终态」用：错误终态下已到的字节仍须先交付再报错）
 #     /hold           sleep 1.5s 后 200（并发 / 排队撤销用）
 #     /big            200 + 2MiB body（headersOnly 截断 / 体上限）；HEAD 正确只回头
 #     PROPFIND 任意路径 207，body = "MS:" + 请求体（验证同方法同 body 跟随重定向）
@@ -88,6 +107,7 @@ class StubServer(ThreadingHTTPServer):
         self.conn_active = 0
         self.conn_peak = 0
         self.defect_port = 0
+        self.auth2_port = 0  # 专用认证 origin（跨 origin 重定向的落点用，见文件头注释）
         super().__init__(("127.0.0.1", 0), StubHandler)
 
 
@@ -216,6 +236,37 @@ class StubHandler(BaseHTTPRequestHandler):
             except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
                 pass
             return
+        # 长细流：同上但总时长 ~8s，明显超过 Config::timeoutMs 的 5000ms 默认
+        # （N50 流式：无总时限须读满；非流式在同一端点必被总时限断开）
+        if self.path == "/trickle-long":
+            self.send_response(200)
+            self.send_header("Content-Length", "80")
+            self.end_headers()
+            try:
+                for _ in range(80):
+                    time.sleep(0.1)
+                    self.wfile.write(b"y")
+                    self.wfile.flush()
+            except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
+                pass
+            return
+        # 404：流式错误终态（非 2xx）
+        if self.path == "/notfound":
+            self._respond(404, b"nope")
+            return
+        # 声明 100000 字节却只发 4096 就关连接：流式「缓冲先于终态」用——错误终态下
+        # 已到的字节仍须先交付完再报错，不得截断丢弃
+        if self.path == "/truncated":
+            self.send_response(200)
+            self.send_header("Content-Length", "100000")
+            self.end_headers()
+            try:
+                self.wfile.write(b"z" * 4096)
+                self.wfile.flush()
+            except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
+                pass
+            self.close_connection = True
+            return
         # 短挂起：并发 / 排队撤销用（1.5s，快于 /slow）
         if self.path == "/hold":
             time.sleep(1.5)
@@ -233,6 +284,11 @@ class StubHandler(BaseHTTPRequestHandler):
             "/redir-loop/a": (301, "/redir-loop/a"),
             "/redir-slow/a": (301, "/slow"),
             "/redir-abs/a": (301, "http://127.0.0.1:%d/b" % self.server.defect_port),
+            # N50：跨 origin 且落点【需要认证】——凭据不越界的判据。首跳 origin 无凭据可带
+            # （流式不预置），落点索要认证时兜底也不得回填原 origin 的凭据，故请求须以
+            # AuthenticationRequired 落错误终态
+            "/redir-cross-basic/a": (301,
+                                     "http://127.0.0.1:%d/basic/x" % self.server.auth2_port),
         }
         if self.path in redirects:
             status, loc = redirects[self.path]
@@ -338,9 +394,11 @@ def main():
     auth_srv = StubServer("main")  # Digest 专用 origin（与主端口隔离，见上）
     tls_srv = StubServer("main", ssl_ctx=ctx)
     tls2_srv = StubServer("main", ssl_ctx=ctx)  # 未受信用例专用 origin
+    auth2_srv = StubServer("main")  # 跨 origin 重定向落点专用 origin（须缓存干净，见上）
 
-    for srv in (main_srv, defect_srv, flow_srv, auth_srv, tls_srv, tls2_srv):
+    for srv in (main_srv, defect_srv, flow_srv, auth_srv, tls_srv, tls2_srv, auth2_srv):
         srv.defect_port = defect_srv.server_address[1]
+        srv.auth2_port = auth2_srv.server_address[1]
         threading.Thread(target=srv.serve_forever, daemon=True).start()
 
     print(
@@ -350,6 +408,7 @@ def main():
             "defect": defect_srv.server_address[1],
             "flow": flow_srv.server_address[1],
             "auth": auth_srv.server_address[1],
+            "auth2": auth2_srv.server_address[1],
             "https": tls_srv.server_address[1],
             "tls2": tls2_srv.server_address[1],
             "ca": cert_pem,

@@ -2,6 +2,9 @@
 
 #include "HttpClient.h"
 
+#include <cstring>
+#include <deque>
+
 // N34 实现。分两块，均在 .cpp 内、不上头文件：
 // 1. 共享传输（匿名命名空间）：专用网络线程 + 进程内唯一 QNAM + 缺陷表 + 等待原语。
 //    client 对象只是不可变缺省值的持有者，构造与析构均不碰传输层；
@@ -22,17 +25,29 @@ struct HttpClient::HttpJobState {
     Response response;
     QNetworkReply *reply = nullptr; // 网络线程在锁内写入；abort 在锁内读以投递中止
 
+    // ——流式字段（N50），同由 g_mutex 保护——
+    bool headReady = false; // 响应头已捕获：waitHeaders 的唤醒条件
+    int headStatus = 0;
+    QHash<QByteArray, QByteArray> headHeaders;
+    std::deque<QByteArray> chunks; // 块队列；仅单个消费者线程经 readBlocking 摘取
+    qint64 chunksBytes = 0;
+
     // ——以下字段 submit 时初始化，发布后只读（重定向更新 url 系除外，见 prepareRedirect）——
-    QElapsedTimer submitElapsed; // 总时限起点：submit 时启动，含排队，见规格 §2.5
-    qint64 remainingMs = 0;      // 出队时换算的剩余时长（总时限 - 已流逝），sendHop 用它启动 timer
-    Config snapshot;             // submit 时的实例缺省快照
+    QElapsedTimer submitElapsed;  // 总时限起点：submit 时启动，含排队，见规格 §2.5
+    qint64 remainingMs = 0;       // 出队时换算的剩余时长（总时限 - 已流逝），sendHop 用它启动 timer
+    Config snapshot;              // submit 时的实例缺省快照
+    bool streaming = false;       // N50：增量交付；为真时下方 deadline / maxBodyBytes 均不适用
+    qint64 streamBufferBytes = 0; // N50：背压水位（submit 时定，> 0）
+    QString initialOrigin;        // N50：本次作业初始 origin（authenticationRequired 校验用）
+    QString baseOrigin;           // N50：Config::baseUrl 的 origin，可空
 
     // ——以下字段仅网络线程访问，无锁——
-    QTimer *deadline = nullptr; // 总时限计时（出队时按剩余时长启动，贯穿全部重定向跳）
+    QTimer *deadline = nullptr; // 总时限计时（出队时按剩余时长启动，贯穿全部重定向跳）；
+                                // 流式作业不建（见规格 §2.5）
     QUrl url;                   // 当前跳的 URL（重定向逐跳更新）
     QString user;               // 当前跳生效的凭据（重定向逐跳更新）
     QString password;
-    QByteArray presetAuth; // 当前跳预置的 Authorization
+    QByteArray presetAuth; // 当前跳预置的 Authorization；流式作业恒空（见规格 §2.8）
     QByteArray method;
     QByteArray body;
     QByteArray contentType;
@@ -49,8 +64,9 @@ struct HttpClient::HttpJobState {
 
 namespace {
 
-// 全局一份互斥 + 条件变量：含义是"有作业状态发生变化"。每作业的状态字段由它保护，
-// wait 按限时换算 deadline 等待，只在状态变化时醒来查一次。
+// 全局一份互斥 + 条件变量：含义是"作业有【可观测量】变化"——终态落定（N34），以及
+// N50 流式新增的两处：响应头捕获、字节入队。每作业的状态字段由它保护，等待者按限时
+// 换算 deadline，只在变化时醒来查一次。
 QMutex g_mutex;
 QWaitCondition g_cond;
 
@@ -59,6 +75,12 @@ QWaitCondition g_cond;
 constexpr qint64 kHeadFlowDefectThreshold = 64 * 1024;
 
 constexpr qint64 kDefaultMaxBodyBytes = 16 * 1024 * 1024;
+
+// N50 流式：块队列的默认背压水位，与 Qt 侧读缓冲零头。
+// 后者只用于吸收两次 readyRead 之间的突发——正常路径上每次 readyRead 都被 readAll
+// 清空，故不需要大；限制它的意义在于「我们不取数」时 Qt 真的会节流（默认 0 无界）。
+constexpr qint64 kDefaultStreamBufferBytes = 4 * 1024 * 1024;
+constexpr qint64 kStreamReplyReadBufferBytes = 512 * 1024;
 
 // 进程级共享传输，惰性创建；由 g_mutex 保护。
 struct Transport {
@@ -129,6 +151,53 @@ void captureHeaders(HttpClient::HttpJobState &job, QNetworkReply *reply) {
     job.capturedStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     job.capturedHeaders.clear();
     fillHeaders(reply, job.capturedHeaders);
+}
+
+// N50 流式写侧：把 reply 上的数据搬进本作业的块队列。仅网络线程调用（readyRead 或
+// pumpStream 的 queued 投递）。达水位即不再取数——数据留在 Qt 侧缓冲，由已设的
+// setReadBufferSize 向 socket 施压；消费方取走后经 pumpStream 再来一次。
+// 响应头在这里兜一道：头总在体之前，故首次入队时必然已可读。
+void streamingReadyRead(const std::shared_ptr<HttpClient::HttpJobState> &job,
+                        QNetworkReply *reply) {
+    {
+        QMutexLocker l(&g_mutex);
+        if (job->finished)
+            return;
+        if (!job->headReady) {
+            captureHeaders(*job, reply);
+            job->headStatus = job->capturedStatus;
+            job->headHeaders = job->capturedHeaders;
+            job->headReady = true;
+            g_cond.wakeAll(); // 唤醒 waitHeaders 的等待者
+        }
+        if (job->chunksBytes >= job->streamBufferBytes)
+            return; // 已到水位：留着让消费方取走后再续泵
+    }
+    // 锁外取数：readAll 不碰作业状态，容量以 Qt 侧读缓冲为界
+    QByteArray d = reply->readAll();
+    if (d.isEmpty())
+        return;
+    QMutexLocker l(&g_mutex);
+    if (job->finished)
+        return; // 取数期间被落定：丢弃本块（终态先落定者为准）
+    job->chunksBytes += d.size();
+    job->chunks.push_back(std::move(d));
+    g_cond.wakeAll(); // 唤醒 readBlocking 的等待者
+}
+
+// N50 续泵：队列由「满」降到「未满」后，由消费方投递到此。不能只依赖 readyRead 再来
+// ——Qt 恢复读之后若没有新数据到达，readyRead 不会重新发射，留在 reply 缓冲里的那块
+// 就永远取不到。
+void pumpStream(const std::shared_ptr<HttpClient::HttpJobState> &job) {
+    QNetworkReply *reply = nullptr;
+    {
+        QMutexLocker l(&g_mutex);
+        if (job->finished)
+            return;
+        reply = job->reply; // finished / 撤销时已置空；非空即本跳尚在，且删除走 deleteLater
+    }
+    if (reply && reply->bytesAvailable() > 0)
+        streamingReadyRead(job, reply);
 }
 
 QString readableNetworkError(QNetworkReply *reply) {
@@ -220,7 +289,10 @@ void sendHop(const std::shared_ptr<HttpClient::HttpJobState> &job, QNetworkAcces
         if (job->finished)
             return; // abort 抢先落定：本跳不再发出，也不建计时器
     }
-    if (!job->deadline) {
+    // N50：流式作业不建任何计时器——消费方可能长时间不取数（mpv 暂停即停止 read），
+    // 任何「无数据即超时」的作业内计时器都会把健康的流判死；超时改由调用侧窗口承担
+    // （waitHeaders / readBlocking 的入参），见规格 §2.5。
+    if (!job->streaming && !job->deadline) {
         auto *timer = new QTimer(nam);
         timer->setSingleShot(true);
         // context 取 nam（寿命等同传输，随传输销毁自动断开）：每跳的 reply 都会重建，
@@ -250,8 +322,12 @@ void sendHop(const std::shared_ptr<HttpClient::HttpJobState> &job, QNetworkAcces
     }
 
     QNetworkRequest req(job->url);
+    // 重定向策略按作业分岔（N50）：非流式自管（为保 PROPFIND 的方法与 body，见
+    // finalizeJob）；流式交 QNAM 自动跟随且允许跨 origin，跳数用 Qt 自己的默认上限
+    // ——不使用 Config::maxRedirects（该字段的语义是「自管」的跳数上限），见规格 §2.8。
     req.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
-                     QNetworkRequest::ManualRedirectPolicy);
+                     job->streaming ? QNetworkRequest::NoLessSafeRedirectPolicy
+                                    : QNetworkRequest::ManualRedirectPolicy);
     // 连接复用一律是 QNAM 内建行为（同 host 6 连接，闲置缓存 120s），本篇不调
     // 任何池参数（保 Qt 6.2 兼容）；调用方纪律见规格 §2.4。
     for (const auto &h : job->extraHeaders)
@@ -273,11 +349,38 @@ void sendHop(const std::shared_ptr<HttpClient::HttpJobState> &job, QNetworkAcces
         job->reply = reply;
     }
 
+    if (job->streaming) {
+        // N50：把 Qt 侧读缓冲限制在一个零头上，「我们不取数」才真的能压到 socket
+        // ——默认 readBufferSize 为 0 即无界，此时 Qt 不会节流，数据只是从本作业的
+        // 队列挪进 Qt 的队列（见规格 §2.3）。重定向时 Qt 走 followRedirect 重发，
+        // 代理对象可能重建，故在 redirected 上再补设一次。此处与规格里已取消的
+        // 「跨 origin 重定向守卫」无关，只是重设读缓冲。
+        reply->setReadBufferSize(kStreamReplyReadBufferBytes);
+        QObject::connect(reply, &QNetworkReply::redirected, reply,
+                         [reply] { reply->setReadBufferSize(kStreamReplyReadBufferBytes); });
+    }
+
     // 截断（headersOnly）：响应头到达即断；随后的 finished（OperationCanceledError）
     // 在已取到头时按成功处理。metaDataChanged 异步派发可能多读少量字节，可接受——
     // 要防的是"读完整个文件"。重定向中间跳（301 / 302 / 303 / 307 / 308）不截断，
     // 由 finished 分支跟随，headersOnly 只取最终落点的头。
     QObject::connect(reply, &QNetworkReply::metaDataChanged, reply, [job, reply] {
+        if (job->streaming) {
+            // N50：头到达即记下（waitHeaders / statusOf 的确定窗口）。必须在这里兜住，
+            // 不能只靠写侧——无响应体的响应不会触发 readyRead。
+            QMutexLocker l(&g_mutex);
+            if (job->headReady || job->finished)
+                return;
+            const int st = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            if (st == 301 || st == 302 || st == 303 || st == 307 || st == 308)
+                return; // 中间跳的响应头不算数（自动跟随时不应出现，仍守一道）
+            captureHeaders(*job, reply);
+            job->headStatus = job->capturedStatus;
+            job->headHeaders = job->capturedHeaders;
+            job->headReady = true;
+            g_cond.wakeAll(); // 唤醒 waitHeaders 的等待者
+            return;
+        }
         if (!job->headersOnly || job->headersCaptured)
             return;
         const int st = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
@@ -289,6 +392,10 @@ void sendHop(const std::shared_ptr<HttpClient::HttpJobState> &job, QNetworkAcces
     });
 
     QObject::connect(reply, &QNetworkReply::readyRead, reply, [job, reply] {
+        if (job->streaming) {
+            streamingReadyRead(job, reply); // N50：入队与背压，不走下方的体累积
+            return;
+        }
         if (job->headersCaptured)
             return;
         // headersOnly：调用方只读头，体越界后一律丢弃（不占内存、也不受体上限约束）。
@@ -329,6 +436,18 @@ void sendHop(const std::shared_ptr<HttpClient::HttpJobState> &job, QNetworkAcces
                              return; // 其他作业的挑战
                          if (job->user.isEmpty() && job->password.isEmpty())
                              return;
+                         if (job->streaming) {
+                             // N50：流式作业不预置 Authorization——预置头会被 QNAM 原样
+                             // 带到重定向目标（createRedirectRequest 整份复制原请求），
+                             // 故凭据只从这里注入，origin 就得自己守：只对本次作业的初始
+                             // origin、或实例 baseUrl 的 origin 回填，其余一律不应答
+                             // （请求以 AuthenticationRequired 落错误终态）。非流式仍预置，
+                             // 跨 origin 由 prepareRedirect 剥头，见规格 §2.8。
+                             const QString cur = originOf(r->url());
+                             if (cur != job->initialOrigin &&
+                                 (job->baseOrigin.isEmpty() || cur != job->baseOrigin))
+                                 return;
+                         }
                          auth->setUser(job->user);
                          auth->setPassword(job->password);
                      });
@@ -374,7 +493,9 @@ void finalizeJob(const std::shared_ptr<HttpClient::HttpJobState> &job, QNetworkR
     // WebDAV 保方法优先，PROPFIND 被降格即变义。相对 Location 按当前 URL 解析；
     // 循环跳转计入跳数；总 deadline 自 submit 起算贯穿全部跳，不重置。
     // headersOnly 的中间跳不截断（metaDataChanged 已跳过），此处照样跟随。
-    if (status > 0 && !job->timedOut && !job->overflow &&
+    // N50：流式作业的重定向由 QNAM 自动跟随（见规格 §2.8），落不到这里——本分支是
+    // 非流式自管专用。
+    if (!job->streaming && status > 0 && !job->timedOut && !job->overflow &&
         reply->error() == QNetworkReply::NoError) {
         // 读原始头而非已知头：header(LocationHeader) 对相对路径的 Location 不可靠
         const QByteArray locRaw = reply->rawHeader("Location");
@@ -445,8 +566,9 @@ void finalizeJob(const std::shared_ptr<HttpClient::HttpJobState> &job, QNetworkR
         resp.status = status;
         fillHeaders(reply, resp.headers);
         // 补齐尾部：个别 Qt 版本可能在 finished 前合并派发 readyRead，
-        // 收尾时取回剩余字节，避免 body 静默丢尾部数据
-        if (reply->bytesAvailable() > 0)
+        // 收尾时取回剩余字节，避免 body 静默丢尾部数据。
+        // N50：流式作业的尾部另有去处（终态前并入块队列，见下），不塞进 body。
+        if (!job->streaming && reply->bytesAvailable() > 0)
             job->bodyBuf += reply->readAll();
         resp.body = job->bodyBuf;
     }
@@ -460,6 +582,27 @@ void finalizeJob(const std::shared_ptr<HttpClient::HttpJobState> &job, QNetworkR
                                      "Server does not support HEAD (%1); registered, "
                                      "subsequent HEAD requests to this origin will not be sent"))
                 .arg(originOf(job->url));
+    }
+
+    // N50：流式作业落终态前，把 reply 里尚未取走的字节并入块队列。此处不受水位约束
+    // ——这是数据尾部，丢掉就等于截断；容量以 Qt 侧读缓冲为界，是个有界的零头。
+    // 若连响应头都没来得及记下（如空响应体），在此一并补上，免得 waitHeaders 空等。
+    if (job->streaming) {
+        QMutexLocker l(&g_mutex);
+        if (!job->finished) {
+            if (!job->headReady) {
+                captureHeaders(*job, reply);
+                job->headStatus = job->capturedStatus;
+                job->headHeaders = job->capturedHeaders;
+                job->headReady = true;
+            }
+            const QByteArray d = reply->readAll();
+            if (!d.isEmpty()) {
+                job->chunksBytes += d.size();
+                job->chunks.push_back(d);
+            }
+            g_cond.wakeAll(); // 头到达 / 尾部入队都可能解锁等待者
+        }
     }
 
     reply->deleteLater();
@@ -485,16 +628,20 @@ void runJob(const std::shared_ptr<HttpClient::HttpJobState> &job, QNetworkAccess
     }
     // 总时限自 submit 起算：出队时换算剩余时长；排队已耗尽的不再发出，
     // 直接按超时失败落定（黑洞地址的 DNS / 建连 hanging 同理，timer 已在跑）。
-    const qint64 timeout = job->snapshot.timeoutMs > 0 ? job->snapshot.timeoutMs : 5000;
-    const qint64 remaining = timeout - job->submitElapsed.elapsed();
-    if (remaining <= 0) {
-        job->timedOut = true;
-        HttpClient::Response resp;
-        resp.error = timeoutMessage(timeout);
-        finishTerminal(job, std::move(resp));
-        return;
+    // N50：流式作业没有总时限（见规格 §2.5），跳过换算与排队超时判定——启动窗口
+    // 由调用侧 waitHeaders 的入参承担。
+    if (!job->streaming) {
+        const qint64 timeout = job->snapshot.timeoutMs > 0 ? job->snapshot.timeoutMs : 5000;
+        const qint64 remaining = timeout - job->submitElapsed.elapsed();
+        if (remaining <= 0) {
+            job->timedOut = true;
+            HttpClient::Response resp;
+            resp.error = timeoutMessage(timeout);
+            finishTerminal(job, std::move(resp));
+            return;
+        }
+        job->remainingMs = remaining;
     }
-    job->remainingMs = remaining;
     sendHop(job, nam);
 }
 
@@ -607,6 +754,16 @@ HttpClient::RequestId HttpClient::submit(const Request &request) const {
         return job;
     }
 
+    // N50：streaming 与 headersOnly 互斥——一个要「持续交付响应体」，一个要「取到响应头
+    // 即断」。同时置位按调用错误处理，不发请求。
+    if (request.streaming && request.headersOnly) {
+        QMutexLocker l(&g_mutex);
+        job->finished = true;
+        job->response.error = trText(
+            QT_TRANSLATE_NOOP("HttpClient", "Request cannot be both streaming and headersOnly"));
+        return job;
+    }
+
     // URL 解析：相对→按 baseUrl 解析；绝对→直接用。baseUrl 为空且相对为调用错误，
     // 返回可读失败，不发请求
     QUrl url = request.url;
@@ -625,18 +782,29 @@ HttpClient::RequestId HttpClient::submit(const Request &request) const {
     }
     job->url = url;
 
+    // N50：流式作业级参数与 origin 基线（authenticationRequired 的校验依据）
+    job->streaming = request.streaming;
+    job->streamBufferBytes =
+        request.streamBufferBytes > 0 ? request.streamBufferBytes : kDefaultStreamBufferBytes;
+    job->initialOrigin = originOf(url);
+    job->baseOrigin = m_config.baseUrl.isEmpty() ? QString() : originOf(m_config.baseUrl);
+
     // 凭据：URL userinfo 优先，空则用实例缺省
     if (!userInfoOf(url, job->user, job->password)) {
         job->user = m_config.user;
         job->password = m_config.password;
     }
-    // 预置 Basic 省一次 401 往返；调用方已自带 Authorization 头则不预置
+    // 预置 Basic 省一次 401 往返；调用方已自带 Authorization 头则不预置。
+    // N50：流式作业不预置——QNAM 重发重定向请求时整份复制原请求（createRedirectRequest），
+    // 预置头必然被带到重定向目标，而公开 API 无法在重发前改头（QNetworkReply::setRawHeader
+    // 为 protected），只要预置了就挡不住跨 origin。凭据改由 authenticationRequired 注入、
+    // origin 在那一侧校验；代价是首次请求多一次 401 往返，见规格 §2.8。
     const bool hasExplicitAuth =
         std::any_of(request.headers.cbegin(), request.headers.cend(),
                     [](const QPair<QByteArray, QByteArray> &h) {
                         return h.first.compare("Authorization", Qt::CaseInsensitive) == 0;
                     });
-    if ((!job->user.isEmpty() || !job->password.isEmpty()) && !hasExplicitAuth)
+    if ((!job->user.isEmpty() || !job->password.isEmpty()) && !hasExplicitAuth && !job->streaming)
         job->presetAuth = basicAuthHeader(job->user, job->password);
 
     QMutexLocker l(&g_mutex);
@@ -734,4 +902,115 @@ void HttpClient::abort(const RequestId &id) {
                 reply->abort();
         },
         Qt::QueuedConnection);
+}
+
+// ——N50 流式消费面。三条唤醒源供这些等待者共用：字节入队 / 响应头捕获 / 终态落定。
+
+bool HttpClient::waitHeaders(RequestId id, int timeoutMs) {
+    MPVQT_ASSERT_TASK_THREAD();
+    if (!id)
+        return false;
+    if (timeoutMs != -1 && timeoutMs < 0)
+        timeoutMs = -1; // 其他负数按 -1 计（与 wait 同款口径）
+    QDeadlineTimer deadline(timeoutMs < 0 ? QDeadlineTimer::Forever : QDeadlineTimer(timeoutMs));
+    QMutexLocker l(&g_mutex);
+    while (!id->headReady && !id->finished) {
+        if (timeoutMs == 0)
+            return false; // 立即返回只做状态检测
+        if (!g_cond.wait(&g_mutex, deadline))
+            return false; // 窗口耗尽而作业仍在途：调用方必须自行 abort 收尾
+    }
+    return id->headReady || id->finished;
+}
+
+qint64 HttpClient::readBlocking(const RequestId &id, char *out, qint64 maxBytes, int timeoutMs) {
+    MPVQT_ASSERT_TASK_THREAD();
+    if (!id || !out || maxBytes <= 0)
+        return kReadError;
+    if (timeoutMs != -1 && timeoutMs < 0)
+        timeoutMs = -1;
+    QDeadlineTimer deadline(timeoutMs < 0 ? QDeadlineTimer::Forever : QDeadlineTimer(timeoutMs));
+
+    // 锁内整块摘出（O(1)，不做搬运），锁外再拷进调用方缓冲——g_mutex 是全部作业共用的，
+    // 不在这把锁里做大块 memcpy，见规格 §2.4。
+    std::deque<QByteArray> local;
+    qint64 localBytes = 0;
+    bool wasFull = false;
+    {
+        QMutexLocker l(&g_mutex);
+        for (;;) {
+            if (id->chunksBytes > 0) {
+                wasFull = id->chunksBytes >= id->streamBufferBytes;
+                while (!id->chunks.empty() && localBytes < maxBytes) {
+                    localBytes += id->chunks.front().size();
+                    local.push_back(std::move(id->chunks.front()));
+                    id->chunks.pop_front();
+                }
+                id->chunksBytes -= localBytes;
+                break;
+            }
+            // 缓冲已空，此时才看终态——缓冲先于终态，否则会丢尾部数据（文件头纪律）
+            if (id->finished)
+                return (id->response.canceled || !id->response.error.isEmpty()) ? kReadError
+                                                                                : kReadEof;
+            if (timeoutMs == 0)
+                return kReadNoData;
+            if (!g_cond.wait(&g_mutex, deadline))
+                return kReadNoData; // 窗口内没等到，不是失败：作业仍在途，下次接着等
+        }
+    }
+
+    qint64 taken = 0;
+    while (!local.empty() && taken < maxBytes) {
+        QByteArray &head = local.front();
+        const qint64 n = qMin<qint64>(maxBytes - taken, head.size());
+        std::memcpy(out + taken, head.constData(), static_cast<size_t>(n));
+        taken += n;
+        if (n == head.size())
+            local.pop_front();
+        else
+            head.remove(0, n); // 部分消费（短读）：余量留待下面归还
+    }
+
+    bool needPump = false;
+    QNetworkAccessManager *nam = nullptr;
+    {
+        QMutexLocker l(&g_mutex);
+        if (!local.empty()) {
+            // 逆序 push_front 还原原有次序；网络线程只往尾部追加，前端无竞争者
+            qint64 rest = 0;
+            for (const QByteArray &c : local)
+                rest += c.size();
+            while (!local.empty()) {
+                id->chunks.push_front(std::move(local.back()));
+                local.pop_back();
+            }
+            id->chunksBytes += rest;
+        }
+        if (wasFull && id->chunksBytes < id->streamBufferBytes) {
+            needPump = true;
+            if (g_transport && g_transport->nam && !g_transport->quitting)
+                nam = g_transport->nam;
+        }
+    }
+    if (needPump && nam) {
+        // 队列由满降到未满：投递一次，让网络线程把留在 reply 缓冲里的那块取回来
+        // （不能只等 readyRead——没有新数据到达时它不会再来）
+        QMetaObject::invokeMethod(nam, [id] { pumpStream(id); }, Qt::QueuedConnection);
+    }
+    return taken;
+}
+
+HttpClient::Response HttpClient::statusOf(const RequestId &id) {
+    MPVQT_ASSERT_TASK_THREAD();
+    if (!id)
+        return Response{
+            0, {}, {}, trText(QT_TRANSLATE_NOOP("HttpClient", "Invalid job handle")), false};
+    QMutexLocker l(&g_mutex);
+    if (id->finished)
+        return id->response; // 已终态：终态响应（流式作业 body 恒空）
+    Response r;              // 未终态：给已到达的响应头与状态码，body 恒空
+    r.status = id->headStatus;
+    r.headers = id->headHeaders;
+    return r;
 }

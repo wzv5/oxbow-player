@@ -16,6 +16,7 @@
 #include <QSslConfiguration>
 #include <QtTest/QtTest>
 
+#include <atomic>
 #include <thread>
 #include <utility>
 
@@ -41,6 +42,80 @@ bool waitInThread(const HttpClient::RequestId &id, int timeoutMs) {
 HttpClient::Response takeInThread(const HttpClient::RequestId &id) {
     HttpClient::Response out;
     std::thread th([&] { out = HttpClient::take(id); });
+    th.join();
+    return out;
+}
+
+// ——N50 流式消费面同样禁止在应用主线程调用，一律经 std::thread 包裹——
+
+bool waitHeadersInThread(const HttpClient::RequestId &id, int timeoutMs) {
+    bool ok = false;
+    std::thread th([&] { ok = HttpClient::waitHeaders(id, timeoutMs); });
+    th.join();
+    return ok;
+}
+
+// 取一次：> 0 为字节数（并入 out），其余为 kRead* 哨兵
+qint64 readOnceInThread(const HttpClient::RequestId &id, QByteArray &out, qint64 maxBytes,
+                        int timeoutMs = -1) {
+    char buf[64 * 1024];
+    const qint64 want = qMin<qint64>(maxBytes, static_cast<qint64>(sizeof(buf)));
+    qint64 n = HttpClient::kReadNoData;
+    std::thread th([&] {
+        n = HttpClient::readBlocking(id, buf, want, timeoutMs);
+        if (n > 0)
+            out.append(buf, static_cast<int>(n));
+    });
+    th.join();
+    return n;
+}
+
+struct Drain {
+    qint64 bytes = 0;
+    qint64 terminal = HttpClient::kReadNoData; // kReadEof / kReadError；预算耗尽则维持 kReadNoData
+};
+
+// 反复读到终态。带预算上限：作业若卡住，用例断言失败而不是挂死整个测试进程
+Drain drainInThread(const HttpClient::RequestId &id, QByteArray &out, int budgetMs = 30000) {
+    Drain res;
+    std::thread th([&] {
+        QElapsedTimer clock;
+        clock.start();
+        char buf[64 * 1024];
+        for (;;) {
+            const qint64 n =
+                HttpClient::readBlocking(id, buf, static_cast<qint64>(sizeof(buf)), 500);
+            if (n > 0) {
+                out.append(buf, static_cast<int>(n));
+                res.bytes += n;
+                continue;
+            }
+            if (n == HttpClient::kReadNoData) {
+                if (clock.elapsed() > budgetMs)
+                    return;
+                continue;
+            }
+            res.terminal = n;
+            return;
+        }
+    });
+    th.join();
+    return res;
+}
+
+// 流式 GET 请求的构造快捷方式（watermark <= 0 即取内置缺省水位）
+HttpClient::Request streamingGet(const QUrl &url, qint64 watermark = 0) {
+    HttpClient::Request r;
+    r.url = url;
+    r.method = "GET";
+    r.streaming = true;
+    r.streamBufferBytes = watermark;
+    return r;
+}
+
+HttpClient::Response statusOfInThread(const HttpClient::RequestId &id) {
+    HttpClient::Response out;
+    std::thread th([&] { out = HttpClient::statusOf(id); });
     th.join();
     return out;
 }
@@ -74,11 +149,12 @@ class PythonStub {
             m_defect = quint16(doc.object().value("defect").toInt());
             m_flow = quint16(doc.object().value("flow").toInt());
             m_auth = quint16(doc.object().value("auth").toInt());
+            m_auth2 = quint16(doc.object().value("auth2").toInt());
             m_https = quint16(doc.object().value("https").toInt());
             m_tls2 = quint16(doc.object().value("tls2").toInt());
             m_ca = doc.object().value("ca").toString().toUtf8();
-            m_ready =
-                m_http && m_defect && m_flow && m_auth && m_https && m_tls2 && !m_ca.isEmpty();
+            m_ready = m_http && m_defect && m_flow && m_auth && m_auth2 && m_https && m_tls2 &&
+                      !m_ca.isEmpty();
         });
         m_proc.start();
         const bool spawned =
@@ -103,6 +179,8 @@ class PythonStub {
     QUrl defectUrl() const { return QUrl(QStringLiteral("http://127.0.0.1:%1").arg(m_defect)); }
     QUrl flowUrl() const { return QUrl(QStringLiteral("http://127.0.0.1:%1").arg(m_flow)); }
     QUrl authUrl() const { return QUrl(QStringLiteral("http://127.0.0.1:%1").arg(m_auth)); }
+    // 跨 origin 重定向落点专用：须缓存干净（见 stub 文件头 D 端口注释）
+    QUrl auth2Url() const { return QUrl(QStringLiteral("http://127.0.0.1:%1").arg(m_auth2)); }
     QUrl tlsUrl() const { return QUrl(QStringLiteral("https://127.0.0.1:%1").arg(m_https)); }
     QUrl tls2Url() const { return QUrl(QStringLiteral("https://127.0.0.1:%1").arg(m_tls2)); }
     QByteArray caPem() const { return m_ca; }
@@ -137,6 +215,9 @@ class PythonStub {
         if (execInThread(c, r).status != 200)
             return false;
         r.url = QUrl(QStringLiteral("http://127.0.0.1:%1/__reset").arg(m_auth));
+        if (execInThread(c, r).status != 200)
+            return false;
+        r.url = QUrl(QStringLiteral("http://127.0.0.1:%1/__reset").arg(m_auth2));
         return execInThread(c, r).status == 200;
     }
 
@@ -177,7 +258,7 @@ class PythonStub {
     QProcess m_proc;
     QByteArray m_out;
     bool m_ready = false;
-    quint16 m_http = 0, m_defect = 0, m_flow = 0, m_auth = 0, m_https = 0, m_tls2 = 0;
+    quint16 m_http = 0, m_defect = 0, m_flow = 0, m_auth = 0, m_auth2 = 0, m_https = 0, m_tls2 = 0;
     QByteArray m_ca;
     QString m_error;
 };
@@ -849,6 +930,396 @@ class TestHttpClient : public QObject {
                  qPrintable(
                      QStringLiteral("status=%1 error=%2").arg(trusted.status).arg(trusted.error)));
         QCOMPARE(trusted.status, 200);
+    }
+
+    // ———— N50 流式：增量交付与背压（以下用例由维护者手动运行）————
+
+    // 流式读满大响应体：内容与非流式一次取到的逐字节一致，EOF 走 kReadEof 而非 kReadError
+    void streamingDeliversFullBodyAndEof() {
+        HttpClient::Config cfg;
+        cfg.baseUrl = m_stub.url();
+        HttpClient c{cfg};
+
+        HttpClient::Request plain;
+        plain.url = QUrl(QStringLiteral("/big"));
+        plain.method = "GET";
+        const auto whole = execInThread(c, plain);
+        QCOMPARE(whole.status, 200);
+        QCOMPARE(whole.body.size(), 2 * 1024 * 1024);
+
+        const auto id = c.submit(streamingGet(QUrl(QStringLiteral("/big"))));
+        QByteArray got;
+        const Drain d = drainInThread(id, got);
+        QCOMPARE(d.terminal, HttpClient::kReadEof);
+        QCOMPARE(d.bytes, qint64(whole.body.size()));
+        QCOMPARE(got, whole.body);
+    }
+
+    // 短读合法、分批读满且逐字节一致。两趟分别压住两侧边界：
+    // a) maxBytes 远小于队首块 → 走「部分消费 + 余量归还」（每次只从块里取走一段）；
+    //    该路径不可从外部观测，判据是重建体逐字节一致（2MiB 全程两千余次部分消费）
+    // b) maxBytes 大于水位 → 队列永远填不满一次请求，**中途**短读可观测
+    void streamingShortReadsReassemble() {
+        HttpClient::Config cfg;
+        cfg.baseUrl = m_stub.url();
+        HttpClient c{cfg};
+
+        HttpClient::Request plain;
+        plain.url = QUrl(QStringLiteral("/big"));
+        plain.method = "GET";
+        const auto whole = execInThread(c, plain);
+        QCOMPARE(whole.status, 200);
+
+        // a) 部分消费 + 余量归还
+        {
+            const auto id = c.submit(streamingGet(QUrl(QStringLiteral("/big"))));
+            QByteArray got;
+            qint64 total = 0;
+            qint64 terminal = HttpClient::kReadNoData;
+            QElapsedTimer clock;
+            clock.start();
+            while (clock.elapsed() < 30000) {
+                const qint64 n = readOnceInThread(id, got, 1000, 500);
+                if (n > 0) {
+                    total += n;
+                    continue;
+                }
+                if (n == HttpClient::kReadNoData)
+                    continue;
+                terminal = n;
+                break;
+            }
+            QCOMPARE(terminal, HttpClient::kReadEof);
+            QCOMPARE(total, qint64(whole.body.size()));
+            QCOMPARE(got, whole.body);
+        }
+
+        // b) 中途短读（可观测）
+        {
+            const auto id = c.submit(streamingGet(QUrl(QStringLiteral("/big")), 64 * 1024));
+            QByteArray got;
+            qint64 total = 0;
+            qint64 shortMidStream = 0;
+            qint64 terminal = HttpClient::kReadNoData;
+            QElapsedTimer clock;
+            clock.start();
+            while (clock.elapsed() < 30000) {
+                const qint64 n = readOnceInThread(id, got, 1024 * 1024, 500);
+                if (n > 0) {
+                    total += n;
+                    if (total < qint64(whole.body.size()))
+                        ++shortMidStream; // 未读完就到手的一段：中途短读
+                    continue;
+                }
+                if (n == HttpClient::kReadNoData)
+                    continue;
+                terminal = n;
+                break;
+            }
+            QCOMPARE(terminal, HttpClient::kReadEof);
+            QCOMPARE(total, qint64(whole.body.size()));
+            QCOMPARE(got, whole.body);
+            QVERIFY2(shortMidStream >= 2,
+                     qPrintable(QStringLiteral("中途短读次数=%1").arg(shortMidStream)));
+        }
+    }
+
+    // waitHeaders 窗口耗尽而作业仍在途 → false；调用方须自行 abort 收尾
+    void waitHeadersTimesOutWhileJobInFlight() {
+        HttpClient::Config cfg;
+        cfg.baseUrl = m_stub.url();
+        HttpClient c{cfg};
+        const auto id = c.submit(streamingGet(QUrl(QStringLiteral("/slow"))));
+        QVERIFY(!waitHeadersInThread(id, 500));     // /slow 头要等 8s
+        QVERIFY(!takeInThread(id).error.isEmpty()); // 作业仍在途：take 拒绝给结果
+        HttpClient::abort(id);
+        QByteArray out;
+        QCOMPARE(drainInThread(id, out).terminal, HttpClient::kReadError);
+    }
+
+    // waitHeaders 命中 + statusOf 读出状态码与响应头（流式作业的启动判定窗口）
+    void waitHeadersSucceedsAndStatusOfReadsHead() {
+        HttpClient::Config cfg;
+        cfg.baseUrl = m_stub.url();
+        HttpClient c{cfg};
+        const auto id = c.submit(streamingGet(QUrl(QStringLiteral("/big"))));
+        QVERIFY(waitHeadersInThread(id, 5000));
+        const auto head = statusOfInThread(id);
+        QCOMPARE(head.status, 200);
+        QVERIFY(head.headers.contains("content-length"));
+        QVERIFY(head.body.isEmpty()); // 未终态：body 恒空
+        QByteArray got;
+        QCOMPARE(drainInThread(id, got).terminal, HttpClient::kReadEof);
+    }
+
+    // Config::timeoutMs 对流式作业不生效：同一端点上非流式必在总时限处断开，流式须读满
+    void streamingIgnoresTotalTimeout() {
+        HttpClient::Config cfg;
+        cfg.baseUrl = m_stub.url(); // timeoutMs 缺省 5000；/trickle-long 全程 ~8s
+        HttpClient c{cfg};
+
+        HttpClient::Request plain;
+        plain.url = QUrl(QStringLiteral("/trickle-long"));
+        plain.method = "GET";
+        QVERIFY(execInThread(c, plain).error.contains(QStringLiteral("timed out")));
+
+        const auto id = c.submit(streamingGet(QUrl(QStringLiteral("/trickle-long"))));
+        QByteArray got;
+        const Drain d = drainInThread(id, got, 20000);
+        QCOMPARE(d.terminal, HttpClient::kReadEof);
+        QCOMPARE(d.bytes, qint64(80)); // 一个字节都没少
+        QCOMPARE(got, QByteArray(80, 'y'));
+    }
+
+    // 背压：水位压到 64KB 后缓慢消费 2MiB，仍读满且全程无错误终态
+    // （水位远小于响应体，必然反复 park / 续泵，泵停续三态都被走到）
+    void streamingBackpressureWithSmallWatermark() {
+        HttpClient::Config cfg;
+        cfg.baseUrl = m_stub.url();
+        HttpClient c{cfg};
+        const auto id = c.submit(streamingGet(QUrl(QStringLiteral("/big")), 64 * 1024));
+
+        QByteArray got;
+        qint64 total = 0;
+        qint64 terminal = HttpClient::kReadNoData;
+        QElapsedTimer clock;
+        clock.start();
+        while (clock.elapsed() < 30000) {
+            const qint64 n = readOnceInThread(id, got, 16 * 1024, 500);
+            if (n > 0) {
+                total += n;
+                QTest::qWait(1); // 让消费慢于网络，逼出水位
+                continue;
+            }
+            if (n == HttpClient::kReadNoData)
+                continue;
+            terminal = n;
+            break;
+        }
+        QCOMPARE(terminal, HttpClient::kReadEof);
+        QCOMPARE(total, qint64(2 * 1024 * 1024));
+    }
+
+    // 错误终态：非 2xx（404）与建连失败各自返 kReadError，原因可从 statusOf 取
+    void streamingErrorTerminal() {
+        HttpClient::Config cfg;
+        cfg.baseUrl = m_stub.url();
+        HttpClient c{cfg};
+
+        const auto notFound = c.submit(streamingGet(QUrl(QStringLiteral("/notfound"))));
+        QByteArray got;
+        QCOMPARE(drainInThread(notFound, got).terminal, HttpClient::kReadError);
+        const auto detail = statusOfInThread(notFound);
+        QCOMPARE(detail.status, 404);
+        QVERIFY(!detail.error.isEmpty());
+
+        HttpClient::Config dead; // 未监听端口 → 建连失败
+        dead.baseUrl = QUrl(QStringLiteral("http://127.0.0.1:9"));
+        HttpClient cd{dead};
+        const auto refused = cd.submit(streamingGet(QUrl(QStringLiteral("/x"))));
+        QByteArray none;
+        QCOMPARE(drainInThread(refused, none, 10000).terminal, HttpClient::kReadError);
+        QVERIFY(!statusOfInThread(refused).error.isEmpty());
+    }
+
+    // timeoutMs = 0 即「立即取一次、不阻塞」：在途且缓冲空返 kReadNoData；
+    // 终态且缓冲已空返 kReadEof——终态判定因此不需要额外方法
+    void streamingTimeoutZeroReturnsImmediately() {
+        HttpClient::Config cfg;
+        cfg.baseUrl = m_stub.url();
+        HttpClient c{cfg};
+
+        const auto slow = c.submit(streamingGet(QUrl(QStringLiteral("/slow"))));
+        QByteArray none;
+        QElapsedTimer clock;
+        clock.start();
+        QCOMPARE(readOnceInThread(slow, none, 4096, 0), HttpClient::kReadNoData);
+        QVERIFY(clock.elapsed() < 1000); // 立即返回，没有等 8s
+        HttpClient::abort(slow);
+
+        const auto id = c.submit(streamingGet(QUrl(QStringLiteral("/big"))));
+        QByteArray got;
+        QCOMPARE(drainInThread(id, got).terminal, HttpClient::kReadEof);
+        QByteArray tail;
+        QCOMPARE(readOnceInThread(id, tail, 4096, 0), HttpClient::kReadEof);
+        QVERIFY(tail.isEmpty());
+
+        // 错误终态 + 缓冲已空 + 传 0 → 同样立即返回 kReadError
+        const auto bad = c.submit(streamingGet(QUrl(QStringLiteral("/notfound"))));
+        QByteArray none2;
+        QCOMPARE(drainInThread(bad, none2).terminal, HttpClient::kReadError);
+        QByteArray tail2;
+        QCOMPARE(readOnceInThread(bad, tail2, 4096, 0), HttpClient::kReadError);
+    }
+
+    // 取消是事件而非轮询：abort 把阻塞中的 readBlocking 叫醒，不必等窗口耗尽
+    void streamingAbortWakesBlockedRead() {
+        HttpClient::Config cfg;
+        cfg.baseUrl = m_stub.url();
+        HttpClient c{cfg};
+        const auto id = c.submit(streamingGet(QUrl(QStringLiteral("/slow")))); // 8s 不吐任何字节
+        QVERIFY(!waitHeadersInThread(id, 300));
+
+        std::atomic<qint64> blocked{HttpClient::kReadNoData};
+        QElapsedTimer clock;
+        clock.start();
+        std::thread reader([&] {
+            char buf[4096];
+            blocked = HttpClient::readBlocking(id, buf, sizeof(buf), -1); // 永久等
+        });
+        QTest::qWait(300); // 确认它已经阻塞住
+        HttpClient::abort(id);
+        reader.join();
+        QCOMPARE(blocked.load(), HttpClient::kReadError);
+        QVERIFY(clock.elapsed() < 5000); // 是被叫醒的，不是等够了
+        // 撤销要在 statusOf 上如实体现
+        const auto canceled = statusOfInThread(id);
+        QVERIFY(canceled.canceled);
+        QVERIFY(!canceled.error.isEmpty());
+    }
+
+    // 缓冲先于终态：撤销前已到手的字节照常交付，交付完才返 kReadError
+    void streamingBufferedBytesSurviveAbort() {
+        HttpClient::Config cfg;
+        cfg.baseUrl = m_stub.url();
+        HttpClient c{cfg};
+        const auto id = c.submit(streamingGet(QUrl(QStringLiteral("/big"))));
+
+        QByteArray one;
+        QCOMPARE(readOnceInThread(id, one, 1, 5000), qint64(1)); // 只取 1 字节，余下留在队列
+        HttpClient::abort(id);
+
+        QByteArray rest;
+        qint64 terminal = HttpClient::kReadNoData;
+        QElapsedTimer clock;
+        clock.start();
+        while (clock.elapsed() < 10000) {
+            const qint64 n = readOnceInThread(id, rest, 64 * 1024, 0);
+            if (n > 0)
+                continue; // 仍在交付缓冲
+            terminal = n;
+            break;
+        }
+        QCOMPARE(terminal, HttpClient::kReadError);
+        QVERIFY(!rest.isEmpty()); // 撤销没有把已到手的字节丢掉
+    }
+
+    // 缓冲先于终态（传输中断一路）：/truncated 声明 100000 字节却只发 4096 就断连，
+    // 已到的 4096 仍须先交付，交付完才落 kReadError——不得截断丢弃
+    void streamingBufferedBytesSurviveTransportError() {
+        HttpClient::Config cfg;
+        cfg.baseUrl = m_stub.url();
+        HttpClient c{cfg};
+        const auto id = c.submit(streamingGet(QUrl(QStringLiteral("/truncated"))));
+        QByteArray got;
+        const Drain d = drainInThread(id, got);
+        QCOMPARE(d.terminal, HttpClient::kReadError);
+        QVERIFY(!got.isEmpty());                    // 中断前到手的字节交付了
+        QVERIFY(got.size() <= 4096);                // 且不超过服务端实际发出的量
+        QCOMPARE(got, QByteArray(got.size(), 'z')); // 内容完好，未被截断或错位
+        QVERIFY(!statusOfInThread(id).error.isEmpty());
+    }
+
+    // 重定向全部交 QNAM 自动跟随：同 origin 与跨 origin 都照常读到最终响应体
+    void streamingFollowsRedirectsAcrossOrigins() {
+        HttpClient::Config cfg;
+        cfg.baseUrl = m_stub.url();
+        HttpClient c{cfg};
+
+        const auto same = c.submit(streamingGet(QUrl(QStringLiteral("/redir-rel/a"))));
+        QByteArray sameBody;
+        QCOMPARE(drainInThread(same, sameBody).terminal, HttpClient::kReadEof);
+        QCOMPARE(sameBody, QByteArray("ok /b"));
+
+        // 跨 origin（主端口 → 缺陷端口）：端口不同即不同 origin，仍须跟随
+        const auto cross = c.submit(streamingGet(QUrl(QStringLiteral("/redir-abs/a"))));
+        QByteArray crossBody;
+        QCOMPARE(drainInThread(cross, crossBody).terminal, HttpClient::kReadEof);
+        QCOMPARE(crossBody, QByteArray("ok /b"));
+    }
+
+    // 凭据不越界：流式不预置 Authorization（首跳日志 auth=false），跨 origin 后也不带
+    void streamingDoesNotPresetCredentialsAcrossOrigins() {
+        QVERIFY(m_stub.resetLogs());
+        HttpClient::Config cfg;
+        cfg.baseUrl = m_stub.url();
+        cfg.user = QStringLiteral("uA");
+        cfg.password = QStringLiteral("pA");
+        HttpClient c{cfg};
+        const auto id = c.submit(streamingGet(QUrl(QStringLiteral("/redir-abs/a"))));
+        QByteArray got;
+        QCOMPARE(drainInThread(id, got).terminal, HttpClient::kReadEof);
+        QCOMPARE(got, QByteArray("ok /b"));
+
+        const auto mainLog = m_stub.snapshot(m_stub.url().port()).requests;
+        const auto defectLog = m_stub.snapshot(m_stub.defectUrl().port()).requests;
+        QCOMPARE(PythonStub::count(mainLog, "GET", "/redir-abs/a"), 1);
+        QCOMPARE(PythonStub::count(defectLog, "GET", "/b"), 1);
+        // 流式不预置：首跳就没带 Authorization（非流式此处为 true）
+        QVERIFY(std::none_of(mainLog.cbegin(), mainLog.cend(), [](const PythonStub::Entry &e) {
+            return e.path == "/redir-abs/a" && e.auth;
+        }));
+        // 跨 origin 的落点更不该带——预置头会被 QNAM 整份复制到重定向请求上
+        QVERIFY(std::none_of(defectLog.cbegin(), defectLog.cend(),
+                             [](const PythonStub::Entry &e) { return e.path == "/b" && e.auth; }));
+    }
+
+    // 凭据不越界（判据落在「需认证的落点」上）：跨 origin 后落点索要认证时不得回填原
+    // origin 的凭据，请求须以认证失败落错误终态；认证端口的日志可证落点压根没收到
+    // Authorization——N51 建在这条性质上，这里必须有测试背书
+    void streamingCrossOriginRedirectToAuthRouteFails() {
+        QVERIFY(m_stub.resetLogs());
+        HttpClient::Config cfg;
+        cfg.baseUrl = m_stub.url();
+        cfg.user = QStringLiteral("uA");
+        cfg.password = QStringLiteral("pA");
+        HttpClient c{cfg};
+        // 主端口 301 → 【缓存干净的专用认证 origin】的 /basic/x（跨 origin 且落点需认证）。
+        // 落点刻意不复用认证端口(D)：QNAM 按 host:port 缓存已成功的 authenticator，D 被
+        // Digest 用例认证过，同 origin 的新请求会先回放那份缓存凭据——日志上的 auth 就不再
+        // 只反映我们的行为（这正是本用例第一版误报的成因）。
+        const auto id = c.submit(streamingGet(QUrl(QStringLiteral("/redir-cross-basic/a"))));
+        QByteArray got;
+        const Drain d = drainInThread(id, got, 15000);
+        QCOMPARE(d.terminal, HttpClient::kReadError);
+        QVERIFY(!statusOfInThread(id).error.isEmpty());
+
+        const auto authLog = m_stub.snapshot(m_stub.auth2Url().port()).requests;
+        QVERIFY(PythonStub::count(authLog, "GET", "/basic/x") >= 1); // 确实打了这一跳
+        // 落点不得收到任何 Authorization：预置头回归、或 authenticationRequired 的 origin
+        // 校验失守，都会让这一跳带上凭据。失败时打印实际值，一眼区分是"我们的凭据越界"
+        // 还是其它来源
+        for (const auto &e : authLog) {
+            if (e.path != "/basic/x" || !e.auth)
+                continue;
+            QFAIL(qPrintable(
+                QStringLiteral("落点收到了 Authorization：%1").arg(QString::fromUtf8(e.authv))));
+        }
+    }
+
+    // 重定向循环：由 Qt 自己的默认跳数上限兜住，不会无限转
+    void streamingRedirectLoopFails() {
+        HttpClient::Config cfg;
+        cfg.baseUrl = m_stub.url();
+        HttpClient c{cfg};
+        const auto id = c.submit(streamingGet(QUrl(QStringLiteral("/redir-loop/a"))));
+        QByteArray got;
+        QCOMPARE(drainInThread(id, got, 20000).terminal, HttpClient::kReadError);
+    }
+
+    // streaming 与 headersOnly 互斥：按调用错误处理且不发请求
+    void streamingAndHeadersOnlyAreMutuallyExclusive() {
+        QVERIFY(m_stub.resetLogs());
+        HttpClient::Config cfg;
+        cfg.baseUrl = m_stub.url();
+        HttpClient c{cfg};
+        HttpClient::Request r = streamingGet(QUrl(QStringLiteral("/big")));
+        r.headersOnly = true;
+        const auto resp = takeInThread(c.submit(r));
+        QVERIFY(resp.error.contains(QStringLiteral("streaming")));
+        QCOMPARE(resp.status, 0);
+        const auto log = m_stub.snapshot(m_stub.url().port()).requests;
+        QVERIFY(log.isEmpty()); // 未发出
     }
 
   private:
