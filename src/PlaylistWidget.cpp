@@ -11,10 +11,12 @@
 #include "PlaylistDelegate.h"
 #include "ProviderCatalog.h"
 #include "ServiceRegistry.h"
+#include "StreamRelay.h"
 #include "TraversalPolicy.h"
 #include "Util.h"
 
-PlaylistWidget::PlaylistWidget(const QString &configFile, QWidget *parent)
+PlaylistWidget::PlaylistWidget(const QString &configFile, std::shared_ptr<StreamRelay> relay,
+                               QWidget *parent)
     : QTabWidget(parent), m_configFile(configFile),
       m_registry(std::make_shared<ServiceRegistry>()) {
     // 注册表在初始化列表创建——创建是本对象的初始化职责，不归任何一个装配函数；
@@ -22,6 +24,10 @@ PlaylistWidget::PlaylistWidget(const QString &configFile, QWidget *parent)
     // 彼此独立、可任意次序调用
     // N35：装配仍须前置——createList 出生即配 StaticProvider 并注入 registry，
     // 两个装配函数仅读 ini，不依赖任何控件
+    // N52 §2.5 硬顺序②：provide<StreamRelayIf> 必须早于任何提供者出生（本 ctor
+    // 下方 createList 即建首个提供者）；以抽象基入库，取用侧经 StreamRelayIf 编程
+    if (relay)
+        m_registry->provide<StreamRelayIf>(std::move(relay));
     provideHttpServices();
     provideTraversalPolicy();
     setAcceptDrops(true);
@@ -313,7 +319,9 @@ QStringList PlaylistWidget::currentLayerFilesOf(int tabIndex) const {
     return layerFilesOf(tabIndex, browsePathIdsOf(listAt(tabIndex)));
 }
 
-// N48：实体序 playUrl → 喂 mpv 的播放形态（逐项经提供者 playbackUrl 映射）。
+// N48：实体序 playUrl → 喂 mpv 的播放形态。N52：改走基类非虚 deliveryUrl 模板
+// 方法——usesTransit() 为假走 playbackUrl（直发形态），为真铸 mpvqt:// 转接 URI；
+// 本出口由此成为全仓唯一能取得"直接形态"的生产调用点（playbackUrl 已 protected）。
 // 凭据只在此处与 PROPFIND 请求两个使用点注入；本出口只服务下发 mpv 的 loadfile
 // 循环，在途快照 / 比对 / 落盘一律另走无凭据形态。providerAt 为空（无提供者的
 // 异常态）原样返回——与基类默认恒等一致
@@ -324,7 +332,7 @@ QStringList PlaylistWidget::playbackFiles(int tabIndex, const QStringList &files
     QStringList out;
     out.reserve(files.size());
     for (const QString &f : files)
-        out.append(p->playbackUrl(f));
+        out.append(p->deliveryUrl(f));
     return out;
 }
 
@@ -705,7 +713,7 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
         // mpv 来源路径：本地 cleanPath+原生分隔符，网络/流保持原样（B15）；
         // N48：再剥凭据——回显里的是播放形态（可能被注入过凭据）
         pushed.append(Util::stripUrlCredentials(
-            Util::resolveLocalPath(map.value(QStringLiteral("filename")).toString())));
+            Util::resolveSourcePath(map.value(QStringLiteral("filename")).toString())));
         current.append(map.value(QStringLiteral("current")).toBool());
     }
 

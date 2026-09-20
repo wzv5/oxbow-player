@@ -43,7 +43,7 @@ class PlaylistEntity {
     virtual ~PlaylistEntity() = default;
 
     // ——工厂：playUrl → 实体（唯一入口；后续协议在此分派）——
-    // 入参先经 Util::resolveLocalPath 加工（本地来源唯一出口；网络 / 流路径原样），
+    // 入参先经 Util::resolveSourcePath 加工（本地来源唯一出口；网络 / 流路径原样），
     // 随后按前缀分派（N35）：http:// / https://（大小写不敏感）→ HttpEntity（需
     // 非空 registry，http(s) + 空 registry 属调用错误：Q_ASSERT 守候，release
     // 降级 UnknownEntity 保"恒返回实体"契约）；其余网络 / 流路径（ftp / rtsp 等）

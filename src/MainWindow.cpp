@@ -12,6 +12,7 @@
 #include "NavigatorPanel.h"
 #include "PlaylistWidget.h"
 #include "SettingsDialog.h"
+#include "StreamRelay.h"
 #include "Util.h"
 
 // N15：章节+书签数据与合并规则的唯一持有者（MainWindow.cpp 文件内实现，
@@ -125,8 +126,10 @@ class MarkAggregator {
     mutable bool m_dirty = true;
 };
 
-MainWindow::MainWindow(MpvController *controller, const QString &configFile, QWidget *parent)
-    : QMainWindow(parent), m_controller(controller), m_configFile(configFile) {
+MainWindow::MainWindow(MpvController *controller, const QString &configFile,
+                       std::shared_ptr<StreamRelay> relay, QWidget *parent)
+    : QMainWindow(parent), m_controller(controller), m_configFile(configFile),
+      m_relay(std::move(relay)) {
     setWindowTitle(App::name());
 
     m_actions = new ActionManager(this); // A15：先于任何容器构建
@@ -152,7 +155,7 @@ MainWindow::MainWindow(MpvController *controller, const QString &configFile, QWi
     m_clickTimer->setSingleShot(true);
     connect(m_clickTimer, &QTimer::timeout, this, &MainWindow::onVideoClickTimeout);
 
-    m_playlist = new PlaylistWidget(configFile, m_splitter);
+    m_playlist = new PlaylistWidget(configFile, m_relay, m_splitter);
     m_playlist->attachController(m_controller); // N4：四步式停止前读取 time-pos
     m_splitter->addWidget(m_playlist);
     m_splitter->setStretchFactor(0, 1);
@@ -637,7 +640,7 @@ void MainWindow::connectController() {
     connect(m_controller, &MpvController::durationChanged, m_playlist,
             [this](const QString &p, double sec) {
                 // mpv 来源路径：本地 cleanPath+原生分隔符，网络/流保持原样（B15）
-                m_playlist->applyDuration(Util::resolveLocalPath(p), sec);
+                m_playlist->applyDuration(Util::resolveSourcePath(p), sec);
             });
     // N18：其余 mpv 元数据（media-metadata / file-format / tracks / chapters）
     // 不再回填 PlaylistWidget——属性对话框改读 MediaInfoHelper 缓存，
@@ -1698,7 +1701,7 @@ void MainWindow::onPlayRequested(const QStringList &files, int tab, int index, d
     // 全部按原顺序 append（不自动播），最后以 playlist-pos 启动目标条目：
     // 既避免 idle 下 append-play 瞬态播放 file[0]，也保持 mpv 列表顺序与界面一致
     for (int i = 0; i < playFiles.size(); ++i)
-        m_controller->command({QStringLiteral("loadfile"), playFiles[i], QStringLiteral("append")});
+        m_controller->loadFile(playFiles[i], QStringLiteral("append"));
     if (seekTo > 0.0) {
         // 进度恢复走挂起 seek（与会话恢复同款）：playlist-pos 触发的加载是
         // 异步的，立即 seek 会因文件未就绪而失败；先挂起再启动杜绝竞态，
@@ -1739,7 +1742,7 @@ void MainWindow::onFilesAdded(const QStringList &files) {
     // 新增项恒属可修改的本地来源，无凭据注入；将来放开远端 tab 增删时形态已正）
     const QStringList playFiles = m_playlist->playbackFiles(m_playlist->playingTabIndex(), files);
     for (const QString &file : playFiles)
-        m_controller->command({QStringLiteral("loadfile"), file, QStringLiteral("append-play")});
+        m_controller->loadFile(file, QStringLiteral("append-play"));
 }
 
 void MainWindow::applyLoopMode(const QString &mode) {
@@ -2241,7 +2244,7 @@ void MainWindow::rebuildChapterMenu() {
         Util::normalizePathForMatch(m_controller->propertyString(QStringLiteral("path")));
     // 跳转需原始显示路径（大小写/分隔符原样）；curPath 仅作书签仓键匹配用（B15）
     const QString curDisplay =
-        Util::resolveLocalPath(m_controller->propertyString(QStringLiteral("path")));
+        Util::resolveSourcePath(m_controller->propertyString(QStringLiteral("path")));
     // 书签经聚合器统一读入口（书签永不查重，即原始）
     const auto bms = m_marks->bookmarks(curPath);
 
@@ -2377,10 +2380,10 @@ void MainWindow::ensureBookmarkEditor() {
 }
 
 void MainWindow::onAddBookmark() {
-    // mpv 来源路径经 resolveLocalPath 加工为显示路径；BookmarkManager 内部归一为键，
+    // mpv 来源路径经 resolveSourcePath 加工为显示路径；BookmarkManager 内部归一为键，
     // 展示保原样（大小写/分隔符，B15）
     const QString rawPath =
-        Util::resolveLocalPath(m_controller->propertyString(QStringLiteral("path")));
+        Util::resolveSourcePath(m_controller->propertyString(QStringLiteral("path")));
     if (rawPath.isEmpty() || m_playlistPos < 0)
         return;
     const QString path = Util::normalizePathForMatch(rawPath);

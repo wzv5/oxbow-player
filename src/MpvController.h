@@ -20,6 +20,14 @@ class MpvController : public QObject {
     void command(const QString &cmd);
     void command(const QStringList &args);
 
+    // N52 §2.10：loadfile 唯一出口。逐文件 cache 申报收口于此——mpv 的 cache
+    // auto 判定按宿主内置网络协议名单，stream_cb 自定义协议恒判本地（缓冲约
+    // 1 秒）；凡走 mpvqt:// 的流按 scheme 判定申报 cache=yes（逐文件选项，随
+    // 条目起播生效、播完自动还原）。空选项走既有三参数字符串通道，本地项命令
+    // 与原行为逐字相同；非空走节点通道。appendMode 由调用方原样传入
+    // append / append-play。
+    void loadFile(const QString &url, const QString &appendMode);
+
     // N42：String 型 set 改判返回值——下发失败（顶层语法错误 / 未知滤镜名等，
     // mpv 保持原值不清理）由调用方决定不写 conf；既有调用点忽略返回值，零波及。
     // 维护者裁决：四个重载返回值统一（bool = 是否写入成功）

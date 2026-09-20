@@ -27,7 +27,7 @@ PlaylistEntity::Ptr PlaylistEntity::fromPlayUrl(const QString &playUrl,
                                                 const std::shared_ptr<ServiceRegistry> &registry) {
     // 本地来源唯一出口：相对 → 绝对 + 原生分隔符；网络 / 流路径原样。
     // 加工对已加工路径幂等，保证往返不变式
-    const QString url = Util::resolveLocalPath(playUrl);
+    const QString url = Util::resolveSourcePath(playUrl);
     if (Util::isNetworkStreamPath(url)) {
         // N35 前缀分派：http(s) → HttpEntity（需非空 registry）；其余网络 / 流
         // 路径仍落 UnknownEntity 兜底。N48：判据改用 Util::isHttpUrl（唯一持有者，

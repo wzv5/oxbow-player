@@ -12,10 +12,12 @@
 #include "pch.h"
 
 #include <mpv/client.h>
+#include <mpv/stream_cb.h> // N52：RESOLVE(mpv_stream_cb_add_ro) 的符号声明
 
 #include "Constants.h"
 #include "MainWindow.h"
 #include "MpvController.h"
+#include "StreamRelay.h"
 
 // 本模块通过 MPV_CPLUGIN_DYNAMIC_SYM 把 mpv_* 编译为指向 pfn_* 的指针，
 // 这些指针本应由 mpv 在“直接加载的模块”里填充。但本模块在 Windows 上是由壳
@@ -56,7 +58,9 @@ static bool resolveMpvSymbols() {
     RESOLVE(mpv_get_property);
     RESOLVE(mpv_free);
     RESOLVE(mpv_free_node_contents); // B18：FILE_LOADED 主动读 NODE 属性后释放
+    RESOLVE(mpv_command_node);       // N52：loadfile 逐文件选项的节点通道
     RESOLVE(mpv_wait_event);
+    RESOLVE(mpv_stream_cb_add_ro); // N52：mpvqt:// 转接协议注册
 #undef RESOLVE
 
     if (missing) {
@@ -168,8 +172,19 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle) {
     installTranslator();
 
     auto *controller = new MpvController(handle);
+
+    // N52：转接协议适配层——shared_ptr 寿命覆盖 QApplication::exec() 全程
+    // （ADR-1：入口本就阻塞到退出）。装配硬顺序（N52 §2.5）：
+    // ① install 必须早于 startEventThread——首次 mpv_wait_event 解除 mpv 启动
+    //    门控后，命令行首文件即会 open 流；
+    // ② 必须早于任何提供者出生——列表在 PlaylistWidget 构造期读盘建提供者，
+    //    deliveryUrl 首次下发就要能从注册表取到 relay（经 MainWindow 构造参数传入）。
+    auto relay = std::make_shared<StreamRelay>();
+    if (!relay->install(handle))
+        return 1; // 协议注册失败：让 mpv 记为脚本加载失败，比静默残缺更可诊断
+
     const QString configFile = resolveConfigFilePath();
-    auto *window = new MainWindow(controller, configFile);
+    auto *window = new MainWindow(controller, configFile, std::move(relay));
     controller->setParent(window);
 
     // 作为 GUI 宿主，让 mpv 在播放列表结束后保持运行而不是直接退出

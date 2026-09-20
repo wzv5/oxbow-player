@@ -141,12 +141,12 @@ int BookmarkManager::removeInvalid() {
     int removed = 0;
     QStringList toRemove;
     for (const QString &key : std::as_const(m_order)) {
-        // 校验以原始显示路径为准（而非小写归一键）；先经 resolveLocalPath 把 file:// 转本地路径，
+        // 校验以原始显示路径为准（而非小写归一键）；先经 resolveSourcePath 把 file:// 转本地路径，
         // 使其能按本地文件做存在性判定（本地文件已删除则为失效项，应移除）。
         // 剩余的网络/流路径（http/ftp/stream 等，含 :// 且非
         // file:）保持原样、无法以文件存在性判定，须保留。
         const QString disp = m_displayOf.value(key, key);
-        const QString local = Util::resolveLocalPath(disp);
+        const QString local = Util::resolveSourcePath(disp);
         if (Util::isNetworkStreamPath(local))
             continue;
         if (!QFile::exists(local))

@@ -40,5 +40,8 @@ class ListSettingsDialog : public QDialog {
     QList<ProviderSettingsPage *> m_pages; // 与 providerCatalog() 同序
     QStackedWidget *m_pageStack = nullptr; // 行 3：只显示选中提供者的表单
     QStringList m_occupiedNames;           // 重名校验用
+    // N52：seed 存为成员——accept 期集中传接 listUuid（模态期间提供者恒存活，
+    // 调用方在 accept 之后才替换）
+    const PlaylistProvider *m_seed = nullptr;
     std::optional<std::shared_ptr<PlaylistProvider>> m_result;
 };

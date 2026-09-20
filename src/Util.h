@@ -83,7 +83,7 @@ bool isHttpUrl(const QString &path);
 // 纯字符串实现（禁用 QUrl）：产出参与跨来源逐字节比对（实体 playUrl / mpv 回显），
 // 经 QUrl 重序列化会在 userinfo 之外的段产生偏差，致比对失配。
 // 用于匹配形态、回显比对、书签展示路径与用户可见文案。
-// 禁止用于喂 mpv——喂 mpv 走提供者的 playbackUrl。
+// 禁止用于喂 mpv——喂 mpv 走提供者的 deliveryUrl（N52：直发形态经其调 playbackUrl）。
 QString stripUrlCredentials(const QString &url);
 
 // N48：与 stripUrlCredentials 成对的插入侧——在 http(s) URL 的 authority 起点插入
@@ -93,7 +93,8 @@ QString stripUrlCredentials(const QString &url);
 // strip(insert(u, c)) == u 构造性成立。
 // 入参先剥一次凭据（带 userinfo 的串绝不产出双段）；凭据段为空、非 http(s)、无 "://"、
 // authority 为空一律原样返回（绝不注入）。
-// 只用于"喂 mpv 的播放形态"（提供者 playbackUrl）：实体 playUrl 与持久化恒无凭据。
+// 只用于"喂 mpv 的播放形态"（提供者 playbackUrl，经 deliveryUrl 模板方法调入）：实体 playUrl
+// 与持久化恒无凭据。
 QString insertUrlCredentials(const QString &url, const QString &encodedCredentials);
 
 // N48：URL 的 path 段结束下标——首个 '?' 或 '#'（无则 size()）。纯字符串运算，不解析
@@ -109,11 +110,18 @@ qsizetype urlPathEnd(const QString &url);
 // 用于文件对话框返回值、拖放 url、目录枚举、WebDAV 条目 URL 等来源处一次性加工。
 QString nativePath(const QString &path);
 
+// "来源路径 → 内部形态"的唯一出口（N52 更名 resolveLocalPath → resolveSourcePath：
+// 它从不只处理本地路径——网络/流路径首行即原样返回；且 N52 起还要剥掉传输包装
+// （mpvqt:// → 条目身份），与 "local" 字面意思正相反）。首行经 StreamTransit::unwrap
+// 折叠还原（幂等，可重复施加），比对类（经 normalizePathForMatch）与显示类读点
+// 一并覆盖，UI 侧零处显式还原。
 // 本地路径相对→绝对（基于进程 CWD，纯字符串变换，不访问文件系统，文件不存在亦可），
-// 结果转原生分隔符；网络/流路径（含 :// 或非 file scheme）保持原样。cleanPath 由 absoluteFilePath
-// 已含。 既供 mpv 来源路径（propertyString / playlist
-// filename），也供手动输入的目录根等来源处加工， 即"来源路径 → 显示路径"的唯一出口。
-QString resolveLocalPath(const QString &path);
+// 结果转原生分隔符；网络/流路径（含 :// 或非 file scheme）保持原样。cleanPath 由
+// absoluteFilePath 已含。既供 mpv 来源路径（propertyString / playlist filename），
+// 也供手动输入的目录根等来源处加工。
+// 本函数是显示出口，不是匹配内核：要匹配形态一律调 normalizePathForMatch，
+// 要显示路径一律调本函数。
+QString resolveSourcePath(const QString &path);
 
 // 是否网络/流路径（含 :// 且非 file: 前缀）：本地目录提供者据此拒绝、mpv 源据此保持原样。
 // 用串前缀判定，避免 QUrl::scheme() 把 Windows 盘符 "C:\dir" 误判为 scheme、

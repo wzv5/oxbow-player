@@ -2,6 +2,10 @@
 
 #include "Util.h"
 
+// N52：依赖方向 Util → StreamTransit 单向（StreamTransit 是叶子，不认识 Util）。
+// 全仓 unwrap 只在此一处——"来源路径 → 内部形态"的唯一还原折叠点。
+#include "StreamTransit.h"
+
 namespace Util {
 
 QString formatFileSize(qint64 bytes) {
@@ -334,7 +338,8 @@ bool isHttpUrl(const QString &path) {
 // 而本函数产出要参与跨来源逐字节比对（实体 playUrl / mpv 回显），多动一个字节就把
 // 正常推送误判为外部变更。非 http(s)、无 "://"、authority 为空、无 userinfo 的输入
 // 一律恒等返回（幂等，对称剥离会重复施加）。跨场景共用：匹配形态、回显比对、书签
-// 展示路径、用户可见文案。禁止用于喂 mpv——喂 mpv 走提供者的 playbackUrl（N48 §2.4）
+// 展示路径、用户可见文案。禁止用于喂 mpv——喂 mpv 走提供者的 deliveryUrl（N48 §2.4；N52 起出口为
+// deliveryUrl）
 QString stripUrlCredentials(const QString &url) {
     if (!isHttpUrl(url))
         return url;
@@ -385,7 +390,7 @@ qsizetype urlPathEnd(const QString &url) {
 QString normalizePathForMatch(const QString &path) {
     // 本地路径先相对→绝对（基于进程 CWD，不访问文件系统），再统一分隔符；
     // Windows 额外转小写。仅用于内部匹配；UI 展示与向 mpv 传递始终保持原样。
-    const QString abs = Util::resolveLocalPath(path);
+    const QString abs = Util::resolveSourcePath(path);
     if (Util::isNetworkStreamPath(abs)) {
         // N37：URL 编码收敛仅对 http(s)（与 playUrlFileName 同口径——URL 语义只对
         // URI 路径成立）；其余网络协议维持 N35 既有形态（分隔符归一、不转小写）。
@@ -467,17 +472,27 @@ QIcon Util::fadedIcon(const QIcon &icon, qreal opacity) {
     return QIcon(out);
 }
 
-QString resolveLocalPath(const QString &path) {
+// N52：更名 resolveLocalPath → resolveSourcePath。理由：① 它从来不只处理本地
+// 路径——网络/流路径在首行即原样返回，入参也包括手工输入的目录根，"Local" 是
+// 既有误名；② N52 起本函数还要剥掉传输包装（mpvqt:// → 条目身份），与 "local"
+// 字面意思正相反。名字取"来源路径"义：入参是来自某个来源的路径串（mpv 属性、
+// 文件对话框、拖放、用户输入），产出是本插件内部认的路径/身份形态。
+QString resolveSourcePath(const QString &path) {
     if (path.isEmpty())
         return path;
-    if (Util::isNetworkStreamPath(path))
-        return path; // 网络/流：保持原样，不绝对化
+    // N52：剥传输包装——mpvqt:// 转接 URI 还原为条目身份。unwrap 幂等（非本
+    // 协议原样返回），故本折叠点可安全常驻首行，比对类与显示类读点一并覆盖：
+    // 走本函数或 normalizePathForMatch（其首行即本函数）的 mpv path 读取点
+    // 自动还原，UI 侧不再需要任何显式套函数。
+    const QString unwrapped = StreamTransit::unwrap(path);
+    if (Util::isNetworkStreamPath(unwrapped))
+        return unwrapped; // 网络/流：保持原样，不绝对化
     // 本地（含 file://、file:/、盘符路径、相对路径、UNC）：file: 前缀先转本地，
     // 其余相对→绝对（基于进程 CWD 的纯字符串变换，不访问文件系统，文件不存在亦可），
     // 结果转原生分隔符（即显示路径形态；网络/流已在上一步返回原样，不受 toNativeSeparators 影响）
-    QString local = path;
-    if (path.startsWith(QStringLiteral("file:"), Qt::CaseInsensitive)) {
-        const QUrl u(path);
+    QString local = unwrapped;
+    if (unwrapped.startsWith(QStringLiteral("file:"), Qt::CaseInsensitive)) {
+        const QUrl u(unwrapped);
         local = u.toLocalFile();
     }
     return QDir::toNativeSeparators(QFileInfo(local).absoluteFilePath());

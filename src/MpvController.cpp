@@ -2,6 +2,8 @@
 
 #include "MpvController.h"
 
+#include "StreamTransit.h" // N52：逐文件 cache 申报按 scheme 判定
+
 #include "FilterListWidget.h"
 
 namespace {
@@ -407,6 +409,70 @@ void MpvController::command(const QStringList &args) {
         argv.append(arg.constData());
     argv.append(nullptr);
     mpv_command(m_mpv, argv.data());
+}
+
+void MpvController::loadFile(const QString &url, const QString &appendMode) {
+    // 申报口径按 scheme 而非按来源（N52 §2.10）：cache=yes 治的是"mpv 认不出
+    // stream_cb 协议是网络流"，凡走 mpvqt:// 的流一律成立，与传输种类无关——
+    // 故留在 L1 的前缀判定里，不升成 ByteStream 的虚函数。
+    const QVariantMap opts = StreamTransit::perFileOptions(url);
+    if (opts.isEmpty()) {
+        // 既有三参数字符串通道：本地项命令与原行为逐字相同
+        command({QStringLiteral("loadfile"), url, appendMode});
+        return;
+    }
+
+    // 节点通道（走 mpv_command_node，不赌 command-string 的 JSON 自动识别）。
+    // 位序坑（N51 实证）：mpv 0.38 起 loadfile 第三参数是插入索引、选项 map 挤到
+    // 第四——append 语义下索引传 -1 占位；选项值必须字符串形态；漏传 index 的
+    // 报错是语焉不详的 invalid parameter(-4)。
+    const QByteArray cmd = QByteArrayLiteral("loadfile");
+    const QByteArray urlUtf8 = url.toUtf8();
+    const QByteArray modeUtf8 = appendMode.toUtf8();
+    const QByteArray optKey = QByteArrayLiteral("cache");
+    const QByteArray optValue =
+        opts.value(QStringLiteral("cache")).toString().toUtf8(); // 选项值必须字符串形态
+
+    // 选项 map 键值成对：keys[0] = "cache" → values[0] = "yes"。此前曾有实现把
+    // 键与值放进同一个双槽 node 数组再整体交给 values——num=1 时 values[0] 取到
+    // 的是键 "cache"，mpv 实收 cache=cache，choice 校验即报
+    // "Error parsing option cache (option parameter could not be parsed)"
+    mpv_node optionValue;
+    optionValue.format = MPV_FORMAT_STRING;
+    optionValue.u.string = const_cast<char *>(optValue.constData());
+
+    char *optionKeys[2] = {const_cast<char *>(optKey.constData()), nullptr};
+    mpv_node_list optionMapList;
+    optionMapList.num = 1;
+    optionMapList.keys = optionKeys;
+    optionMapList.values = &optionValue;
+
+    mpv_node argNodes[5];
+    argNodes[0].format = MPV_FORMAT_STRING;
+    argNodes[0].u.string = const_cast<char *>(cmd.constData());
+    argNodes[1].format = MPV_FORMAT_STRING;
+    argNodes[1].u.string = const_cast<char *>(urlUtf8.constData());
+    argNodes[2].format = MPV_FORMAT_STRING;
+    argNodes[2].u.string = const_cast<char *>(modeUtf8.constData());
+    argNodes[3].format = MPV_FORMAT_INT64;
+    argNodes[3].u.int64 = -1; // append 语义下索引占位
+    argNodes[4].format = MPV_FORMAT_NODE_MAP;
+    argNodes[4].u.list = &optionMapList; // map 与 array 同用 mpv_node_list（keys/values 成对）
+
+    mpv_node_list argList;
+    argList.num = 5;
+    argList.values = argNodes;
+
+    mpv_node argRoot;
+    argRoot.format = MPV_FORMAT_NODE_ARRAY;
+    argRoot.u.list = &argList;
+
+    mpv_node result;
+    const int err = mpv_command_node(m_mpv, &argRoot, &result);
+    if (err == 0)
+        mpv_free_node_contents(&result); // 节点内存按既有用法规还
+    else
+        qDebug() << "[mpvqt] loadfile(node) failed:" << err << url;
 }
 
 bool MpvController::setProperty(const QString &name, const QString &value) {

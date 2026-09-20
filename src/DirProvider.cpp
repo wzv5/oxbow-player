@@ -192,11 +192,11 @@ QString DirProvider::displayName() {
 
 QString DirProvider::normalizeRoot(const QString &text) {
     // 路径来源处（用户可手动输入，可能相对或分隔符不规范）：相对→绝对、转原生分隔符，
-    // 统一走 resolveLocalPath；网络/流保持原样（需求 #6 读写原样）
+    // 统一走 resolveSourcePath；网络/流保持原样（需求 #6 读写原样）
     const QString trimmed = text.trimmed();
     if (trimmed.isEmpty())
         return QString();
-    return Util::resolveLocalPath(trimmed);
+    return Util::resolveSourcePath(trimmed);
 }
 
 std::optional<QString> DirProvider::validateInput(const QString &rawRoot) {
@@ -371,7 +371,7 @@ DirProvider::enumerate(const QStringList &parent) const {
     out.entities.reserve(infos.size());
     for (const QFileInfo &fi : infos) {
         // 路径加工（绝对化 + 原生分隔符，B15）统一由 fromPlayUrl 内的
-        // resolveLocalPath 出口负责，此处不再预处理；registry 转交（本地路径忽略）
+        // resolveSourcePath 出口负责，此处不再预处理；registry 转交（本地路径忽略）
         auto entity = PlaylistEntity::fromPlayUrl(fi.absoluteFilePath(), registry());
         injectFileMeta(*entity, LocalFileEntity::fileMetaFrom(fi)); // 零成本注入
         out.entities.push_back(std::move(entity));
@@ -413,7 +413,7 @@ void DirProvider::collect(const QDir &dir, const QStringList &filters, bool recu
                           int maxDepth, QSet<QString> &visited, QFileInfoList &out,
                           QStringList &warnings) {
     // 文件层：命中扩展名的条目信息追加（N29：整个 QFileInfo 留给注入，
-    // 路径加工统一在 fromPlayUrl 的 resolveLocalPath 出口做）
+    // 路径加工统一在 fromPlayUrl 的 resolveSourcePath 出口做）
     const QFileInfoList files =
         dir.entryInfoList(filters, QDir::Files | QDir::Readable, QDir::NoSort);
     for (const QFileInfo &fi : files)

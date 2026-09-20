@@ -2,9 +2,6 @@
 
 #include "HttpClient.h"
 
-#include <cstring>
-#include <deque>
-
 // N34 实现。分两块，均在 .cpp 内、不上头文件：
 // 1. 共享传输（匿名命名空间）：专用网络线程 + 进程内唯一 QNAM + 缺陷表 + 等待原语。
 //    client 对象只是不可变缺省值的持有者，构造与析构均不碰传输层；
@@ -170,8 +167,18 @@ void streamingReadyRead(const std::shared_ptr<HttpClient::HttpJobState> &job,
             job->headReady = true;
             g_cond.wakeAll(); // 唤醒 waitHeaders 的等待者
         }
-        if (job->chunksBytes >= job->streamBufferBytes)
+        if (job->chunksBytes >= job->streamBufferBytes) {
+            // N52 探针（临时）：水位打满后的 Qt 侧滞留观测——若整文件灌在 Qt 缓冲，
+            // bytesAvailable 会无界增长；每 256 次命中采样一行（每次命中 = 一次
+            // readyRead 且我方不再取数）。与 readBufferSize() 的实际值同放一行，
+            // 直接验证该限流是否兑现
+            static std::atomic<int> s_gateHits{0};
+            if (s_gateHits.fetch_add(1, std::memory_order_relaxed) % 256 == 0)
+                qDebug() << "[mpvqt] probe watermark-full queue=" << job->chunksBytes
+                         << "qtBuf=" << reply->bytesAvailable()
+                         << "qtLimit=" << reply->readBufferSize();
             return; // 已到水位：留着让消费方取走后再续泵
+        }
     }
     // 锁外取数：readAll 不碰作业状态，容量以 Qt 侧读缓冲为界
     QByteArray d = reply->readAll();
@@ -337,7 +344,16 @@ void sendHop(const std::shared_ptr<HttpClient::HttpJobState> &job, QNetworkAcces
     if (!job->presetAuth.isEmpty())
         req.setRawHeader("Authorization", job->presetAuth);
 
-    QNetworkReply *reply = nam->sendCustomRequest(req, job->method, job->body);
+    // 流式作业的限流依赖 setReadBufferSize 的下游停读；但 CustomOperation 一旦
+    // 携带上传设备（含空 body 的 QByteArray 重载内部创建的 QBuffer），该限流即
+    // 完全失效——Qt 把整个响应无节制吸入 reply 缓冲（_probe-n52/qnam-buf 定向
+    // 对照：rb=512KB 从不读取，body=QByteArray 10 秒灌入 4.98GB / RSS 5.2GB；
+    // body=nullptr 精确停在 512KB；慢消费 drain 模式背压逐字节兑现）。插件整
+    // 文件内存增长即此。空 body 一律不挂上传设备；非空 body 照旧
+    QNetworkReply *reply =
+        job->body.isEmpty()
+            ? nam->sendCustomRequest(req, job->method, static_cast<QIODevice *>(nullptr))
+            : nam->sendCustomRequest(req, job->method, job->body);
     {
         QMutexLocker l(&g_mutex);
         if (job->finished) { // abort 抢先落定：立刻中止本跳，不产生更多流量
@@ -481,7 +497,10 @@ void finalizeJob(const std::shared_ptr<HttpClient::HttpJobState> &job, QNetworkR
     {
         QMutexLocker l(&g_mutex);
         if (job->finished) {
-            // 撤销 / 停机已先落定：结果已是 canceled，仅回收本跳 reply
+            // 撤销 / 停机已先落定：结果已是 canceled，仅回收本跳 reply；
+            // 摘除 job->reply——排队中的 abort lambda（QPointer 守护）与本回收
+            // 存在竞态，指针不得以悬垂形态残留
+            job->reply = nullptr;
             reply->deleteLater();
             return;
         }
@@ -890,16 +909,22 @@ void HttpClient::abort(const RequestId &id) {
     }
     if (!nam)
         return; // 传输已停：QNAM 与其子对象（reply / timer）随传输一并销毁
+    // QPointer 守护（N52 实测加固）：reply 的自然终态（如服务端断开触发
+    // RemoteHostClosed）在本投递排队期间走 finalizeJob「abort 先落定」分支，
+    // 该分支只回收 reply 不等本 lambda——排队执行到此处时 reply 可能已被
+    // deleteLater 销毁，裸指针虚调用 abort() 即 0xC0000005 执行冲突。
+    // reply 的析构与本 lambda 同在网络线程，QPointer 读写同线程，安全。
+    QPointer<QNetworkReply> replyGuard(reply);
     QMetaObject::invokeMethod(
         nam,
-        [reply, deadline] {
+        [replyGuard, deadline] {
             if (deadline) {
                 deadline->stop();
                 deadline->deleteLater();
             }
             // 尚未发出的作业正排在 QNAM 队列中，abort 把它摘掉且不产生网络流量
-            if (reply)
-                reply->abort();
+            if (replyGuard)
+                replyGuard->abort();
         },
         Qt::QueuedConnection);
 }

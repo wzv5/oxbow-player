@@ -32,6 +32,14 @@ endif()
 add_library(mpvqtcore MODULE
     src/plugin.cpp
     src/Constants.h
+    src/StreamTransit.cpp
+    src/StreamTransit.h
+    src/ByteStream.h
+    src/StreamEndpoint.h
+    src/HttpByteStream.cpp
+    src/HttpByteStream.h
+    src/StreamRelay.cpp
+    src/StreamRelay.h
     src/ActionManager.cpp
     src/ActionManager.h
     src/MainWindow.cpp
@@ -207,6 +215,12 @@ if(MPVQT_BUILD_TESTS)
         src/MediaInfoHelper.h
         src/FilterListWidget.cpp
         src/FilterListWidget.h
+        src/StreamTransit.cpp
+        src/StreamTransit.h
+        src/ByteStream.h
+        src/StreamEndpoint.h
+        src/HttpByteStream.cpp
+        src/HttpByteStream.h
         src/Util.cpp
         src/Util.h
         src/HttpClient.cpp
@@ -244,5 +258,7 @@ if(MPVQT_BUILD_TESTS)
     mpvqt_add_test(DirProvider)
     mpvqt_add_test(WebDavProvider)
     mpvqt_add_test(Util)
+    mpvqt_add_test(StreamTransit)
+    mpvqt_add_test(HttpByteStream)
     mpvqt_add_test(FilterList)
 endif()

@@ -6,7 +6,7 @@
 // N46 增补：容器 id 的无凭据形态构造（containerId）与浏览模式 INI 取值
 // （browseModeFromInt）。
 // N48 增补：条目恒无凭据（解析侧期望由"嵌入"改为"剥离"，自条目判定在带凭据基
-// URL 下仍须跳过）、playbackUrl 注入与剥离的往返不变式、非 http(s) href 跳过并
+// URL 下仍须跳过）、deliveryUrl 直发形态的注入与剥离往返不变式、非 http(s) href 跳过并
 // 合并告警。
 // 一类一可执行（R5）：ctest --test-dir build -C Debug -R WebDavProvider 跑本套件。
 
@@ -31,7 +31,7 @@ QUrl baseUrlWithCreds() {
     return url;
 }
 
-// N48：带凭据的提供者实例（枚举路径不参与，凭据只用于 playbackUrl）
+// N48：带凭据的提供者实例（枚举路径不参与，凭据只用于 playbackUrl（经 deliveryUrl 直发形态））
 std::shared_ptr<WebDavProvider> providerWith(const QString &user, const QString &password) {
     return std::make_shared<WebDavProvider>(kBase, user, password,
                                             WebDavProvider::BrowseMode::Layered, QStringList(),
@@ -485,13 +485,13 @@ void TestWebDavProvider::browseModeFromIntMapsAndFallsBack() {
 void TestWebDavProvider::playbackUrlInjectsAndRoundTrips() {
     // 空凭据：恒等（不注入、不产出空 userinfo 段）
     const auto plain = providerWith(QString(), QString());
-    QCOMPARE(plain->playbackUrl(expectUrl(QStringLiteral("a.mp4"))),
+    QCOMPARE(plain->deliveryUrl(expectUrl(QStringLiteral("a.mp4"))),
              expectUrl(QStringLiteral("a.mp4")));
 
     // 含分隔符 / 空格 / 非 ASCII / sub-delims 的凭据：注入后剥离必须逐字还原
     const QString clean = expectUrl(QStringLiteral("sub/a%20b.mp4"));
     const auto tricky = providerWith(QStringLiteral("u@x"), QStringLiteral("p:w@ss/word+!$&=% 中"));
-    const QString played = tricky->playbackUrl(clean);
+    const QString played = tricky->deliveryUrl(clean);
     QVERIFY(played != clean);
     QVERIFY(played.startsWith(QStringLiteral("http://")));
     QVERIFY(played.endsWith(QStringLiteral("@server/dav/sub/a%20b.mp4")));
@@ -514,14 +514,14 @@ void TestWebDavProvider::playbackUrlInjectsAndRoundTrips() {
 
     // path 中的 '@' 不受影响：定位规则只作用于 authority 段
     const QString atPath = expectUrl(QStringLiteral("a@b.mp4"));
-    QCOMPARE(Util::stripUrlCredentials(tricky->playbackUrl(atPath)), atPath);
+    QCOMPARE(Util::stripUrlCredentials(tricky->deliveryUrl(atPath)), atPath);
 
     // query 中的 '@' 同理（authority 终止于 '?'）
     const QString atQuery = expectUrl(QStringLiteral("a.mp4?token=x@y"));
-    QCOMPARE(Util::stripUrlCredentials(tricky->playbackUrl(atQuery)), atQuery);
+    QCOMPARE(Util::stripUrlCredentials(tricky->deliveryUrl(atQuery)), atQuery);
 
     // 非 http(s) 入参不注入（条目恒 http(s) 由解析侧保证，此处为同口径的守）
-    QCOMPARE(tricky->playbackUrl(QStringLiteral("rtsp://host/live")),
+    QCOMPARE(tricky->deliveryUrl(QStringLiteral("rtsp://host/live")),
              QStringLiteral("rtsp://host/live"));
 }
 

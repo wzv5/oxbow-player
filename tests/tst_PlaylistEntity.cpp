@@ -220,7 +220,7 @@ void TestPlaylistEntity::httpEntityKeyPreservesCase() {
 }
 
 void TestPlaylistEntity::factoryRoundtripIdempotent() {
-    // 本地路径：resolveLocalPath 加工（相对→绝对 + 原生分隔符）后往返不变
+    // 本地路径：resolveSourcePath 加工（相对→绝对 + 原生分隔符）后往返不变
     auto registry = std::make_shared<ServiceRegistry>();
     const QString local = QDir::tempPath() + QStringLiteral("/mpvqt_entity_roundtrip.mp4");
     auto e = PlaylistEntity::fromPlayUrl(local, registry);

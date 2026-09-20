@@ -2,10 +2,6 @@
 
 #include "pch.h"
 
-#include <mutex>
-#include <typeindex>
-#include <unordered_map>
-
 // 服务注册表（N35）：简易 IoC——类型键注册实例，调用方按类型解析，后续依赖同理注册。
 // 只接受实例不接受工厂：HttpClient 构造只是值对象拷贝 + 一次性传输，启动 /
 // 设置变更时饿汉提供足够；真有昂贵依赖那天再加 provideFactory 重载。

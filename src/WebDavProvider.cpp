@@ -3,8 +3,10 @@
 #include "WebDavProvider.h"
 
 #include "Constants.h"
+#include "HttpByteStream.h"
 #include "ProviderSettingsPage.h"
 #include "ServiceRegistry.h"
+#include "StreamEndpoint.h"
 #include "TraversalPolicy.h"
 #include "Util.h"
 #include "WebDavEntity.h"
@@ -59,6 +61,58 @@ WebDavProvider::WebDavProvider(const QString &rootUrl, const QString &user, cons
                                const std::shared_ptr<ServiceRegistry> &registry)
     : PlaylistProvider(registry), m_rootUrl(rootUrl), m_user(user), m_password(password),
       m_browseMode(mode), m_extensions(extensions) {}
+
+// ——N52：WebDAV 的来源解析点（来源私有的东西与参数页同级定义，不外露）——
+// openStream 就一行实质工作：identity（恒无 userinfo）+ 构造期收到的 user/password
+// → Util::insertUrlCredentials → 交 HttpByteStream::open。凭据的编码形态与
+// playbackUrl 同款（QUrl userInfo(FullyEncoded) 产出，"与既有路径逐字相同"）。
+namespace {
+class WebDavStreamEndpoint final : public StreamEndpoint {
+  public:
+    WebDavStreamEndpoint(const QString &user, const QString &password,
+                         std::shared_ptr<ServiceRegistry> registry)
+        : m_user(user), m_password(password), m_registry(std::move(registry)) {}
+
+    std::expected<std::shared_ptr<ByteStream>, QString>
+    openStream(const QString &identity) const override {
+        // 现取 client（resolve 的副本随流存活，N35 既有线程契约）；缺注册表/缺
+        // client 属装配错误，起流失败并记因，不静默
+        const auto client = m_registry ? m_registry->resolve<HttpClient>() : nullptr;
+        if (!client)
+            return std::unexpected(QStringLiteral("http client unavailable"));
+        HttpStreamTarget target;
+        if (!m_user.isEmpty() || !m_password.isEmpty()) {
+            QUrl cred;
+            cred.setUserName(m_user);
+            cred.setPassword(m_password);
+            const QString userinfo = cred.userInfo(QUrl::ComponentFormattingOption::FullyEncoded);
+            if (!userinfo.isEmpty())
+                target.url = Util::insertUrlCredentials(identity, userinfo);
+        }
+        if (target.url.isEmpty())
+            target.url = identity; // 无凭据可注入（皆空 / 编码为空）
+        // 背压水位取 HttpClient 内置默认（N51 实测口径维持）
+        auto opened = HttpByteStream::open(HttpByteStream::makeFeed(client), target);
+        if (!opened)
+            return std::unexpected(opened.error());
+        return opened.value(); // shared_ptr<HttpByteStream> → shared_ptr<ByteStream>
+    }
+
+  private:
+    QString m_user;                              // 可空；构造后不可变（N52 §2.3 契约 5）
+    QString m_password;                          // 可空
+    std::shared_ptr<ServiceRegistry> m_registry; // 现取 HttpClient 与可轮换令牌的唯一通道
+};
+} // namespace
+
+// N52：直链与转接都合法（首个 Optional 来源）；列表级偏好决定下发形态
+PlaylistProvider::TransitCapability WebDavProvider::transitCapability() const {
+    return TransitCapability::Optional;
+}
+
+std::shared_ptr<StreamEndpoint> WebDavProvider::createStreamEndpoint() const {
+    return std::make_shared<WebDavStreamEndpoint>(m_user, m_password, registry());
+}
 
 // WebDAV 目录的参数页（N44 §2.5.3）：URL 行 + 用户名行 + 密码行 + 浏览模式 +
 // 扩展名行。N46：原"包含子目录"复选框换为三选一的浏览模式下拉框（单行，与
@@ -115,6 +169,9 @@ class WebDavSettingsPage : public ProviderSettingsPage {
         form->addRow(tr("Filter"), extField);
 
         layout->addLayout(form);
+        // N52：转接行（Optional 类型 = 可勾选项）——基类一次实现，本页只此一行；
+        // 回显取 seed 的持久化偏好，新建列表 false 起。放在 stretch 之前即视觉底行
+        enableTransitOption(m_seed ? m_seed->transitPreference() : std::optional<bool>(false));
         // 同目录页：把被拉伸出来的余量压到内容之下，避免行间距被均摊撑大
         layout->addStretch(1);
 
@@ -145,7 +202,8 @@ class WebDavSettingsPage : public ProviderSettingsPage {
     bool hasChanges() const override {
         return !m_seed || urlValue() != m_seed->rootUrl() || userValue() != m_seed->user() ||
                passwordValue() != m_seed->password() || modeValue() != m_seed->browseMode() ||
-               extensionsValue() != m_seed->extensions();
+               extensionsValue() != m_seed->extensions() ||
+               transitEnabled() != m_seed->transitPreference().value_or(false);
     }
 
     std::shared_ptr<PlaylistProvider> build() const override {
@@ -403,7 +461,7 @@ WebDavProvider::enumerate(const QStringList &parent) const {
             }
             // N39：直接构造 WebDavEntity，不经工厂——工厂对 http(s) 只产无元数据
             // 能力的 HttpEntity（收编 / 静态表重载的落点）。二者对网络路径的
-            // 加工等价（resolveLocalPath 对网络路径原样返回），故绕过工厂无损
+            // 加工等价（resolveSourcePath 对网络路径原样返回），故绕过工厂无损
             auto entity = std::make_shared<WebDavEntity>(entry.playUrl, registry());
             if (entry.size || entry.modified) {
                 FileMeta fm;

@@ -11,12 +11,16 @@ class BookmarkManager;
 class BookmarkEditorDialog;
 class ChapterSlider;
 class MarkAggregator; // N15：章节+书签标记聚合器（定义于 MainWindow.cpp）
+class StreamRelay;    // N52：mpv 自定义协议适配层（定义于 StreamRelay.h）
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
   public:
+    // N52：relay 由 plugin.cpp 构造并 install 后传入，构造期收下（不在 show()
+    // 之后才装配——列表构造期就要能从注册表取到 relay）；本类仅持有与转交
+    // PlaylistWidget（provide 进注册表），不做其他使用
     explicit MainWindow(MpvController *controller, const QString &configFile = QString(),
-                        QWidget *parent = nullptr);
+                        std::shared_ptr<StreamRelay> relay = nullptr, QWidget *parent = nullptr);
 
     // 视频显示区域（mpv 通过 wid 嵌入的目标窗口）
     QWidget *videoWidget() const { return m_videoWidget; }
@@ -142,7 +146,9 @@ class MainWindow : public QMainWindow {
     void onAddBookmark();
 
     MpvController *m_controller;
-    QString m_configFile;               // 配置文件完整路径（插件 DLL 同目录下的 mpv-qt.ini）
+    QString m_configFile; // 配置文件完整路径（插件 DLL 同目录下的 mpv-qt.ini）
+    // N52：转接协议适配层（寿命归 plugin.cpp 的 shared_ptr，覆盖 exec 全程）
+    std::shared_ptr<StreamRelay> m_relay;
     ActionManager *m_actions = nullptr; // A15：全部 UI 动作出生与登记处，先于容器构建
     QSplitter *m_splitter = nullptr;
     // 视频显示区域（mpv wid 嵌入目标）：主窗直接子控件（N3），

@@ -32,7 +32,10 @@ class ProviderSettingsPage;
 // 再经 Util::nativePath 收口取编码形态输出；此后 playUrl 全链路只读转发，任何环节
 // 不得再改（匹配经 normalizePathForMatch 落键，setPlaylist 收编判定原串）。
 // 凭据只在两个使用点注入：PROPFIND 请求 URL（enumerate 内逐请求注入）与喂 mpv
-// 播放（playbackUrl）——二者都不进实体、不落盘。
+// 播放（playbackUrl，经基类 deliveryUrl 模板方法在直发形态下调入；开启转接时
+// 凭据经 WebDavStreamEndpoint 在 open 期注入，播放 URL 不携带）——二者都不进
+// 实体、不落盘。
+// N52：转接能力取 Optional——直链与转接都合法，列表级偏好决定下发形态。
 class WebDavProvider : public PlaylistProvider {
   public:
     // N46 §2.1：浏览模式（三选一）。枚举值序即参数页下拉框的选项序，亦即 INI 的
@@ -56,10 +59,9 @@ class WebDavProvider : public PlaylistProvider {
     bool supportsModify() const override;
     // 显式 true：内容以枚举为准不可增删，但可排序并持久化规则（与目录表同形）
     bool supportsSort() const override;
-    // N48：喂 mpv 的播放形态——在 URL 的 authority 起点插入 `编码后user:编码后pass@`
-    // （凭据皆空恒等返回）。条目恒无 userinfo（resolveEntryUrl 恒剥），故这是凭据进入
-    // 播放链的唯一入口；产出只喂 mpv，不进实体、不落盘、不参与比对
-    QString playbackUrl(const QString &playUrl) const override;
+    // N52：直链与转接都合法（首个 Optional 来源）；端点在 createStreamEndpoint 现造
+    TransitCapability transitCapability() const override;
+    std::shared_ptr<StreamEndpoint> createStreamEndpoint() const override;
 
     // 当前语言下的显示名（无译文时即英文源）；登记表以函数指针引用（N44）
     static QString displayName();
@@ -98,6 +100,15 @@ class WebDavProvider : public PlaylistProvider {
     BrowseMode browseMode() const { return m_browseMode; }
     QStringList extensions() const { return m_extensions; }
 
+  protected:
+    // N48：喂 mpv 的播放形态——在 URL 的 authority 起点插入 `编码后user:编码后pass@`
+    // （凭据皆空恒等返回）。条目恒无 userinfo（resolveEntryUrl 恒剥），故这是凭据进入
+    // 播放链的唯一入口；产出只喂 mpv，不进实体、不落盘、不参与比对。
+    // N52：降为 protected（访问段与签名位置移动，函数体一行不动）——公开出口只有
+    // 基类非虚的 deliveryUrl，usesTransit() 为假才会调到这里
+    QString playbackUrl(const QString &playUrl) const override;
+
+  public:
     void saveSettings(QSettings &settings) const override;
 
     static std::shared_ptr<PlaylistProvider> load(QSettings &settings,

@@ -8,7 +8,7 @@ ListSettingsDialog::ListSettingsDialog(QWidget *parent, const QString &currentNa
                                        const PlaylistProvider *current,
                                        const QStringList &occupiedNames,
                                        const std::shared_ptr<ServiceRegistry> &registry)
-    : QDialog(parent), m_occupiedNames(occupiedNames) {
+    : QDialog(parent), m_occupiedNames(occupiedNames), m_seed(current) {
     setWindowTitle(tr("List Settings"));
     // 最小宽度写死 450：窗口宽度本由 sizeHint 链算出（行 2 单选项数、行 3 当前页表单、
     // 按钮行三者取最大），内容窄的页（如静态页只有一句提示）会把窗口压得很窄。
@@ -113,7 +113,16 @@ void ListSettingsDialog::accept() {
         return; // 留在对话框
     }
     // 未变更（存量同类型且参数未动）→ 不产出新提供者，调用方仅应用改名
-    if (page->hasChanges())
+    if (page->hasChanges()) {
         m_result = page->build();
+        // N52 §2.7 / §2.8：身份传接收进本对话框一处——build() 产出新提供者后统一
+        // adoptListUuid（allowBusy=true，编辑换身接回旧身份），新增提供者不需要知道
+        // 身份传接这回事。转接偏好仅对 Optional 写（hasTransitOption() 即 Optional 行）
+        if (*m_result) {
+            (*m_result)->adoptListUuid(m_seed ? m_seed->listUuid() : QString(), /*allowBusy=*/true);
+            if (page->hasTransitOption())
+                (*m_result)->setTransitPreference(page->transitEnabled());
+        }
+    }
     QDialog::accept();
 }

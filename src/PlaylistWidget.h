@@ -8,6 +8,7 @@
 
 class MpvController;
 class ServiceRegistry; // N35：服务注册表（成员以 shared_ptr 持有）
+class StreamRelay;     // N52：转接协议适配层（ctor 传入并 provide 进注册表）
 
 // 右侧播放列表：每个 tab 对应一个播放列表，tab 标题为列表名。
 // 约定：第一个 tab 名为"默认"，不可删除；其余 tab 持久化保存到 INI 配置文件。
@@ -44,7 +45,11 @@ class PlaylistWidget : public QTabWidget {
     static constexpr int ContainerRole = Qt::UserRole + 3;  // 容器行（存容器 id，QString）
     static constexpr int ParentLinkRole = Qt::UserRole + 4; // "上一级"行（bool）
 
-    explicit PlaylistWidget(const QString &configFile = QString(), QWidget *parent = nullptr);
+    // N52：relay 自 MainWindow 构造参数传入（plugin.cpp 创建并 install），ctor 内
+    // provide<StreamRelayIf> 进注册表——硬顺序②：必须早于任何提供者出生（列表在
+    // 本构造期读盘建提供者，deliveryUrl 首次下发就要能从注册表取到 relay）
+    explicit PlaylistWidget(const QString &configFile, std::shared_ptr<StreamRelay> relay,
+                            QWidget *parent = nullptr);
     ~PlaylistWidget() override; // N32：非阻塞收尾——作废并取消在途任务后立即返回（不再等待）
 
     // 注入控制器（弱引用）：N30 起四步式在停止前读 pause、归位读 path / idle-active
