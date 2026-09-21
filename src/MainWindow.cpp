@@ -627,6 +627,10 @@ void MainWindow::connectController() {
     });
 
     connect(m_playlist, &PlaylistWidget::playRequested, this, &MainWindow::onPlayRequested);
+    // N54：书签层级定位的两种结局——播放决策三档与失败策略都在本类（widget 只切层
+    // 与定位，不知道 mpv 现状，也不报错）
+    connect(m_playlist, &PlaylistWidget::levelItemReady, this, &MainWindow::onLevelItemReady);
+    connect(m_playlist, &PlaylistWidget::levelItemFailed, this, &MainWindow::onLevelItemFailed);
     connect(m_playlist, &PlaylistWidget::filesAdded, this, &MainWindow::onFilesAdded);
     connect(m_playlist, &PlaylistWidget::removeRequested, this, &MainWindow::onRemoveRequested);
     connect(m_playlist, &PlaylistWidget::clearRequested, this, &MainWindow::onClearRequested);
@@ -2265,8 +2269,16 @@ void MainWindow::rebuildChapterMenu() {
             a->setProperty("title", it.title);
             m_chapterGroup->addAction(a);
             const double t = it.time;
-            connect(a, &QAction::triggered, this,
-                    [this, curDisplay, t] { jumpToFileTime(curDisplay, t); });
+            // N54：书签条目带上它自带的来源（列表身份 + 所在层），走"回绑定列表"的
+            // 跳转；章节条目属"当前文件的这一时刻"，恒在现有列表里解决，不传来源
+            if (it.isBookmark) {
+                const BookmarkManager::Origin origin = m_bookmarkMgr->bookmarkOrigin(curPath);
+                connect(a, &QAction::triggered, this,
+                        [this, curDisplay, t, origin] { jumpToBookmark(curDisplay, t, origin); });
+            } else {
+                connect(a, &QAction::triggered, this,
+                        [this, curDisplay, t] { jumpToChapter(curDisplay, t); });
+            }
         }
     };
 
@@ -2306,7 +2318,11 @@ void MainWindow::rebuildChapterMenu() {
     updateChapterMenuChecked();
 }
 
-void MainWindow::jumpToFileTime(const QString &path, double time) {
+// N54：章节跳转。原 jumpToFileTime 函数体逐字沿用（改名 + 末尾四行收进
+// fallbackPlayInDefaultTab，零行为变化）——章节语义本就是“当前文件的这一时刻”，
+// 只能在手上现有的列表里解决，那套“先扫当前 tab、再扫播放 tab、末尾兜底默认 tab”
+// 的扫描对它成立且无可替代
+void MainWindow::jumpToChapter(const QString &path, double time) {
     if (path.isEmpty())
         return;
     const QString norm = Util::normalizePathForMatch(path);
@@ -2362,10 +2378,117 @@ void MainWindow::jumpToFileTime(const QString &path, double time) {
         return;
     }
     // 复用“打开文件”逻辑：清空默认列表后推入新文件并跳转
+    fallbackPlayInDefaultTab(path, time);
+}
+
+// N54 §2.2：书签跳转。只认书签自带的身份，两条路——回绑定的列表与层，或回默认 tab；
+// 不再有“先在别的列表里找一把”的扫描（那套扫描是列表身份缺位时代的替代品）
+void MainWindow::jumpToBookmark(const QString &path, double time,
+                                const BookmarkManager::Origin &origin) {
+    if (path.isEmpty())
+        return;
+    // 第 1 步·本地缺失闸门：文件不在磁盘上，两条路都放不出来，直接说明并终止——
+    // 不切 tab、不加载列表、不回退（判据与书签失效清理同源，Util::isMissingLocalSource）
+    if (Util::isMissingLocalSource(path)) {
+        warnBookmarkJump(tr("The bookmarked file no longer exists on disk."), path, QString());
+        return;
+    }
+    PlaylistWidget::LevelJump req;
+    req.itemKey = Util::normalizePathForMatch(path);
+    req.time = time;
+    if (origin.isValid()) {
+        const int tab = m_playlist->tabIndexOfListUuid(origin.listUuid);
+        if (tab >= 0) {
+            req.tab = tab;
+            req.levelIds = origin.levelIds;
+            m_playlist->requestLevelItemJump(req);
+            return;
+        }
+    }
+    // 无身份、或所属列表已删：目标退化为默认 tab 的队列根层——那里可能还留着这一项
+    // （无身份书签本就出生于此）。不为“列表已删”另设早退分支：定位成败统一由回报通道
+    // 裁决，失败策略见 onLevelItemFailed
+    req.tab = 0;
+    req.levelIds = m_playlist->queueRootIdsOf(0);
+    m_playlist->requestLevelItemJump(req);
+}
+
+// N54 §2.2 第 3 步：命中即播，三档全走既有出口（与 jumpToChapter 的三档同一形状）。
+// widget 已把目标层换入前台（不变式：req.tab 的显示层 == req.levelIds），故新队列直取
+// 当前层出口；entityIndex 是实体序，即 mpv playlist-pos 语义
+void MainWindow::onLevelItemReady(const PlaylistWidget::LevelJump &req, int entityIndex) {
+    const QString path = m_bookmarkMgr->displayPath(req.itemKey);
+    const bool sameQueue = req.tab == m_playlist->playingTabIndex() &&
+                           req.levelIds == m_playlist->queueRootIdsOf(req.tab);
+    if (sameQueue) {
+        // 目标层就是此刻这份队列：内容基准没变，重推纯属自扰（重载文件、转接流重开、
+        // 可听中断）——同列表内只切条目
+        if (entityIndex == m_playlistPos) {
+            m_controller->command(
+                {QStringLiteral("seek"), QString::number(req.time), QStringLiteral("absolute")});
+        } else {
+            playAt(entityIndex);
+            m_pendingSeekRow = entityIndex;
+            m_pendingSeekTime = req.time;
+        }
+        return;
+    }
+    m_playlist->markPlayingTab(req.tab); // 队列根在此重锚到该层（N45 §2.1）
+    m_playlist->requestTab(req.tab);
+    onPlayRequested(m_playlist->currentLayerFilesOf(req.tab), req.tab, entityIndex, req.time);
+}
+
+// N54 §2.2 第 4 步 + §2.5：失败策略是一个布尔。本地项在磁盘上，回默认 tab 必然可播，
+// 静默回退不打扰；远端项回不去所属列表就没有可靠的播放形态（N48 之后 URL 恒无凭据、
+// N52 的转接 URI 又依赖所属列表的端点），故一律弹窗中止，不做注定失败的尝试。
+// 三类原因共用同一条弹窗，detail 只改正文不改行为
+void MainWindow::onLevelItemFailed(const PlaylistWidget::LevelJump &req,
+                                   PlaylistWidget::JumpFailure why, const QString &detail) {
+    const QString path = m_bookmarkMgr->displayPath(req.itemKey);
+    // 本地/远端判据单点在 Util::isLocalSourcePath（与书签失效清理同一份）
+    if (Util::isLocalSourcePath(path)) {
+        fallbackPlayInDefaultTab(path, req.time);
+        return;
+    }
+    QString reason;
+    switch (why) {
+    case PlaylistWidget::JumpFailure::ListGone:
+        reason = tr("The list this bookmark belongs to no longer exists.");
+        break;
+    case PlaylistWidget::JumpFailure::LevelLoadFailed:
+        // 正文不提"层级 / 层"这类内部概念（用户视角只有"这个列表打不开"）；detail 是
+        // 提供者回传的原文（widget 只在本类失败时填），交 warnBookmarkJump 进正文之外
+        reason = tr("Failed to load the list.");
+        break;
+    case PlaylistWidget::JumpFailure::ItemNotFound:
+        reason = tr("The bookmarked item could not be found in its list.");
+        break;
+    }
+    warnBookmarkJump(reason, path, detail);
+}
+
+// 把单个文件作为会话镜像推入默认 tab（默认 tab 不落盘、可随时被替换）。
+// N54：唯一调用方是书签跳转的两条兜底（本地项回退、章节跳转扫不到时的旧路径）
+void MainWindow::fallbackPlayInDefaultTab(const QString &path, double time) {
     m_playlist->setDefaultTabFiles({path});
     m_playlist->markPlayingTab(0);
     m_playlist->requestTab(0); // N19：忙时排队
     onPlayRequested({path}, 0, 0, time);
+}
+
+// N54：书签跳转的报错出口。正文恒为一句人话（不含"层级"这类内部词），文件路径与
+// 提供者回传的原文进 informativeText——长 URL 不挤进正文（破版），排查信息也不丢
+void MainWindow::warnBookmarkJump(const QString &reason, const QString &path,
+                                  const QString &detail) {
+    QStringList info;
+    if (!path.isEmpty())
+        info << path;
+    if (!detail.isEmpty())
+        info << detail;
+    QMessageBox box(QMessageBox::Warning, tr("Bookmark Jump"), reason, QMessageBox::Ok, this);
+    if (!info.isEmpty())
+        box.setInformativeText(info.join(QLatin1Char('\n')));
+    box.exec();
 }
 
 void MainWindow::ensureBookmarkEditor() {
@@ -2378,7 +2501,13 @@ void MainWindow::ensureBookmarkEditor() {
     const QString curKey =
         Util::normalizePathForMatch(m_controller->propertyString(QStringLiteral("path")));
     m_bookmarkEditor = new BookmarkEditorDialog(
-        m_bookmarkMgr, [this](const QString &p, double t) { jumpToFileTime(p, t); }, curKey, this);
+        m_bookmarkMgr,
+        [this](const QString &p, double t, const BookmarkManager::Origin &origin) {
+            jumpToBookmark(p, t, origin); // N54：来源由对话框按选中项的键现取后随行
+        },
+        [this](const QString &uuid) { return m_playlist->listNameOfUuid(uuid); }, // N54 列表名
+        [this](const QString &uuid) { return m_playlist->tabIndexOfListUuid(uuid) >= 0; }, curKey,
+        this);
     m_bookmarkEditor->setAttribute(Qt::WA_DeleteOnClose, true);
     connect(m_bookmarkEditor, &QObject::destroyed, this, [this] { m_bookmarkEditor = nullptr; });
     m_bookmarkEditor->show();
@@ -2393,25 +2522,22 @@ void MainWindow::onAddBookmark() {
         return;
     const QString path = Util::normalizePathForMatch(rawPath);
     const double t = m_timePos;
-    QString title;
-    if (m_bookmarkMgr) {
-        const auto list = m_marks->bookmarks(path);
-        QSet<QString> titles;
-        for (const auto &b : list)
-            titles.insert(b.title);
-        int n = 1;
-        while (true) {
-            const QString cand = tr("Bookmark %1").arg(n);
-            if (!titles.contains(cand)) {
-                title = cand;
-                break;
-            }
-            ++n;
-        }
-    } else {
-        title = tr("Bookmark 1");
-    }
-    m_bookmarkMgr->addBookmark(rawPath, t, title);
+    // 自动命名：取"本文件既有书签名的最大序号 +1"，与播放列表自动命名共用同一份算法
+    // （Util::nextSequenceNumber）。原实现找的是"第一个空号"——已有 Bookmark 1 与 3 时
+    // 会补出 2，删掉中间一条后新条目又能复用其号，序号不随时间单调、读不出先后。
+    // 作用域仍是"本文件的书签集"（各文件各自从 1 起属既有语义，本轮不动）
+    QStringList titles;
+    for (const auto &b : m_marks->bookmarks(path))
+        titles << b.title;
+    const QString title = tr("Bookmark %1").arg(Util::nextSequenceNumber(tr("Bookmark "), titles));
+    // N54：来源 = 播放 tab 的列表身份 + 其队列根层 id 序列。此刻正播项必在播放 tab 的
+    // 队列根层（凡 mpv 侧语义一律在队列根层上工作，N45 §2.4.2），所以"这条书签在哪一层"
+    // 是现成且无歧义的，无需推断。默认 tab 不落盘、无持久身份（N52 §2.7）→ 存空
+    BookmarkManager::Origin origin;
+    const int playingTab = m_playlist->playingTabIndex();
+    if (playingTab > 0)
+        origin = {m_playlist->listUuidOf(playingTab), m_playlist->queueRootIdsOf(playingTab)};
+    m_bookmarkMgr->addBookmark(rawPath, t, title, origin);
     showOsd(tr("Bookmark added: [%1] %2").arg(Util::formatTimeHMSms(t), title));
 }
 

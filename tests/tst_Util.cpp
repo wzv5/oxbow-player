@@ -6,6 +6,7 @@
 
 #include "pch.h"
 
+#include <QTemporaryDir>
 #include <QtTest/QtTest>
 
 #include "Util.h"
@@ -68,6 +69,12 @@ class TestUtil : public QObject {
     void insertUrlCredentialsInsertsOrLeavesAlone();
     // ——N48：urlPathEnd（显示名取末段与基 URL 尾斜杠补位共用的分界口径）——
     void urlPathEndFindsSpecBoundary();
+    // ——N54：isMissingLocalSource（本地来源缺失判据，书签失效清理与书签跳转共用）——
+    // 存在/不存在/目录/file:///网络与流/mpvqt:// 折叠/相对名绝对化后判定
+    void missingLocalSourceJudgesByForm();
+    // ——N54：nextSequenceNumber（播放列表与书签共用的自动命名算法）——
+    // 最大序号 +1 而非第一个空号；前缀不匹配与序号段解析失败一律不计入
+    void nextSequenceNumberTakesMaxPlusOne();
 };
 
 void TestUtil::emptyInputYieldsNoSegments() {
@@ -403,6 +410,72 @@ void TestUtil::urlPathEndFindsSpecBoundary() {
     QCOMPARE(Util::urlPathEnd(QStringLiteral("http://host/dav/")), qsizetype(16));
     // 分界即首字符
     QCOMPARE(Util::urlPathEnd(QStringLiteral("?q")), qsizetype(0));
+}
+
+// N54：本地来源缺失判据（书签失效清理与书签跳转共用）。三件事各钉一刀：
+// 网络/流恒假（不可判定 ≠ 缺失）、目录不算缺失（QFileInfo 而非 QFile 的存在性）、
+// 相对名先绝对化再判定、file:// 与 mpvqt:// 经 resolveSourcePath 折叠后再判
+void TestUtil::missingLocalSourceJudgesByForm() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString here = dir.filePath(QStringLiteral("here.mkv"));
+    {
+        QFile f(here);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("x");
+    }
+    const QString gone = dir.filePath(QStringLiteral("gone.mkv"));
+
+    QVERIFY(!Util::isMissingLocalSource(here));
+    QVERIFY(Util::isMissingLocalSource(gone));
+    // 目录：QFile::exists 在 Windows 判假，会被误当失效——判据取 QFileInfo::exists，
+    // 与 LocalFileEntity::exists() 同口径（mpv 能播目录，目录不是失效项）
+    QVERIFY(!Util::isMissingLocalSource(dir.path()));
+    QVERIFY(!Util::isMissingLocalSource(QString()));
+
+    // 网络 / 流：保持原样、无从以文件存在性判定，一律假
+    QVERIFY(!Util::isMissingLocalSource(QStringLiteral("http://host/dav/a.mkv")));
+    QVERIFY(!Util::isMissingLocalSource(QStringLiteral("https://user:pw@host/a.mkv")));
+    QVERIFY(!Util::isMissingLocalSource(QStringLiteral("rtsp://host/stream")));
+    // N52 折叠：转接 URI 先还原成条目身份（此处是 http URL）→ 仍判假
+    QVERIFY(
+        !Util::isMissingLocalSource(QStringLiteral("mpvqt://11111111-2222-3333-4444-555555555555/"
+                                                   "http%3A%2F%2Fhost%2Fdav%2Fa.mkv")));
+
+    // file:// 形态转本地后判定
+    QVERIFY(!Util::isMissingLocalSource(QUrl::fromLocalFile(here).toString()));
+    QVERIFY(Util::isMissingLocalSource(QUrl::fromLocalFile(gone).toString()));
+
+    // 相对名：绝对化（基于进程 CWD 的纯字符串变换）后判定，不因"非绝对路径"早退
+    QVERIFY(Util::isMissingLocalSource(QStringLiteral("mpvqt-absent-probe-file.mkv")));
+}
+
+// N54：自动命名的单点。钉住两件事——① 取"最大 +1"而不是"第一个空号"（1 与 3 并存时
+// 出 4，不出 2；删掉中间一条也不复用其号）；② 只有"前缀 + 纯数字"才占号，译文名、
+// 手改名、带尾巴的名一律跳过，不会把新号挤到不可预期的位置
+void TestUtil::nextSequenceNumberTakesMaxPlusOne() {
+    const QString p = QStringLiteral("Bookmark ");
+    QCOMPARE(Util::nextSequenceNumber(p, {}), 1);
+    QCOMPARE(Util::nextSequenceNumber(p, {QStringLiteral("Bookmark 1")}), 2);
+    QCOMPARE(
+        Util::nextSequenceNumber(p, {QStringLiteral("Bookmark 1"), QStringLiteral("Bookmark 3")}),
+        4); // 关键用例：空号 2 不复用
+    QCOMPARE(
+        Util::nextSequenceNumber(p, {QStringLiteral("Bookmark 7"), QStringLiteral("Bookmark 2"),
+                                     QStringLiteral("Bookmark 40")}),
+        41); // 最大者胜出，与出现次序无关
+    // 非本算法生出的名字不占号
+    QCOMPARE(
+        Util::nextSequenceNumber(p, {QStringLiteral("My intro"), QStringLiteral("Bookmark 3b"),
+                                     QStringLiteral("Bookmark "), QStringLiteral("Bookmark -5"),
+                                     QStringLiteral("Playlist 99")}),
+        1);
+    // 前导零按十进制解析（"007" → 7）
+    QCOMPARE(Util::nextSequenceNumber(p, {QStringLiteral("Bookmark 007")}), 8);
+    // 前缀区分大小写与逐字节：另一个前缀自成一号段（播放列表与书签各自独立计数）
+    QCOMPARE(Util::nextSequenceNumber(QStringLiteral("Playlist "),
+                                      {QStringLiteral("Playlist 5"), QStringLiteral("Bookmark 9")}),
+             6);
 }
 
 // 一类一可执行（R5）：自带 main（QTEST_GUILESS_MAIN）

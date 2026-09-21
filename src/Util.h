@@ -58,6 +58,17 @@ bool parseTimeHMSms(const QString &text, double *outSeconds);
 // 通用：定点小数去末尾 0（"24.00" -> "24"、"44.10" -> "44.1"）
 QString trimTrailingZeros(const QString &fixed);
 
+// 自动命名共用算法：既有名字中形如 "<prefix><十进制整数>" 的最大序号 +1（无匹配即 1）。
+// 取"最大 +1"而非"第一个空号"——后者在已有 1 与 3 时会补出 2，删掉中间一条后新名字
+// 又能复用其号，序号不随时间单调，名字就读不出先后。播放列表
+// （PlaylistWidget::createNewList）与书签（MainWindow::onAddBookmark）共用这一条规则，
+// 故单点在此。本函数只答"下一个号是多少"，成品名仍由调用方按自己的模板拼
+// （tr("Playlist %1").arg(...)）——不在这里返回整串，是为了不把各家的译文模板吞掉。
+// prefix 传**已翻译**的前缀（含其尾随分隔，如 tr("Playlist ")），比对逐字节；
+// 序号段解析失败（"List 3b"、"List " 空尾段）不计入，但 toInt 容忍首尾空白，
+// 故 "List 03 " 与 "List 3" 同样按 3 计入
+int nextSequenceNumber(const QString &prefix, const QStringList &existing);
+
 // 路径规范化（仅内部匹配用：元数据仓键 / 书签键 / 回显比对）。
 // 本地路径先相对→绝对（基于进程 CWD，不访问文件系统，文件不存在亦可），再统一分隔符；
 // Windows 额外转小写。N35：网络路径不转小写（URL 大小写敏感，key 逐字节）。
@@ -127,6 +138,17 @@ QString resolveSourcePath(const QString &path);
 // 用串前缀判定，避免 QUrl::scheme() 把 Windows 盘符 "C:\dir" 误判为 scheme、
 // 也避免 QUrl::fromUserInput 把相对名（如 "a"）误判为非本地。
 bool isNetworkStreamPath(const QString &path);
+
+// 是否本地来源路径：经 resolveSourcePath（含 mpvqt:// 折叠）后**不是**网络/流形态。
+// 判据单点在此——isMissingLocalSource 用它，书签失效清理与书签跳转的本地/远端分流也
+// 用它（两处同口径，不各写一遍 !isNetworkStreamPath(resolveSourcePath(...))）
+bool isLocalSourcePath(const QString &path);
+
+// N54：本地来源是否已从磁盘消失——入参为显示路径，先经 resolveSourcePath（含
+// mpvqt:// 折叠），网络/流路径恒假（不可判定 ≠ 缺失），否则按 QFileInfo::exists 判定。
+// 与实体侧 isLocalFile() && !exists() 同口径，是"这条来源能不能就地播"的判据单点
+// （书签失效清理与书签跳转共用）。目录不算缺失（mpv 能播目录）。
+bool isMissingLocalSource(const QString &path);
 
 // N25：按序子序列判定——sub 的元素能否在 full 中按原序不跳序地逐一命中（双指针，O(n)）。
 // 空序列是任何序列的子序列；两序列相等亦返回 true。

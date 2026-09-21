@@ -202,6 +202,8 @@ if(MPVQT_BUILD_TESTS)
         src/StaticProvider.h
         src/MpvConf.cpp
         src/MpvConf.h
+        src/BookmarkManager.cpp
+        src/BookmarkManager.h
         src/PlaylistEntity.cpp
         src/PlaylistEntity.h
         src/LocalFileEntity.cpp
@@ -258,6 +260,7 @@ if(MPVQT_BUILD_TESTS)
     mpvqt_add_test(DirProvider)
     mpvqt_add_test(WebDavProvider)
     mpvqt_add_test(Util)
+    mpvqt_add_test(BookmarkManager)
     mpvqt_add_test(StreamTransit)
     mpvqt_add_test(HttpByteStream)
     mpvqt_add_test(FilterList)

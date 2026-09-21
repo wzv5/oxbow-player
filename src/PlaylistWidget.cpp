@@ -337,6 +337,36 @@ QStringList PlaylistWidget::playbackFiles(int tabIndex, const QStringList &files
     return out;
 }
 
+// ——N54 列表身份只读出口（书签按身份回跳的查询面）——
+
+QString PlaylistWidget::listUuidOf(int tabIndex) const {
+    const PlaylistProvider *p = providerAt(tabIndex);
+    return p ? p->listUuid() : QString();
+}
+
+QStringList PlaylistWidget::queueRootIdsOf(int tabIndex) const {
+    return queueRootIdsOf(listAt(tabIndex));
+}
+
+// 按列表身份找 tab。比对两侧统一 toLower——QUuid 的 WithoutBraces 形态本已小写，
+// 但落盘/读取经 INI 与用户手改都可能换大小写，与 StreamRelay 端点表同一口径，
+// 不再自造第二套规则。默认 tab 恒跳过：它的身份不落盘（N52 §2.7），重启后必是
+// 另一个值，认它等于认错——无身份书签因此一律落默认 tab 兜底目标（N54 §2.2 第 1 步）
+int PlaylistWidget::tabIndexOfListUuid(const QString &uuid) const {
+    const QString want = uuid.toLower();
+    if (want.isEmpty())
+        return -1;
+    for (int i = 1; i < count(); ++i)
+        if (listUuidOf(i).toLower() == want)
+            return i;
+    return -1;
+}
+
+QString PlaylistWidget::listNameOfUuid(const QString &uuid) const {
+    const int tab = tabIndexOfListUuid(uuid);
+    return tab >= 0 ? tabText(tab) : QString();
+}
+
 // ——N45 §2.4 双坐标系换算与三类行谓词——
 
 bool PlaylistWidget::isContainerRow(const QListWidgetItem *item) {
@@ -1450,6 +1480,117 @@ void PlaylistWidget::flushPendingTab() {
     const int idx = m_pendingTab;
     m_pendingTab = -1;
     setCurrentIndex(idx);
+}
+
+// ——N54 层级定位（书签按列表身份回跳的机制侧：切列表 + 换层 + 定位，不播任何东西）——
+
+// 整段替换某表的浏览路径。标题列不进层缓存键（N45 §2.5）、只服务"上一级"行的
+// tooltip 相对路径，故按 loadPlaylists 的同一降级形态取 id 自兼（书签来源不另存
+// 标题列）。替换前保存离开层的选中，与钻取 / 返回同一纪律
+void PlaylistWidget::setBrowsePath(QListWidget *list, const QStringList &ids) {
+    if (!list || browsePathIdsOf(list) == ids)
+        return;
+    saveLayerSelection(list, browsePathIdsOf(list));
+    QList<PathSeg> path;
+    path.reserve(ids.size());
+    for (const QString &id : ids)
+        path.append({id, id});
+    m_browsePath[list] = std::move(path);
+}
+
+// 删除某层的失败条目，使其落回"未加载"从而能被重新枚举。N54 §2.4：书签跳转是用户
+// 点名的显式重试入口（与手动刷新同类），不受 N53"切入失败层不自动重试"约束。
+// 删除形态与 navigateUp 那处一致——只删这一层、不连带子孙
+void PlaylistWidget::eraseFailedLevel(QListWidget *list, const QStringList &ids) {
+    auto it = m_levels.find(list);
+    if (it == m_levels.end())
+        return;
+    const auto lit = it->find(ids);
+    if (lit != it->end() && !lit->loadError.isEmpty())
+        it->erase(lit);
+}
+
+// 目标层内定位：返回首个 key() == itemKey 的**实体序**下标（即 mpv playlist-pos 语义，
+// 非行序，N45 §2.4.2）。两侧同为 normalizePathForMatch 产出，逐字节相等即命中
+int PlaylistWidget::entityIndexInLevel(const QListWidget *list, const QStringList &ids,
+                                       const QString &itemKey) const {
+    const Level *lvl = findLevel(list, ids);
+    if (!lvl)
+        return -1;
+    for (int i = 0; i < int(lvl->entities.size()); ++i)
+        if (lvl->entities[i] && lvl->entities[i]->key() == itemKey)
+            return i;
+    return -1;
+}
+
+void PlaylistWidget::requestLevelItemJump(const LevelJump &req) {
+    if (!listAt(req.tab)) { // 当场失败：调用方只有一条失败出口，不设返回值分支
+        emit levelItemFailed(req, JumpFailure::ListGone, QString());
+        return;
+    }
+    m_pendingJump = PendingJump{req, false, true}; // last-wins：新的显式意图取代旧的
+    if (m_busy)
+        return; // 忙时不进行任何列表相关操作（连浏览路径都不写），等 busy 出口消费
+    advanceLevelJump();
+}
+
+// 唯一推进口：每次重判目标层三态（已加载 / 失败 / 未加载），不假设上一轮消费已把
+// 该层取回——一轮可能只是发起了枚举。至多两轮出结果，第三轮不可达（enumerated 闸门）
+void PlaylistWidget::advanceLevelJump() {
+    if (!m_pendingJump.active || m_busy)
+        return;
+    const LevelJump req = m_pendingJump.req; // 副本：出结果即作废，不残留待办意图
+    QListWidget *list = listAt(req.tab);
+    if (!list) {
+        m_pendingJump = PendingJump{};
+        emit levelItemFailed(req, JumpFailure::ListGone, QString());
+        return;
+    }
+    const Level *lvl = findLevel(list, req.levelIds);
+    if (lvl && !lvl->loadError.isEmpty()) {
+        if (m_pendingJump.enumerated) { // 已重试过一轮仍失败：出结果
+            m_pendingJump = PendingJump{};
+            emit levelItemFailed(req, JumpFailure::LevelLoadFailed, lvl->loadError);
+            return;
+        }
+        eraseFailedLevel(list, req.levelIds); // 显式重试一次，落回下面的未加载分支
+        lvl = nullptr;
+    }
+    if (lvl) {
+        // 已加载：先同步换入（换入自身可能起一轮预读——切入已加载层时 needsMetaRescan
+        // 判定通过），再判能否立刻出结果
+        setBrowsePath(list, req.levelIds);
+        requestTab(req.tab); // 非忙即切，currentChanged 走 onTabChanged 的换入路径
+        showLayer(list);     // 目标 tab 本就是当前 tab 时无回调，此处补换入（缓存命中同步重建）
+        m_pendingJump.enumerated = true; // 目标层已在手，绝不再起第二轮枚举
+        if (m_busy)
+            // 预读在途：实体序仍会被排序改动，此刻定位会把索引打在旧序上，且重推与
+            // 预读收尾的四步式互相打断——留给下一次 busy 出口消费（至多一次，预读标志
+            // 置位后 needsMetaRescan 不再复触发）
+            return;
+        m_pendingJump = PendingJump{};
+        const int idx = entityIndexInLevel(list, req.levelIds, req.itemKey);
+        if (idx >= 0)
+            emit levelItemReady(req, idx);
+        else
+            emit levelItemFailed(req, JumpFailure::ItemNotFound, QString());
+        return;
+    }
+    if (m_pendingJump.enumerated) {
+        // 起过枚举而层仍不在缓存 = 该轮任务被作废 / 取消：静默作废，两个信号都不发
+        // （取消即用户意图，不弹错也不回退，N54 §2.3）
+        m_pendingJump = PendingJump{};
+        return;
+    }
+    m_pendingJump.enumerated = true;
+    setBrowsePath(list, req.levelIds); // 先落路径：未加载分支按当前浏览路径发起首载
+    requestTab(req.tab);
+    // 不经 showLayer 起枚举：第二次跳转到同一失败层时，行内容已与该层"对齐"（残留的
+    // 骨架 + 占位行），showLayer 首行即按 displayedIds == ids 早退，于是整次跳转静默
+    // 无事发生——既不重举也不回报。失败层条目刚被 eraseFailedLevel 删掉，此处必然
+    // 不在缓存，直接按目标层发起枚举（startEnumAsync 自带清占位 / 置忙 / 遮罩）
+    if (!m_busy)
+        startEnumAsync(list, Intent::InitialLoad, req.levelIds);
 }
 
 void PlaylistWidget::dragEnterEvent(QDragEnterEvent *event) {
@@ -2877,6 +3018,11 @@ void PlaylistWidget::setBusy(bool on) {
             m_pendingReveal = false;
             revealPlayingItem();
         }
+        // N54：延后的层级定位补执行（同族纪律：忙时不动列表，走到这里才落浏览路径）。
+        // 放在 reveal 之后、updateBottomBarState 之前：定位成功会由 MainWindow 起播并
+        // 转移同步目标，按钮启用态要按新状态刷；若 flushPendingTab / reveal 又起了新
+        // 任务使 m_busy 复真，advanceLevelJump 自守早退，旗留到那一轮的出口消费
+        advanceLevelJump();
         // N49：忙时结束一并刷新定位按钮启用态——setListsEnabled(true) 只是把工具条
         // 整体恢复可用，按钮自身的 enabled 仍停留在进入忙时前的旧值；若在途期间停止
         // 播放，按钮会以"可点"的样子留到下一次切 tab 或回刷才纠正。放在延后消费之后，
@@ -2942,6 +3088,10 @@ void PlaylistWidget::tabInserted(int index) {
 void PlaylistWidget::tabRemoved(int index) {
     QTabWidget::tabRemoved(index);
     reserveBottomBarSpace();
+    // N54：删 tab 即作废挂起的层级定位——挂起态按 tab 索引记，索引会随删除漂移，
+    // 不作废就会把定位打到别的列表上。忙时 tab 栏与列表整体禁用（setListsEnabled），
+    // 正常流程走不到"在途删 tab"，此项属防御；作废是静默的（不回报，MainWindow 不弹错）
+    m_pendingJump = PendingJump{};
 }
 
 bool PlaylistWidget::event(QEvent *event) {
@@ -3852,21 +4002,15 @@ void PlaylistWidget::removeTabAt(int tabIndex) {
 void PlaylistWidget::createNewList() {
     if (m_busy)
         return;
-    int maxN = 0;
-    for (int i = 0; i < count(); ++i) {
-        const QString &name = tabText(i);
-        if (name.startsWith(tr("Playlist "))) {
-            bool ok = false;
-            int n = name.mid(QString(tr("Playlist ")).length()).toInt(&ok);
-            if (ok && n > maxN)
-                maxN = n;
-        }
-    }
-
+    // 默认名 = 既有 tab 名里 "Playlist <n>" 的最大序号 +1（Util::nextSequenceNumber，
+    // 与书签自动命名同一份算法）。同一份名清单兼作对话框的重名占位表：采集一次、两处
+    // 同源，不再各扫一遍 tab
     QStringList occupied;
+    occupied.reserve(count());
     for (int i = 0; i < count(); ++i)
         occupied << tabText(i);
-    ListSettingsDialog dlg(this, tr("Playlist %1").arg(maxN + 1), nullptr, occupied, m_registry);
+    const int nextN = Util::nextSequenceNumber(tr("Playlist "), occupied);
+    ListSettingsDialog dlg(this, tr("Playlist %1").arg(nextN), nullptr, occupied, m_registry);
     if (dlg.exec() != QDialog::Accepted)
         return;
     const QString name = dlg.listName();

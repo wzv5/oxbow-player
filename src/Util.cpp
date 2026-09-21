@@ -193,6 +193,24 @@ QString trimTrailingZeros(const QString &fixed) {
     return s;
 }
 
+// 自动命名的单点（播放列表与书签共用，口径见 Util.h 声明处注释）：序号段须整段解析成
+// 十进制整数才计入，故 "List 3b"、"List "（空尾段）一类不参与——它们不是本算法生出的
+// 名字。另注 toInt 容忍首尾空白，"List 03 " 与 "List 3" 同样按 3 计入；为手改名多出来
+// 的空白尾巴加一次 trim 不值得，而前缀比对本身是逐字节的
+int nextSequenceNumber(const QString &prefix, const QStringList &existing) {
+    int maxN = 0;
+    const qsizetype skip = prefix.size();
+    for (const QString &name : existing) {
+        if (!name.startsWith(prefix))
+            continue;
+        bool ok = false;
+        const int n = name.mid(skip).toInt(&ok);
+        if (ok && n > maxN)
+            maxN = n;
+    }
+    return maxN + 1;
+}
+
 namespace {
 // N37：URL 匹配形态的编码收敛内核（约二十行纯字符串函数，不解析 URL 结构、
 // 不依赖任何 Qt 版本行为）。扫 %HH：合法 hex 对中 unreserved 字符（ALPHA / DIGIT /
@@ -496,6 +514,26 @@ QString resolveSourcePath(const QString &path) {
         local = u.toLocalFile();
     }
     return QDir::toNativeSeparators(QFileInfo(local).absoluteFilePath());
+}
+
+// N54：本地/远端定性的单点——来源路径经折叠（含 mpvqt://）后不是网络/流形态即为本地。
+// 既是 isMissingLocalSource 的前半，也是"这条来源离开所属列表还能不能播"的分界：本地
+// 项就在磁盘上，远端项的播放形态依赖列表（N48 之后 URL 恒无凭据、N52 的转接 URI 依赖
+// 列表端点）。空串判"非本地"（无从定性）
+bool isLocalSourcePath(const QString &path) {
+    return !path.isEmpty() && !isNetworkStreamPath(resolveSourcePath(path));
+}
+
+// N54：本地来源存在性判据的单点。与实体侧 isLocalFile() && !exists() 同口径——
+// 本地路径经 PlaylistEntity::fromPlayUrl 必出生 LocalFileEntity，其 exists() 即
+// QFileInfo::exists(playUrl())；网络与未知实体 exists() 恒真，故本函数对它们恒假
+// （不可判定 ≠ 缺失）。取 QFileInfo::exists 而非 QFile::exists：后者在 Windows 对
+// 目录判假，会把"书签指向目录"（mpv 能播）误判为缺失。
+bool isMissingLocalSource(const QString &path) {
+    const QString local = resolveSourcePath(path);
+    if (!isLocalSourcePath(local))
+        return false;
+    return !QFileInfo::exists(local);
 }
 
 QDateTime parseReleaseDate(const QString &s) {

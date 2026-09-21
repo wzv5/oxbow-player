@@ -75,6 +75,37 @@ class PlaylistWidget : public QTabWidget {
     // 具体提供者头文件，凭据访问只走基类接口）。providerAt(tab) 为空原样返回。
     // 只用于下发 mpv 的 loadfile 循环；在途快照 / 比对 / 落盘一律取无凭据形态
     QStringList playbackFiles(int tabIndex, const QStringList &files) const;
+
+    // ——N54：书签按列表身份回跳（机制侧：切列表 + 换层 + 定位；播放决策与报错归 MainWindow）——
+    // 某 tab 提供者的列表身份（N52 §2.7）；providerAt 空即空串。走基类接口取用，
+    // 视图层不含任何具体提供者头文件（与 N48 §2.4 同纪律）
+    QString listUuidOf(int tabIndex) const;
+    // 某 tab 的队列根层 id 序列（与私有 queueRootIdsOf(list) 同语义，仅换键类型）
+    QStringList queueRootIdsOf(int tabIndex) const;
+    // 按列表身份找 tab：两侧统一 toLower（与 StreamRelay 端点表同口径）；无命中 -1。
+    // 默认 tab 恒不参与——它不落盘、无持久身份，重启必失配
+    int tabIndexOfListUuid(const QString &uuid) const;
+    // 列表显示名（tab 标题）按身份现查：不落盘、改名即刻生效；查不到（身份无匹配
+    // 列表）返回空串，由调用方决定呈现（书签编辑器据此显示 Unknown，N54 变更记录 6）
+    QString listNameOfUuid(const QString &uuid) const;
+    // 一次层级定位请求的全部输入。tab / levelIds / itemKey 供机制使用，time 是纯过路值：
+    // 挂起态活在本 widget 跨枚举存活，回传它比让调用方另造一份挂起簿记少一处状态
+    struct LevelJump {
+        int tab = -1;
+        QStringList levelIds; // enumerate 的 parent 形态（空序列 = 根层）
+        QString itemKey;      // 条目归一键（normalizePathForMatch 产出，两侧同形态逐字节比）
+        double time = -1.0;
+    };
+    // 把目标层换入前台并在其中定位 itemKey：层已加载即同步回报，未加载走异步枚举后回报。
+    // 忙时只登记不动作（不碰浏览路径、不切 tab、不起任务），由 busy 出口消费
+    void requestLevelItemJump(const LevelJump &req);
+    // 定位失败的三类原因（N54 §2.2 第 4 步按此分流产文案，不分流行为）
+    enum class JumpFailure {
+        ListGone,        // 目标 tab 不存在（含请求发起后 tab 被删）
+        LevelLoadFailed, // 目标层枚举失败（本轮已按 §2.4 显式重试过一次）
+        ItemNotFound,    // 目标层已加载，但其中没有这个条目
+    };
+    Q_ENUM(JumpFailure)
     // 续播记忆在队列根层的实体序（-1 无）：序号校验优先、失败按路径取首命中。
     // mpv 侧语义（四步式重推、停止态步进起点）一律取本值，不得用行序充数（§2.4.2）
     int resumeEntityIndexOf(int tabIndex) const;
@@ -169,6 +200,14 @@ class PlaylistWidget : public QTabWidget {
     // 收编不引发 playlist-pos 推送（值不变不推），MainWindow 须主动刷新标题/OSD
     // 的正播名（pos 推送时刻按旧镜像取名已错）
     void playingListAdopted();
+    // N54：层级定位的两种结局（恒在 GUI 线程直连，不跨线程投递）。entityIndex 是目标层
+    // 的**实体序**（即 mpv playlist-pos 语义，非行序，N45 §2.4.2）；成功回报蕴含一条
+    // 不变式：req.tab 的当前显示层 == req.levelIds（换入已完成），故调用方可直接取
+    // currentLayerFilesOf(req.tab) 当新队列。失败发 levelItemFailed；被作废（取消遮罩 /
+    // abandonJob）时两个信号都不发——取消即用户意图，静默收尾（N54 §2.3）
+    void levelItemReady(const PlaylistWidget::LevelJump &req, int entityIndex);
+    void levelItemFailed(const PlaylistWidget::LevelJump &req, PlaylistWidget::JumpFailure why,
+                         const QString &detail); // detail 仅 LevelLoadFailed 有值（提供者文案）
 
   protected:
     void dragEnterEvent(QDragEnterEvent *event) override;
@@ -432,6 +471,19 @@ class PlaylistWidget : public QTabWidget {
     void setBusy(bool on);
     void flushPendingTab();
     void setListsEnabled(bool on);
+    // ——N54 层级定位内核——
+    // 唯一推进口：每次重判目标层三态（已加载 / 失败 / 未加载）并据此动作，至多两轮
+    // 出结果（一轮起枚举、下一轮定位），故不假设"上一次消费已把该层取回"
+    void advanceLevelJump();
+    // 整段替换某表的浏览路径（标题列按 loadPlaylists 的降级形态取 id 自兼）；
+    // 替换前按导航纪律保存离开层的选中，与钻取/返回同一口径
+    void setBrowsePath(QListWidget *list, const QStringList &ids);
+    // 删除某层的失败条目（只删这一层、不连带子孙，与 navigateUp 那处同形态）——
+    // 跳转是显式重试入口（N54 §2.4），删后落回未加载分支起一次枚举
+    void eraseFailedLevel(QListWidget *list, const QStringList &ids);
+    // 目标层内定位：首个 key() == itemKey 的实体序，无命中 -1（两侧同为归一形态，逐字节比）
+    int entityIndexInLevel(const QListWidget *list, const QStringList &ids,
+                           const QString &itemKey) const;
     // ——N49 底部工具条——
     // 让位：压住内部页面栈的最大高度并把工具条摆到底部（含主动几何修正，§2.3）
     void reserveBottomBarSpace();
@@ -588,6 +640,16 @@ class PlaylistWidget : public QTabWidget {
     bool m_busy = false;          // 加载在途或预读中：tab 栏 + 列表 + 右键菜单冻结
     int m_pendingTab = -1;        // 忙时排队的程序化切 tab（last-wins）
     bool m_pendingReveal = false; // N45：忙时延后的切曲归位（last-wins，busy 结束补执行）
+    // N54：延后的层级定位（last-wins，与 m_pendingTab / m_pendingReveal / m_pendingLocate
+    // 同族）。enumerated = 本次跳转已为目标层起过一轮枚举的闸门：既实现"一次跳转至多
+    // 一次枚举"（§2.4 的失败层显式重试也只此一次），又让"任务被作废/取消后目标层仍不在
+    // 缓存"这一情形落到静默作废而不是无限重起
+    struct PendingJump {
+        LevelJump req;
+        bool enumerated = false;
+        bool active = false;
+    };
+    PendingJump m_pendingJump;
     // N37：枚举警告累积（仅 Ok 批次写入；Discarded 在 onLoadFinished 首行早退不写），
     // 唯一出口第⑤步复位后弹框，弹完即清（§3.5）
     // ——N49 底部工具条（面板级常驻：全 tab 共享一行，不随 tab 切换重建）——

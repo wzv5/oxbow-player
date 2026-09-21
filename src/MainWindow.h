@@ -4,10 +4,13 @@
 
 #include "MpvController.h"
 
+// N54：两处接线要用到嵌套类型（PlaylistWidget::LevelJump / JumpFailure、
+// BookmarkManager::Origin），嵌套类型必须有完整类型可见
+#include "BookmarkManager.h"
+#include "PlaylistWidget.h"
+
 class NavigatorPanel;
-class PlaylistWidget;
 class ActionManager;
-class BookmarkManager;
 class BookmarkEditorDialog;
 class ChapterSlider;
 class MarkAggregator; // N15：章节+书签标记聚合器（定义于 MainWindow.cpp）
@@ -65,6 +68,11 @@ class MainWindow : public QMainWindow {
     void onRemoveRequested(QList<int> rows);
     void onClearRequested();
     void onMpvShutdown();
+    // N54：书签层级定位的两种结局（PlaylistWidget 只切层与定位，播放与报错在此决定）。
+    // entityIndex 是目标层的实体序（即 mpv playlist-pos 语义）
+    void onLevelItemReady(const PlaylistWidget::LevelJump &req, int entityIndex);
+    void onLevelItemFailed(const PlaylistWidget::LevelJump &req, PlaylistWidget::JumpFailure why,
+                           const QString &detail);
 
   private:
     // R3：音量上限推送回调（由 MpvController::volumeMaxChanged 驱动）
@@ -141,7 +149,15 @@ class MainWindow : public QMainWindow {
     void updateChapterMenuState();
     void updateChapterMenuChecked();
     void updateChapterSlider();
-    void jumpToFileTime(const QString &path, double time);
+    // N54：跳转拆成两条语义不共用的路。章节语义是"当前文件的这一时刻"，只能在手上
+    // 现有的列表里解决（jumpToChapter 即现 jumpToFileTime 函数体逐字改名沿用）；
+    // 书签语义是"回到它所属的列表与所在层"，只认书签自带的身份，不再扫描别的列表
+    void jumpToChapter(const QString &path, double time);
+    void jumpToBookmark(const QString &path, double time, const BookmarkManager::Origin &origin);
+    // N54 §2.2 第 4 步的回退档：把这一个文件作为会话镜像推入默认 tab（仅本地项走到这里）
+    void fallbackPlayInDefaultTab(const QString &path, double time);
+    // N54：书签跳转的报错出口——正文一句人话，路径与提供者回传原文进 informativeText
+    void warnBookmarkJump(const QString &reason, const QString &path, const QString &detail);
     void ensureBookmarkEditor();
     void onAddBookmark();
 
