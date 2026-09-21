@@ -258,7 +258,8 @@ QStringList PlaylistWidget::browsePathIdsOf(const QListWidget *list) const {
 }
 
 // 队列根（id 序列，§2.1）。随双击入队 / 收编 / 会话恢复经 markPlayingTab 重锚；
-// 回刷比对、切曲归位、recordPlayback 以它为硬依赖——队列根所在层常驻缓存（§2.5）
+// 回刷比对、切曲归位、recordPlayback 以它为硬依赖——队列根层被逐出必与播放目标
+// 归位同步（祖先层刷新整枝时一并作废锚点并归位，N53 §2.2），故这些读取恒有层可读
 QStringList PlaylistWidget::queueRootIdsOf(const QListWidget *list) const {
     QStringList ids;
     if (const auto it = m_queueRoot.constFind(list); it != m_queueRoot.end())
@@ -299,8 +300,8 @@ QString PlaylistWidget::levelErrorOf(const QListWidget *list, const QStringList 
 }
 
 // filesOf 双出口的共用体：层实体的 playUrl 序列（实体序）。旧 filesOf 读显示行
-// （跳占位行），实体序与显示行在无特殊行时一致；失败层的旧内容行仍由 Level.entities
-// 承载（占位行只是追加的显示行），读层实体与旧行读取等价
+// （跳占位行），实体序与显示行在无特殊行时一致；失败层既无实体也无内容行
+// （内容一律清空），读层实体与旧行读取等价
 QStringList PlaylistWidget::layerFilesOf(int tabIndex, const QStringList &ids) const {
     QStringList files;
     const Level *lvl = findLevel(listAt(tabIndex), ids);
@@ -479,7 +480,8 @@ void PlaylistWidget::restoreLayerSelection(QListWidget *list, const Level &lvl) 
 }
 
 // 切层统一入口（§2.5）：显示层 != 浏览层时按层换入。命中缓存同步重建
-// （不起任务、无遮罩）；失败层重建旧内容行 + 占位；未加载层异步枚举
+// （不起任务、无遮罩）；失败层只剩骨架与占位行（切入不自动重试，N53 变更
+// 记录 V1）；未加载层异步枚举
 void PlaylistWidget::showLayer(QListWidget *list) {
     if (!list)
         return;
@@ -494,7 +496,8 @@ void PlaylistWidget::showLayer(QListWidget *list) {
         else
             restoreLayerSelection(list, *lvl);
     } else if (lvl) {
-        // 失败层：旧内容行仍显示（Level.entities 承载），占位行追加（N19 现状）
+        // 失败层：只剩骨架与占位行。切入失败层的常规渲染路径（切入不自动重试，
+        // 变更记录 V1）；离开该层（回到上一级）即删条目，再钻进来按未加载重举
         rebuildRowsForLevel(list, *lvl, ids);
         showPlaceholder(list, lvl->loadError);
         restoreLayerSelection(list, *lvl);
@@ -518,9 +521,22 @@ void PlaylistWidget::navigateDown(QListWidget *list, QListWidgetItem *containerR
 void PlaylistWidget::navigateUp(QListWidget *list) {
     if (!list || m_busy)
         return;
-    saveLayerSelection(list, browsePathIdsOf(list));
-    if (!m_browsePath[list].isEmpty())
+    const QStringList ids = browsePathIdsOf(list); // 离开层（删失败层条目与存选中共用）
+    saveLayerSelection(list, ids);
+    if (!m_browsePath[list].isEmpty()) {
+        // 失败层不长期驻留缓存，回到上一级即删（N53 §2.4）——清空后条目只剩一句
+        // loadError，钻取重进即走异步重举（服务端已恢复时不必再等手动刷新）。删除点
+        // 只此一处且不得铺开：切入失败层按缓存渲染零请求（变更记录 V1），删层若挂
+        // 在切 tab 等高频路径上才构成反复打服务端。失败当场不删：条目须在缓存承载
+        // loadError（占位行文案来源 + 手动刷新的 ensureLevel 清文案落点）。不连带删
+        // 子孙——刷新发起时已按前缀整枝逐出，能留在缓存里的只可能是它自己
+        if (auto it = m_levels.find(list); it != m_levels.end()) {
+            const auto lit = it->constFind(ids);
+            if (lit != it->constEnd() && !lit->loadError.isEmpty())
+                it->erase(lit);
+        }
         m_browsePath[list].removeLast();
+    }
     showLayer(list);
     reactivateIfStale(list);
 }
@@ -543,8 +559,8 @@ void PlaylistWidget::reactivateIfStale(QListWidget *list) {
 }
 
 // N45 §2.9 归位：浏览路径置为队列根层并滚动到正播项（restorePlayingState 的层级版）。
-// 队列根层常驻缓存，归位是同步的；层未在缓存（会话恢复早期）则仅归位状态，
-// 其载入完成即换入（onLoadFinished 的收尾补换入）
+// 播放中读队列根层时它恒在缓存（逐出必与归位同步，N53 §2.2），归位是同步的；
+// 层未在缓存（会话恢复早期）则仅归位状态，其载入完成即换入（onLoadFinished 的收尾补换入）
 void PlaylistWidget::revealQueueRoot(QListWidget *list) {
     if (!list)
         return;
@@ -558,12 +574,15 @@ void PlaylistWidget::revealQueueRoot(QListWidget *list) {
         restorePlayingState(list, indexOf(list)); // 标记 + 选中 + 滚动一次完成
         reactivateIfStale(list);                  // 队列根层元数据未预读时补排（与导航换入同判）
     } else if (lvl) {
+        // 失败层：兜底渲染骨架与占位行（仅当刚失败且仍停在层上时可达——刚失败时
+        // 行已对齐会首行早退，此处为防御保留，N53 §2.4）
         rebuildRowsForLevel(list, *lvl, ids);
         showPlaceholder(list, lvl->loadError);
     }
-    // 层不在缓存：防御兜底，正常流程不可达（mpv 在播 ⇒ 队列根层常驻——
-    // 双击/停止态起播/收编/书签各锚点都在已加载层上锚定，见 markPlayingTab）；
-    // 仅归位状态，不发起任务
+    // 层不在缓存：防御兜底，正常流程不可达（mpv 在播 ⇒ 队列根层在缓存——
+    // 双击/停止态起播/收编/书签各锚点都在已加载层上锚定，见 markPlayingTab；
+    // 层被逐出的那一步必同步归位播放目标并作废锚点，N53 §2.2，此后不再有指向
+    // 队列根层的归位读取）；仅归位状态，不发起任务
 }
 
 // N45 §2.9：归位统一作用播放 tab——手动"定位到正在播放"（右键菜单启用条件已
@@ -738,8 +757,9 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
     if (!list)
         return;
 
-    // 3. 占位/枚举失败态：N45 §2.9——比对基准 = 队列根层的实体序列（自常驻缓存取），
-    // 显示层的占位行与之无关；队列根层枚举失败（loadError 非空）维持"忽略"现状
+    // 3. 占位/枚举失败态：N45 §2.9——比对基准 = 队列根层的实体序列（播放中读它时
+    // 层恒在缓存：逐出必与归位同步，N53 §2.2）；显示层的占位行与之无关；
+    // 队列根层枚举失败（loadError 非空）维持"忽略"现状
     if (!levelErrorOf(list, queueRootIdsOf(list)).isEmpty())
         return;
 
@@ -1178,7 +1198,8 @@ void PlaylistWidget::recordPlayback(int tabIndex, int pos, double seconds) {
         return;
     // N45 §2.4.2：pos 是 mpv 的 playlist-pos，即队列根层内的实体序下标——
     // 不再当显示行行号用（层级化后"浏览别层期间切曲"会取到别层的行、key 比对
-    // 失败、静默早退）。队列根层常驻（§2.5），未在缓存即无记忆可写
+    // 失败、静默早退）。队列根层被逐出必与播放目标归位同步（N53 §2.2），
+    // 播放中读它时恒在缓存，未在缓存即无记忆可写
     const Level *lvl = findLevel(list, queueRootIdsOf(list));
     if (!lvl || pos >= int(lvl->entities.size()))
         return;
@@ -1264,9 +1285,13 @@ void PlaylistWidget::onTabChanged(int index) {
     // N28：所有 tab 创建 / 换源 / 会话恢复时层不在缓存，内容统一在此经异步枚举填充；
     // N30：默认 tab 内容由两条直写路径维护，层恒在缓存，故不在此发起枚举
     // （其刷新经 refreshCurrentTab 显式发起）。
-    // N45：已加载 = 层在缓存且无失败文案（§2.5；失败层重进即重试，与旧
-    // entriesLoaded 为假重枚举等价）。判定对象是本 tab 的当前显示层（浏览路径层）
-    if (!layerLoaded(list, browsePathIdsOf(list))) {
+    // N45：已加载 = 层在缓存且无失败文案（§2.5）。判定对象是本 tab 的当前显示层
+    // （浏览路径层）。
+    // N53 变更记录 V1：失败层（在缓存且带 loadError）切入不自动重试——落到下方
+    // showLayer 按缓存渲染骨架与占位行（行未对齐才换入，对齐即原样保留），切入
+    // 零请求，重试入口只剩手动刷新；层不在缓存（从未加载）才走首载
+    if (!layerLoaded(list, browsePathIdsOf(list)) &&
+        levelErrorOf(list, browsePathIdsOf(list)).isEmpty()) {
         startLoadAsync(list);
         return;
     }
@@ -1292,7 +1317,7 @@ bool PlaylistWidget::needsMetaRescan(int tabIndex) const {
     if (!list)
         return false;
     if (!layerLoaded(list, browsePathIdsOf(list)))
-        return false; // 未加载 / 占位层（loadError 非空）走加载或失败重试，不走预读
+        return false; // 未加载层走首载；占位层（loadError 非空）切入只渲染缓存，均不走预读
     const PlaylistProvider *p = providerAt(tabIndex);
     if (!p)
         return false;
@@ -1714,11 +1739,10 @@ void PlaylistWidget::startLoadAsync(QListWidget *list) {
     const Intent intent = pend.refresh
                               ? Intent::Refresh
                               : (pend.selectFirst ? Intent::SwitchSource : Intent::InitialLoad);
-    startEnumAsync(list, intent, browsePathIdsOf(list), pend.rebuildQueueRoot);
+    startEnumAsync(list, intent, browsePathIdsOf(list));
 }
 
-void PlaylistWidget::startEnumAsync(QListWidget *list, Intent intent, const QStringList &parent,
-                                    bool rebuildAfter) {
+void PlaylistWidget::startEnumAsync(QListWidget *list, Intent intent, const QStringList &parent) {
     if (!list)
         return;
     const auto it = m_providerOf.find(list);
@@ -1733,7 +1757,6 @@ void PlaylistWidget::startEnumAsync(QListWidget *list, Intent intent, const QStr
     ctx.list = list;
     ctx.tab = indexOf(list);
     ctx.parent = parent;
-    ctx.rebuildQueueRootAfter = rebuildAfter;
 
     auto result = std::make_shared<std::expected<PlaylistProvider::Enumeration, QString>>();
     runJob(
@@ -1748,7 +1771,8 @@ void PlaylistWidget::startEnumAsync(QListWidget *list, Intent intent, const QStr
 // 前缀比较已蕴含"只增不删、相对顺序未变"，mpv 的增量通道只能追加，只有这一形状可静默。
 // 返回是否走了四步式（走了则由回刷重建标记，归位不介入）。
 // N45 §2.9：显示层非队列根层时，刷新纯粹是该层视图重建——比对与播放同步无意义
-// （mpv 队列的内容基准是队列根层，其刷新由链式 QueueRootRebuild 承担）
+// （mpv 队列的内容基准是队列根层；该情形已由 N53 §2.2 在刷新发起时整枝清除
+// 前置处置，本函数不再轮得到执行）
 bool PlaylistWidget::syncAfterRefresh(QListWidget *list, int tab, const QStringList &oldKeys) {
     if (browsePathIdsOf(list) != queueRootIdsOf(list))
         return false;
@@ -1809,31 +1833,33 @@ void PlaylistWidget::onLoadFinished(const JobContext &ctx,
     if (!list || v == JobVerdict::Discarded)
         return;
     // N45 §2.4.1/§2.10：失败与换入的处置按层分派——显示层（行上可见）与队列根层
-    // （播放基准）各有专属语义，其余层只落缓存
+    // （播放基准）各有专属语义
     const bool targetsDisplayed = (ctx.parent == browsePathIdsOf(list));
     const bool targetsQueueRoot = (ctx.parent == queueRootIdsOf(list));
     if (targetsDisplayed)
         clearPlaceholder(list);
     if (!r.has_value()) {
-        // N45 §2.5：失败层入缓存（loadError 标记；层内实体仓保持换入前的旧内容，
-        // 与仍显示的旧行对齐——仅显示层如此；非显示层实体仓为空即可）
+        // 失败层内容可信度归零：先毁行、再清内容、后重建骨架（N53 §2.1）。清空不分
+        // 显示层与否——枚举没成功，保留只会在下次渲染时复现陈旧行。毁行前置于清仓：
+        // 行上 EntityRole 是实体裸指针，先清仓会让现有行悬空
         Level &lvl = ensureLevel(list, ctx.parent);
         lvl.loadError = r.error();
-        if (!targetsDisplayed)
-            lvl.entities.clear();
+        if (targetsDisplayed)
+            list->clear();
+        lvl.containers.clear();
+        lvl.entities.clear();
         if (targetsDisplayed) {
-            // N45 §2.4.1："上一级"行是渲染骨架的一部分，不依赖内容是否加载成功。
-            // 首钻失败（显示行仍是旧层内容、浏览路径已指向失败层）必须按失败层重建
-            // 行骨架——否则持续失败即回不到上一级，且旧层残留行的双击会在失败层
-            // 路径上继续推段；重试失败（行已对齐）重建为幂等刷新（stale 实体保留）
+            // "上一级"行是渲染骨架的一部分，不依赖内容是否加载成功：首钻失败
+            // （显示行仍是旧层内容、浏览路径已指向失败层）也按失败层重建行骨架，
+            // 否则持续失败即回不到上一级，且旧层残留行的双击会在失败层路径上
+            // 继续推段。清空后重建只产出骨架，占位行追加于其后
             rebuildRowsForLevel(list, lvl, ctx.parent);
             showPlaceholder(list, r.error());
-            // stop 已入队（队列根层失败分支），显示层标记须显式清除（不可按归位判断）
-            clearPlayingMarks(list);
         }
-        // N25/N45：枚举失败即停止的处置只适用于队列根层失败（§2.4.1——该层是
-        // mpv 队列的内容基准，后续切曲大概率同失败）。stop 不带 keep-playlist，
-        // 一并清空 mpv 播放列表（随后的空列表推送由回刷"空列表忽略"吸收）
+        // N25/N45：枚举失败即停止的处置只适用于队列根层失败且正在播放（N53 §2.3——
+        // 该层是 mpv 队列的内容基准，后续切曲大概率同失败；停在队列根层的子层失败时
+        // 队列内容仍有效，不停播）。stop 不带 keep-playlist，一并清空 mpv 播放列表
+        // （随后的空列表推送由回刷"空列表忽略"吸收）。行已重建、天然无播放标记
         const int failTab = indexOf(list);
         if (targetsQueueRoot && failTab >= 0 && failTab == m_playingTab) {
             emit stopRequested();
@@ -1857,25 +1883,8 @@ void PlaylistWidget::onLoadFinished(const JobContext &ctx,
         m_enumWarnings.append(enumeration.warnings); // N37：部分失败警告随成功批次入库
     lvl.containers = std::move(enumeration.containers);
 
-    if (ctx.intent == Intent::QueueRootRebuild) {
-        // N45 §2.5：队列根层链式重建——枚举成功即重推 mpv（停止已在刷新发起时下发）。
-        // 重枚举失败则立即停止播放的处置由上面的失败分支承担（队列根失败即归位）
-        sortLevelData(lvl, ruleKeyOf(list), ruleAscendingOf(list));
-        const int tab = indexOf(list);
-        if (tab >= 0 && tab == m_playingTab) {
-            const bool keepPaused =
-                m_mpv ? m_mpv->propertyFlag(QStringLiteral("pause"), false) : false;
-            const int idx = resumeEntityIndexOf(tab);
-            if (idx >= 0)
-                emit playRequested(queueFilesOf(tab), tab, idx, lastTimePosOf(tab), keepPaused);
-        }
-        emit contentsChanged();
-        return;
-    }
-
     // N45 §2.10：归位已并入忙时延后家族（revealPlayingItem），在途期浏览路径不被
-    // 搬移——非 QueueRootRebuild 批次恒以目标层即显示层完成，此处必然换入。
-    // QueueRootRebuild 已在上方分支提前返回（其目标队列根层非显示层，只落缓存）
+    // 搬移——批次恒以目标层即显示层完成，此处必然换入
     Q_ASSERT(targetsDisplayed);
 
     // 换入前一刻才采集（§4.3）：在途期间 mpv 事件仍经 recordPlayback 推进本表记忆，
@@ -1962,11 +1971,6 @@ void PlaylistWidget::advanceTab(JobContext ctx, bool fromMetaScan) {
     }
     if (!fourStep)
         restorePlayingState(list, tab);
-    // N45 §2.5：刷新失效子树包含队列根层且队列根非显示层——显示层收尾后链式
-    // 重枚举队列根层（停止已在刷新发起时下发，队列根层仓保留至此刻由本批覆盖，
-    // 重推由 QueueRootRebuild 续作承担）
-    if (ctx.rebuildQueueRootAfter)
-        startEnumAsync(list, Intent::QueueRootRebuild, queueRootIdsOf(list));
     emit contentsChanged(); // 末位补发一次（该信号契约幂等，接收方只刷新导航启停）
 }
 
@@ -2690,49 +2694,50 @@ void PlaylistWidget::refreshCurrentTab() {
     // 与回刷仍读旧内容），仅清失败文案（旧②同样清它，使回刷在途比对不被失败态拦下）；
     // 成功收尾在 onLoadFinished 就地覆盖层内容
     ensureLevel(list, browsePathIdsOf(list)).loadError.clear();
-    // ②' N45 §2.5：失效当前层及其全部子孙层（按键的前缀匹配）。显示层与队列根层
-    // 的层仓保留——在途期显示行上的实体必须存活（Refresh 续作的 oldKeys 采集、
-    // 回刷比对、recordPlayback 均是硬依赖），分别由本批收尾与链式重建覆盖；
-    // 其余被失效子孙层移出缓存，下次被显示时按需重枚举
+    // ②' N45 §2.5：失效当前层及其全部子孙层（按键的前缀匹配）。保留例外只剩浏览层
+    // 一项——在途期显示行上的实体必须存活（Refresh 续作的 oldKeys 采集、回刷比对、
+    // recordPlayback 均是硬依赖），由本批收尾覆盖；其余被失效层（含队列根层，
+    // N53 §2.2）移出缓存，下次被显示时按需重枚举
     const QStringList browseIds = browsePathIdsOf(list);
     const QStringList queueIds = queueRootIdsOf(list);
-    bool queueRootInSubtree = false;
     {
         auto &cache = m_levels[list];
         for (auto it = cache.begin(); it != cache.end();) {
             const QStringList &k = it.key();
             const bool inSubtree = k.size() >= browseIds.size() &&
                                    std::equal(browseIds.begin(), browseIds.end(), k.begin());
-            if (!inSubtree) {
-                ++it;
-                continue;
-            }
-            if (k == queueIds) {
-                queueRootInSubtree = true; // 队列根层保留：链式重建覆盖
-                ++it;
-                continue;
-            }
-            if (k == browseIds) {
-                ++it; // 显示层保留：本批收尾覆盖（行上实体在途期必须存活）
+            if (!inSubtree || k == browseIds) {
+                ++it; // 浏览层保留：本批收尾覆盖（行上实体在途期必须存活）
                 continue;
             }
             it = cache.erase(it);
         }
     }
-    // 停止先行（§2.5 四步式：停止 → 重枚举 → 整表重推 → 续播）：失效子树包含
-    // 队列根层且队列根非显示层时，mpv 队列内容基准即将失效，先停；重推由
-    // QueueRootRebuild 续作承担（显示层即队列根层的场景由 syncAfterRefresh 三分支处置）
-    const bool queueRootNeedsRebuild =
-        queueRootInSubtree && browseIds != queueIds && tab == m_playingTab;
-    if (queueRootNeedsRebuild)
+    // ②'' N53 §2.2：浏览层是队列根层的严格祖先且该 tab 是播放 tab ⇒ 整棵子树不可信
+    // ——发起即一个同帧完成的原子动作组，成败都不回头：停播；同步目标无条件归位
+    // （空闲时也归位，不留指向空队列基准的播放 tab）；清旧播放 tab 行上的播放标记
+    // （归位不经 markPlayingTab，行上 PlayingRole 没有清除点，成功收尾的行级换入
+    // 又刻意复用行——不在此清即永久残留）；队列根锚点作废（savePlaylists 见空序列
+    // 不写 queueRootIds / queueRootTitles，重启后该 tab 落根层）。
+    // 续播记忆不在此作废（N53 变更记录 V2）：刷新失败可能只是网络波动，恢复后
+    // 重钻重举即按 lastPath 重新命中；指向已逐出层的记忆按"序号校验优先、路径
+    // 首命中"安全退化，无命中即 -1，无错误续播面。
+    // 归位先行使失败收尾的停播合取恒假 ⇒ 不会二次 stop
+    const bool ancestorOfQueueRoot =
+        queueIds.size() > browseIds.size() &&
+        std::equal(browseIds.begin(), browseIds.end(), queueIds.begin());
+    if (ancestorOfQueueRoot && tab == m_playingTab) {
         emit stopRequested();
+        m_playingTab = 0;
+        clearPlayingMarks(list);
+        m_queueRoot.remove(list);
+    }
     // ③ 驱逐：N20 条目只驱逐本表；flag 重置所有表（N45：全部层的两类标志一并复位）
     evictListKeys(list);
     // ④ 登记意图 + ⑤ 发起（收尾见 onLoadFinished：换入 → 推进函数）
     m_pendingLoad = PendingLoad{};
     m_pendingLoad.list = list;
     m_pendingLoad.refresh = true;
-    m_pendingLoad.rebuildQueueRoot = queueRootNeedsRebuild;
     startLoadAsync(list);
 }
 
@@ -2866,7 +2871,8 @@ void PlaylistWidget::setBusy(bool on) {
         }
         // N45：延后的切曲归位补执行（在 flushPendingTab 之后：若排队切 tab 起了
         // 新任务，m_busy 复真，归位再次延后，由那一轮的 busy 结束消费）。
-        // 归位自身不起任务（队列根层常驻缓存，缓存命中即同步换入）
+        // 归位自身不起任务（播放中读队列根层时它恒在缓存——逐出必与归位同步，
+        // N53 §2.2，缓存命中即同步换入）
         if (m_pendingReveal && !m_busy) {
             m_pendingReveal = false;
             revealPlayingItem();

@@ -212,10 +212,8 @@ class PlaylistWidget : public QTabWidget {
     };
 
     // ——N32 单任务槽：意图 / 判定 / 上下文 / 结果 / 槽位——
-    // 意图枚举取代原 pend.refresh / pend.selectFirst 两个布尔：在发起处定死并按值随任务走。
-    // QueueRootRebuild（N45 §2.5）：刷新失效子树包含队列根层且队列根非显示层时，
-    // 在显示层刷新收尾后链式重枚举队列根层并重推 mpv（停止已在刷新发起时下发）
-    enum class Intent { InitialLoad, SwitchSource, Refresh, Reactivate, Sort, QueueRootRebuild };
+    // 意图枚举取代原 pend.refresh / pend.selectFirst 两个布尔：在发起处定死并按值随任务走
+    enum class Intent { InitialLoad, SwitchSource, Refresh, Reactivate, Sort };
     // 唯一出口的判定。Discarded = 批次已作废（watcher 已非当前槽位项，什么都不碰）；
     // Cancelled = 用户取消；Ok = 正常。原 RescanResult 的 Ok/Cancelled/Stale 三态
     // 由"身份校验 + 二态"承载
@@ -235,9 +233,6 @@ class PlaylistWidget : public QTabWidget {
         bool ascending = true;
         QStringList oldKeys; // 换入类由枚举续作在换入前采集
         ViewSnapshot snap;   // 同上；Reactivate 由预读续作在排序前采集
-        // N45 §2.5：刷新失效子树包含队列根层（且队列根非显示层）时置位——
-        // 显示层收尾后链式发起队列根层重枚举与重推
-        bool rebuildQueueRootAfter = false;
     };
     // 预读任务的结果对象：槽位只存 QFuture<void>，异构结果由它携带（类型擦除的落点）。
     // N35 修订 2：取消改"立即收尾 + 结果静默丢弃"——mutex/abandoned 供遮罩取消
@@ -288,7 +283,7 @@ class PlaylistWidget : public QTabWidget {
     };
     // 单层内容与状态。**"本层是否已加载"不设独立标志——层在本缓存中存在即已加载**
     // （归一化旧的 entriesLoaded 标志与 m_entities 容器两条并行来源）；
-    // loadError 非空 = 本层枚举失败（占位行显示中，行上可能仍挂着换入前的旧内容）
+    // loadError 非空 = 本层枚举失败（内容一律清空，行上只剩骨架与占位行）
     struct Level {
         QList<PlaylistProvider::Container> containers; // 容器组（恒在实体组之前，§2.2）
         PlaylistEntity::List entities;                 // 实体所有权仓（序 == 实体行序）
@@ -313,7 +308,8 @@ class PlaylistWidget : public QTabWidget {
     Level &ensureLevel(QListWidget *list, const QStringList &ids);
     // 当前显示层（ensure 语义）：承接旧 entitiesOf 的插入语义
     Level &levelOf(QListWidget *list);
-    // 层已加载 = 在缓存且 loadError 为空（失败层存在但不算已加载——重进即重试）
+    // 层已加载 = 在缓存且 loadError 为空（失败层存在但不算已加载——切入按缓存
+    // 渲染占位行，不自动重试，N53 变更记录 V1；回到上一级即删条目，不长期驻留）
     bool layerLoaded(const QListWidget *list, const QStringList &ids) const;
     // 层的失败文案；层不在缓存返回空串（未加载 ≠ 失败，两者语义分开）
     QString levelErrorOf(const QListWidget *list, const QStringList &ids) const;
@@ -325,7 +321,8 @@ class PlaylistWidget : public QTabWidget {
 
     // ——N45 §2.4/§2.5 导航与换入——
     // 切层统一入口：显示层 != 浏览层时按层换入——命中缓存同步重建（不起任务），
-    // 失败层重建旧内容行 + 占位，未加载层走异步枚举（遮罩，完成后换入）
+    // 失败层只剩骨架与占位行（切入的常规渲染路径，不自动重试；回到上一级即删
+    // 条目，再钻进来按未加载重举），未加载层走异步枚举（遮罩，完成后换入）
     void showLayer(QListWidget *list);
     // 钻取 / 返回：先保存当前层选中项（lastSelectedKey），再改浏览路径并换入
     void navigateDown(QListWidget *list, QListWidgetItem *containerRow);
@@ -334,7 +331,8 @@ class PlaylistWidget : public QTabWidget {
     // 未预读且排序规则需要时，预读后重排（否则缓存命中会永久呈现旧序，§2.6）
     void reactivateIfStale(QListWidget *list);
     // 浏览路径归位队列根层；队列根层在缓存即同步换入并滚动到正播项。
-    // 不在缓存属防御兜底（mpv 在播 ⇒ 队列根层常驻，见各锚点分析），仅归位状态
+    // 不在缓存属防御兜底（mpv 在播 ⇒ 队列根层在缓存；逐出必与归位同步，
+    // N53 §2.2，见各锚点分析），仅归位状态
     void revealQueueRoot(QListWidget *list);
     // 整层行重建（视图侧：实体所有权留在 Level，行只引用）：上一级行 + 容器行 +
     // 实体行，行序 = [上一级行][容器行…][实体行…]
@@ -353,10 +351,8 @@ class PlaylistWidget : public QTabWidget {
     // 非显示层的数据重排（§2.6 规则变更时队列根层一并重排）：容器组内排 +
     // 实体组内排，不动任何行
     static void sortLevelData(Level &lvl, SortKey key, bool ascending);
-    // 枚举发起内核（意图与目标层显式给定）；startLoadAsync 为其薄壳。
-    // rebuildAfter：显示层刷新收尾后链式重建队列根层（§2.5）
-    void startEnumAsync(QListWidget *list, Intent intent, const QStringList &parent,
-                        bool rebuildAfter = false);
+    // 枚举发起内核（意图与目标层显式给定）；startLoadAsync 为其薄壳
+    void startEnumAsync(QListWidget *list, Intent intent, const QStringList &parent);
 
     // ——N45 §2.4 双坐标系（实体序 / 行序）换算与三类行谓词——
     // 行序 = [上一级行][容器行…][实体行…]；凡 mpv 侧语义一律在实体序上工作，
@@ -393,8 +389,9 @@ class PlaylistWidget : public QTabWidget {
     void restoreViewState(QListWidget *list, int tab, const ViewSnapshot &snap);
     // 播放态归位：按 mpv 现状重建本表 PlayingRole 与选中，是标记的唯一权威出口
     void restorePlayingState(QListWidget *list, int tab);
-    // N30：清除本表全部 PlayingRole（四步式第 3 步与枚举失败路径共用——
-    // 二者都已下发 stop，属性查询读到的是发起前的旧值，不可按归位判断）
+    // N30：清除本表全部 PlayingRole（四步式第 3 步与祖先层刷新前置处置共用——
+    // 都已下发 stop，属性查询读到的是发起前的旧值，不可按归位判断。
+    // N53：枚举失败路径不再调用——失败即整行重建，重建行天然无标记）
     static void clearPlayingMarks(QListWidget *list);
     // ——四步式唯一入口（刷新 / 切入的"其它"分支、applySort、executeRemoval 共用）——
     // mutate = 停止之后、重推之前的结构变更（重排 / 删行）；空则表示调用前已排好
@@ -559,7 +556,8 @@ class PlaylistWidget : public QTabWidget {
     // （不受 tab 增删导致的索引漂移影响），内层 QMap 键 = enumerate 的 parent
     // 形态（QStringList 自带字典序 operator<）；浏览路径另带标题列、不进键。
     // 队列根为路径段序列（同形）：随同步目标转移经 markPlayingTab 重锚、
-    // 会话恢复读入，其所在层常驻缓存（§2.5）
+    // 会话恢复读入；队列根层被逐出必与播放目标归位同步（祖先层刷新整枝时
+    // 一并作废锚点并归位，N53 §2.2），故凡按队列根读层时它恒在缓存
     QHash<const QListWidget *, QMap<QStringList, Level>> m_levels;
     QHash<const QListWidget *, QList<PathSeg>> m_browsePath; // 当前浏览路径（含标题列）
     QHash<const QListWidget *, QList<PathSeg>> m_queueRoot;  // 队列根（同形，重锚即写）
@@ -611,8 +609,6 @@ class PlaylistWidget : public QTabWidget {
         QPointer<QListWidget> list;
         bool selectFirst = false; // 完成后选中首项（列表设置换源）
         bool refresh = false;     // 刷新批次：收尾需比对与播放同步
-        // N45 §2.5：刷新失效子树包含队列根层（且非显示层）——收尾后链式重建队列根层
-        bool rebuildQueueRoot = false;
     };
     PendingLoad m_pendingLoad;
     // ——N25 本地在途回显——

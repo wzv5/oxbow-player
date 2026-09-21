@@ -1832,11 +1832,16 @@ void MainWindow::saveSettings() {
 
     // 会话恢复入口（Q1 方案 A）：记录播放中的非默认 tab 名。
     // 仅当本次进程发生过播放才更新/清除（A13）：未播放就关闭属于会话延续，
-    // 上次保存的 lastTabName 与各 tab 记忆仍然有效，不得清空
+    // 上次保存的 lastTabName 与各 tab 记忆仍然有效，不得清空。
+    // N53 变更记录 V3：同步目标归位默认 tab（刷新失败停播 / 祖先层整枝）不再
+    // 连坐清键——用户仍停留在非默认 tab 时按停留 tab 落盘，重启回到停留处；
+    // 停留在默认 tab（如收编后）才删除
     if (m_playedThisSession) {
         const int playingTab = m_playlist->playingTabIndex();
         if (playingTab > 0)
             settings.setValue(QStringLiteral("lastTabName"), m_playlist->tabText(playingTab));
+        else if (const int currentTab = m_playlist->currentIndex(); currentTab > 0)
+            settings.setValue(QStringLiteral("lastTabName"), m_playlist->tabText(currentTab));
         else
             settings.remove(QStringLiteral("lastTabName"));
     }
