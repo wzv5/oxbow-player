@@ -14,8 +14,8 @@
 class WebDavEntity : public HttpEntity {
   public:
     // registry 必填（同 HttpEntity：构造内断言非空）
-    WebDavEntity(QString playUrl, const std::shared_ptr<ServiceRegistry> &registry)
-        : HttpEntity(std::move(playUrl), registry) {}
+    WebDavEntity(QString path, const std::shared_ptr<ServiceRegistry> &registry)
+        : HttpEntity(std::move(path), registry) {}
 
     Ptr clone() const override { return std::make_shared<WebDavEntity>(*this); }
 

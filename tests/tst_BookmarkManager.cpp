@@ -32,6 +32,8 @@ class TestBookmarkManager : public QObject {
     void removeInvalidKeepsDirectories();
     // N54：远端项按归属判失效（无来源 uuid = 数据异常；来源列表已删 = 跳转必被拒）
     void removeInvalidDropsRemoteWithoutLiveList();
+    // N56 §2.3：写侧剥除取消——书签展示路径按实体身份串原样保留（含 userinfo）
+    void addBookmarkKeepsRawIdentity();
 
   private:
     // 每个用例一份独立 INI（init 里换名），避免用例间互扰
@@ -61,7 +63,7 @@ void TestBookmarkManager::originRoundTrip() {
     }
     BookmarkManager again(m_ini);
     again.load();
-    const QString key = Util::normalizePathForMatch(path);
+    const QString key = Util::Url::key(path);
     const Origin got = again.bookmarkOrigin(key);
     QCOMPARE(got.listUuid, o.listUuid);
     QCOMPARE(got.levelIds, o.levelIds);
@@ -88,8 +90,8 @@ void TestBookmarkManager::numericSubkeysNoAlias() {
     }
     BookmarkManager again(m_ini);
     again.load();
-    const QString keyA = Util::normalizePathForMatch(fileA);
-    const QString keyB = Util::normalizePathForMatch(fileB);
+    const QString keyA = Util::Url::key(fileA);
+    const QString keyB = Util::Url::key(fileB);
     const auto a = again.bookmarks(keyA);
     QCOMPARE(a.size(), 2);
     QCOMPARE(a.at(0).title, QStringLiteral("A1"));
@@ -116,10 +118,10 @@ void TestBookmarkManager::oddIdsAndPaths() {
     }
     BookmarkManager again(m_ini);
     again.load();
-    const Origin got = again.bookmarkOrigin(Util::normalizePathForMatch(file));
+    const Origin got = again.bookmarkOrigin(Util::Url::key(file));
     QCOMPARE(got.levelIds, o.levelIds); // 逐字节：分隔符、百分号、反斜杠、非 ASCII 均不转义丢
     QCOMPARE(got.listUuid, o.listUuid);
-    QCOMPARE(again.displayPath(Util::normalizePathForMatch(file)), file);
+    QCOMPARE(again.displayPath(Util::Url::key(file)), file);
 }
 
 // 空来源（默认 tab 出生）不留任何痕迹：两个键都不写，而非写空串占位
@@ -136,13 +138,13 @@ void TestBookmarkManager::emptyOriginWritesNoKeys() {
     QVERIFY(s.contains(QStringLiteral("Bookmarks/0/path"))); // 本体照写
     BookmarkManager again(m_ini);
     again.load();
-    QVERIFY(!again.bookmarkOrigin(Util::normalizePathForMatch(file)).isValid());
+    QVERIFY(!again.bookmarkOrigin(Util::Url::key(file)).isValid());
 }
 
 // 旧 INI 形态：只有 path/count/time/title 两代键，无来源键 → 空来源，不迁移不猜测
 void TestBookmarkManager::missingKeysYieldEmptyOrigin() {
     const QString file = QStringLiteral("D:/legacy.mkv");
-    const QString key = Util::normalizePathForMatch(file);
+    const QString key = Util::Url::key(file);
     {
         QSettings s(m_ini, QSettings::IniFormat);
         s.setValue(QStringLiteral("Bookmarks/size"), 1);
@@ -179,16 +181,16 @@ void TestBookmarkManager::rootLevelDistinguishedFromNoOrigin() {
     }
     BookmarkManager again(m_ini);
     again.load();
-    const Origin root = again.bookmarkOrigin(Util::normalizePathForMatch(fileRoot));
+    const Origin root = again.bookmarkOrigin(Util::Url::key(fileRoot));
     QVERIFY(root.isValid());
     QVERIFY(root.levelIds.isEmpty());
-    QVERIFY(!again.bookmarkOrigin(Util::normalizePathForMatch(fileNone)).isValid());
+    QVERIFY(!again.bookmarkOrigin(Util::Url::key(fileNone)).isValid());
 }
 
 // 同一文件从别的列表再加书签：来源首见即定，后来者不覆盖（与展示路径同纪律）
 void TestBookmarkManager::originFirstWriteWins() {
     const QString file = QStringLiteral("D:/twice.mkv");
-    const QString key = Util::normalizePathForMatch(file);
+    const QString key = Util::Url::key(file);
     const Origin first = makeOrigin(QStringLiteral("11111111-1111-1111-1111-111111111111"));
     const Origin later = makeOrigin(QStringLiteral("22222222-2222-2222-2222-222222222222"));
     BookmarkManager mgr(m_ini);
@@ -214,7 +216,7 @@ void TestBookmarkManager::removeInvalidKeepsDirectories() {
     QCOMPARE(mgr.allFiles().size(), 2);
     QCOMPARE(mgr.removeInvalid(), 1);
     QCOMPARE(mgr.allFiles().size(), 1);
-    const QString dirKey = Util::normalizePathForMatch(dir);
+    const QString dirKey = Util::Url::key(dir);
     QVERIFY(mgr.bookmarks(dirKey).size() == 1);
     QVERIFY(mgr.bookmarkOrigin(dirKey).isValid()); // 保留项的来源不丢
     // 被清掉的失效项：模型与落盘两侧都不留来源残骸
@@ -251,22 +253,42 @@ void TestBookmarkManager::removeInvalidDropsRemoteWithoutLiveList() {
     repopulate();
     QCOMPARE(mgr.removeInvalid(BookmarkManager::ListAlivePredicate{}), 1);
     QCOMPARE(mgr.allFiles().size(), 3);
-    QCOMPARE(mgr.bookmarks(Util::normalizePathForMatch(remoteLive)).size(), 1);
-    QCOMPARE(mgr.bookmarks(Util::normalizePathForMatch(remoteDead)).size(), 1);
+    QCOMPARE(mgr.bookmarks(Util::Url::key(remoteLive)).size(), 1);
+    QCOMPARE(mgr.bookmarks(Util::Url::key(remoteDead)).size(), 1);
 
     // 判据接上：来源列表已删者一并清，本地项恒留
     repopulate();
     const auto alive = [&](const QString &uuid) { return uuid == liveUuid; };
     QCOMPARE(mgr.removeInvalid(alive), 2);
     QCOMPARE(mgr.allFiles().size(), 2);
-    QCOMPARE(mgr.bookmarks(Util::normalizePathForMatch(remoteLive)).size(), 1);
-    QCOMPARE(mgr.bookmarks(Util::normalizePathForMatch(localFile)).size(), 1);
+    QCOMPARE(mgr.bookmarks(Util::Url::key(remoteLive)).size(), 1);
+    QCOMPARE(mgr.bookmarks(Util::Url::key(localFile)).size(), 1);
     // 落盘侧同步：被清项的来源不留残骸（重读只看到两条）
     BookmarkManager again(m_ini);
     again.load();
     QCOMPARE(again.allFiles().size(), 2);
-    QVERIFY(!again.bookmarkOrigin(Util::normalizePathForMatch(remoteDead)).isValid());
-    QVERIFY(!again.bookmarkOrigin(Util::normalizePathForMatch(remoteOrphan)).isValid());
+    QVERIFY(!again.bookmarkOrigin(Util::Url::key(remoteDead)).isValid());
+    QVERIFY(!again.bookmarkOrigin(Util::Url::key(remoteOrphan)).isValid());
+}
+
+// N56 §2.3：写侧剥除取消——addBookmark 存的串来自正播实体 path()（不含提供者注入
+// 凭据，用户显式提供的凭据如实保留），展示路径 = 身份串原样。入库前剥 userinfo 的
+// 旧行为随 N48 出口一并取消（§2.4：书签层完全豁免显示纪律）
+void TestBookmarkManager::addBookmarkKeepsRawIdentity() {
+    const QString creded = QStringLiteral("https://user:pw@host/dav/file.mkv");
+    {
+        BookmarkManager mgr(m_ini);
+        mgr.load();
+        mgr.addBookmark(creded, 5.0, QStringLiteral("Bookmark 1"), Origin{});
+    }
+    BookmarkManager again(m_ini);
+    again.load();
+    const QString key = Util::Url::key(creded);
+    // 键恒为无凭据形态（改密后既有书签继续有效）
+    QVERIFY(!key.contains(QStringLiteral("user:pw")));
+    QCOMPARE(again.bookmarks(key).size(), 1);
+    // 展示路径原样保留（含 userinfo）——INI 的 path 与展示路径逐字一致
+    QCOMPARE(again.displayPath(key), creded);
 }
 
 QTEST_GUILESS_MAIN(TestBookmarkManager)

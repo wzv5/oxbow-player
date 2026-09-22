@@ -58,13 +58,13 @@ class MainWindow : public QMainWindow {
     // N38：静音状态联动单一出口（菜单勾选 + 图标按钮同一处刷新，不播报 OSD）
     void applyMuteState(bool muted);
     // 统一播放入口：整表载入 → 跳转 index → seekTo>0 时经挂起机制恢复进度。
-    // N48：tab 为内容所属列表——在途快照（noteLocalPush）取无凭据的 files，下发的
-    // loadfile 取 playbackFiles(tab, files)（提供者可注入凭据）
+    // N56 §2.7：播放链路传实体表——下发的 loadfile 与在途快照（noteLocalPush）都取
+    // playUrls(tab, entities)，即喂 mpv 前最后一刻映射的播放形态（与回显同源同形）。
     // N30：keepPaused 为真时载入后保持暂停（四步式在 stop 前读到的 pause 状态），
     // 使暂停态下的刷新 / 排序 / 移除无效项不误起播
-    void onPlayRequested(const QStringList &files, int tab, int index, double seekTo,
+    void onPlayRequested(const PlaylistEntity::List &entities, int tab, int index, double seekTo,
                          bool keepPaused = false);
-    void onFilesAdded(const QStringList &files);
+    void onFilesAdded(const PlaylistEntity::List &entities);
     void onRemoveRequested(QList<int> rows);
     void onClearRequested();
     void onMpvShutdown();
@@ -77,6 +77,23 @@ class MainWindow : public QMainWindow {
   private:
     // R3：音量上限推送回调（由 MpvController::volumeMaxChanged 驱动）
     void applyVolumeMax(int v);
+    // N56：注册表维护（自 PlaylistWidget 上移装配顶点）——初装配（构造期）与
+    // 重装配（设置变更）共用，读 ini 构建 HttpClient 缺省参数 provide 进注册表；
+    // 覆盖式更新（注册表身份恒定——实体持有的 registry 指针不变，下一次求值
+    // resolve 即得新 client）
+    void provideHttpServices();
+    // N36 遍历策略同路：读 ini 构建 TraversalPolicy 快照 provide 进同一注册表；
+    // 取值侧在 DirProvider::enumerate 起始处 resolve
+    void provideTraversalPolicy();
+    // N56 §2.7：正播实体——凡"以当前内容为对象"的书签 / 聚合器 / OSD / duration
+    // 读点统一经此取实体，不再读 mpv 属性。零参：playlist-pos 的真相源是本类的
+    // m_playlistPos 镜像，取实体的坐标对在此收口；无正播（停止态 / 镜像未就位）
+    // 返回空 Ptr。返回 Ptr 而非 optional<Ptr>：shared_ptr 本身就是可空句柄，
+    // 再包一层 optional 只会引入语义上不存在区分的第二重空态
+    PlaylistEntity::Ptr playingEntity() const;
+    // N56：注册表维护的设置变更入口（自 PlaylistWidget 上移）——命中相关键时
+    // 重读 ini 覆盖注册表内部实例，下一次求值即生效
+    void onPluginIniKeysChanged(const QStringList &keys);
     void createMenus();
     QWidget *createLeftArea();
     // A15：无状态按钮统一接线——事件来源走 action trigger，启停跟随 action enabled
@@ -166,6 +183,9 @@ class MainWindow : public QMainWindow {
     // N52：转接协议适配层（寿命归 plugin.cpp 的 shared_ptr，覆盖 exec 全程）
     std::shared_ptr<StreamRelay> m_relay;
     ActionManager *m_actions = nullptr; // A15：全部 UI 动作出生与登记处，先于容器构建
+    // N56 §2.7：服务注册表由装配顶点（本类）创建并持有，注入 PlaylistWidget；
+    // relay 的 provide<StreamRelayIf> 亦在此完成（早于任何提供者出生）
+    std::shared_ptr<ServiceRegistry> m_registry;
     QSplitter *m_splitter = nullptr;
     // 视频显示区域（mpv wid 嵌入目标）：主窗直接子控件（N3），
     // 脱离布局管理由 syncVideoGeometry 手动同步，父链构造期定死后全程不动

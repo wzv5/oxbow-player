@@ -12,9 +12,9 @@
 // content-length / last-modified）已删除——耗时长、数据不准，实际无使用价值。
 // 该类型因此不具备任何取得元数据的途径，能力位如实为假，使排序菜单的文件级
 // 排序项对纯 http 表自动灰掉；有元数据可注入的 http 实体见 WebDavEntity。
-// 不支持媒体元数据（恒走静态空回落）。playUrl 恒为可播放的完整 URL，本类不脱敏
+// 不支持媒体元数据（恒走静态空回落）。path() 恒为可播放的完整 URL，本类不脱敏
 // ——UI 一律直接显示传入的串，与本地路径的处理一致。
-// N48：WebDAV 来源的实体（WebDavEntity）其 playUrl 由提供者保证无 userinfo（凭据只在
+// N48：WebDAV 来源的实体（WebDavEntity）其 path() 由提供者保证无 userinfo（凭据只在
 // PROPFIND 请求与喂 mpv 时注入），故工具提示 / 属性对话框 / 复制路径天然无凭据；手工
 // 打开等来源的通用 http 项仍按其原样（含 userinfo）显示，本篇不改该形态
 //
@@ -24,7 +24,7 @@ class HttpEntity : public PlaylistEntity {
   public:
     // registry 必须非空（构造内断言）：http(s) + 空 registry 属调用错误，
     // 工厂已在分派处挡住（Debug 断言、Release 降级 UnknownEntity）
-    HttpEntity(QString playUrl, const std::shared_ptr<ServiceRegistry> &registry);
+    HttpEntity(QString path, const std::shared_ptr<ServiceRegistry> &registry);
 
     Ptr clone() const override { return std::make_shared<HttpEntity>(*this); }
 

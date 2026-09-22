@@ -11,13 +11,13 @@
 class LocalFileEntity : public PlaylistEntity {
   public:
     // registry 必填（经基类持有，本地实体不用；无缺省，调用点显式传）
-    explicit LocalFileEntity(QString playUrl, const std::shared_ptr<ServiceRegistry> &registry)
-        : PlaylistEntity(std::move(playUrl), registry) {}
+    explicit LocalFileEntity(QString path, const std::shared_ptr<ServiceRegistry> &registry)
+        : PlaylistEntity(std::move(path), registry) {}
 
     Ptr clone() const override { return std::make_shared<LocalFileEntity>(*this); }
 
     bool isLocalFile() const override { return true; }
-    bool exists() const override { return QFileInfo::exists(playUrl()); }
+    bool exists() const override { return QFileInfo::exists(path()); }
     // 文件不存在属"值未知"（求值结果三字段全空），非能力缺失
     bool supportsFileMeta() const override { return true; }
     bool supportsMediaMeta() const override { return MediaInfoHelper::available(); }

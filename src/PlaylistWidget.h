@@ -8,7 +8,7 @@
 
 class MpvController;
 class ServiceRegistry; // N35：服务注册表（成员以 shared_ptr 持有）
-class StreamRelay;     // N52：转接协议适配层（ctor 传入并 provide 进注册表）
+class StreamRelay;     // N52：转接协议适配层（plugin.cpp 创建并 install，经 MainWindow 注入注册表）
 
 // 右侧播放列表：每个 tab 对应一个播放列表，tab 标题为列表名。
 // 约定：第一个 tab 名为"默认"，不可删除；其余 tab 持久化保存到 INI 配置文件。
@@ -45,10 +45,13 @@ class PlaylistWidget : public QTabWidget {
     static constexpr int ContainerRole = Qt::UserRole + 3;  // 容器行（存容器 id，QString）
     static constexpr int ParentLinkRole = Qt::UserRole + 4; // "上一级"行（bool）
 
-    // N52：relay 自 MainWindow 构造参数传入（plugin.cpp 创建并 install），ctor 内
-    // provide<StreamRelayIf> 进注册表——硬顺序②：必须早于任何提供者出生（列表在
-    // 本构造期读盘建提供者，deliveryUrl 首次下发就要能从注册表取到 relay）
-    explicit PlaylistWidget(const QString &configFile, std::shared_ptr<StreamRelay> relay,
+    // N56 §2.7：registry 由装配顶点（MainWindow）创建并注入，本类不再自造——
+    // 造实体的层不止视图一个，装配顶点只留一处；每个造实体点都因此确保 registry
+    // 非空（http(s) + 空 registry 会静默降级 UnknownEntity，形态悄悄变错）。
+    // relay 的 provide<StreamRelayIf> 同样上移到 MainWindow（早于本构造即可，
+    // 硬顺序②由装配顶点保证）。构造内不再做任何 provide——HttpClient /
+    // TraversalPolicy 的注册与更新同样在装配顶点完成
+    explicit PlaylistWidget(const QString &configFile, std::shared_ptr<ServiceRegistry> registry,
                             QWidget *parent = nullptr);
     ~PlaylistWidget() override; // N32：非阻塞收尾——作废并取消在途任务后立即返回（不再等待）
 
@@ -59,22 +62,28 @@ class PlaylistWidget : public QTabWidget {
     // （仅翻转播放标记）→ 占位/枚举失败态忽略 → 差异则整体收编到默认 tab 并转移同步目标。
     // 回刷不再重建正在播放的 tab，也不驱逐任何元数据缓存
     void setPlaylist(const QVariantList &items);
-    // 向当前 tab 添加文件（触发 filesAdded 信号）
+    // 向当前 tab 添加文件（触发 filesAdded 信号，携建好的实体表）
     void addFiles(const QStringList &files);
 
     // N11：主菜单"打开文件"专用——整体替换默认 tab 内容并作废其续播记忆；
-    // 默认 tab 永不持久化，也不触发 filesAdded（播放由 MainWindow 统一入口显式驱动）
-    void setDefaultTabFiles(const QStringList &files);
+    // 默认 tab 永不持久化，也不触发 filesAdded（播放由 MainWindow 统一入口显式驱动）。
+    // N56 §2.7：回传它造好的实体表，调用方据此驱动统一播放入口（不再经字符串表绕行）
+    PlaylistEntity::List setDefaultTabFiles(const QStringList &files);
 
-    // ——N45 §2.8：filesOf 拆双出口。凡 mpv 侧语义（上一/下一、循环判定、回刷比对、
-    // 在途回显、正播名等）一律读队列根层出口；唯一当前层语义是双击入队。
-    // 两出口均返回实体序的 playUrl 序列（跳过占位行 / 容器行 / "上一级"行）
-    QStringList queueFilesOf(int tabIndex) const;        // 队列根层（mpv 队列的内容基准）
-    QStringList currentLayerFilesOf(int tabIndex) const; // 当前显示层（入队单位）
-    // N48：喂 mpv 的播放形态——逐项经该 tab 提供者的 playbackUrl 映射（视图中不含
-    // 具体提供者头文件，凭据访问只走基类接口）。providerAt(tab) 为空原样返回。
-    // 只用于下发 mpv 的 loadfile 循环；在途快照 / 比对 / 落盘一律取无凭据形态
-    QStringList playbackFiles(int tabIndex, const QStringList &files) const;
+    // ——N45 §2.8：filesOf 拆双出口的实体版。凡 mpv 侧语义（上一/下一、循环判定、
+    // 回刷比对、在途回显、正播名等）一律读队列根层出口；唯一当前层语义是双击入队。
+    // N56 §2.7：字符串表出口退到"喂 mpv 前最后一刻"——凡 mpv 侧语义一律传实体表，
+    // 下发形态（playUrls）在 MainWindow 的统一入口现场映射
+    PlaylistEntity::List queueEntitiesOf(int tabIndex) const; // 队列根层（mpv 队列的内容基准）
+    PlaylistEntity::List currentLayerEntitiesOf(int tabIndex) const; // 当前显示层（入队单位）
+    // N48/R：喂 mpv 的播放形态——逐实体经该 tab 提供者的 playUrl 映射（视图中不含
+    // 具体提供者头文件，凭据访问只走基类接口）。providerAt(tab) 为空按恒等兜底。
+    // 只用于下发 mpv 的 loadfile 循环；在途快照与收编索引与它同源同形（N56 §2.5）
+    QStringList playUrls(int tabIndex, const PlaylistEntity::List &entities) const;
+    // N56 §2.7：正播实体——某 tab 队列根层第 entityIndex 项（mpv playlist-pos 语义）。
+    // MainWindow 的"以当前内容为对象"取串点（书签 / 聚合器 / duration / OSD 取名）
+    // 一律经此取实体，不再读 mpv 属性；越界 / 层不在缓存 / 空位返回空
+    PlaylistEntity::Ptr playingEntityOf(int tabIndex, int entityIndex) const;
 
     // ——N54：书签按列表身份回跳（机制侧：切列表 + 换层 + 定位；播放决策与报错归 MainWindow）——
     // 某 tab 提供者的列表身份（N52 §2.7）；providerAt 空即空串。走基类接口取用，
@@ -93,7 +102,7 @@ class PlaylistWidget : public QTabWidget {
     struct LevelJump {
         int tab = -1;
         QStringList levelIds; // enumerate 的 parent 形态（空序列 = 根层）
-        QString itemKey;      // 条目归一键（normalizePathForMatch 产出，两侧同形态逐字节比）
+        QString itemKey;      // 条目归一键（Util::Url::key 产出，两侧同形态逐字节比）
         double time = -1.0;
     };
     // 把目标层换入前台并在其中定位 itemKey：层已加载即同步回报，未加载走异步枚举后回报。
@@ -145,7 +154,9 @@ class PlaylistWidget : public QTabWidget {
     // 记录本地变更后的最终序列。回刷据此识别"同一变更的在途中间态"（空列表/部分列表）
     // 并忽略，避免误判为外部变更而把列表搬去默认 tab。空序列不登记（清空/删 tab
     // 由回刷的"空列表忽略"兜底）。整表载入统一在 MainWindow::onPlayRequested 登记；
-    // 追加（addFiles）与批量移除（removeRowsLocal）在各自发射点登记
+    // 追加（addFiles）与批量移除（removeRowsLocal）在各自发射点登记。
+    // R（N56 §2.5）：入参是**下发给 mpv 的形态**（调用方经 playUrls 现算），
+    // 与原样回显、reuse 索引键同源同形；本函数不做任何加工
     void noteLocalPush(const QStringList &snapshot);
 
     // ——N9 提供者——
@@ -164,12 +175,8 @@ class PlaylistWidget : public QTabWidget {
     void savePlaylists();
 
     // ——元数据回填（N18：仅保留 duration 写入）——
-    void applyDuration(const QString &path, double seconds);
-
-  public slots:
-    // N35：设置对话框 ini 键变更转接——命中远端请求设置（remoteTimeoutSec /
-    // ignoreHttpsErrors）时重读 ini 重建 client 并覆盖注册表，下一次求值即生效
-    void onPluginIniKeysChanged(const QStringList &keys);
+    // N56 §2.7：键由调用方取正播实体的 key() 传入（不再吃 mpv 路径现归一）
+    void applyDuration(const QString &key, double seconds);
 
   protected:
     // N5：ShortcutOverride 认领导航键——焦点在列表上时 ↑↓←→/PgUp/PgDn/Home/End
@@ -178,15 +185,15 @@ class PlaylistWidget : public QTabWidget {
     bool eventFilter(QObject *watched, QEvent *event) override;
 
   signals:
-    // 请求整表载入并播放 files 中第 index 个；seekTo > 0 时就绪后恢复到该进度
+    // 请求整表载入并播放 entities 中第 index 个；seekTo > 0 时就绪后恢复到该进度
     // （N4 四步式的进度恢复与此同一通道；发出前已将 tab 标记为正在播放列表）。
-    // N48：tab 为内容所属列表——MainWindow 据此经 playbackFiles(tab, files) 取喂 mpv
-    // 的播放形态（凭据注入在提供者侧）；files 本身恒为无凭据形态（快照/比对/落盘基准）。
+    // N56 §2.7：播放链路改传实体表——MainWindow 据此经 playUrls(tab, entities)
+    // 在喂 mpv 前最后一刻映射播放形态（凭据注入在提供者侧）。
     // N30：keepPaused 为真时载入后保持暂停（四步式在 stop 前读到的 pause 状态）
-    void playRequested(const QStringList &files, int tab, int index, double seekTo,
+    void playRequested(const PlaylistEntity::List &entities, int tab, int index, double seekTo,
                        bool keepPaused = false);
-    // 当前 tab 收到新文件（菜单添加或拖放）
-    void filesAdded(const QStringList &files);
+    // 当前 tab 收到新文件（菜单添加或拖放），携建好的实体表
+    void filesAdded(const PlaylistEntity::List &entities);
     // "正在播放"tab 请求移除指定行 / 清空（需同步到 mpv 播放列表，由 MainWindow 执行；
     // 本地 tab 的删除直接在界面完成，不发信号）
     void removeRequested(const QList<int> &rows);
@@ -203,7 +210,7 @@ class PlaylistWidget : public QTabWidget {
     // N54：层级定位的两种结局（恒在 GUI 线程直连，不跨线程投递）。entityIndex 是目标层
     // 的**实体序**（即 mpv playlist-pos 语义，非行序，N45 §2.4.2）；成功回报蕴含一条
     // 不变式：req.tab 的当前显示层 == req.levelIds（换入已完成），故调用方可直接取
-    // currentLayerFilesOf(req.tab) 当新队列。失败发 levelItemFailed；被作废（取消遮罩 /
+    // currentLayerEntitiesOf(req.tab) 当新队列。失败发 levelItemFailed；被作废（取消遮罩 /
     // abandonJob）时两个信号都不发——取消即用户意图，静默收尾（N54 §2.3）
     void levelItemReady(const PlaylistWidget::LevelJump &req, int entityIndex);
     void levelItemFailed(const PlaylistWidget::LevelJump &req, PlaylistWidget::JumpFailure why,
@@ -305,7 +312,7 @@ class PlaylistWidget : public QTabWidget {
     };
 
     // 单个 tab 的播放记忆（默认 tab 仅进程内有效，持久化时跳过索引 0）。
-    // N9/N26：lastPath 为记忆条目 key（normalizePathForMatch 归一形态，引用条目身份
+    // N9/N26：lastPath 为记忆条目 key（Util::Url::key 归一形态，引用条目身份
     // 而非某次字符串形态；旧 INI 读取时归一桥接），恢复时序号校验失败按其寻位
     struct TabMemory {
         int lastPos = -1;
@@ -352,8 +359,8 @@ class PlaylistWidget : public QTabWidget {
     bool layerLoaded(const QListWidget *list, const QStringList &ids) const;
     // 层的失败文案；层不在缓存返回空串（未加载 ≠ 失败，两者语义分开）
     QString levelErrorOf(const QListWidget *list, const QStringList &ids) const;
-    // 某层实体的 playUrl 序列（filesOf 双出口的共用体，按实体序）
-    QStringList layerFilesOf(int tabIndex, const QStringList &ids) const;
+    // 某层的实体序列（filesOf 双出口的实体版共用体，按实体序）
+    PlaylistEntity::List layerEntitiesOf(int tabIndex, const QStringList &ids) const;
     // 显示行当前对应的层：行内容只在换入 / 重建时改变，浏览路径可先行漂移
     // （切曲归位只改状态、层未在缓存时延后换入），二者须分开跟踪
     QStringList displayedIdsOf(const QListWidget *list) const;
@@ -558,7 +565,7 @@ class PlaylistWidget : public QTabWidget {
     bool anyEntitySupports(const QListWidget *list, const QStringList &ids, MetaCategory cat) const;
 
     // ——结构变更公共骨架——
-    // 三步法之第 1 步：抄录记忆行对应的 playUrl；第 3 步：在新序列中找回并写回
+    // 三步法之第 1 步：抄录记忆行对应的身份串；第 3 步：在新序列中找回并写回
     QString captureMemoryPath(QListWidget *list) const;
     void restoreMemoryPath(QListWidget *list, const QString &captured, bool hadMemory);
     // N30：回刷收编后的记忆重建。内容被整体替换，旧记忆的行号与路径一并失效，
@@ -591,15 +598,9 @@ class PlaylistWidget : public QTabWidget {
     void copyPathToClipboard(const QString &path);
 
     // ——N35 服务注册表装配——
-    // 初装配（构造期）与重装配（设置变更）共用：读 ini 两项构建 HttpClient
-    // 缺省参数，provide 进注册表（重装配为覆盖，注册表身份恒定——实体持有的
-    // registry 指针不变，下一次 resolve 即得新 client）
-    void provideHttpServices();
-
-    // ——N36 遍历策略装配——
-    // 同走 N35 路子：GUI 线程读 ini 构建 TraversalPolicy 快照 provide 进同一注册表，
-    // 替换即覆盖（注册表身份恒定）。取值侧在 DirProvider::enumerate 起始处 resolve
-    void provideTraversalPolicy();
+    // N56：注册表的维护（HttpClient / TraversalPolicy 的注册与设置变更更新）全部
+    // 上移装配顶点 MainWindow，本类只经注入的 registry 取用（提供者构造注入、
+    // 实体求值现查），不再负责任何 provide
 
     // 正在播放条目所在行（PlayingRole 命中处），无则 -1
     int playingRowOf(const QListWidget *list) const;
@@ -675,7 +676,7 @@ class PlaylistWidget : public QTabWidget {
     PendingLoad m_pendingLoad;
     // ——N25 本地在途回显——
     struct LocalPush {
-        QStringList snapshot; // 本地变更后的最终序列（回显比对基准）
+        QStringList snapshot; // 本地变更后"下发给 mpv 的形态"序列（与原样回显同形，R）
         bool pending = false; // 有尚未回显确认的本地序列
     };
     LocalPush m_localPush;

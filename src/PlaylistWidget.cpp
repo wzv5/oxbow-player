@@ -3,7 +3,6 @@
 #include "PlaylistWidget.h"
 
 #include "Constants.h"
-#include "HttpClient.h"
 #include "ListSettingsDialog.h"
 #include "LoadingOverlay.h"
 #include "MediaInfoHelper.h"
@@ -11,25 +10,19 @@
 #include "PlaylistDelegate.h"
 #include "ProviderCatalog.h"
 #include "ServiceRegistry.h"
-#include "StreamRelay.h"
-#include "TraversalPolicy.h"
+#include "StreamTransit.h"
 #include "Util.h"
 
-PlaylistWidget::PlaylistWidget(const QString &configFile, std::shared_ptr<StreamRelay> relay,
+PlaylistWidget::PlaylistWidget(const QString &configFile, std::shared_ptr<ServiceRegistry> registry,
                                QWidget *parent)
-    : QTabWidget(parent), m_configFile(configFile),
-      m_registry(std::make_shared<ServiceRegistry>()) {
-    // 注册表在初始化列表创建——创建是本对象的初始化职责，不归任何一个装配函数；
-    // 此后 m_registry 恒非空，两个 provide 函数只做"读 ini + 覆盖内部实例"，
-    // 彼此独立、可任意次序调用
-    // N35：装配仍须前置——createList 出生即配 StaticProvider 并注入 registry，
-    // 两个装配函数仅读 ini，不依赖任何控件
-    // N52 §2.5 硬顺序②：provide<StreamRelayIf> 必须早于任何提供者出生（本 ctor
-    // 下方 createList 即建首个提供者）；以抽象基入库，取用侧经 StreamRelayIf 编程
-    if (relay)
-        m_registry->provide<StreamRelayIf>(std::move(relay));
-    provideHttpServices();
-    provideTraversalPolicy();
+    : QTabWidget(parent), m_configFile(configFile), m_registry(std::move(registry)) {
+    // N56 §2.7：registry 由装配顶点（MainWindow）创建并注入，本类不再自造；
+    // HttpClient / TraversalPolicy 的注册与设置变更更新同样上移装配顶点，本类
+    // 只经注入的 registry 取用（提供者构造注入、实体求值现查），不做任何 provide。
+    // relay 的 provide<StreamRelayIf> 同样上移（MainWindow 在构造本对象之前完成），
+    // 硬顺序②"早于任何提供者出生"由装配顶点保证
+    Q_ASSERT(m_registry);
+    // N35：装配仍须前置——createList 出生即配 StaticProvider 并注入 registry
     setAcceptDrops(true);
     setDocumentMode(true);
     setMinimumWidth(220);
@@ -127,52 +120,6 @@ PlaylistWidget::~PlaylistWidget() {
 }
 
 // ——N35 服务注册表装配——
-
-// 读 ini 两项构建 HttpClient 缺省参数并 provide。初装配与重装配共用：
-// 注册表身份恒定（初始化列表创建一次，此后恒非空），重装配只覆盖内部
-// HttpClient 实例——实体持有的 registry 指针不变，下一次求值 resolve 即得新 client；
-// 在途单请求不受影响（旧 client 副本随任务存活），条目粒度切换，可接受（N35 §2.3）
-void PlaylistWidget::provideHttpServices() {
-    int timeoutSec = App::remoteTimeoutSecDefault();
-    bool ignoreSsl = App::ignoreHttpsErrorsDefault();
-    if (!m_configFile.isEmpty()) {
-        QSettings s(m_configFile, QSettings::IniFormat);
-        bool ok = false;
-        const int v = s.value(QStringLiteral("remoteTimeoutSec"), timeoutSec).toInt(&ok);
-        if (ok && v >= 1 && v <= 120) // 与设置目录 range 同界，读侧自钳
-            timeoutSec = v;
-        ignoreSsl = s.value(QStringLiteral("ignoreHttpsErrors"), ignoreSsl).toBool();
-    }
-    HttpClient::Config cfg;
-    cfg.timeoutMs = timeoutSec * 1000; // ini 记秒，Config 记毫秒（N34）
-    cfg.ignoreSslErrors = ignoreSsl;
-    m_registry->provide<HttpClient>(std::make_shared<HttpClient>(cfg));
-}
-
-// N36：遍历策略同路——读 ini 构建 TraversalPolicy 快照 provide 进同一注册表
-// （m_registry 于初始化列表创建，恒非空）；取值侧在 DirProvider::enumerate 起始处 resolve
-void PlaylistWidget::provideTraversalPolicy() {
-    int depthLimit = App::recursiveDepthLimitDefault();
-    if (!m_configFile.isEmpty()) {
-        QSettings s(m_configFile, QSettings::IniFormat);
-        bool ok = false;
-        const int v = s.value(QStringLiteral("recursiveDepthLimit"), depthLimit).toInt(&ok);
-        // 读侧自钳：上界与设置目录 range 同源（见 Constants.h）；下界恒 0
-        if (ok && v >= 0 && v <= App::recursiveDepthLimitMax())
-            depthLimit = v;
-    }
-    auto policy = std::make_shared<TraversalPolicy>();
-    policy->depthLimit = depthLimit;
-    m_registry->provide<TraversalPolicy>(std::move(policy));
-}
-
-void PlaylistWidget::onPluginIniKeysChanged(const QStringList &keys) {
-    if (keys.contains(QStringLiteral("remoteTimeoutSec")) ||
-        keys.contains(QStringLiteral("ignoreHttpsErrors")))
-        provideHttpServices();
-    if (keys.contains(QStringLiteral("recursiveDepthLimit")))
-        provideTraversalPolicy();
-}
 
 QListWidget *PlaylistWidget::createList() {
     auto *list = new QListWidget;
@@ -299,41 +246,46 @@ QString PlaylistWidget::levelErrorOf(const QListWidget *list, const QStringList 
     return lvl ? lvl->loadError : QString();
 }
 
-// filesOf 双出口的共用体：层实体的 playUrl 序列（实体序）。旧 filesOf 读显示行
+// filesOf 双出口的实体版（共用体）：层的实体序列（实体序）。旧 filesOf 读显示行
 // （跳占位行），实体序与显示行在无特殊行时一致；失败层既无实体也无内容行
-// （内容一律清空），读层实体与旧行读取等价
-QStringList PlaylistWidget::layerFilesOf(int tabIndex, const QStringList &ids) const {
-    QStringList files;
+// （内容一律清空），读层实体与旧行读取等价。空位原样保留，调用方自判
+PlaylistEntity::List PlaylistWidget::layerEntitiesOf(int tabIndex, const QStringList &ids) const {
     const Level *lvl = findLevel(listAt(tabIndex), ids);
-    if (lvl)
-        for (const auto &entity : lvl->entities)
-            if (entity)
-                files.append(entity->playUrl());
-    return files;
+    return lvl ? lvl->entities : PlaylistEntity::List{};
 }
 
-QStringList PlaylistWidget::queueFilesOf(int tabIndex) const {
-    return layerFilesOf(tabIndex, queueRootIdsOf(listAt(tabIndex)));
+PlaylistEntity::List PlaylistWidget::queueEntitiesOf(int tabIndex) const {
+    return layerEntitiesOf(tabIndex, queueRootIdsOf(listAt(tabIndex)));
 }
 
-QStringList PlaylistWidget::currentLayerFilesOf(int tabIndex) const {
-    return layerFilesOf(tabIndex, browsePathIdsOf(listAt(tabIndex)));
+PlaylistEntity::List PlaylistWidget::currentLayerEntitiesOf(int tabIndex) const {
+    return layerEntitiesOf(tabIndex, browsePathIdsOf(listAt(tabIndex)));
 }
 
-// N48：实体序 playUrl → 喂 mpv 的播放形态。N52：改走基类非虚 deliveryUrl 模板
-// 方法——usesTransit() 为假走 playbackUrl（直发形态），为真铸 mpvqt:// 转接 URI；
-// 本出口由此成为全仓唯一能取得"直接形态"的生产调用点（playbackUrl 已 protected）。
+// N56 §2.7：正播实体——队列根层第 entityIndex 项（mpv playlist-pos 语义）。
+// MainWindow 的一切"以当前内容为对象"取串点经此取实体，不再读 mpv 属性
+PlaylistEntity::Ptr PlaylistWidget::playingEntityOf(int tabIndex, int entityIndex) const {
+    if (tabIndex < 0 || entityIndex < 0)
+        return nullptr;
+    const Level *lvl = findLevel(listAt(tabIndex), queueRootIdsOf(listAt(tabIndex)));
+    if (!lvl || entityIndex >= int(lvl->entities.size()))
+        return nullptr;
+    return lvl->entities.at(entityIndex);
+}
+
+// N48/R：实体表 → 喂 mpv 的播放形态。N52：走基类非虚 playUrl 模板
+// 方法——usesTransit() 为假走 directPlayUrl（直发形态），为真铸 mpvqt:// 转接 URI；
+// 本出口由此成为全仓唯一能取得"直接形态"的生产调用点（directPlayUrl 已 protected）。
 // 凭据只在此处与 PROPFIND 请求两个使用点注入；本出口只服务下发 mpv 的 loadfile
-// 循环，在途快照 / 比对 / 落盘一律另走无凭据形态。providerAt 为空（无提供者的
-// 异常态）原样返回——与基类默认恒等一致
-QStringList PlaylistWidget::playbackFiles(int tabIndex, const QStringList &files) const {
+// 循环，在途快照 / 收编索引与它同源同形（N56 §2.5）。providerAt 为空（无提供者的
+// 异常态）按恒等兜底——与基类默认恒等一致
+QStringList PlaylistWidget::playUrls(int tabIndex, const PlaylistEntity::List &entities) const {
     const PlaylistProvider *p = providerAt(tabIndex);
-    if (!p)
-        return files;
     QStringList out;
-    out.reserve(files.size());
-    for (const QString &f : files)
-        out.append(p->deliveryUrl(f));
+    out.reserve(int(entities.size()));
+    for (const auto &entity : entities)
+        out.append(p && entity ? p->playUrl(entity->path())
+                               : (entity ? entity->path() : QString()));
     return out;
 }
 
@@ -723,7 +675,8 @@ void PlaylistWidget::setItemEntity(QListWidgetItem *item, const PlaylistEntity::
     item->setData(Qt::DisplayRole, entity->title());
     item->setData(Qt::DecorationRole, entity->icon());
     item->setData(EntityRole, QVariant::fromValue<quintptr>(quintptr(entity.get())));
-    item->setToolTip(entity->playUrl());
+    // N56 §2.4：tooltip 走显示出口（剥凭据），凭据不再明文可见
+    item->setToolTip(entity->displayUrl());
 }
 
 // 统一的条目构造：显示名 / 图标 / tooltip 全部取自实体；
@@ -747,9 +700,11 @@ int PlaylistWidget::playingRowOf(const QListWidget *list) const {
 // N25：回刷策略——本地在途回显 → 空列表忽略 → 一致静默 → 占位/枚举失败忽略 → 差异收编默认 tab。
 // 回刷不再重建正在播放的 tab：本地发起的变更一律本地先行，回刷因此恒为一致而静默；
 // 真正的外部变更统一收编到默认 tab（mpv 会话镜像：临时、不持久化、可随时被替换）。
-// N48：本函数内"mpv 回显侧"与"本地比较基准侧"统一取无凭据形态（stripUrlCredentials）
-// ——提供者可为播放注入凭据（WebDAV），而通用 http 项的实体 playUrl 本身可能带凭据，
-// 只剥回显一侧会让它们恒失配、被误判为外部变更而反复整表收编
+// N56 §2.5 判据 R：回显**原样**进判据（视图零加工），实体侧按所在 tab 的提供者
+// **现算**它会下发的形态（playUrls 的同源产物），逐字节比对——语义是"mpv 手里
+// 那条串，正是我此刻会推的那条"。在途快照（noteLocalPush）与 reuse 索引键与判据
+// **同源同形**（同为这份形态），否则"命中即克隆、克隆形态 ≠ 回显形态"会让下一次
+// 回显又判不一致而重复收编永续
 void PlaylistWidget::setPlaylist(const QVariantList &items) {
     // N49：回刷入口是正播态的最新真相（覆盖停止 / 起播 / 外部变更收编），在此刷新按钮态
     updateBottomBarState();
@@ -759,10 +714,10 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
     current.reserve(items.size());
     for (const QVariant &v : items) {
         const QVariantMap map = v.toMap();
-        // mpv 来源路径：本地 cleanPath+原生分隔符，网络/流保持原样（B15）；
-        // N48：再剥凭据——回显里的是播放形态（可能被注入过凭据）
-        pushed.append(Util::stripUrlCredentials(
-            Util::resolveSourcePath(map.value(QStringLiteral("filename")).toString())));
+        // R：回显原样——mpv 对下发的串不做任何修改（只做相对→绝对转换，而插件
+        // 从不推相对路径，N25 实测 + 维护者复核），回显逐字节等于下发串，
+        // 判据侧不做任何定形（toIdentity / 剥凭据均已随 N56 删除）
+        pushed.append(map.value(QStringLiteral("filename")).toString());
         current.append(map.value(QStringLiteral("current")).toBool());
     }
 
@@ -796,15 +751,20 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
     // 4. 逐行一致即静默：只翻转播放标记，正播行变化才迁移选中+滚动（无重建、无闪烁）。
     // 比对与标记都作用于队列根层；显示层非队列根层时不触碰任何行（标记随层状态，
     // 下次渲染队列根层时由归位权威出口按 mpv 现状重建）。
-    // N48：实体侧同样取无凭据形态——通用 http 项的 playUrl 可能自带凭据，与剥过的
-    // 回显逐字节比对会恒失配
+    // R：实体侧现算形态 = providerAt(m_playingTab)->playUrl(entity->path())，
+    // 与 playUrls 的下发路径同源；提供者缺失的异常态按恒等兜底（与 playUrls 一致）
     const Level *ql = findLevel(list, queueRootIdsOf(list));
+    const PlaylistProvider *pp = providerAt(m_playingTab);
     const bool sameAsQueueRoot =
-        ql && int(ql->entities.size()) == pushed.size() && [ql, &pushed]() {
-            for (int i = 0; i < int(ql->entities.size()); ++i)
-                if (!ql->entities.at(i) ||
-                    Util::stripUrlCredentials(ql->entities.at(i)->playUrl()) != pushed.at(i))
+        ql && int(ql->entities.size()) == pushed.size() && [ql, pp, &pushed]() {
+            for (int i = 0; i < int(ql->entities.size()); ++i) {
+                if (!ql->entities.at(i))
                     return false;
+                const QString form =
+                    pp ? pp->playUrl(ql->entities.at(i)->path()) : ql->entities.at(i)->path();
+                if (form != pushed.at(i))
+                    return false;
+            }
             return true;
         }();
     if (sameAsQueueRoot) {
@@ -841,18 +801,19 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
     if (m_job.target == def)
         abandonJob();
 
-    // N31：清前快照收编源实体，建 playUrl → 源实体索引（constFind 拷贝只延长源寿命，
-    // 自覆盖情形清表后克隆仍可用）。同 playUrl 取首个；首个未解析而重复项已解析时
+    // N31：清前快照收编源实体，建"下发形态 → 源实体"索引（constFind 拷贝只延长源寿命，
+    // 自覆盖情形清表后克隆仍可用）。同形态取首个；首个未解析而重复项已解析时
     // 复用落空无正确性代价（缺失元数据按需链自补）。
     // N45：收编源 = 正在播放 tab 队列根层的实体序列（§2.9）。
-    // N48：键取无凭据形态（与回显侧同形态），命中即克隆源实体——克隆携带源实体原
-    // playUrl（WebDAV 干净、通用项原样），播放形态不受影响
+    // R：索引键与判据**同源同形**——对每个源实体现算它会下发的形态（与第 4 步同一
+    // 现算、与 noteLocalPush 快照同一形态），命中即克隆源实体——克隆携带源实体原
+    // 身份串与缓存，克隆再经第 4 步现算仍得同一形态，下一次回显必静默（自愈不变式）
     QHash<QString, PlaylistEntity::Ptr> reuse;
     if (const Level *srcLvl = findLevel(list, queueRootIdsOf(list))) {
         for (const auto &src : srcLvl->entities) {
             if (!src)
                 continue;
-            const QString key = Util::stripUrlCredentials(src->playUrl());
+            const QString key = pp ? pp->playUrl(src->path()) : src->path();
             if (!reuse.contains(key))
                 reuse.insert(key, src);
         }
@@ -872,14 +833,18 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
 
     QListWidgetItem *newCurrent = nullptr;
     for (int i = 0; i < pushed.size(); ++i) {
-        // N31：命中索引复用源实体克隆（携带已解析缓存，playUrl 与源实体一致，不破静默
+        // N31：命中索引复用源实体克隆（携带已解析缓存，身份串与源实体一致，不破静默
         // 不变式）；未命中经工厂新建（网络路径落 UnknownEntity）。
-        // N48：未命中项用剥过的串建实体——默认 tab 实体恒为无凭据形态（默认 tab 是
-        // 会话镜像、不落盘、可随时被替换）
+        // R：未命中项的回显是"播放形态"，先经 StreamTransit::unwrap 折回身份再进
+        // 工厂（N56 §2.6：工厂只收已定形身份）。unwrap 是纯解码（非 mpvqt:// 原样
+        // 返回）——转接项还原为条目身份，其余形态原样；两条路不得互换：索引键若改
+        // 用折叠键（小写归一）就与判据不同形，命中的克隆会被下次回显判成"外部改动"
+        // 而重复收编永续；建实体若改用折叠键，则展示形态被小写化（破 B15）
         const auto rit = reuse.constFind(pushed.at(i));
-        PlaylistEntity::Ptr entity = rit != reuse.constEnd()
-                                         ? rit.value()->clone()
-                                         : PlaylistEntity::fromPlayUrl(pushed.at(i), m_registry);
+        PlaylistEntity::Ptr entity =
+            rit != reuse.constEnd()
+                ? rit.value()->clone()
+                : PlaylistEntity::fromPath(StreamTransit::unwrap(pushed.at(i)), m_registry);
         QListWidgetItem *item = makeItem(def, std::move(entity));
         if (current.at(i)) {
             item->setData(PlayingRole, true);
@@ -929,32 +894,37 @@ void PlaylistWidget::addFiles(const QStringList &files) {
     }
 
     // N25：本地先行——播放中 tab 也立即插行（回刷只会把"本地未改"的差异搬去默认 tab），
-    // 插入后本地序列即等于 mpv 追加后的序列，回刷恒一致而静默
-    for (const QString &file : files)
-        makeItem(list, PlaylistEntity::fromPlayUrl(file, m_registry));
+    // 插入后本地序列即等于 mpv 追加后的序列，回刷恒一致而静默。
+    // N56 §2.7：建好的实体表随 filesAdded 信号交 MainWindow（喂 mpv 前最后一刻再映射形态）
+    PlaylistEntity::List created;
+    created.reserve(files.size());
+    for (const QString &file : files) {
+        auto entity = PlaylistEntity::fromPath(file, m_registry);
+        created.push_back(entity);
+        makeItem(list, std::move(entity));
+    }
     // 非默认本地 tab 添加后持久化（默认 tab 永不落盘，N9/N4 既定）
     if (currentIndex() != 0)
         savePlaylists();
     // 仅播放中 tab 的增删会同步进 mpv（MainWindow::onFilesAdded 同款守卫）：
     // 非播放 tab 不会引发推送，登记在途会留下永不回显的快照。
     // N45：在途回显基准是 mpv 队列 → 队列根层出口（§2.8；该处二者同层——addFiles
-    // 仅对静态来源生效、静态来源不产容器——按队列语义写以免将来放开时错判）
+    // 仅对静态来源生效、静态来源不产容器——按队列语义写以免将来放开时错判）。
+    // R：登记的是下发给 mpv 的形态（经 playUrls 现算，与回显同形）
     if (currentIsPlayingTab())
-        noteLocalPush(queueFilesOf(currentIndex()));
-    emit filesAdded(files);
+        noteLocalPush(playUrls(currentIndex(), queueEntitiesOf(currentIndex())));
+    emit filesAdded(std::move(created));
 }
 
 // N25：本地在途回显登记。空序列不登记——清空/删 tab 之后 mpv 侧本就变空，
 // 由回刷的"空列表忽略"兜底，登记反而会让后续推送被误判为在途中间态。
-// N48：登记前逐项剥凭据——下发 mpv 的是播放形态（可能含注入凭据），而 setPlaylist
-// 的比对基准同样是剥过的回显，两侧同形态才能识别在途中间态（四个调用点一并覆盖）
+// R（N56 §2.5）：入参是**下发给 mpv 的形态**（调用方经 playUrls 现算，字符串
+// 出口退到喂 mpv 前最后一刻），与 setPlaylist 的原样回显、reuse 索引键同源同形
+// ——三者同为这份形态，判等才成立；此处不做任何加工
 void PlaylistWidget::noteLocalPush(const QStringList &snapshot) {
     if (snapshot.isEmpty())
         return;
-    m_localPush.snapshot.clear();
-    m_localPush.snapshot.reserve(snapshot.size());
-    for (const QString &s : snapshot)
-        m_localPush.snapshot.append(Util::stripUrlCredentials(s));
+    m_localPush.snapshot = snapshot;
     m_localPush.pending = true;
 }
 
@@ -962,10 +932,10 @@ void PlaylistWidget::noteLocalPush(const QStringList &snapshot) {
 // （清空列表隐含记忆失效，Q3 裁决）。默认 tab 永不持久化（N9/N4 既定），
 // 也不发 filesAdded：立即播放由 MainWindow 经统一入口 onPlayRequested 驱动，
 // 避免误入播放中 append 分支
-void PlaylistWidget::setDefaultTabFiles(const QStringList &files) {
+PlaylistEntity::List PlaylistWidget::setDefaultTabFiles(const QStringList &files) {
     QListWidget *list = listAt(0);
     if (!list || files.isEmpty())
-        return;
+        return {};
     // N30：主菜单"打开文件"与书签跳转不受 m_busy 限制，此时可能有本表的刷新批次在途。
     // 不作废则枚举收尾到达后用回推的旧内容整表覆盖，视图回到旧内容而 mpv 在播新文件。
     // N32：统一走 abandonJob（仅当在途批次的目标表即本表）
@@ -983,8 +953,13 @@ void PlaylistWidget::setDefaultTabFiles(const QStringList &files) {
     lvl.entities.clear();        // 同步点：重建＝先清实体仓再随建行 push_back
     lvl.mediaMetaLoaded = false; // N29：条目集合变化，两类已读元数据一并失效
     lvl.fileMetaLoaded = false;
-    for (const QString &file : files)
-        makeItem(list, PlaylistEntity::fromPlayUrl(file, m_registry));
+    PlaylistEntity::List created;
+    created.reserve(files.size());
+    for (const QString &file : files) {
+        auto entity = PlaylistEntity::fromPath(file, m_registry);
+        created.push_back(entity);
+        makeItem(list, std::move(entity));
+    }
     // N45：直写重建即根层显示（与收编同款，显式落显示层记录）
     m_displayedIds[list] = queueRootIdsOf(list);
     // N31：内容序 == 打开顺序，随直写复位排序规则为无序（保留方向）——否则存量
@@ -992,6 +967,8 @@ void PlaylistWidget::setDefaultTabFiles(const QStringList &files) {
     // 静态源 enumerate 不读排序键，与被作废的在途枚举批次无实际竞争
     if (auto *p = providerAt(0))
         p->setSortRule(int(SortKey::None), p->sortAscending());
+    // N56 §2.7：回传造好的实体表，调用方据此驱动统一播放入口
+    return created;
 }
 
 void PlaylistWidget::repaintAllLists() {
@@ -1002,12 +979,12 @@ void PlaylistWidget::repaintAllLists() {
 }
 
 // B18/N26：读取失败（seconds<=0）存 nullopt——时长列经取值链回落到实体缓存元数据
-// （mpv 推送未知而实体已解析时显示 MediaInfo 时长，B18 口径以 N26 为准）
-void PlaylistWidget::applyDuration(const QString &rawPath, double seconds) {
-    if (rawPath.isEmpty())
+// （mpv 推送未知而实体已解析时显示 MediaInfo 时长，B18 口径以 N26 为准）。
+// N56 §2.7：键由调用方取正播实体的 key() 传入，与 m_duration 仓的读取侧（实体 key）同形
+void PlaylistWidget::applyDuration(const QString &key, double seconds) {
+    if (key.isEmpty())
         return;
-    m_duration[Util::normalizePathForMatch(rawPath)] =
-        seconds > 0 ? std::optional<double>(seconds) : std::nullopt;
+    m_duration[key] = seconds > 0 ? std::optional<double>(seconds) : std::nullopt;
     repaintAllLists();
 }
 
@@ -1049,8 +1026,8 @@ void PlaylistWidget::restoreMemoryPath(QListWidget *list, const QString &capture
 // N30：回刷收编后的记忆重建（替代原先的整体作废）。内容虽被整体替换，mpv 仍在播
 // 新表里的某一项——按正播行重建记忆，使随后的四步式（排序 / 移除）恒有续播目标。
 // 优先用推送自带的 current 行；推送无 current 时退回 mpv 的 path 定位
-// （与 restorePlayingState 同口径）。两者都定位不到即 mpv 未播，此时才作废记忆——
-// 与"不在播就不续播"同义，不是记忆缺失
+// （与 restorePlayingState 同口径，经 matches 键级判等）。两者都定位不到即 mpv
+// 未播，此时才作废记忆——与"不在播就不续播"同义，不是记忆缺失
 void PlaylistWidget::rebuildMemoryAfterAdopt(QListWidget *list, int playingRow) {
     if (!list)
         return;
@@ -1058,11 +1035,10 @@ void PlaylistWidget::rebuildMemoryAfterAdopt(QListWidget *list, int playingRow) 
     // N45：入参 playingRow 是行序，记忆 lastPos 是队列根层实体序，先换算
     int idx = rowToEntityIndex(list, playingRow);
     if (idx < 0 && m_mpv) {
-        const QString cur =
-            Util::normalizePathForMatch(m_mpv->propertyString(QStringLiteral("path")));
+        const QString cur = m_mpv->propertyString(QStringLiteral("path"));
         if (!cur.isEmpty() && lvl) {
             for (int i = 0; i < int(lvl->entities.size()); ++i) {
-                if (const PlaylistEntity *e = lvl->entities.at(i).get(); e && e->key() == cur) {
+                if (const PlaylistEntity *e = lvl->entities.at(i).get(); e && e->matches(cur)) {
                     idx = i;
                     break;
                 }
@@ -1110,10 +1086,10 @@ void PlaylistWidget::loadPlaylists() {
         mem.lastPos = settings.value(QStringLiteral("lastPos"), -1).toInt();
         mem.lastTimePos = settings.value(QStringLiteral("lastTimePos"), -1.0).toDouble();
         mem.lastPath = settings.value(QStringLiteral("lastPath")).toString();
-        // N26：记忆存条目 key（normalizePathForMatch 归一形态）。旧 INI 存原始形态，
+        // N26：记忆存条目 key（Util::Url::key 归一形态）。旧 INI 存原始形态，
         // 读取侧归一桥接（新写入的 key 再归一幂等，往返无损）；空值防归一成 CWD
         if (!mem.lastPath.isEmpty())
-            mem.lastPath = Util::normalizePathForMatch(mem.lastPath);
+            mem.lastPath = Util::Url::key(mem.lastPath);
 
         // N9：提供者反序列化完全自治（静态回填条目、目录读参数与排序键），
         // 内容统一经 enumerate 取得（N28：静态表同样延迟到首次激活）；
@@ -1167,7 +1143,7 @@ void PlaylistWidget::savePlaylists() {
         QListWidget *list = listAt(i);
         auto *provider = providerAt(i);
         // N9：静态列表内容先回写提供者（内容跟提供者走），序列化统一走 saveSettings。
-        // N26：回传实体集合（StaticProvider 从实体提取 playUrl 覆盖最小表示）；
+        // N26：回传实体集合（StaticProvider 从实体提取身份串落最小表示）；
         // N27：回传条件收口为能力位，走基类虚调用——不可修改的提供者（目录）走空实现，
         // 落盘内容恒为参数与排序键。回传与落盘是同一动作的两半，不得拆开。
         // N28：回传守卫——仅对已加载的表执行：未加载表实体集合为空，
@@ -1233,10 +1209,10 @@ void PlaylistWidget::recordPlayback(int tabIndex, int pos, double seconds) {
     const Level *lvl = findLevel(list, queueRootIdsOf(list));
     if (!lvl || pos >= int(lvl->entities.size()))
         return;
-    const QString mpvPath = Util::normalizePathForMatch(
-        m_mpv ? m_mpv->propertyString(QStringLiteral("path")) : QString());
+    const QString mpvPath = m_mpv ? m_mpv->propertyString(QStringLiteral("path")) : QString();
     const PlaylistEntity *entity = lvl->entities.at(pos).get();
-    if (mpvPath.isEmpty() || !entity || entity->key() != mpvPath)
+    // N56 §2.5：键级判等经 matches（回显原样进判据，归一在实体内部完成）
+    if (mpvPath.isEmpty() || !entity || !entity->matches(mpvPath))
         return; // 索引与正播文件对不上：结构变更在途，不写本表记忆
     TabMemory &mem = m_memory[list];
     mem.lastPos = pos;
@@ -1456,8 +1432,9 @@ void PlaylistWidget::onItemDoubleClicked(QListWidgetItem *item) {
     }
     markPlayingTab(tab);
     // N45 §2.8：双击入队是唯一"当前层"语义——入队单位即当前层（markPlayingTab
-    // 已把队列根锚定到该层）；index 由行序换算为实体序
-    emit playRequested(currentLayerFilesOf(tab), tab, rowToEntityIndex(list, list->row(item)),
+    // 已把队列根锚定到该层）；index 由行序换算为实体序。
+    // N56 §2.7：播放链路传实体表，下发形态由 MainWindow 在喂 mpv 前一刻映射
+    emit playRequested(currentLayerEntitiesOf(tab), tab, rowToEntityIndex(list, list->row(item)),
                        -1.0); // 回显由 MainWindow 统一入口登记（N25）
 }
 
@@ -1510,15 +1487,16 @@ void PlaylistWidget::eraseFailedLevel(QListWidget *list, const QStringList &ids)
         it->erase(lit);
 }
 
-// 目标层内定位：返回首个 key() == itemKey 的**实体序**下标（即 mpv playlist-pos 语义，
-// 非行序，N45 §2.4.2）。两侧同为 normalizePathForMatch 产出，逐字节相等即命中
+// 目标层内定位：返回首个 matches(itemKey) 的**实体序**下标（即 mpv playlist-pos 语义，
+// 非行序，N45 §2.4.2）。入参是书签存下的键（Util::Url::key 产出，N56 §2.5）——
+// 键级判等经实体自己的 matches 出口，外部不假设键长什么样
 int PlaylistWidget::entityIndexInLevel(const QListWidget *list, const QStringList &ids,
                                        const QString &itemKey) const {
     const Level *lvl = findLevel(list, ids);
     if (!lvl)
         return -1;
     for (int i = 0; i < int(lvl->entities.size()); ++i)
-        if (lvl->entities[i] && lvl->entities[i]->key() == itemKey)
+        if (lvl->entities[i] && lvl->entities[i]->matches(itemKey))
             return i;
     return -1;
 }
@@ -1607,7 +1585,7 @@ void PlaylistWidget::dropEvent(QDropEvent *event) {
     QStringList files;
     for (const QUrl &url : event->mimeData()->urls()) {
         if (url.isLocalFile())
-            files.append(Util::nativePath(url.toLocalFile()));
+            files.append(Util::Url::toNative(url.toLocalFile()));
     }
     if (!files.isEmpty()) {
         addFiles(files);
@@ -1718,13 +1696,12 @@ void PlaylistWidget::restorePlayingState(QListWidget *list, int tab) {
     if (browsePathIdsOf(list) != queueRootIdsOf(list))
         return;
     const bool idle = m_mpv ? m_mpv->propertyFlag(QStringLiteral("idle-active"), false) : true;
-    const QString cur =
-        m_mpv ? Util::normalizePathForMatch(m_mpv->propertyString(QStringLiteral("path")))
-              : QString();
+    const QString cur = m_mpv ? m_mpv->propertyString(QStringLiteral("path")) : QString();
     int target = -1;
     if (!idle && !cur.isEmpty()) { // path 为空即无正播 → 清除
         for (int i = 0; i < list->count(); ++i) {
-            if (const PlaylistEntity *e = entityFromItem(list->item(i)); e && e->key() == cur) {
+            // N56 §2.5：键级判等经 matches（回显原样进判据，归一在实体内部完成）
+            if (const PlaylistEntity *e = entityFromItem(list->item(i)); e && e->matches(cur)) {
                 target = i;
                 break;
             }
@@ -1769,11 +1746,12 @@ void PlaylistWidget::runFourStep(QListWidget *list, int tab, const std::function
     clearPlayingMarks(list); // stop 即 mpv 列表清空，本地标记同步失效
     if (mutate)
         mutate();
-    // N45 §2.8：重推的是 mpv 队列本身——files 取队列根层出口，idx 为队列根层
-    // 实体序（resumeEntityIndexOf 内部完成序号校验与路径寻位）
+    // N45 §2.8：重推的是 mpv 队列本身——entities 取队列根层出口，idx 为队列根层
+    // 实体序（resumeEntityIndexOf 内部完成序号校验与路径寻位）。
+    // N56 §2.7：播放链路传实体表
     const int idx = resumeEntityIndexOf(tab);
     if (idx >= 0)
-        emit playRequested(queueFilesOf(tab), tab, idx, lastTimePosOf(tab), keepPaused);
+        emit playRequested(queueEntitiesOf(tab), tab, idx, lastTimePosOf(tab), keepPaused);
     // idx < 0：记忆条目已在本次变更中消失，保持停止，标记保持清除态
 }
 
@@ -1924,14 +1902,14 @@ bool PlaylistWidget::syncAfterRefresh(QListWidget *list, int tab, const QStringL
         prefix = e && e->key() == oldKeys.at(i) && !isPlaceholderRow(list->item(i));
     }
     // 正播时长回填（三分支通用）：静默与追加不重建播放列表，正播行时长不会再有 mpv 推送补回。
-    // 不前置判断——duration <= 0 由 applyDuration 记 nullopt，时长列回落到实体缓存元数据
+    // 不前置判断——duration <= 0 由 applyDuration 记 nullopt，时长列回落到实体缓存元数据。
+    // N56 §2.5：定位正播行经 matches（回显原样进判据）；落仓键取实体 key
     if (m_mpv && tab >= 0 && tab == m_playingTab) {
-        const QString cur =
-            Util::normalizePathForMatch(m_mpv->propertyString(QStringLiteral("path")));
+        const QString cur = m_mpv->propertyString(QStringLiteral("path"));
         if (!cur.isEmpty()) {
             for (int i = 0; i < list->count(); ++i) {
-                if (const PlaylistEntity *e = entityFromItem(list->item(i)); e && e->key() == cur) {
-                    applyDuration(e->playUrl(),
+                if (const PlaylistEntity *e = entityFromItem(list->item(i)); e && e->matches(cur)) {
+                    applyDuration(e->key(),
                                   m_mpv->propertyDouble(QStringLiteral("duration"), -1.0));
                     break;
                 }
@@ -1948,12 +1926,16 @@ bool PlaylistWidget::syncAfterRefresh(QListWidget *list, int tab, const QStringL
     if (!canSync)
         return false;
     if (prefix) { // 末尾追加：登记在途回显后追加新项，播放零中断
-        // N45 §2.8：比对与追加的基准是 mpv 队列 → 队列根层出口
-        const QStringList files = queueFilesOf(tab);
-        const QStringList added = files.mid(n);
-        if (!added.isEmpty()) {
-            noteLocalPush(files); // 登记先于发射：避免 mpv 回刷被判为外部变更
-            emit filesAdded(added);
+        // N45 §2.8：比对与追加的基准是 mpv 队列 → 队列根层出口。
+        // N56 §2.7：追加段以实体表随 filesAdded 信号交 MainWindow
+        const PlaylistEntity::List entities = queueEntitiesOf(tab);
+        PlaylistEntity::List added;
+        for (int i = n; i < int(entities.size()); ++i)
+            added.push_back(entities.at(i));
+        if (!added.empty()) {
+            // R：登记"下发给 mpv 的形态"（与原样回显同形，N56 §2.5）
+            noteLocalPush(playUrls(tab, entities)); // 登记先于发射：避免 mpv 回刷被判为外部变更
+            emit filesAdded(std::move(added));
         }
         return false;
     }
@@ -2774,8 +2756,10 @@ void PlaylistWidget::removeRowsLocal(QListWidget *list, const QList<int> &rowsIn
     }
     restoreMemoryPath(list, captured, hadMemory);
     if (tab >= 0)
-        noteLocalPush(queueFilesOf(tab)); // N45 §2.8：在途回显基准是 mpv 序列（队列根层）
-    emit contentsChanged();               // A17：本地删行条目数已变，刷新导航启停
+        // N45 §2.8：在途回显基准是 mpv 序列（队列根层）；R 之下登记"下发给 mpv 的
+        // 形态"（与原样回显同形，N56 §2.5）
+        noteLocalPush(playUrls(tab, queueEntitiesOf(tab)));
+    emit contentsChanged(); // A17：本地删行条目数已变，刷新导航启停
 }
 
 void PlaylistWidget::removeInvalidItems() {
@@ -3357,7 +3341,8 @@ void PlaylistWidget::showPropertiesDialog(const PlaylistEntity::Ptr &entityPtr) 
         // ——常规组：路径 / 大小 / 创建 / 修改 走实体 fileMeta；
         // 文件格式 / 总时长 走实体 mediaMeta
         QList<Row> general;
-        general.append({tr("File Path"), entity.playUrl()});
+        // N56 §2.4：属性对话框 File Path 走显示出口（剥凭据）
+        general.append({tr("File Path"), entity.displayUrl()});
         if (mi && !mi->format.isEmpty())
             general.append({tr("Format"), mi->format});
         if (totalSize > 0)
@@ -3742,7 +3727,7 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
     // 副本保活到分发结束，对话框读取的是存活实体（内容与右键时刻一致）
     PlaylistEntity::Ptr targetEntity =
         m_menuTargetList ? entityPtrAt(m_menuTargetList, m_menuTargetRow) : nullptr;
-    const QString targetUrl = targetEntity ? targetEntity->playUrl() : QString();
+    const QString targetUrl = targetEntity ? targetEntity->path() : QString();
     // N47：容器目标的按值副本（实体行为空；菜单 exec 期间持有安全，见 containerAt）。
     // 展示路径取 path，缺失回退相对路径（标题拼接，与 tooltip 同口径，§2.2）；
     // 复制 / 打开只用 path 本体，不用回退值
@@ -3849,7 +3834,7 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
     // 本地形态判定看 path 本体（目录绝对路径天然本地，WebDAV 完整 URL 天然网络），
     // 不引入提供者身份接口；存在性以点击时刻为准
     const bool containerLocalExists = targetContainer && !containerPath.isEmpty() &&
-                                      !Util::isNetworkStreamPath(containerPath) &&
+                                      !Util::Url::isNetworkStream(containerPath) &&
                                       QDir(containerPath).exists();
     // 能力位取代字符串前缀猜测——定位仅对本地存在项启用
     openLocationAction->setEnabled(
@@ -3886,18 +3871,22 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
         QStringList patterns;
         for (const QString &ext : App::defaultMediaExtensions())
             patterns << QStringLiteral("*.") + ext;
-        const QStringList files = QFileDialog::getOpenFileNames(
+        QStringList files = QFileDialog::getOpenFileNames(
             this, tr("Add Files"), QString(),
             tr("Media files (%1);;All files (*)").arg(patterns.join(QLatin1Char(' '))));
+        // 入口定形（N56 §2.6）：对话框返回正斜杠绝对路径，转原生分隔符——与
+        // MainWindow::onOpenFile / 拖放同款；工厂不再代做定形
+        for (QString &f : files)
+            f = Util::Url::toNative(f);
         if (!files.isEmpty())
             addFiles(files);
     } else if (chosen == refreshAction) {
         refreshCurrentTab();
     } else if (chosen == openLocationAction) {
-        // N47：容器目标打开其 path（本地目录本身）；实体走原 playUrl
+        // N47：容器目标打开其 path（本地目录本身）；实体走原身份串
         Util::openFileLocation(targetContainer ? containerPath : targetUrl, this);
     } else if (chosen == copyPathAction) {
-        // N47：容器目标复制其 path（无凭据形态）；实体走原 playUrl
+        // N47：容器目标复制其 path（无凭据形态）；实体走原身份串
         copyPathToClipboard(targetContainer ? containerPath : targetUrl);
     } else if (chosen == propsAction) {
         if (targetContainer)

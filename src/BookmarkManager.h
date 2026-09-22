@@ -28,8 +28,9 @@ class BookmarkManager : public QObject {
 
     QStringList allFiles() const { return m_order; }
     QList<Bookmark> bookmarks(const QString &path) const;
-    // UI 展示用：归一化键 → 首见原始路径（保留大小写/分隔符形态；N48：凭据段不保留
-    // ——新增书签在入库前剥除 userinfo，load 不为已有值做处理）
+    // UI 展示用：归一化键 → 首见原始路径（保留大小写/分隔符形态；N56 §2.4：书签层
+    // 完全豁免显示纪律——存串取自实体 path()，用户凭据原样保留并展示，load 不为
+    // 已有值做处理）
     QString displayPath(const QString &normalizedKey) const {
         return m_displayOf.value(normalizedKey, normalizedKey);
     }
@@ -45,7 +46,7 @@ class BookmarkManager : public QObject {
     void removeBookmark(const QString &path, int index);
     void removeFile(const QString &path);
     void clearAll();
-    // 移除失效项。本地项看磁盘：不存在即失效（判据单点 Util::isMissingLocalSource）。
+    // 移除失效项。本地项看磁盘：不存在即失效（判据单点 Util::Url::isMissingLocal）。
     // 远端项看归属（N54）：本篇不做 INI 兼容与迁移，故"没有可用归属"就是数据异常——
     // 既无来源 uuid、或来源 uuid 在现存列表里查不到，这类项按 §2.2 跳转必被拒（远端不
     // 回退），留着只是列表里的死条目。listAlive 未接时"列表是否还在"这一半无从判定，

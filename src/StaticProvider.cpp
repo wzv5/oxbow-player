@@ -53,18 +53,18 @@ QString StaticProvider::displayName() {
 StaticProvider::StaticProvider(const std::shared_ptr<ServiceRegistry> &registry)
     : PlaylistProvider(registry) {}
 
-// 从实体提取 playUrl 覆盖最小表示（未来加标题等字段不改签名）。
+// 从实体提取身份串落最小表示（未来加标题等字段不改签名）。
 // 不变式：只提取标量，不保存实体指针
 void StaticProvider::setItems(const EntityList &entities) {
     QStringList urls;
     urls.reserve(int(entities.size()));
     for (const auto &entity : entities)
-        urls << entity->playUrl();
+        urls << entity->path();
     m_urls = std::move(urls);
 }
 
 // 现场造实体后移交视图（静态列表永成功，警告恒空）；N29 起不预热元数据，
-// 按需经预读骨架供给。registry 经基类转交 fromPlayUrl：持久化的 http 条目
+// 按需经预读骨架供给。registry 经基类转交 fromPath：持久化的 http 条目
 // 重载后仍得 HttpEntity。
 // N45：静态保持平铺、不产容器——非空 parent 属调用方违约，Q_ASSERT 守候，
 // release 降级返回空结果（不得静默忽略，否则视图侧 bug 会被吞掉）
@@ -77,7 +77,7 @@ StaticProvider::enumerate(const QStringList &parent) const {
     EntityList entities;
     entities.reserve(m_urls.size());
     for (const QString &url : m_urls)
-        entities.push_back(PlaylistEntity::fromPlayUrl(url, registry()));
+        entities.push_back(PlaylistEntity::fromPath(url, registry()));
     return Enumeration{{}, std::move(entities), {}}; // 静态列表无警告
 }
 

@@ -97,7 +97,7 @@ MediaInfoHelper::Data MediaInfoHelper::parse(const QString &path) {
 
     // N18：仅对本地路径解析；网络/流路径（http:// / rtmp:// / ...）无本地文件
     // 实体，Open 必然失败且会触发 IO 等待；提前返回空 Data 让 UI 优雅降级
-    if (Util::isNetworkStreamPath(path))
+    if (Util::Url::isNetworkStream(path))
         return out;
 
     MediaInfoDLL::MediaInfo MI;

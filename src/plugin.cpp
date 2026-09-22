@@ -178,7 +178,7 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle) {
     // ① install 必须早于 startEventThread——首次 mpv_wait_event 解除 mpv 启动
     //    门控后，命令行首文件即会 open 流；
     // ② 必须早于任何提供者出生——列表在 PlaylistWidget 构造期读盘建提供者，
-    //    deliveryUrl 首次下发就要能从注册表取到 relay（经 MainWindow 构造参数传入）。
+    //    playUrl 首次下发就要能从注册表取到 relay（经 MainWindow 构造参数传入）。
     auto relay = std::make_shared<StreamRelay>();
     if (!relay->install(handle))
         return 1; // 协议注册失败：让 mpv 记为脚本加载失败，比静默残缺更可诊断

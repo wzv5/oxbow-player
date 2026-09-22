@@ -8,11 +8,14 @@
 #include "ChapterSlider.h"
 #include "Constants.h"
 #include "FilterListWidget.h"
+#include "HttpClient.h"
 #include "MpvController.h"
 #include "NavigatorPanel.h"
 #include "PlaylistWidget.h"
+#include "ServiceRegistry.h"
 #include "SettingsDialog.h"
 #include "StreamRelay.h"
+#include "TraversalPolicy.h"
 #include "Util.h"
 
 // N15：章节+书签数据与合并规则的唯一持有者（MainWindow.cpp 文件内实现，
@@ -30,8 +33,7 @@ class MarkAggregator {
         bool isBookmark = false;
     };
 
-    explicit MarkAggregator(MpvController *controller, BookmarkManager *bookmarks)
-        : m_controller(controller), m_bookmarks(bookmarks) {}
+    explicit MarkAggregator(BookmarkManager *bookmarks) : m_bookmarks(bookmarks) {}
 
     // 章节数据：接收原始（不去重），内部严格 == 去重（保留首项）+ time 升序。
     // 传空即清空（文件切换/停止）。去重规则与合并规则同处收口
@@ -62,24 +64,25 @@ class MarkAggregator {
     QList<BookmarkManager::Bookmark> bookmarks(const QString &path) const {
         if (path.isEmpty() || !m_bookmarks)
             return {};
-        return m_bookmarks->bookmarks(Util::normalizePathForMatch(path));
+        return m_bookmarks->bookmarks(Util::Url::key(path));
     }
     // 书签/装载完成等任意内容变更后调用
     void invalidate() { m_dirty = true; }
 
     // 合并清单：当前文件的章节 ∪ 书签，time 升序；同 time（严格 ==）书签覆盖章节。
     // 返回内部缓存 const 引用（零拷贝）；引用仅在下次 marks()/invalidate 前有效，
-    // 调用方须即时消费，不得跨变更持有
-    const QList<Mark> &marks() const {
+    // 调用方须即时消费，不得跨变更持有。
+    // N56 §2.7：书签查表键取自调用方给的正播实体（空指针即无正播，书签段为空），
+    // 本类不再读 mpv 属性——凡"以当前内容为对象"的读点统一归正播实体
+    const QList<Mark> &marks(const PlaylistEntity *playing) const {
         if (!m_dirty)
             return m_cache;
-        const QString path =
-            Util::normalizePathForMatch(m_controller->propertyString(QStringLiteral("path")));
         QList<Mark> out;
         for (const auto &c : m_chapters)
             out.append({c.time, c.title, false});
-        if (!path.isEmpty() && m_bookmarks) {
-            const auto bms = m_bookmarks->bookmarks(path);
+        const QString playingKey = playing ? playing->key() : QString();
+        if (!playingKey.isEmpty() && m_bookmarks) {
+            const auto bms = m_bookmarks->bookmarks(playingKey);
             for (const auto &b : bms)
                 out.append({b.time, b.title, true});
         }
@@ -105,8 +108,8 @@ class MarkAggregator {
     }
 
     // 命中：marks 中 time ≤ timePos 的最大项；无命中返回空
-    std::optional<Mark> hit(double timePos) const {
-        const auto &list = marks();
+    std::optional<Mark> hit(double timePos, const PlaylistEntity *playing) const {
+        const auto &list = marks(playing);
         std::optional<Mark> result;
         for (const auto &m : list) {
             if (m.time <= timePos)
@@ -118,7 +121,6 @@ class MarkAggregator {
     }
 
   private:
-    MpvController *m_controller;                     // 非拥有
     BookmarkManager *m_bookmarks;                    // 非拥有
     QList<MpvController::ChapterInfo> m_rawChapters; // 原始章节（setChapters 入参原样）
     QList<MpvController::ChapterInfo> m_chapters;    // 严格 == 去重 + time 升序
@@ -133,6 +135,15 @@ MainWindow::MainWindow(MpvController *controller, const QString &configFile,
     setWindowTitle(App::name());
 
     m_actions = new ActionManager(this); // A15：先于任何容器构建
+
+    // N56 §2.7：装配顶点——registry 由本类创建并持有，relay 的 provide<StreamRelayIf>
+    // 亦在此完成（硬顺序②：必须早于 PlaylistWidget 构造期出生的第一个提供者）。
+    // HttpClient / TraversalPolicy 的注册同样归本类（自 PlaylistWidget 上移）
+    m_registry = std::make_shared<ServiceRegistry>();
+    if (m_relay)
+        m_registry->provide<StreamRelayIf>(m_relay);
+    provideHttpServices();
+    provideTraversalPolicy();
 
     m_splitter = new QSplitter(Qt::Horizontal, this);
     m_splitter->addWidget(createLeftArea());
@@ -155,7 +166,7 @@ MainWindow::MainWindow(MpvController *controller, const QString &configFile,
     m_clickTimer->setSingleShot(true);
     connect(m_clickTimer, &QTimer::timeout, this, &MainWindow::onVideoClickTimeout);
 
-    m_playlist = new PlaylistWidget(configFile, m_relay, m_splitter);
+    m_playlist = new PlaylistWidget(configFile, m_registry, m_splitter);
     m_playlist->attachController(m_controller); // N4：四步式停止前读取 time-pos
     m_splitter->addWidget(m_playlist);
     m_splitter->setStretchFactor(0, 1);
@@ -178,7 +189,7 @@ MainWindow::MainWindow(MpvController *controller, const QString &configFile,
     m_bookmarkMgr = new BookmarkManager(configFile, this);
     m_bookmarkMgr->load();
 
-    m_marks = new MarkAggregator(m_controller, m_bookmarkMgr); // N15：标记聚合器
+    m_marks = new MarkAggregator(m_bookmarkMgr); // N15：标记聚合器
 
     setCentralWidget(m_splitter);
     createMenus();
@@ -637,14 +648,15 @@ void MainWindow::connectController() {
     // N4：四步式第一步——排序/清理播放中 tab 前下发停止
     connect(m_playlist, &PlaylistWidget::stopRequested, this,
             [this]() { m_controller->command({QStringLiteral("stop")}); });
-    // N4：元数据回填路由——按"当前正播路径"定位全局仓条目（推送数据覆写）。
-    // 路径经 normalizePathForMatch 规范化，与条目存储键同形，防止写入幻影条目。
+    // N4：元数据回填路由——按正播实体定位全局仓条目（推送数据覆写）。
+    // N56 §2.7：键取正播实体的 key()（与条目存储键同形，防止写入幻影条目）；
+    // playlist-pos 推送先于文件装载完成，duration 到达时镜像必已就位
     // B18：0 秒（FILE_LOADED 读不到）同其余 4 项一样走"读取失败即清空"，
     // 故不在此拦截；卸载路径不发 0.0（PropDuration 跳过 NONE），档案不受影响
     connect(m_controller, &MpvController::durationChanged, m_playlist,
-            [this](const QString &p, double sec) {
-                // mpv 来源路径：本地 cleanPath+原生分隔符，网络/流保持原样（B15）
-                m_playlist->applyDuration(Util::resolveSourcePath(p), sec);
+            [this](const QString &, double sec) {
+                if (const auto e = playingEntity())
+                    m_playlist->applyDuration(e->key(), sec);
             });
     // N18：其余 mpv 元数据（media-metadata / file-format / tracks / chapters）
     // 不再回填 PlaylistWidget——属性对话框改读 MediaInfoHelper 缓存，
@@ -720,6 +732,54 @@ void MainWindow::connectController() {
     connect(m_controller, &MpvController::mpvShutdown, this, &MainWindow::onMpvShutdown);
 }
 
+// N56：注册表维护（自 PlaylistWidget 上移装配顶点）。读 ini 两项构建 HttpClient
+// 缺省参数并 provide。初装配（构造期）与重装配（设置变更）共用：覆盖式更新，
+// 注册表身份恒定——实体持有的 registry 指针不变，下一次求值 resolve 即得新 client；
+// 在途单请求不受影响（旧 client 副本随任务存活），条目粒度切换，可接受（N35 §2.3）
+void MainWindow::provideHttpServices() {
+    int timeoutSec = App::remoteTimeoutSecDefault();
+    bool ignoreSsl = App::ignoreHttpsErrorsDefault();
+    if (!m_configFile.isEmpty()) {
+        QSettings s(m_configFile, QSettings::IniFormat);
+        bool ok = false;
+        const int v = s.value(QStringLiteral("remoteTimeoutSec"), timeoutSec).toInt(&ok);
+        if (ok && v >= 1 && v <= 120) // 与设置目录 range 同界，读侧自钳
+            timeoutSec = v;
+        ignoreSsl = s.value(QStringLiteral("ignoreHttpsErrors"), ignoreSsl).toBool();
+    }
+    HttpClient::Config cfg;
+    cfg.timeoutMs = timeoutSec * 1000; // ini 记秒，Config 记毫秒（N34）
+    cfg.ignoreSslErrors = ignoreSsl;
+    m_registry->provide<HttpClient>(std::make_shared<HttpClient>(cfg));
+}
+
+// N36：遍历策略同路——读 ini 构建 TraversalPolicy 快照 provide 进同一注册表；
+// 取值侧在 DirProvider::enumerate 起始处 resolve
+void MainWindow::provideTraversalPolicy() {
+    int depthLimit = App::recursiveDepthLimitDefault();
+    if (!m_configFile.isEmpty()) {
+        QSettings s(m_configFile, QSettings::IniFormat);
+        bool ok = false;
+        const int v = s.value(QStringLiteral("recursiveDepthLimit"), depthLimit).toInt(&ok);
+        // 读侧自钳：上界与设置目录 range 同源（见 Constants.h）；下界恒 0
+        if (ok && v >= 0 && v <= App::recursiveDepthLimitMax())
+            depthLimit = v;
+    }
+    auto policy = std::make_shared<TraversalPolicy>();
+    policy->depthLimit = depthLimit;
+    m_registry->provide<TraversalPolicy>(std::move(policy));
+}
+
+// N56：设置对话框 ini 键变更入口（自 PlaylistWidget 上移）——命中相关键时重读
+// ini 覆盖注册表内部实例，下一次求值即生效
+void MainWindow::onPluginIniKeysChanged(const QStringList &keys) {
+    if (keys.contains(QStringLiteral("remoteTimeoutSec")) ||
+        keys.contains(QStringLiteral("ignoreHttpsErrors")))
+        provideHttpServices();
+    if (keys.contains(QStringLiteral("recursiveDepthLimit")))
+        provideTraversalPolicy();
+}
+
 void MainWindow::openFiles() {
     // N9：过滤器模式由全局媒体扩展名清单生成（与 DirProvider 默认值同源）
     QStringList patterns;
@@ -732,14 +792,15 @@ void MainWindow::openFiles() {
         return;
     // Qt 来源：拿到即转原生分隔符（B15），逐文件加工
     for (QString &f : files)
-        f = Util::nativePath(f);
+        f = Util::Url::toNative(f);
     // N11：主菜单打开文件固定落点默认播放列表——清旧内容与续播记忆后重灌，
     // 随即整表开播（他 tab 播放中被抢占切换）；多选按对话框原始返回顺序从首项播起。
-    // 有意不走 addFiles：绕开落点漂移与播放中 append 语义，拖放/右键添加不受影响
-    m_playlist->setDefaultTabFiles(files);
+    // 有意不走 addFiles：绕开落点漂移与播放中 append 语义，拖放/右键添加不受影响。
+    // N56 §2.7：setDefaultTabFiles 回传实体表，播放入口改传实体表
+    const PlaylistEntity::List entities = m_playlist->setDefaultTabFiles(files);
     m_playlist->markPlayingTab(0);
     m_playlist->requestTab(0); // Q2 裁决：抢占切换时激活态同步跳到默认 tab（N19 忙时排队）
-    onPlayRequested(files, 0, 0, -1.0);
+    onPlayRequested(entities, 0, 0, -1.0);
 }
 
 void MainWindow::playAt(int index) {
@@ -760,19 +821,19 @@ void MainWindow::togglePause() {
         // 续播定位——mpv 侧语义一律实体序
         const int cur = m_playlist->currentIndex();
         m_playlist->markPlayingTab(cur);
-        const QStringList files = m_playlist->queueFilesOf(cur);
-        if (files.isEmpty())
+        const PlaylistEntity::List entities = m_playlist->queueEntitiesOf(cur);
+        if (entities.empty())
             return;
         const double restoreTime = m_playlist->lastTimePosOf(cur);
         int idx = m_playlist->resumeEntityIndexOf(cur);
         if (idx < 0) {
             idx = m_playlist->currentSelectedEntityIndex();
-            if (idx < 0 || idx >= files.size())
+            if (idx < 0 || idx >= int(entities.size()))
                 idx = 0;
         }
         // 载入即转移同步目标：mpv 列表回刷写进当前 tab，关闭时 lastTabName 随之正确；
         // 续播进度经统一入口的挂起 seek 机制恢复
-        onPlayRequested(files, cur, idx, restoreTime > 0.0 ? restoreTime : -1.0);
+        onPlayRequested(entities, cur, idx, restoreTime > 0.0 ? restoreTime : -1.0);
         return;
     }
     m_controller->command({QStringLiteral("cycle"), QStringLiteral("pause")});
@@ -821,22 +882,22 @@ void MainWindow::playlistNext() {
 void MainWindow::stepStopped(bool next) {
     const int cur = m_playlist->currentIndex();
     m_playlist->markPlayingTab(cur);
-    const QStringList files = m_playlist->queueFilesOf(cur);
-    if (files.isEmpty())
+    const PlaylistEntity::List entities = m_playlist->queueEntitiesOf(cur);
+    if (entities.empty())
         return;
     int base = m_playlist->resumeEntityIndexOf(cur);
-    if (base < 0 || base >= files.size())
+    if (base < 0 || base >= int(entities.size()))
         base = 0;
     int target = base + (next ? 1 : -1);
     if (currentLoopMode() == QLatin1String("playlist")) {
         if (target < 0)
-            target = files.size() - 1; // 首项上一个 → 绕尾项
-        else if (target >= files.size())
+            target = int(entities.size()) - 1; // 首项上一个 → 绕尾项
+        else if (target >= int(entities.size()))
             target = 0; // 尾项下一个 → 绕首项
-    } else if (target < 0 || target >= files.size()) {
+    } else if (target < 0 || target >= int(entities.size())) {
         return;
     }
-    onPlayRequested(files, cur, target, -1.0);
+    onPlayRequested(entities, cur, target, -1.0);
 }
 
 // A16：上一/下一动作三路联动启停（矩阵见 specs/A16.md）。
@@ -849,7 +910,7 @@ void MainWindow::updateNavigationActions() {
     if (m_playlistPos >= 0) {
         // 播放/暂停态：以 mpv 实际列表为准（长度取正在播放 tab 的镜像）
         const int pt = m_playlist->playingTabIndex();
-        const int count = pt >= 0 ? m_playlist->queueFilesOf(pt).size() : m_playlistPos + 1;
+        const int count = pt >= 0 ? int(m_playlist->queueEntitiesOf(pt).size()) : m_playlistPos + 1;
         prevAction->setEnabled(loop || m_playlistPos > 0);
         nextAction->setEnabled(loop || m_playlistPos < count - 1);
         return;
@@ -858,17 +919,17 @@ void MainWindow::updateNavigationActions() {
     // 停止态：以当前选中 tab 为准；空列表无视 LOOP 双禁用。
     // N45：基准按队列根层实体序（resumeEntityIndexOf）
     const int cur = m_playlist->currentIndex();
-    const QStringList files = m_playlist->queueFilesOf(cur);
-    if (files.isEmpty()) {
+    const PlaylistEntity::List entities = m_playlist->queueEntitiesOf(cur);
+    if (entities.empty()) {
         prevAction->setEnabled(false);
         nextAction->setEnabled(false);
         return;
     }
     int base = m_playlist->resumeEntityIndexOf(cur);
-    if (base < 0 || base >= files.size())
+    if (base < 0 || base >= int(entities.size()))
         base = 0; // 与 stepStopped 起点归一规则一致
     prevAction->setEnabled(loop || base > 0);
-    nextAction->setEnabled(loop || base < files.size() - 1);
+    nextAction->setEnabled(loop || base < int(entities.size()) - 1);
 }
 
 void MainWindow::seekReleased() {
@@ -1500,7 +1561,8 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
                 break;
             const double hoverTime = m_duration * percent / 100.0;
             QString tip;
-            if (const auto hit = m_marks->hit(hoverTime); hit && !hit->title.isEmpty())
+            if (const auto hit = m_marks->hit(hoverTime, playingEntity().get());
+                hit && !hit->title.isEmpty())
                 tip = hit->title + QStringLiteral("\n");
             tip += Util::formatTimePercent(hoverTime, m_duration);
             QToolTip::showText(global, tip, m_progressSlider);
@@ -1571,22 +1633,20 @@ void MainWindow::applyMuteState(bool muted) {
 // 列表镜像优先——playlist-pos 推送早于新文件装载完成，此刻读属性
 // 会拿到上一个文件的残留值（概率性错名根因）；本地镜像顺序与 mpv 恒一致，
 // 按 pos 取名为确定性来源。属性仅作镜像缺失时的兜底（如起播早期回刷未达）。
-// N37：WebDAV 条目的 playUrl 为完整 URL，末段经 percent-decode 才是显示名
-// （Util::playUrlFileName，与列表显示名同一出口），否则标题 / OSD 出现 "%XX" 形态
+// N37：WebDAV 条目的身份串为完整 URL，末段经 percent-decode 才是显示名
+// （Util::Url::fileName，与列表显示名同一出口），否则标题 / OSD 出现 "%XX" 形态
 // N51：兜底不读 mpv 的 filename 属性（basename 语义依赖 mpv 实现），一律以
-// path 为准——转码后仍是条目身份，与主路径共用同一取名出口 playUrlFileName
+// path 为准——转码后仍是条目身份，与主路径共用同一取名出口 Util::Url::fileName
+// B11：正在播放的真实文件名（含后缀不含路径），标题与 OSD #2 同源。
+// N56 §2.7：取名一律取正播实体——列表镜像优先（playlist-pos 推送早于新文件装载
+// 完成，此刻读属性会拿到上一个文件的残留值，概率性错名的根因），镜像顺序与 mpv
+// 恒一致，按 pos 取正播实体是确定性来源；实体的 fileName() 即显示名（HttpEntity
+// 构造期已 percent-decode）。不再保留属性兜底——回刷收编 / duration 推送 /
+// playlist-pos 变化都会再次驱动本函数，空窗期跳过一次标题刷新即可
 QString MainWindow::playingFilename() {
-    const int pt = m_playlist->playingTabIndex();
-    if (pt >= 0 && m_playlistPos >= 0) {
-        const QStringList files = m_playlist->queueFilesOf(pt);
-        if (m_playlistPos < files.size()) {
-            // 解后为空（如以 / 结尾的 URL）回退属性兜底，与 HttpEntity 显示名的
-            // 空串回退同哲学——两侧不出现空白标题
-            if (const QString name = Util::playUrlFileName(files[m_playlistPos]); !name.isEmpty())
-                return name;
-        }
-    }
-    return Util::playUrlFileName(m_controller->propertyString(QStringLiteral("path")));
+    if (const auto e = playingEntity(); e && !e->fileName().isEmpty())
+        return e->fileName();
+    return QString();
 }
 
 // N7 #2 + N8 Part1：标题与 OSD #2 同源刷新（B11 镜像取名）。
@@ -1598,7 +1658,7 @@ void MainWindow::updateNowPlayingUi() {
         return; // 停止态无"正在播放"可言
     QString filename = playingFilename();
     const int pt = m_playlist->playingTabIndex();
-    const int total = pt >= 0 ? m_playlist->queueFilesOf(pt).size() : m_playlistPos + 1;
+    const int total = pt >= 0 ? int(m_playlist->queueEntitiesOf(pt).size()) : m_playlistPos + 1;
     if (!filename.isEmpty())
         setWindowTitle(filename); // N8 Part1：标题跟随真实文件名
     else
@@ -1686,19 +1746,19 @@ void MainWindow::mousePressEvent(QMouseEvent *event) {
     QMainWindow::mousePressEvent(event);
 }
 
-void MainWindow::onPlayRequested(const QStringList &files, int tab, int index, double seekTo,
-                                 bool keepPaused) {
+void MainWindow::onPlayRequested(const PlaylistEntity::List &entities, int tab, int index,
+                                 double seekTo, bool keepPaused) {
     // 统一播放入口（N4 合并）：整表载入 → 跳转 index → 挂起恢复进度。
     m_pendingSeekRow = -1; // 丢弃未执行的挂起 seek
     m_pendingSeekTime = -1.0;
-    if (files.isEmpty())
+    if (entities.empty())
         return;
     // N25：整表载入是多命令序列（stop→clear→N×append→pos），登记本地在途回显基准，
     // 使回刷把空列表/部分列表的中间态识别为本变更在途而忽略（files 即本地列表内容）。
-    // N48：登记与下发分离——登记恒取无凭据形态（与回显比对同形态），下发经
-    // playbackFiles 取该 tab 提供者的播放形态（凭据注入只发生在这一处与请求侧）
-    m_playlist->noteLocalPush(files);
-    const QStringList playFiles = m_playlist->playbackFiles(tab, files);
+    // R（N56 §2.5）：下发与登记都取 playUrls(tab, entities)——喂 mpv 前最后一刻
+    // 映射的播放形态，与回显侧的原样回显、reuse 索引键同源同形
+    const QStringList playFiles = m_playlist->playUrls(tab, entities);
+    m_playlist->noteLocalPush(playFiles);
     // mpv 的 playlist-clear 会保留当前播放的条目，先 stop 才能真正清空
     m_controller->command({QStringLiteral("stop")});
     m_controller->command({QStringLiteral("playlist-clear")});
@@ -1735,16 +1795,15 @@ void MainWindow::onClearRequested() {
     m_controller->command({QStringLiteral("playlist-clear")});
 }
 
-void MainWindow::onFilesAdded(const QStringList &files) {
+void MainWindow::onFilesAdded(const PlaylistEntity::List &entities) {
     updateNavigationActions(); // 本地 tab 新增内容影响停止态步进（A16）；播放态由 playlistChanged
                                // 兜底
     // 只有添加到“正在播放”tab 的文件才同步进 mpv 播放列表；
     // 其他 tab 为本地列表，双击播放时整体载入。
     if (!m_playlist->currentIsPlayingTab())
         return;
-    // N48：与 onPlayRequested 同款——下发取该 tab 提供者的播放形态（防御性：现守卫下
-    // 新增项恒属可修改的本地来源，无凭据注入；将来放开远端 tab 增删时形态已正）
-    const QStringList playFiles = m_playlist->playbackFiles(m_playlist->playingTabIndex(), files);
+    // R（N56 §2.5）：下发取喂 mpv 前最后一刻映射的播放形态（与回显同形）
+    const QStringList playFiles = m_playlist->playUrls(m_playlist->playingTabIndex(), entities);
     for (const QString &file : playFiles)
         m_controller->loadFile(file, QStringLiteral("append-play"));
 }
@@ -1785,8 +1844,8 @@ void MainWindow::ensureSettingsDialog() {
     connect(m_settingsDialog, &QObject::destroyed, this, [this] { m_settingsDialog = nullptr; });
     // N35：ini 键变更转接播放列表——命中远端请求设置（remoteTimeoutSec /
     // ignoreHttpsErrors）时重读 ini 重建 client 并覆盖注册表，下一次求值即生效
-    connect(m_settingsDialog, &SettingsDialog::pluginIniKeysChanged, m_playlist,
-            &PlaylistWidget::onPluginIniKeysChanged);
+    connect(m_settingsDialog, &SettingsDialog::pluginIniKeysChanged, this,
+            &MainWindow::onPluginIniKeysChanged);
     m_settingsDialog->show();
 }
 
@@ -2203,7 +2262,7 @@ void MainWindow::toggleFilterEntry(const QString &property, int index) {
 // ---- N15：章节与书签 ----
 void MainWindow::updateChapterSlider() {
     m_progressSlider->setDuration(m_duration);
-    const auto &marks = m_marks->marks();
+    const auto &marks = m_marks->marks(playingEntity().get());
     QList<double> times;
     times.reserve(marks.size());
     for (const auto &m : marks)
@@ -2212,8 +2271,8 @@ void MainWindow::updateChapterSlider() {
 }
 
 void MainWindow::updateChapterMenuState() {
-    const QString path = m_controller->propertyString(QStringLiteral("path"));
-    const bool hasFile = !path.isEmpty() && m_playlistPos >= 0 && m_duration > 0.0;
+    // N56 §2.7：有无正播内容以正播实体为准（键非空即有），不再读 mpv 属性
+    const bool hasFile = playingEntity() && m_duration > 0.0;
     if (auto *a = m_actions->action(ActionManager::Id::AddBookmark))
         a->setEnabled(hasFile);
 }
@@ -2221,7 +2280,7 @@ void MainWindow::updateChapterMenuState() {
 void MainWindow::updateChapterMenuChecked() {
     if (!m_chapterMenu || !m_chapterGroup)
         return;
-    const auto hit = m_marks->hit(m_timePos); // std::optional<Mark>
+    const auto hit = m_marks->hit(m_timePos, playingEntity().get()); // std::optional<Mark>
     const bool hasHit = hit.has_value();
     const bool wasExclusive = m_chapterGroup->isExclusive();
     m_chapterGroup->setExclusive(false);
@@ -2249,11 +2308,11 @@ void MainWindow::rebuildChapterMenu() {
     // 菜单项由 clear() 连同销毁，QAction 析构时自动脱离 m_chapterGroup，
     // 此处重建 action 后重新入组即可
     const auto marksChapters = m_marks->chapters();
-    const QString curPath =
-        Util::normalizePathForMatch(m_controller->propertyString(QStringLiteral("path")));
-    // 跳转需原始显示路径（大小写/分隔符原样）；curPath 仅作书签仓键匹配用（B15）
-    const QString curDisplay =
-        Util::resolveSourcePath(m_controller->propertyString(QStringLiteral("path")));
+    // N56 §2.7：以当前内容为对象的取串点统一取正播实体——key 作书签仓键匹配（B15），
+    // path 作跳转用的原始显示路径；无正播实体（停止态）两者为空，菜单只剩章节段
+    const auto playing = playingEntity();
+    const QString curPath = playing ? playing->key() : QString();
+    const QString curDisplay = playing ? playing->path() : QString();
     // 书签经聚合器统一读入口（书签永不查重，即原始）
     const auto bms = m_marks->bookmarks(curPath);
 
@@ -2325,15 +2384,14 @@ void MainWindow::rebuildChapterMenu() {
 void MainWindow::jumpToChapter(const QString &path, double time) {
     if (path.isEmpty())
         return;
-    const QString norm = Util::normalizePathForMatch(path);
-    // 查当前激活列表。两侧均为 normalizePathForMatch 产物（N15.1 起 Windows 分支
-    // 折叠大小写），字符串相等即路径相等，无需额外分支
+    // 查当前激活列表。N56 §2.5：键级判等经实体自己的 matches 出口——形态漂移
+    // （大小写 / 分隔符）仍认得出同一条内容（N30），外部不假设键的形态
     auto findInTab = [&](int tabIdx) -> int {
         if (tabIdx < 0 || tabIdx >= m_playlist->count())
             return -1;
-        const QStringList files = m_playlist->queueFilesOf(tabIdx);
-        for (int i = 0; i < files.size(); ++i)
-            if (Util::normalizePathForMatch(files[i]) == norm)
+        const PlaylistEntity::List entities = m_playlist->queueEntitiesOf(tabIdx);
+        for (int i = 0; i < int(entities.size()); ++i)
+            if (entities.at(i) && entities.at(i)->matches(path))
                 return i;
         return -1;
     };
@@ -2370,10 +2428,10 @@ void MainWindow::jumpToChapter(const QString &path, double time) {
             }
         } else {
             // 跨列表跳转：复用 onPlayRequested 整表载入（与双击条目同路径）
-            const QStringList files = m_playlist->queueFilesOf(targetTab);
+            const PlaylistEntity::List entities = m_playlist->queueEntitiesOf(targetTab);
             m_playlist->markPlayingTab(targetTab);
             m_playlist->requestTab(targetTab); // N19：忙时排队
-            onPlayRequested(files, targetTab, targetRow, time);
+            onPlayRequested(entities, targetTab, targetRow, time);
         }
         return;
     }
@@ -2388,13 +2446,13 @@ void MainWindow::jumpToBookmark(const QString &path, double time,
     if (path.isEmpty())
         return;
     // 第 1 步·本地缺失闸门：文件不在磁盘上，两条路都放不出来，直接说明并终止——
-    // 不切 tab、不加载列表、不回退（判据与书签失效清理同源，Util::isMissingLocalSource）
-    if (Util::isMissingLocalSource(path)) {
+    // 不切 tab、不加载列表、不回退（判据与书签失效清理同源，Util::Url::isMissingLocal）
+    if (Util::Url::isMissingLocal(path)) {
         warnBookmarkJump(tr("The bookmarked file no longer exists on disk."), path, QString());
         return;
     }
     PlaylistWidget::LevelJump req;
-    req.itemKey = Util::normalizePathForMatch(path);
+    req.itemKey = Util::Url::key(path);
     req.time = time;
     if (origin.isValid()) {
         const int tab = m_playlist->tabIndexOfListUuid(origin.listUuid);
@@ -2435,7 +2493,7 @@ void MainWindow::onLevelItemReady(const PlaylistWidget::LevelJump &req, int enti
     }
     m_playlist->markPlayingTab(req.tab); // 队列根在此重锚到该层（N45 §2.1）
     m_playlist->requestTab(req.tab);
-    onPlayRequested(m_playlist->currentLayerFilesOf(req.tab), req.tab, entityIndex, req.time);
+    onPlayRequested(m_playlist->currentLayerEntitiesOf(req.tab), req.tab, entityIndex, req.time);
 }
 
 // N54 §2.2 第 4 步 + §2.5：失败策略是一个布尔。本地项在磁盘上，回默认 tab 必然可播，
@@ -2445,8 +2503,8 @@ void MainWindow::onLevelItemReady(const PlaylistWidget::LevelJump &req, int enti
 void MainWindow::onLevelItemFailed(const PlaylistWidget::LevelJump &req,
                                    PlaylistWidget::JumpFailure why, const QString &detail) {
     const QString path = m_bookmarkMgr->displayPath(req.itemKey);
-    // 本地/远端判据单点在 Util::isLocalSourcePath（与书签失效清理同一份）
-    if (Util::isLocalSourcePath(path)) {
+    // 本地/远端判据单点在 Util::Url::isLocal（与书签失效清理同一份）
+    if (Util::Url::isLocal(path)) {
         fallbackPlayInDefaultTab(path, req.time);
         return;
     }
@@ -2468,12 +2526,13 @@ void MainWindow::onLevelItemFailed(const PlaylistWidget::LevelJump &req,
 }
 
 // 把单个文件作为会话镜像推入默认 tab（默认 tab 不落盘、可随时被替换）。
-// N54：唯一调用方是书签跳转的两条兜底（本地项回退、章节跳转扫不到时的旧路径）
+// N54：唯一调用方是书签跳转的两条兜底（本地项回退、章节跳转扫不到时的旧路径）。
+// N56 §2.7：setDefaultTabFiles 回传实体表，播放入口改传实体表
 void MainWindow::fallbackPlayInDefaultTab(const QString &path, double time) {
-    m_playlist->setDefaultTabFiles({path});
+    const PlaylistEntity::List entities = m_playlist->setDefaultTabFiles({path});
     m_playlist->markPlayingTab(0);
     m_playlist->requestTab(0); // N19：忙时排队
-    onPlayRequested({path}, 0, 0, time);
+    onPlayRequested(entities, 0, 0, time);
 }
 
 // N54：书签跳转的报错出口。正文恒为一句人话（不含"层级"这类内部词），文件路径与
@@ -2497,9 +2556,10 @@ void MainWindow::ensureBookmarkEditor() {
         m_bookmarkEditor->raise();
         return;
     }
-    // N16：传入当前播放文件归一化键，使编辑器打开即聚焦该文件（若存在书签）
-    const QString curKey =
-        Util::normalizePathForMatch(m_controller->propertyString(QStringLiteral("path")));
+    // N16：传入当前播放文件归一化键，使编辑器打开即聚焦该文件（若存在书签）。
+    // N56 §2.7：键取正播实体，不再读 mpv 属性
+    const auto cur = playingEntity();
+    const QString curKey = cur ? cur->key() : QString();
     m_bookmarkEditor = new BookmarkEditorDialog(
         m_bookmarkMgr,
         [this](const QString &p, double t, const BookmarkManager::Origin &origin) {
@@ -2513,14 +2573,25 @@ void MainWindow::ensureBookmarkEditor() {
     m_bookmarkEditor->show();
 }
 
+// N56 §2.7：正播实体——凡"以当前内容为对象"的书签 / 聚合器 / OSD / duration 读点
+// 统一经此取实体，不再读 mpv 属性。正播实体 = 播放 tab 队列根层第 m_playlistPos 项
+// （镜像与 mpv 恒一致）；坐标对（playingTabIndex, m_playlistPos）在此收口，
+// playlist-pos 的真相源是本类镜像。返回空 Ptr 即无正播（停止态 / 镜像未就位）
+PlaylistEntity::Ptr MainWindow::playingEntity() const {
+    if (m_playlistPos < 0)
+        return nullptr;
+    return m_playlist->playingEntityOf(m_playlist->playingTabIndex(), m_playlistPos);
+}
+
 void MainWindow::onAddBookmark() {
-    // mpv 来源路径经 resolveSourcePath 加工为显示路径；BookmarkManager 内部归一为键，
+    // N56 §2.3/§2.7：书签的存储串与键同源取自正播实体——实体 path() 不含提供者
+    // 注入的凭据（用户显式提供的凭据如实保留，许可），BookmarkManager 内部归一为键，
     // 展示保原样（大小写/分隔符，B15）
-    const QString rawPath =
-        Util::resolveSourcePath(m_controller->propertyString(QStringLiteral("path")));
-    if (rawPath.isEmpty() || m_playlistPos < 0)
+    const auto entity = playingEntity();
+    if (!entity)
         return;
-    const QString path = Util::normalizePathForMatch(rawPath);
+    const QString rawPath = entity->path();
+    const QString path = entity->key();
     const double t = m_timePos;
     // 自动命名：取"本文件既有书签名的最大序号 +1"，与播放列表自动命名共用同一份算法
     // （Util::nextSequenceNumber）。原实现找的是"第一个空号"——已有 Bookmark 1 与 3 时

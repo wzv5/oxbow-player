@@ -43,7 +43,7 @@ class DirProvider : public PlaylistProvider {
     static QString displayName();
 
     // ——以下三个静态纯函数（N44）：参数设置页的取值 / 校验与单元测试共用同一出口——
-    // 根路径定形：trim → 空即空串 → Util::resolveSourcePath（相对转绝对、转原生
+    // 根路径定形：trim → 空即空串 → Util::Url::toIdentity（相对转绝对、转原生
     // 分隔符；网络 / 流路径原样）。**幂等是硬要求**——已规范形态的输入再定形
     // 必须结果不变，否则"原样回显 + 未改动"会被 hasChanges 误判成有改动
     static QString normalizeRoot(const QString &text);

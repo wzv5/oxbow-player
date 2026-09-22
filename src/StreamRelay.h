@@ -19,7 +19,7 @@ typedef struct mpv_handle mpv_handle; // 与 client.h 的 typedef 重复声明�
 // 写该字段是越界写，症状是内存损坏而非优雅失败。
 
 // ——取用侧接缝（实施勘误，随 N52 变更记录留档）——
-// PlaylistProvider::deliveryUrl 只需要 publish 一个动作，而它编进 mpvqt_testlib
+// PlaylistProvider::playUrl 只需要 publish 一个动作，而它编进 mpvqt_testlib
 // （L4 实现体不入 testlib，且其 .cpp 含 mpv 符号解析不可链入测试）。故取用侧面向
 // 本抽象基编程：解析与发布经虚函数完成，测试链接不携带 L4。行为等价于规格 §2.8
 // 的 resolve<StreamRelay>() 直取——同一注册表、同一实例、同一动作，纯头无实现体。
@@ -42,7 +42,7 @@ class StreamRelay final : public StreamRelayIf {
     // 解除 mpv 启动门控后，命令行首文件即会 open 流。
     bool install(mpv_handle *handle);
 
-    // 端点表发布（§2.6 发布即下发）：deliveryUrl 每铸一条 URI 顺手 publish 一条，
+    // 端点表发布（§2.6 发布即下发）：playUrl 每铸一条 URI 顺手 publish 一条，
     // 同 key 幂等覆盖，成本可忽略——谁最后产出这批 URI，谁就是这批 URI 的解析者。
     // 注销 = 端点寿命终点：表存弱引用，提供者析构后表项自然 expired，取用时
     // 顺手 erase；不提供 unregister API，因而没有"谁该调、误删别人表项、

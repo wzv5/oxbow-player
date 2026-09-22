@@ -38,7 +38,7 @@ class PlaylistProvider {
 
     // ——N35 服务注册表（基类统一持有，供子类 enumerate 造实体时注入）——
     // 构造注入，必填无缺省：所有提供者诞生点必须显式传入可用实例。
-    // Static 经此向 fromPlayUrl 转交，使持久化的 http 条目重载后仍得同类型实体
+    // Static 经此向 fromPath 转交，使持久化的 http 条目重载后仍得同类型实体
     explicit PlaylistProvider(const std::shared_ptr<ServiceRegistry> &registry);
 
     virtual ~PlaylistProvider();
@@ -55,7 +55,7 @@ class PlaylistProvider {
     // N45：parent 为相对根的路径段序列（不含根本身），空即根层——决定枚举哪一层。
     // 契约：视图只对提供者自己返回过的容器 id 发起非空 parent 调用；平铺形态的
     // 提供者收到非空 parent 属调用方违约——Q_ASSERT 守候，release 降级返回空结果
-    // （照 fromPlayUrl 对"http 加空 registry"的既有先例），不得静默忽略。
+    // （照 fromPath 对"http 加空 registry"的既有先例），不得静默忽略。
     // 提供者不产出"上一级"项，该行由视图合成
     virtual std::expected<Enumeration, QString> enumerate(const QStringList &parent = {}) const = 0;
     // 视图 → 提供者内容回传（只读引用）。基类默认实现忽略——不可修改的提供者
@@ -63,7 +63,7 @@ class PlaylistProvider {
     // 后随即序列化，回传与落盘不得拆开（N27）。
     // N28：回传另有守卫——未加载（含首载在途）的表实体集合为空，回传会清空提供者
     // 自持内容造成永久丢数据，故整段跳过；落盘侧照走 saveSettings
-    // 不变式：实现方只许从实体提取标量（本轮即 playUrl），不得保存实体指针——
+    // 不变式：实现方只许从实体提取标量（本轮即 path()），不得保存实体指针——
     // 实体归视图层，视图 refresh() / 重建后提供者持有的实例即成陈旧副本
     virtual void setItems(const EntityList &entities) { Q_UNUSED(entities); }
     // 能力位：是否支持修改（添加与删除）。不可修改的提供者内容以枚举为准，
@@ -86,9 +86,9 @@ class PlaylistProvider {
     //   Required（Emby 一类） | 任意                    | true（偏好值被忽略，关不掉）
     //
     // 由这张表换来的两条不变式（写进头文件即接口的一部分）：
-    // 1. usesTransit()==true 时 playbackUrl() 永不被调用——"凭据不进播放 URL"
+    // 1. usesTransit()==true 时 directPlayUrl() 永不被调用——"凭据不进播放 URL"
     //    与"令牌不进播放 URL"不是两条各守一次的纪律，而是同一条路径不可达；
-    // 2. Required 的提供者不必覆写 playbackUrl——基类恒等实现即"这条分支永不走"。
+    // 2. Required 的提供者不必覆写 directPlayUrl——基类恒等实现即"这条分支永不走"。
     enum class TransitCapability { Unsupported, Optional, Required };
     virtual TransitCapability transitCapability() const { return TransitCapability::Unsupported; }
     // 产出来源解析点（Unsupported 时必空；Optional/Required 返空 = 编程错误）。
@@ -98,13 +98,13 @@ class PlaylistProvider {
     // 唯一有效决策（非虚，全仓只有它读那个持久化偏好）
     bool usesTransit() const;
 
-    // ——喂 mpv 的下发形态（模板方法，非虚公开出口）——
-    // usesTransit() 为假 → 走 playbackUrl()（直发形态）；为真 → 铸 mpvqt:// 转接
+    // ——喂 mpv 的播放形态（模板方法，非虚公开出口）——
+    // usesTransit() 为假 → 走 directPlayUrl()（直发形态）；为真 → 铸 mpvqt:// 转接
     // URI 并把端点发布进注册表（发布即下发，N52 §2.6）。这样"把直接形态误当播放
-    // 串下发"在编译期就不可能——playbackUrl 降为 protected，外部拿不到那个钩子。
-    // 实现必须轻（playbackFiles 是整表逐条调用）：一次哈希查找 + 一次前缀判定 +
-    // 一次百分号编码，零网络。仅在 GUI 线程经 PlaylistWidget::playbackFiles 调用。
-    QString deliveryUrl(const QString &playUrl) const;
+    // 串下发"在编译期就不可能——directPlayUrl 降为 protected，外部拿不到那个钩子。
+    // 实现必须轻（playUrls 是整表逐条调用）：一次哈希查找 + 一次前缀判定 +
+    // 一次百分号编码，零网络。仅在 GUI 线程经 PlaylistWidget::playUrls 调用。
+    QString playUrl(const QString &path) const;
 
     // ——N52 §2.7：列表身份 listUuid——
     // 构造期新铸（会话占用表查重），listUuid() 读口；adoptListUuid 接回存量身份。
@@ -143,22 +143,22 @@ class PlaylistProvider {
     bool m_sortAscending = true;
     std::shared_ptr<ServiceRegistry> m_registry; // N35：服务注册表（基类统一持有）
     // N52：列表身份（构造期新铸，会话占用表查重）与转接偏好；端点惰性建一次
-    // 并缓存（参数不可变故无需重建；deliveryUrl 仅 GUI 线程调用，缓存无需加锁）
+    // 并缓存（参数不可变故无需重建；playUrl 仅 GUI 线程调用，缓存无需加锁）
     QString m_listUuid;
     bool m_transitPreferred = false;
     mutable std::shared_ptr<StreamEndpoint> m_transitEndpoint;
 
   protected:
-    // ——N48：喂 mpv 的播放形态（实体 playUrl → 实际下发给 mpv 的串）——
-    // N52 降为 protected：公开出口只有非虚的 deliveryUrl（模板方法），usesTransit()
+    // ——N48：喂 mpv 的播放形态（实体 path() → 实际下发给 mpv 的串）——
+    // N52 降为 protected：公开出口只有非虚的 playUrl（模板方法），usesTransit()
     // 为假才会走到这里——"凭据不进播放 URL"（N48）与"令牌不进播放 URL"（Emby）
     // 由同一条不可达路径承载。默认恒等：内容原样下发（本地文件、静态表、通用
     // http 项皆如此）。WebDavProvider 重写为在 URL 的 userinfo 段注入当前凭据——
-    // 凭据只在"PROPFIND 请求"与"喂 mpv 播放"两个使用点注入，实体 playUrl / 持久化 /
+    // 凭据只在"PROPFIND 请求"与"喂 mpv 播放"两个使用点注入，实体 path() / 持久化 /
     // 各项比对恒为无凭据形态。该产出只喂 mpv（不进实体、不落盘、不参与比对），
     // 故允许经 QUrl 取编码形态；反向的剥离（回显比对、落键）走
-    // Util::stripUrlCredentials 的纯字符串实现
-    virtual QString playbackUrl(const QString &playUrl) const { return playUrl; }
+    // Util::Url::stripCredentials 的纯字符串实现
+    virtual QString directPlayUrl(const QString &path) const { return path; }
 
     // 写 INI 的 provider 键（N44）：取值即 typeKey()。各提供者 saveSettings 首行
     // 调用它——写侧（typeKey()）与读侧（登记表条目）共用同一点定义的键常量，
@@ -168,7 +168,7 @@ class PlaylistProvider {
     // 可能的存量键）——偏好不决定形态，形态由三态表承载
     void writeProviderKey(QSettings &settings) const;
 
-    // 子类经此取构造期注入的注册表（enumerate 造实体时转交 fromPlayUrl）
+    // 子类经此取构造期注入的注册表（enumerate 造实体时转交 fromPath）
     const std::shared_ptr<ServiceRegistry> &registry() const { return m_registry; }
 
     // ——N29 元数据注入口（唯一授权通道）——

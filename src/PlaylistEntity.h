@@ -39,22 +39,25 @@ class PlaylistEntity {
 
     // 构造注入 registry（必填，无缺省）：所有调用点必须显式传入可用实例，
     // 缺 registry 在编译期暴露。本地 / 兜底实体同样经形参接收后存基类（忽略不用）。
-    explicit PlaylistEntity(QString playUrl, const std::shared_ptr<ServiceRegistry> &registry);
+    explicit PlaylistEntity(QString path, const std::shared_ptr<ServiceRegistry> &registry);
     virtual ~PlaylistEntity() = default;
 
-    // ——工厂：playUrl → 实体（唯一入口；后续协议在此分派）——
-    // 入参先经 Util::resolveSourcePath 加工（本地来源唯一出口；网络 / 流路径原样），
+    // ——工厂：身份串 → 实体（唯一入口；后续协议在此分派）——
+    // 契约（N56 §2.6）：入参必须是**已定形的身份串**（绝对路径或含 "://" 的 URL）。
+    // 定形（mpvqt:// 折叠、相对转绝对、file:// 转本地）是造实体一方的责任，工厂
+    // 不再代做——只有提供者知道该怎么拆自己拿来的串，工厂对着读不懂的串加工等于猜。
+    // Debug 断言：既非绝对路径、也非含 "://" 的形态即调用方违约，显影（与"http(s)
+    // + 空 registry"同款守候；release 不拦，未定形串会静默落成 LocalFileEntity）。
     // 随后按前缀分派（N35）：http:// / https://（大小写不敏感）→ HttpEntity（需
     // 非空 registry，http(s) + 空 registry 属调用错误：Q_ASSERT 守候，release
     // 降级 UnknownEntity 保"恒返回实体"契约）；其余网络 / 流路径（ftp / rtsp 等）
     // → UnknownEntity 兜底；本地路径 → LocalFileEntity（忽略 registry）。
     // 前缀判断天然免疫 QUrl::scheme() 误判 Windows 盘符的陷阱，不引入 QUrl 解析。
-    // 不变式：fromPlayUrl(e->playUrl(), registry)->playUrl() == e->playUrl()
+    // 不变式：入参已定形时 fromPath(e->path(), registry)->path() == e->path()
     // 调用方纪律：registry 必填（无缺省），一律传视图层注册表（本地路径同样传，
-    // 工厂内忽略）；同一 URL 在遵守前提下，无论经提供者、工厂还是收编路径，
+    // 工厂内忽略）；同一身份串在遵守前提下，无论经提供者、工厂还是收编路径，
     // 都得到同类型实体。
-    static Ptr fromPlayUrl(const QString &playUrl,
-                           const std::shared_ptr<ServiceRegistry> &registry);
+    static Ptr fromPath(const QString &path, const std::shared_ptr<ServiceRegistry> &registry);
 
     // ——按值复制（深拷贝，含已解析缓存）——
     // 与 Ptr 共享计数相对：副本与原实体此后互不影响（一方 refresh 不清另一方）。
@@ -62,9 +65,19 @@ class PlaylistEntity {
     virtual Ptr clone() const = 0;
 
     // ——身份与显示——
-    const QString &playUrl() const { return m_playUrl; } // 喂 mpv / 持久化 / 回刷比对
-    // 默认 normalizePathForMatch(playUrl)（构造期缓存）；远端可重写为服务端 id
+    const QString &path() const { return m_path; } // 身份：喂 mpv / 持久化 / 回刷比对
+    // 默认 Util::Url::key(path())（构造期缓存）；远端可重写为服务端 id
     virtual QString key() const;
+    // N56 §2.4：显示出口——path() 剥除凭据后的形态（构造期缓存，非虚）。
+    // 非虚是刻意的：显示纪律不得被派生类破坏（与 m_key 同款）。取用点收敛在
+    // 列表 tooltip 与属性对话框 File Path 两处；右键复制路径 / 打开位置给原样
+    // （工具性动作，用户要一份能直接用的地址），书签层完全豁免（原样展示）
+    const QString &displayUrl() const { return m_displayUrl; }
+    // N56 §2.5：键级判等——实体自答"这个串是不是我"（内部 m_key == key(串)，
+    // 与 key() 同一实现不会漂移）。供定位 / 记忆使用，故意宽松：形态漂移
+    // （大小写 / 分隔符）仍认得出同一条内容（N30）。回刷判等不走它——那是
+    // 形态级逐字节比对（R，N56 §2.5），两套语义不得合一
+    bool matches(const QString &path) const;
     const QString &title() const { return m_title; } // 列表显示名，恒为有效值（本地回退文件名）
     const QString &fileName() const {
         return m_fileName;
@@ -100,7 +113,7 @@ class PlaylistEntity {
     PlaylistEntity(const PlaylistEntity &) = default;
     PlaylistEntity &operator=(const PlaylistEntity &) = delete;
 
-    // 子类修正文件名：网络 / 远端地址无法从 playUrl 中准确提取文件名时调用。
+    // 子类修正文件名：网络 / 远端地址无法从 path() 中准确提取文件名时调用。
     // 基类随之重算 suffix()，并在 title() 未被显式设置时同步 title()
     void setFilename(QString fileName);
     // 子类构造后修正显示名（远端取服务端标题）
@@ -130,31 +143,33 @@ class PlaylistEntity {
     virtual QIcon computeIcon() const = 0;
 
   private:
-    // 构造期派生 title / fileName / suffix（纯字符串运算，与 playUrl 同生命周期）
+    // 构造期派生 title / fileName / suffix（纯字符串运算，与身份串同生命周期）
     void deriveNames();
 
-    QString m_playUrl;
+    QString m_path;
     std::shared_ptr<ServiceRegistry> m_registry; // N35：服务注册表（基类统一持有）
     QString m_title;                             // 构造期派生
     QString m_fileName;                          // setFilename 可改，改则同步 suffix
     QString m_suffix;                            // 同上
     bool m_titleSet = false; // setTitle 显式设置后置位，此后 setFilename 不再联动 title
-    QString m_key;           // 构造期缓存：normalizePathForMatch(playUrl)——key()
+    QString m_key;           // 构造期缓存：Util::Url::key(path())——key()
                              // 在委托绘制热路径上，避免逐行逐帧重算
+    QString m_displayUrl;    // N56：构造期缓存 stripCredentials(path())——显示出口，
+                             // 与 m_key 同款（构造期定死、不可被子类改动）
     mutable std::optional<FileMeta> m_fileMeta;
     mutable std::optional<MediaMeta> m_mediaMeta;
     mutable std::optional<QIcon> m_icon;
 };
 
 // 兜底实体（N26）：工厂对网络 / 流路径产出。插件不做任何额外加工，
-// playUrl() 原样喂 mpv / 持久化 / 回显比对。完整远端实体（服务端标题、延迟解析、
+// path() 原样喂 mpv / 持久化 / 回显比对。完整远端实体（服务端标题、延迟解析、
 // 远端元数据）归后续篇；未知实体是其最小替身，保证网络项有实体可落
 // （回刷收编的 mpv 列表即现实引用者）。
 class UnknownEntity : public PlaylistEntity {
   public:
     // registry 必填（经基类持有，兜底实体不用；无缺省，调用点显式传）
-    explicit UnknownEntity(QString playUrl, const std::shared_ptr<ServiceRegistry> &registry)
-        : PlaylistEntity(std::move(playUrl), registry) {}
+    explicit UnknownEntity(QString path, const std::shared_ptr<ServiceRegistry> &registry)
+        : PlaylistEntity(std::move(path), registry) {}
 
     Ptr clone() const override { return std::make_shared<UnknownEntity>(*this); }
 

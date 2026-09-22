@@ -211,6 +211,9 @@ int nextSequenceNumber(const QString &prefix, const QStringList &existing) {
     return maxN + 1;
 }
 
+// ——身份与形态一族（N56 收族：嵌套命名空间即边界，算法与收族前逐字一致）——
+namespace Url {
+
 namespace {
 // N37：URL 匹配形态的编码收敛内核（约二十行纯字符串函数，不解析 URL 结构、
 // 不依赖任何 Qt 版本行为）。扫 %HH：合法 hex 对中 unreserved 字符（ALPHA / DIGIT /
@@ -262,8 +265,8 @@ QString convergeUrlEscapes(const QString &s) {
 }
 
 // N48：authority 段定位（URL 结构）——"://" 之后至首个 '/' / '?' / '#' 之间即 authority
-// （query / fragment 不在此段）。剥离（stripUrlCredentials）/ 插入（insertUrlCredentials）
-// 与收敛（convergeHttpUrlForm）共用同一内核：定位规则必须逐字一致，各写一遍必然漂移。
+// （query / fragment 不在此段）。剥离（stripCredentials）/ 插入（insertCredentials）
+// 与收敛（convergeHttpForm）共用同一内核：定位规则必须逐字一致，各写一遍必然漂移。
 // 入参是裸串、类型上看不出域，故名字带 Url（与仓库既有的"域 + 动作"命名同款）。
 // authStart 为 authority 起始下标、authEnd 为 path / query / fragment 起点，
 // 两者相等即 authority 为空。找不到 "://" 返回 false（调用方原样返回）
@@ -294,15 +297,11 @@ QString splitUrlAuthority(const QString &authority, QString *hostPort) {
     *hostPort = at >= 0 ? authority.mid(at + 1) : authority;
     return at >= 0 ? authority.left(at + 1) : QString();
 }
+} // namespace
 
-// N37：http(s) URL 的规范形态内核——scheme / host 归小写、去默认端口
-// （http 80 / https 443），userinfo 原样保留（大小写敏感，不解析），其余整段过
-// 编码收敛。纯字符串操作，无解析失败路径；找不到 "://" 时原样返回。
-// 入口形态（nativePath）与匹配形态（normalizePathForMatch）共用同一内核——
-// "入口即规范"，服务端以等价书写指向同一文件时归一为同一 playUrl，不产出重复条目。
-// N48：userinfo 透传段保留——匹配形态在调用本函数之前已剥凭据（此处对匹配路径即
-// 死代码），而入口形态不承担去凭据职责；撤掉透传等于让 nativePath 也变成剥凭据
-QString convergeHttpUrlForm(const QString &url) {
+// N37：http(s) URL 的规范形态内核（实现见上；N56 收族并公开，原文件内静态
+// convergeHttpUrlForm → convergeHttpForm）
+QString convergeHttpForm(const QString &url) {
     int authStart = 0;
     int authEnd = 0;
     if (!locateUrlAuthority(url, &authStart, &authEnd))
@@ -336,14 +335,13 @@ QString convergeHttpUrlForm(const QString &url) {
     rebuilt += url.mid(authEnd);
     return convergeUrlEscapes(rebuilt);
 }
-} // namespace
 
 // N37：URL 形态处理仅对 http(s) 生效——percent / URL 语义只对 URI 路径成立，
 // 其余网络协议（rtsp / srt / udp / edl 等）不参与 URL 规范化与编码收敛。
 // N48：由匿名命名空间改为公开谓词——判据的持有者已不止本文件的四个调用点（提供者的
 // 条目 scheme 白名单、将来的远端来源分派等），多份同口径拷贝必然漂移；它是纯读判定、
 // 不参与任何比对产出，公开的代价远小于重复维护
-bool isHttpUrl(const QString &path) {
+bool isHttp(const QString &path) {
     const int schemeEnd = path.indexOf(QStringLiteral("://"));
     if (schemeEnd < 0)
         return false;
@@ -353,13 +351,13 @@ bool isHttpUrl(const QString &path) {
 
 // N48：剥除 http(s) URL authority 中的 userinfo 段，其余字节逐字不动。纯字符串
 // 实现，禁用 QUrl——产出一旦经 QUrl 重序列化，除 userinfo 之外的段也可能变形，
-// 而本函数产出要参与跨来源逐字节比对（实体 playUrl / mpv 回显），多动一个字节就把
+// 而本函数产出要参与跨来源逐字节比对（实体身份 / mpv 回显），多动一个字节就把
 // 正常推送误判为外部变更。非 http(s)、无 "://"、authority 为空、无 userinfo 的输入
-// 一律恒等返回（幂等，对称剥离会重复施加）。跨场景共用：匹配形态、回显比对、书签
-// 展示路径、用户可见文案。禁止用于喂 mpv——喂 mpv 走提供者的 deliveryUrl（N48 §2.4；N52 起出口为
-// deliveryUrl）
-QString stripUrlCredentials(const QString &url) {
-    if (!isHttpUrl(url))
+// 一律恒等返回（幂等，对称剥离会重复施加）。覆盖面不扩（N56 §2.3：非 http 网络
+// URL 不剥，将来由该协议自己的实体负责）。禁止用于喂 mpv——喂 mpv 走提供者的
+// playUrl（N48 §2.4；N52 起出口为 playUrl，N56 更名）
+QString stripCredentials(const QString &url) {
+    if (!isHttp(url))
         return url;
     int authStart = 0;
     int authEnd = 0;
@@ -372,17 +370,17 @@ QString stripUrlCredentials(const QString &url) {
     return url.left(authStart) + hostPort + url.mid(authEnd);
 }
 
-// N48：与 stripUrlCredentials 成对的插入侧——在 URL 的 authority 起点插入 `凭据段@`。
+// N48：与 stripCredentials 成对的插入侧——在 URL 的 authority 起点插入 `凭据段@`。
 // 插入动作与前者的删除动作共用同一 authority 定位内核（`://` 偏移的规则只此一份），
 // 其余字节取自原串，故 strip(insert(u, c)) == u 构造性成立。入参先剥一次凭据：带
 // userinfo 的串绝不产出双段。encodedCredentials 的编码形态由调用方决定（约定与 QUrl 的
-// userinfo 序列化一致，见 WebDavProvider::playbackUrl），本函数只做拼接
-QString insertUrlCredentials(const QString &url, const QString &encodedCredentials) {
+// userinfo 序列化一致，见 WebDavProvider::directPlayUrl），本函数只做拼接
+QString insertCredentials(const QString &url, const QString &encodedCredentials) {
     // 凭据段内不得有字面 '@'——那会与定界符混同（userinfo 内的 '@' 必为编码形态）
     Q_ASSERT(!encodedCredentials.contains(QLatin1Char('@')));
-    if (encodedCredentials.isEmpty() || !isHttpUrl(url))
+    if (encodedCredentials.isEmpty() || !isHttp(url))
         return url;
-    const QString clean = stripUrlCredentials(url);
+    const QString clean = stripCredentials(url);
     int authStart = 0;
     int authEnd = 0;
     if (!locateUrlAuthority(clean, &authStart, &authEnd) || authEnd <= authStart)
@@ -393,8 +391,8 @@ QString insertUrlCredentials(const QString &url, const QString &encodedCredentia
 // N48：URL 的 path 段结束下标——首个 '?' 或 '#'（无则 size()）。纯字符串运算，不解析也
 // 不校验：query / fragment 的语义由调用方按 URL 语境赋予（本地路径里的 '?' / '#' 是
 // 普通字符，调用方不得误用）。两处产出共用同一"分界"口径——显示名取末段
-// （playUrlFileName）与基 URL 的尾斜杠补位（WebDavProvider::normalizeRootUrl）
-qsizetype urlPathEnd(const QString &url) {
+// （fileName）与基 URL 的尾斜杠补位（WebDavProvider::normalizeRootUrl）
+qsizetype pathEnd(const QString &url) {
     qsizetype cut = url.size();
     const qsizetype q = url.indexOf(QLatin1Char('?'));
     const qsizetype f = url.indexOf(QLatin1Char('#'));
@@ -405,19 +403,20 @@ qsizetype urlPathEnd(const QString &url) {
     return cut;
 }
 
-QString normalizePathForMatch(const QString &path) {
+// N56 收族更名 normalizePathForMatch → key："给外部串落键"的算法内核
+QString key(const QString &path) {
     // 本地路径先相对→绝对（基于进程 CWD，不访问文件系统），再统一分隔符；
     // Windows 额外转小写。仅用于内部匹配；UI 展示与向 mpv 传递始终保持原样。
-    const QString abs = Util::resolveSourcePath(path);
-    if (Util::isNetworkStreamPath(abs)) {
-        // N37：URL 编码收敛仅对 http(s)（与 playUrlFileName 同口径——URL 语义只对
+    const QString abs = toIdentity(path);
+    if (isNetworkStream(abs)) {
+        // N37：URL 编码收敛仅对 http(s)（与 fileName 同口径——URL 语义只对
         // URI 路径成立）；其余网络协议维持 N35 既有形态（分隔符归一、不转小写）。
         // 收敛是"两侧各落一次 key"，按协议族划分后每族内单调性依旧成立。
         // N48：http(s) 先剥凭据再收敛——键（书签 / 时长 / 续播 / mpv path 落键）恒为
         // 无凭据形态，改密后既有记忆继续有效；剥离只让原本不等的形态相等，故单调性
         // 保持
-        if (isHttpUrl(abs))
-            return convergeHttpUrlForm(stripUrlCredentials(abs));
+        if (isHttp(abs))
+            return convergeHttpForm(stripCredentials(abs));
         return QDir::fromNativeSeparators(abs);
     }
     QString p = QDir::fromNativeSeparators(abs);
@@ -427,83 +426,40 @@ QString normalizePathForMatch(const QString &path) {
     return p;
 }
 
-QString nativePath(const QString &path) {
+QString toNative(const QString &path) {
     // 网络分支：http(s) 走 URL 规范化（入口形态），绝不做 toNativeSeparators——
     // 后者会把 '/' 换成 '\'，对 URL 是破坏性的（N37 前的隐患，此前无调用点传
     // URL 未暴露）；解析失败退回原串（不抛错、不判失败）。其余网络协议原样
     // 返回——toNativeSeparators 同样破坏 URL，QUrl 重序列化对非 URI scheme
     // 的语义没有保证
-    if (Util::isNetworkStreamPath(path)) {
-        if (!isHttpUrl(path))
+    if (isNetworkStream(path)) {
+        if (!isHttp(path))
             return path;
         const QUrl u = QUrl(path, QUrl::ParsingMode::TolerantMode);
         if (!u.isValid())
             return path;
         // Qt 完成 scheme / host 归小写与非 ASCII 的编码；默认端口剥离与转义收敛
         // 和匹配形态共用同一内核——"入口即规范"，等价书写不产出重复条目
-        return convergeHttpUrlForm(u.toString(QUrl::ComponentFormattingOption::FullyEncoded));
+        return convergeHttpForm(u.toString(QUrl::ComponentFormattingOption::FullyEncoded));
     }
     return QDir::toNativeSeparators(path);
 }
 
-bool Util::isNetworkStreamPath(const QString &path) {
-    // 含 :// 且非 file: 前缀（覆盖 file:// 与 file:/）即视为网络/流。
-    // 串前缀判定规避两陷阱：QUrl::scheme() 把 "C:\dir" 误判 scheme "c"；
-    // QUrl::fromUserInput 把相对名 "a" 误判非本地。
-    return path.contains(QStringLiteral("://")) &&
-           !path.startsWith(QStringLiteral("file:"), Qt::CaseInsensitive);
-}
-
-// N25：按序子序列判定（回刷在途中间态识别用）
-bool Util::isOrderedSubsequence(const QStringList &sub, const QStringList &full) {
-    int j = 0;
-    for (const QString &s : sub) {
-        while (j < full.size() && full.at(j) != s)
-            ++j;
-        if (j == full.size())
-            return false;
-        ++j;
-    }
-    return true;
-}
-
-// N49：图标淡化。合成底取素材最大可用尺寸——源分辨率不低于最终显示尺寸
-// （16px × 最大缩放率），后续由 QIcon 下采样显示不会糊；透明度经
-// QPainter::setOpacity 施加，与缩放无关，故随后缩放不丢效果
-QIcon Util::fadedIcon(const QIcon &icon, qreal opacity) {
-    if (icon.isNull())
-        return icon; // 空图标原样返回：不做兜底，与"资源缺失即空图标"同口径
-    QSize size;
-    for (const QSize &s : icon.availableSizes()) {
-        if (s.width() > size.width())
-            size = s;
-    }
-    if (!size.isValid() || size.isEmpty())
-        size = QSize(64, 64); // 无可用尺寸（理论不可达）：按素材规格兜一个合成底
-    const QPixmap src = icon.pixmap(size);
-    QPixmap out(src.size());
-    out.fill(Qt::transparent);
-    QPainter p(&out);
-    p.setOpacity(opacity);
-    p.drawPixmap(0, 0, src);
-    p.end();
-    return QIcon(out);
-}
-
-// N52：更名 resolveLocalPath → resolveSourcePath。理由：① 它从来不只处理本地
-// 路径——网络/流路径在首行即原样返回，入参也包括手工输入的目录根，"Local" 是
-// 既有误名；② N52 起本函数还要剥掉传输包装（mpvqt:// → 条目身份），与 "local"
-// 字面意思正相反。名字取"来源路径"义：入参是来自某个来源的路径串（mpv 属性、
-// 文件对话框、拖放、用户输入），产出是本插件内部认的路径/身份形态。
-QString resolveSourcePath(const QString &path) {
+// N52：更名 resolveLocalPath → resolveSourcePath（N56 收族再更名 → toIdentity）。
+// 理由：① 它从来不只处理本地路径——网络/流路径在首行即原样返回，入参也包括手工
+// 输入的目录根，"Local" 是既有误名；② N52 起本函数还要剥掉传输包装（mpvqt:// →
+// 条目身份），与 "local" 字面意思正相反。名字取"定形"义：入参是来自某个来源的
+// 串（mpv 属性、文件对话框、拖放、用户输入），产出是已定形的条目身份。
+// N56 §2.6 起：工厂不再代做本加工——定形是造实体一方的责任，本函数收归
+// Util::Url 内部，调用方只经 key（首行折叠）或入口定形（toNative）间接用到它
+QString toIdentity(const QString &path) {
     if (path.isEmpty())
         return path;
     // N52：剥传输包装——mpvqt:// 转接 URI 还原为条目身份。unwrap 幂等（非本
-    // 协议原样返回），故本折叠点可安全常驻首行，比对类与显示类读点一并覆盖：
-    // 走本函数或 normalizePathForMatch（其首行即本函数）的 mpv path 读取点
-    // 自动还原，UI 侧不再需要任何显式套函数。
+    // 协议原样返回），故本折叠点可安全常驻首行，比对类（key）读点自动覆盖：
+    // 走本函数或 key 的 mpv path 读取点自动还原，无需显式套函数。
     const QString unwrapped = StreamTransit::unwrap(path);
-    if (Util::isNetworkStreamPath(unwrapped))
+    if (isNetworkStream(unwrapped))
         return unwrapped; // 网络/流：保持原样，不绝对化
     // 本地（含 file://、file:/、盘符路径、相对路径、UNC）：file: 前缀先转本地，
     // 其余相对→绝对（基于进程 CWD 的纯字符串变换，不访问文件系统，文件不存在亦可），
@@ -516,26 +472,75 @@ QString resolveSourcePath(const QString &path) {
     return QDir::toNativeSeparators(QFileInfo(local).absoluteFilePath());
 }
 
-// N54：本地/远端定性的单点——来源路径经折叠（含 mpvqt://）后不是网络/流形态即为本地。
-// 既是 isMissingLocalSource 的前半，也是"这条来源离开所属列表还能不能播"的分界：本地
-// 项就在磁盘上，远端项的播放形态依赖列表（N48 之后 URL 恒无凭据、N52 的转接 URI 依赖
-// 列表端点）。空串判"非本地"（无从定性）
-bool isLocalSourcePath(const QString &path) {
-    return !path.isEmpty() && !isNetworkStreamPath(resolveSourcePath(path));
+// 是否网络/流路径（含 :// 且非 file: 前缀）：本地目录提供者据此拒绝、mpv 源据此保持原样。
+// 用串前缀判定，避免 QUrl::scheme() 把 Windows 盘符 "C:\dir" 误判为 scheme、
+// 也避免 QUrl::fromUserInput 把相对名（如 "a"）误判为非本地。
+bool isNetworkStream(const QString &path) {
+    return path.contains(QStringLiteral("://")) &&
+           !path.startsWith(QStringLiteral("file:"), Qt::CaseInsensitive);
 }
 
+// N54：本地/远端定性的单点——来源串经折叠（含 mpvqt://）后不是网络/流形态即为本地。
+// 既是 isMissingLocal 的前半，也是"这条来源离开所属列表还能不能播"的分界：本地
+// 项就在磁盘上，远端项的播放形态依赖列表（N48 之后 URL 恒无凭据、N52 的转接 URI 依赖
+// 列表端点）。空串判"非本地"（无从定性）
+bool isLocal(const QString &path) { return !path.isEmpty() && !isNetworkStream(toIdentity(path)); }
+
 // N54：本地来源存在性判据的单点。与实体侧 isLocalFile() && !exists() 同口径——
-// 本地路径经 PlaylistEntity::fromPlayUrl 必出生 LocalFileEntity，其 exists() 即
-// QFileInfo::exists(playUrl())；网络与未知实体 exists() 恒真，故本函数对它们恒假
+// 本地路径经 PlaylistEntity::fromPath 必出生 LocalFileEntity，其 exists() 即
+// QFileInfo::exists(path())；网络与未知实体 exists() 恒真，故本函数对它们恒假
 // （不可判定 ≠ 缺失）。取 QFileInfo::exists 而非 QFile::exists：后者在 Windows 对
 // 目录判假，会把"书签指向目录"（mpv 能播）误判为缺失。
-bool isMissingLocalSource(const QString &path) {
-    const QString local = resolveSourcePath(path);
-    if (!isLocalSourcePath(local))
+bool isMissingLocal(const QString &path) {
+    const QString local = toIdentity(path);
+    if (!isLocal(local))
         return false;
     return !QFileInfo::exists(local);
 }
 
+// N37：播放项显示文件名（自 HttpEntity 构造内的同名逻辑收编，供标题 / OSD
+// 取名共用，见头注）。percent-decode 仅对 http(s) 生效（isHttp，与
+// toNative / key 的网络分支同口径）。N56 收族更名 playUrlFileName → fileName
+QString fileName(const QString &identity) {
+    if (isHttp(identity)) {
+        // N48：query / fragment 的分界走共用内核（与 WebDavProvider::normalizeRootUrl
+        // 的尾斜杠补位是同一口径）
+        const QString spec = identity.left(pathEnd(identity));
+        const qsizetype slash = spec.lastIndexOf(QLatin1Char('/'));
+        const QString lastSeg = slash >= 0 ? spec.mid(slash + 1) : spec;
+        return QUrl::fromPercentEncoding(lastSeg.toUtf8());
+    }
+    return QFileInfo(identity).fileName();
+}
+
+} // namespace Url
+
+// ——杂项族（续）——
+
+// N37：HTTP 日期解析（自 HttpEntity 迁入，行为不变——详见头注）
+QDateTime parseHttpDate(const QByteArray &raw) {
+    QString s = QString::fromLatin1(raw).trimmed();
+    if (s.isEmpty())
+        return {};
+
+    // 字母时区后缀 → 等价 +0000（数字时区保留原样；无后缀即 0 时区，与
+    // Last-Modified 恒为 UTC 墙钟的语义吻合）
+    static const char *kZoneNames[] = {"GMT", "UTC", "UT"};
+    for (const char *z : kZoneNames) {
+        const QString suffix = QStringLiteral(" ") + QString::fromLatin1(z);
+        if (s.endsWith(suffix, Qt::CaseInsensitive)) {
+            s.chop(suffix.size());
+            s += QStringLiteral(" +0000");
+            break;
+        }
+    }
+
+    const QDateTime dt = QDateTime::fromString(s, Qt::RFC2822Date);
+    return dt.toLocalTime(); // invalid 时保持 invalid，调用方按"值未知"丢弃
+}
+
+// 发行时间解析：ISO 8601 优先，兼容常见格式（yyyy-MM-dd / yyyy/MM/dd / yyyy-MM / yyyy）；
+// 全败返回无效 QDateTime
 QDateTime parseReleaseDate(const QString &s) {
     if (s.isEmpty())
         return {};
@@ -559,41 +564,40 @@ QDateTime parseReleaseDate(const QString &s) {
     return {};
 }
 
-// N37：播放项显示文件名（自 HttpEntity 构造内的同名逻辑收编，供标题 / OSD
-// 取名共用，见头注）。percent-decode 仅对 http(s) 生效（isHttpUrl，与
-// nativePath / normalizePathForMatch 的网络分支同口径）
-QString playUrlFileName(const QString &playUrl) {
-    if (isHttpUrl(playUrl)) {
-        // N48：query / fragment 的分界走共用内核（与 WebDavProvider::normalizeRootUrl
-        // 的尾斜杠补位是同一口径）
-        const QString spec = playUrl.left(urlPathEnd(playUrl));
-        const qsizetype slash = spec.lastIndexOf(QLatin1Char('/'));
-        const QString lastSeg = slash >= 0 ? spec.mid(slash + 1) : spec;
-        return QUrl::fromPercentEncoding(lastSeg.toUtf8());
+// N25：按序子序列判定（回刷在途中间态识别用）
+bool isOrderedSubsequence(const QStringList &sub, const QStringList &full) {
+    int j = 0;
+    for (const QString &s : sub) {
+        while (j < full.size() && full.at(j) != s)
+            ++j;
+        if (j == full.size())
+            return false;
+        ++j;
     }
-    return QFileInfo(playUrl).fileName();
+    return true;
 }
 
-// N37：HTTP 日期解析（自 HttpEntity 迁入，行为不变——详见头注）
-QDateTime parseHttpDate(const QByteArray &raw) {
-    QString s = QString::fromLatin1(raw).trimmed();
-    if (s.isEmpty())
-        return {};
-
-    // 字母时区后缀 → 等价 +0000（数字时区保留原样；无后缀即 0 时区，与
-    // Last-Modified 恒为 UTC 墙钟的语义吻合）
-    static const char *kZoneNames[] = {"GMT", "UTC", "UT"};
-    for (const char *z : kZoneNames) {
-        const QString suffix = QStringLiteral(" ") + QString::fromLatin1(z);
-        if (s.endsWith(suffix, Qt::CaseInsensitive)) {
-            s.chop(suffix.size());
-            s += QStringLiteral(" +0000");
-            break;
-        }
+// N49：图标淡化。合成底取素材最大可用尺寸——源分辨率不低于最终显示尺寸
+// （16px × 最大缩放率），后续由 QIcon 下采样显示不会糊；透明度经
+// QPainter::setOpacity 施加，与缩放无关，故随后缩放不丢效果
+QIcon fadedIcon(const QIcon &icon, qreal opacity) {
+    if (icon.isNull())
+        return icon; // 空图标原样返回：不做兜底，与"资源缺失即空图标"同口径
+    QSize size;
+    for (const QSize &s : icon.availableSizes()) {
+        if (s.width() > size.width())
+            size = s;
     }
-
-    const QDateTime dt = QDateTime::fromString(s, Qt::RFC2822Date);
-    return dt.toLocalTime(); // invalid 时保持 invalid，调用方按"值未知"丢弃
+    if (!size.isValid() || size.isEmpty())
+        size = QSize(64, 64); // 无可用尺寸（理论不可达）：按素材规格兜一个合成底
+    const QPixmap src = icon.pixmap(size);
+    QPixmap out(src.size());
+    out.fill(Qt::transparent);
+    QPainter p(&out);
+    p.setOpacity(opacity);
+    p.drawPixmap(0, 0, src);
+    p.end();
+    return QIcon(out);
 }
 
 QString resolveMpvConfPath(const QString &pluginDir) {

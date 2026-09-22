@@ -10,15 +10,15 @@ inline constexpr char kStaticProviderName[] = QT_TRANSLATE_NOOP("StaticProvider"
 class ProviderSettingsPage;
 
 // 静态列表提供者（N9）：条目由用户手工添加，内容持有于本实现内部。
-// N26：仅保留持久化所需的最小表示（playUrl 有序表，不存实体）——
+// N26：仅保留持久化所需的最小表示（身份串有序表，不存实体）——
 // enumerate 现场造实体返回；N29 起不预热元数据（只有 URL 列表、无可用元数据，
-// 实体保持未求值，按需经视图侧预读骨架供给），setItems 从实体提取 playUrl 覆盖；
+// 实体保持未求值，按需经视图侧预读骨架供给），setItems 从实体提取身份串覆盖；
 // 序列化写类型键 + 全部条目（不持久化排序键）；默认 tab 同样使用本实现，
 // 仅持久化侧跳过。
 // N44：本实现是登记表第 0 项（默认提供者），默认 tab 经 createDefault 出生
 class StaticProvider : public PlaylistProvider {
   public:
-    // registry 经基类持有，必填无缺省，enumerate 造实体时转交 fromPlayUrl
+    // registry 经基类持有，必填无缺省，enumerate 造实体时转交 fromPath
     explicit StaticProvider(const std::shared_ptr<ServiceRegistry> &registry);
 
     QString typeKey() const override;
@@ -40,7 +40,7 @@ class StaticProvider : public PlaylistProvider {
                                                   const std::shared_ptr<ServiceRegistry> &registry);
 
   private:
-    QStringList m_urls; // 持久化形态的 playUrl 有序表
+    QStringList m_urls; // 持久化形态的身份串有序表
 };
 
 // 参数页工厂（N44）：页面类定义在 StaticProvider.cpp，本处只声明工厂。

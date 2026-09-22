@@ -24,15 +24,15 @@ class ProviderSettingsPage;
 //
 // 全局运行时参数一律经注册表快照取用（N36 修订 1 的路子）：enumerate 起始处
 // resolve<TraversalPolicy>() 取深度上限、resolve<HttpClient>() 取网络 client；
-// 不持 client、不读 INI——HttpClient 由 N35 的 provideHttpServices() 按 INI 装配，
-// 身份恒定、重装配即覆盖，超时与证书改动下一次枚举即生效。
+// 不持 client、不读 INI——HttpClient 由装配顶点（MainWindow）的 provideHttpServices()
+// 按 INI 装配，身份恒定、重装配即覆盖，超时与证书改动下一次枚举即生效。
 //
 // 路径纪律（承 B15 / N37 §3.1，N48 修订）：条目 URL 的构造点是本提供者的枚举体
 // （解析纯函数）——以 rootUrl 为基 QUrl::resolved() 展开 href、**剥除 userinfo**，
-// 再经 Util::nativePath 收口取编码形态输出；此后 playUrl 全链路只读转发，任何环节
-// 不得再改（匹配经 normalizePathForMatch 落键，setPlaylist 收编判定原串）。
+// 再经 Util::Url::toNative 收口取编码形态输出；此后身份串全链路只读转发，任何环节
+// 不得再改（匹配经 Util::Url::key 落键，setPlaylist 收编判定原串）。
 // 凭据只在两个使用点注入：PROPFIND 请求 URL（enumerate 内逐请求注入）与喂 mpv
-// 播放（playbackUrl，经基类 deliveryUrl 模板方法在直发形态下调入；开启转接时
+// 播放（directPlayUrl，经基类 playUrl 模板方法在直发形态下调入；开启转接时
 // 凭据经 WebDavStreamEndpoint 在 open 期注入，播放 URL 不携带）——二者都不进
 // 实体、不落盘。
 // N52：转接能力取 Optional——直链与转接都合法，列表级偏好决定下发形态。
@@ -47,7 +47,7 @@ class WebDavProvider : public PlaylistProvider {
         FilesRecursive, // 仅文件（含子目录）：递归 DFS 拉平
     };
 
-    // rootUrl 为参数页来源处定形的 URL（trim → nativePath → 补尾斜杠，见
+    // rootUrl 为参数页来源处定形的 URL（trim → Util::Url::toNative → 补尾斜杠，见
     // normalizeRootUrl）；user / password 可空，皆空则请求与播放都不注入凭据。
     // registry 必填（经基类持有）
     WebDavProvider(const QString &rootUrl, const QString &user, const QString &password,
@@ -67,7 +67,7 @@ class WebDavProvider : public PlaylistProvider {
     static QString displayName();
 
     // ——以下三个静态纯函数（N44）：参数设置页的取值 / 校验与单元测试共用同一出口——
-    // URL 定形（原列表设置对话框的 davUrl 整体迁入）：trim → Util::nativePath →
+    // URL 定形（原列表设置对话框的 davUrl 整体迁入）：trim → Util::Url::toNative →
     // 尾斜杠补在 **path** 上（在 ? / # 之前插入），query / fragment 原样保留在后。
     // 尾斜杠是 WebDAV 的基目录语义（resolved 展开相对 href 的前提），属本来源
     // 自身的规则，不进通用函数。**幂等是硬要求**——已定形的 URL 再定形结果必须
@@ -87,12 +87,12 @@ class WebDavProvider : public PlaylistProvider {
     // INI 的 int 取值 → 浏览模式：取值域外（损坏 / 未知值）降级 Layered
     // （新建列表默认，§2.1），不做旧键兼容。与 DirProvider 同名函数各自持有
     static BrowseMode browseModeFromInt(int value);
-    // collection 条目的 playUrl → 容器 id：剥除 userinfo 的无凭据形态，编码形态与
-    // 尾斜杠原样保留。N48 起条目 playUrl 已恒无 userinfo（resolveEntryUrl 恒剥），
+    // collection 条目的身份串 → 容器 id：剥除 userinfo 的无凭据形态，编码形态与
+    // 尾斜杠原样保留。N48 起条目身份已恒无 userinfo（resolveEntryUrl 恒剥），
     // 故对现产出即恒等变换；剥离动作保留（id 是持久化进 queueRoot 与请求基 URL 的
     // 身份，形态恒定是硬要求）。id 恒无凭据：持久化进 queueRoot 的 INI 不携带凭据，
     // 请求侧由 enumerate 逐请求重写当前凭据
-    static QString containerId(const QString &playUrl);
+    static QString containerId(const QString &entryPath);
 
     QString rootUrl() const { return m_rootUrl; }
     QString user() const { return m_user; }
@@ -105,8 +105,8 @@ class WebDavProvider : public PlaylistProvider {
     // （凭据皆空恒等返回）。条目恒无 userinfo（resolveEntryUrl 恒剥），故这是凭据进入
     // 播放链的唯一入口；产出只喂 mpv，不进实体、不落盘、不参与比对。
     // N52：降为 protected（访问段与签名位置移动，函数体一行不动）——公开出口只有
-    // 基类非虚的 deliveryUrl，usesTransit() 为假才会调到这里
-    QString playbackUrl(const QString &playUrl) const override;
+    // 基类非虚的 playUrl，usesTransit() 为假才会调到这里
+    QString directPlayUrl(const QString &path) const override;
 
   public:
     void saveSettings(QSettings &settings) const override;
@@ -115,10 +115,10 @@ class WebDavProvider : public PlaylistProvider {
                                                   const std::shared_ptr<ServiceRegistry> &registry);
 
     // ——multistatus 解析纯函数（N37 §3.2，本篇唯一"自己写"的部分）——
-    // 单个条目的解析产出：playUrl 为定形后的完整 URL（resolved → 剥 userinfo →
-    // Util::nativePath，构造确定性——同一 href 两次解析得同一串；N48 起恒无凭据）
+    // 单个条目的解析产出：path 为定形后的完整 URL（resolved → 剥 userinfo →
+    // Util::Url::toNative，构造确定性——同一 href 两次解析得同一串；N48 起恒无凭据）
     struct DavEntry {
-        QString playUrl;
+        QString path;
         std::optional<qint64> size;        // getcontentlength（缺失 = 值未知）
         std::optional<QDateTime> modified; // getlastmodified（缺失 / 解析失败 = 值未知）
     };
@@ -145,7 +145,7 @@ class WebDavProvider : public PlaylistProvider {
   private:
     // 条目 URL 构造（解析与枚举共用）：href 相对基解析（绝对 href 直接采用）→ 恒剥
     // 解析结果的 userinfo（相对 href 的 userinfo 继承自基 URL、绝对 href 的来自 href
-    // 自身，两者一并剥）→ Util::nativePath 收口取编码形态。§3.1 第 1 条的"URL 在入口处
+    // 自身，两者一并剥）→ Util::Url::toNative 收口取编码形态。§3.1 第 1 条的"URL 在入口处
     // 构造一次"，N48 起产出恒无凭据
     static QString resolveEntryUrl(const QUrl &baseUrl, const QString &href);
 

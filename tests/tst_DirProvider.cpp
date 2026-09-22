@@ -1,7 +1,7 @@
 // DirProvider 单元测试（N36）：递归深度上限（修订 2：0 = 不递归、n = 最多深入
 // n 层子目录）与符号链接环 / 同一目录重复访问的剪枝（修订 3）。
 // 目录树全部在 QTemporaryDir 内现场搭建（含指向祖先的链接），枚举结果按
-// playUrl 集合断言——无素材依赖、无网络、无 mpv，GUILESS 环境可直接跑。
+// 身份串集合断言——无素材依赖、无网络、无 mpv，GUILESS 环境可直接跑。
 // 环用两种链接各建一遍，环境限制（建不出来 / 未被 QDir 视为目录）一律 QSKIP：
 //   · 目录符号链接 —— mklink /D（需开发者模式或管理员，且卷须支持）。不用
 //     QFile::link：它在 Windows 上建的是 .lnk 快捷方式，isDir() 为 false，
@@ -111,7 +111,7 @@ std::shared_ptr<ServiceRegistry> registryWithDepth(int depth) {
     return registry;
 }
 
-// 枚举并抽出 playUrl（统一分隔符后升序）——集合语义，便于逐层比对。
+// 枚举并抽出身份串（统一分隔符后升序）——集合语义，便于逐层比对。
 // N37：enumerate 返回类型改为 Enumeration，取 entities 字段（warnings 非本套件关注点）。
 // N45：构造参数由 bool recursive 改为浏览模式枚举——本套件既有深度 / 环用例
 // 全部对应"仅文件（含子目录）"模式
@@ -125,20 +125,20 @@ std::expected<QStringList, QString> enumerateUrls(const QString &root, int depth
     QStringList urls;
     urls.reserve(int(result->entities.size()));
     for (const auto &e : result->entities)
-        urls << QDir::fromNativeSeparators(e->playUrl()); // 加工后为原生分隔符
+        urls << QDir::fromNativeSeparators(e->path()); // 加工后为原生分隔符
     urls.sort();
     return urls;
 }
 
-// 期望值同款归一：playUrl 经加工为原生分隔符，比较前统一
+// 期望值同款归一：身份串经加工为原生分隔符，比较前统一
 QString norm(const QString &path) { return QDir::fromNativeSeparators(path); }
 
-// N45：枚举结果的实体 playUrl（保持产出序，不排序——初始排序用例按序断言）
+// N45：枚举结果的实体身份串（保持产出序，不排序——初始排序用例按序断言）
 QStringList entityUrlsInOrder(const std::expected<PlaylistProvider::Enumeration, QString> &r) {
     QStringList urls;
     if (r.has_value())
         for (const auto &e : r->entities)
-            urls << norm(e->playUrl());
+            urls << norm(e->path());
     return urls;
 }
 
@@ -415,7 +415,7 @@ void TestDirProvider::unreadableSubdirectoryYieldsWarning() {
     if (!result.has_value())
         QFAIL(qPrintable(result.error()));
     QCOMPARE(int(result->entities.size()), 1);
-    QCOMPARE(result->entities.front()->playUrl(), a);
+    QCOMPARE(result->entities.front()->path(), a);
     QVERIFY(!result->warnings.isEmpty());
 
     // 恢复权限位，让 QTemporaryDir 的递归清理得以完成

@@ -166,7 +166,7 @@ class DirSettingsPage : public ProviderSettingsPage {
             QFileDialog::getExistingDirectory(this, tr("Select Directory"), rootValue());
         // Qt 来源（目录选择）：拿到即转原生分隔符（B15）
         if (!dir.isEmpty())
-            m_rootEdit->setText(Util::nativePath(dir));
+            m_rootEdit->setText(Util::Url::toNative(dir));
     }
 
     const DirProvider *m_seed = nullptr;
@@ -192,11 +192,11 @@ QString DirProvider::displayName() {
 
 QString DirProvider::normalizeRoot(const QString &text) {
     // 路径来源处（用户可手动输入，可能相对或分隔符不规范）：相对→绝对、转原生分隔符，
-    // 统一走 resolveSourcePath；网络/流保持原样（需求 #6 读写原样）
+    // 统一走 Util::Url::toIdentity；网络/流保持原样（需求 #6 读写原样）
     const QString trimmed = text.trimmed();
     if (trimmed.isEmpty())
         return QString();
-    return Util::resolveSourcePath(trimmed);
+    return Util::Url::toIdentity(trimmed);
 }
 
 std::optional<QString> DirProvider::validateInput(const QString &rawRoot) {
@@ -207,7 +207,7 @@ std::optional<QString> DirProvider::validateInput(const QString &rawRoot) {
     // 本地目录列表仅接受真实本地路径；网络/流路径（http/ftp/stream 等，含 :// 且非
     // file:）拒绝。用串前缀判定，避免 QUrl::scheme() 误判盘符、
     // QUrl::fromUserInput 误判相对名 "a" 为非本地
-    if (Util::isNetworkStreamPath(root))
+    if (Util::Url::isNetworkStream(root))
         return trText(QT_TRANSLATE_NOOP(
             "DirProvider", "Local directory lists do not support network or stream paths."));
     if (!QDir(root).exists())
@@ -343,7 +343,7 @@ DirProvider::enumerate(const QStringList &parent) const {
             c.title = fi.fileName();
             // N47：该层绝对路径（纯展示，供属性对话框 / 复制 / 打开；
             // 原生分隔符，B15 显示口径）
-            c.path = Util::nativePath(fi.absoluteFilePath());
+            c.path = Util::Url::toNative(fi.absoluteFilePath());
             // 顺手取得的目录元数据经 optional 带出，供容器参与日期 / 大小排序
             c.meta = LocalFileEntity::fileMetaFrom(fi);
             out.containers.push_back(std::move(c));
@@ -370,9 +370,11 @@ DirProvider::enumerate(const QStringList &parent) const {
     }
     out.entities.reserve(infos.size());
     for (const QFileInfo &fi : infos) {
-        // 路径加工（绝对化 + 原生分隔符，B15）统一由 fromPlayUrl 内的
-        // resolveSourcePath 出口负责，此处不再预处理；registry 转交（本地路径忽略）
-        auto entity = PlaylistEntity::fromPlayUrl(fi.absoluteFilePath(), registry());
+        // 入口定形（N56 §2.6）：工厂不再代做加工，身份串由造实体的一方自行定形——
+        // absoluteFilePath 已是绝对路径，此处补原生分隔符（toIdentity 时代的显示
+        // 路径形态；与容器 path 的 346 行同款）。registry 转交（本地路径忽略）
+        auto entity =
+            PlaylistEntity::fromPath(Util::Url::toNative(fi.absoluteFilePath()), registry());
         injectFileMeta(*entity, LocalFileEntity::fileMetaFrom(fi)); // 零成本注入
         out.entities.push_back(std::move(entity));
     }
@@ -412,8 +414,8 @@ DirProvider::load(QSettings &settings, const std::shared_ptr<ServiceRegistry> &r
 void DirProvider::collect(const QDir &dir, const QStringList &filters, bool recursive, int depth,
                           int maxDepth, QSet<QString> &visited, QFileInfoList &out,
                           QStringList &warnings) {
-    // 文件层：命中扩展名的条目信息追加（N29：整个 QFileInfo 留给注入，
-    // 路径加工统一在 fromPlayUrl 的 resolveSourcePath 出口做）
+    // 文件层：命中扩展名的条目信息追加（N29：整个 QFileInfo 留给注入；
+    // N56 §2.6：路径定形由 enumerate 的造实体点自行 toNative，工厂不再代做）
     const QFileInfoList files =
         dir.entryInfoList(filters, QDir::Files | QDir::Readable, QDir::NoSort);
     for (const QFileInfo &fi : files)

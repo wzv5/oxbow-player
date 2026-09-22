@@ -4,6 +4,8 @@
 
 namespace Util {
 
+// ——杂项族（与 URL / 路径无关的通用工具；N56 起与身份形态一族以命名空间分界）——
+
 // 文件大小自适应单位显示（B/KB/MB/GB，按量级就近选择）
 QString formatFileSize(qint64 bytes);
 
@@ -69,87 +71,6 @@ QString trimTrailingZeros(const QString &fixed);
 // 故 "List 03 " 与 "List 3" 同样按 3 计入
 int nextSequenceNumber(const QString &prefix, const QStringList &existing);
 
-// 路径规范化（仅内部匹配用：元数据仓键 / 书签键 / 回显比对）。
-// 本地路径先相对→绝对（基于进程 CWD，不访问文件系统，文件不存在亦可），再统一分隔符；
-// Windows 额外转小写。N35：网络路径不转小写（URL 大小写敏感，key 逐字节）。
-// N37：http(s) 路径改走匹配形态收敛（scheme/host 归小写、去默认端口、unreserved
-// 转义解码、其余转义十六进制统一大写），吃掉同一 URL 的等价书写差异；其余网络
-// 协议（rtsp / srt / edl 等）维持 N35 既有形态（分隔符归一、不转小写）。
-// N48：http(s) 分支先剥凭据（stripUrlCredentials）再收敛——键恒为无凭据形态，
-// 凭据只在请求与播放两个使用点注入。
-// 禁止用于 UI 显示或向 mpv 传递。
-QString normalizePathForMatch(const QString &path);
-
-// 是否 http(s) URL（仅面向前缀串判定，不解析）。串前缀 + scheme 归小写，
-// 与 isNetworkStreamPath 同款：不用 QUrl::scheme()——它会把 Windows 盘符 "C:\dir"
-// 误判为 scheme。
-// "URL 语义只对 http(s) 生效"这一判据的唯一持有者：normalizePathForMatch /
-// nativePath / playUrlFileName 的网络分支、stripUrlCredentials、WebDAV 条目的 scheme
-// 白名单（N48）共用。N48 由匿名命名空间改为公开——判据持有者已跨文件，多份同口径
-// 拷贝必然漂移
-bool isHttpUrl(const QString &path);
-
-// N48：剥除 http(s) URL authority 中的 userinfo 段，其余字节逐字不动。
-// 非 http(s)、无 "://"、authority 为空、无 userinfo 的输入一律恒等返回（幂等）。
-// 纯字符串实现（禁用 QUrl）：产出参与跨来源逐字节比对（实体 playUrl / mpv 回显），
-// 经 QUrl 重序列化会在 userinfo 之外的段产生偏差，致比对失配。
-// 用于匹配形态、回显比对、书签展示路径与用户可见文案。
-// 禁止用于喂 mpv——喂 mpv 走提供者的 deliveryUrl（N52：直发形态经其调 playbackUrl）。
-QString stripUrlCredentials(const QString &url);
-
-// N48：与 stripUrlCredentials 成对的插入侧——在 http(s) URL 的 authority 起点插入
-// `凭据段@`（authority 定位内核两处共用，偏移规则只此一份）。encodedCredentials 为**已编码**
-// 的 `user` 或 `user:pass`（不含尾随 '@'，不得含字面 '@'；编码形态由调用方决定，约定与
-// QUrl 的 userinfo 序列化一致），插入是纯字符串拼接——其余字节逐字不动，故
-// strip(insert(u, c)) == u 构造性成立。
-// 入参先剥一次凭据（带 userinfo 的串绝不产出双段）；凭据段为空、非 http(s)、无 "://"、
-// authority 为空一律原样返回（绝不注入）。
-// 只用于"喂 mpv 的播放形态"（提供者 playbackUrl，经 deliveryUrl 模板方法调入）：实体 playUrl
-// 与持久化恒无凭据。
-QString insertUrlCredentials(const QString &url, const QString &encodedCredentials);
-
-// N48：URL 的 path 段结束下标——首个 '?' 或 '#'（无则 size()）。纯字符串运算，不解析
-// 也不校验：query / fragment 语义由调用方按 URL 语境赋予（本地路径里的 '?' / '#' 是普通
-// 字符，不得误用）。两处产出共用同一分界口径：显示名取末段（playUrlFileName）与基 URL
-// 的尾斜杠补位（WebDavProvider::normalizeRootUrl）
-qsizetype urlPathEnd(const QString &url);
-
-// Qt 来源路径：本地路径转原生分隔符；http(s) URL 经 QUrl 规范化（FullyEncoded，
-// scheme/host 归小写、转义形态定型），解析失败退回原串；其余网络协议原样返回
-// ——绝不做 toNativeSeparators（'/'→'\' 对任何 URL 都是破坏性的）；均不做
-// 绝对化 / cleanPath / 大小写处理（N37）。
-// 用于文件对话框返回值、拖放 url、目录枚举、WebDAV 条目 URL 等来源处一次性加工。
-QString nativePath(const QString &path);
-
-// "来源路径 → 内部形态"的唯一出口（N52 更名 resolveLocalPath → resolveSourcePath：
-// 它从不只处理本地路径——网络/流路径首行即原样返回；且 N52 起还要剥掉传输包装
-// （mpvqt:// → 条目身份），与 "local" 字面意思正相反）。首行经 StreamTransit::unwrap
-// 折叠还原（幂等，可重复施加），比对类（经 normalizePathForMatch）与显示类读点
-// 一并覆盖，UI 侧零处显式还原。
-// 本地路径相对→绝对（基于进程 CWD，纯字符串变换，不访问文件系统，文件不存在亦可），
-// 结果转原生分隔符；网络/流路径（含 :// 或非 file scheme）保持原样。cleanPath 由
-// absoluteFilePath 已含。既供 mpv 来源路径（propertyString / playlist filename），
-// 也供手动输入的目录根等来源处加工。
-// 本函数是显示出口，不是匹配内核：要匹配形态一律调 normalizePathForMatch，
-// 要显示路径一律调本函数。
-QString resolveSourcePath(const QString &path);
-
-// 是否网络/流路径（含 :// 且非 file: 前缀）：本地目录提供者据此拒绝、mpv 源据此保持原样。
-// 用串前缀判定，避免 QUrl::scheme() 把 Windows 盘符 "C:\dir" 误判为 scheme、
-// 也避免 QUrl::fromUserInput 把相对名（如 "a"）误判为非本地。
-bool isNetworkStreamPath(const QString &path);
-
-// 是否本地来源路径：经 resolveSourcePath（含 mpvqt:// 折叠）后**不是**网络/流形态。
-// 判据单点在此——isMissingLocalSource 用它，书签失效清理与书签跳转的本地/远端分流也
-// 用它（两处同口径，不各写一遍 !isNetworkStreamPath(resolveSourcePath(...))）
-bool isLocalSourcePath(const QString &path);
-
-// N54：本地来源是否已从磁盘消失——入参为显示路径，先经 resolveSourcePath（含
-// mpvqt:// 折叠），网络/流路径恒假（不可判定 ≠ 缺失），否则按 QFileInfo::exists 判定。
-// 与实体侧 isLocalFile() && !exists() 同口径，是"这条来源能不能就地播"的判据单点
-// （书签失效清理与书签跳转共用）。目录不算缺失（mpv 能播目录）。
-bool isMissingLocalSource(const QString &path);
-
 // N25：按序子序列判定——sub 的元素能否在 full 中按原序不跳序地逐一命中（双指针，O(n)）。
 // 空序列是任何序列的子序列；两序列相等亦返回 true。
 // 用于回刷的本地在途回显：识别"同一变更的在途中间态"（整表载入的部分列表是最终列表的前缀，
@@ -172,18 +93,129 @@ QDateTime parseReleaseDate(const QString &s);
 // （Last-Modified 恒为 UTC 墙钟，正合需求）。失败返回无效 QDateTime（值未知）。
 QDateTime parseHttpDate(const QByteArray &raw);
 
+// R3：mpv.conf 路径解析。从 pluginDir（plugin.ini 的绝对目录）上溯两级即
+// portable_config（必存在目录），优先其下 mpv.conf；其次 %APPDATA%/mpv/mpv.conf；
+// 都不存在返回 portable_config/mpv.conf 作为创建目标（目录必然存在，无需 mkpath）。
+QString resolveMpvConfPath(const QString &pluginDir);
+
+// ——身份与形态一族（N56 收族）：嵌套命名空间即这一族的边界——
+// 实体与提供者都从这里取内核；调用方只问角色（toIdentity 定形 / key 落键 /
+// fileName 取显示名 / 判据定性），不再自己拼加工链。算法本身与收族前逐字一致
+// （原 resolveSourcePath / normalizePathForMatch / stripUrlCredentials / … 十二个函数，
+// 见 N56 §2.1 收族表）。
+namespace Url {
+
+// "来源串 → 已定形身份"的唯一出口（N52 更名 resolveLocalPath → resolveSourcePath、
+// N56 收族更名 → toIdentity：它从不只处理本地路径——网络/流路径首行即原样返回；且
+// N52 起还要剥掉传输包装（mpvqt:// → 条目身份），与 "local" 字面意思正相反）。
+// 首行经 StreamTransit::unwrap 折叠还原（幂等，可重复施加）。
+// 本地路径相对→绝对（基于进程 CWD，纯字符串变换，不访问文件系统，文件不存在亦可），
+// 结果转原生分隔符；网络/流路径（含 :// 或非 file scheme）保持原样。cleanPath 由
+// absoluteFilePath 已含。
+// N56 起它不再是显示出口——显示归实体 displayUrl()，本函数只服务定形（造实体前的
+// 入口加工与 key 的首行折叠）。
+QString toIdentity(const QString &path);
+
+// 路径归一化（仅内部匹配用：元数据仓键 / 书签键 / 续播记忆 / 回显定位）。
+// 本地路径先相对→绝对（基于进程 CWD，不访问文件系统，文件不存在亦可），再统一分隔符；
+// Windows 额外转小写。N35：网络路径不转小写（URL 大小写敏感，key 逐字节）。
+// N37：http(s) 路径改走匹配形态收敛（scheme/host 归小写、去默认端口、unreserved
+// 转义解码、其余转义十六进制统一大写），吃掉同一 URL 的等价书写差异；其余网络
+// 协议（rtsp / srt / edl 等）维持 N35 既有形态（分隔符归一、不转小写）。
+// N48：http(s) 分支先剥凭据（stripCredentials）再收敛——键恒为无凭据形态，
+// 凭据只在请求与播放两个使用点注入。
+// 禁止用于 UI 显示或向 mpv 传递。
+// N56 更名 normalizePathForMatch → key："给外部串落键"的算法内核；实体 key() /
+// matches(串) 与本函数同一实现，不会漂移。
+QString key(const QString &path);
+
 // N37：播放项显示文件名（含后缀不含路径）——列表显示名与标题 / OSD 取名的唯一
 // 出口。本地路径取末段（QFileInfo::fileName 口径）；http(s) URL 先剥 query /
 // fragment（避免末段混入 "?token=xx"），取末段后 percent-decode（与列表显示名
 // 一致，不出现 "%20" 形态）——解码仅限 http(s)：URL 编码语义只对 URI 路径成立，
 // 其余协议（rtsp / srt / edl 等）与 UnknownEntity 列表侧同走末段原样。解后为空
 // （如以 / 结尾）返回空串，调用方按"未知"处理；无路径且无尾斜杠时末段即主机名。
-// 禁止用于匹配（匹配走 normalizePathForMatch）
-QString playUrlFileName(const QString &playUrl);
+// 禁止用于匹配（匹配走 key）。
+// N56 收族更名 playUrlFileName → fileName。
+QString fileName(const QString &identity);
 
-// R3：mpv.conf 路径解析。从 pluginDir（plugin.ini 的绝对目录）上溯两级即
-// portable_config（必存在目录），优先其下 mpv.conf；其次 %APPDATA%/mpv/mpv.conf；
-// 都不存在返回 portable_config/mpv.conf 作为创建目标（目录必然存在，无需 mkpath）。
-QString resolveMpvConfPath(const QString &pluginDir);
+// N48：剥除 http(s) URL authority 中的 userinfo 段，其余字节逐字不动。
+// 非 http(s)、无 "://"、authority 为空、无 userinfo 的输入一律恒等返回（幂等）。
+// 纯字符串实现（禁用 QUrl）：产出参与跨来源逐字节比对（实体身份 / mpv 回显），
+// 经 QUrl 重序列化会在 userinfo 之外的段产生偏差，致比对失配。
+// 用于匹配形态、回显比对与实体显示形态（displayUrl）。
+// 禁止用于喂 mpv——喂 mpv 走提供者的 playUrl（N52：直发形态经其调 directPlayUrl）。
+// N56 收族更名 stripUrlCredentials → stripCredentials；覆盖面不扩（N56 §2.3：
+// 非 http 网络 URL 不剥，将来由该协议自己的实体负责）。
+QString stripCredentials(const QString &url);
+
+// N48：与 stripCredentials 成对的插入侧——在 http(s) URL 的 authority 起点插入
+// `凭据段@`（authority 定位内核两处共用，偏移规则只此一份）。encodedCredentials 为**已编码**
+// 的 `user` 或 `user:pass`（不含尾随 '@'，不得含字面 '@'；编码形态由调用方决定，约定与
+// QUrl 的 userinfo 序列化一致），插入是纯字符串拼接——其余字节逐字不动，故
+// strip(insert(u, c)) == u 构造性成立。
+// 入参先剥一次凭据（带 userinfo 的串绝不产出双段）；凭据段为空、非 http(s)、无 "://"、
+// authority 为空一律原样返回（绝不注入）。
+// 只用于"喂 mpv 的播放形态"（提供者 directPlayUrl，经 playUrl 模板方法调入）：
+// 实体身份与持久化恒不含提供者注入的凭据（N56 §2.3：用户显式提供的凭据除外）。
+// N56 收族更名 insertUrlCredentials → insertCredentials。
+QString insertCredentials(const QString &url, const QString &encodedCredentials);
+
+// N48：URL 的 path 段结束下标——首个 '?' 或 '#'（无则 size()）。纯字符串运算，不解析
+// 也不校验：query / fragment 语义由调用方按 URL 语境赋予（本地路径里的 '?' / '#' 是普通
+// 字符，不得误用）。两处产出共用同一分界口径：显示名取末段（fileName）与基 URL
+// 的尾斜杠补位（WebDavProvider::normalizeRootUrl）。
+// N56 收族更名 urlPathEnd → pathEnd。
+qsizetype pathEnd(const QString &url);
+
+// Qt 来源路径：本地路径转原生分隔符；http(s) URL 经 QUrl 规范化（FullyEncoded，
+// scheme/host 归小写、转义形态定型），解析失败退回原串；其余网络协议原样返回
+// ——绝不做 toNativeSeparators（'/'→'\' 对任何 URL 都是破坏性的）；均不做
+// 绝对化 / cleanPath / 大小写处理（N37）。
+// 用于文件对话框返回值、拖放 url、目录枚举、WebDAV 条目 URL 等来源处一次性加工
+// （入口定形：造实体的一方自行保证传给工厂的是已定形串，N56 §2.6）。
+// N56 收族更名 nativePath → toNative。
+QString toNative(const QString &path);
+
+// N37：http(s) URL 的规范形态内核——scheme / host 归小写、去默认端口
+// （http 80 / https 443），userinfo 原样保留（大小写敏感，不解析），其余整段过
+// 编码收敛。纯字符串操作，无解析失败路径；找不到 "://" 时原样返回。
+// 入口形态（toNative）与匹配形态（key）共用同一内核——"入口即规范"，服务端以等价
+// 书写指向同一文件时归一为同一身份，不产出重复条目。
+// N48：userinfo 透传段保留——匹配形态在调用本函数之前已剥凭据（此处对匹配路径即
+// 死代码），而入口形态不承担去凭据职责；撤掉透传等于让 toNative 也变成剥凭据。
+// N56 收族并公开（原文件内静态 convergeHttpUrlForm → convergeHttpForm）：它是
+// 形态算法内核的一部分，测试与将来可能的复用都从 Util::Url 取。
+QString convergeHttpForm(const QString &url);
+
+// 是否 http(s) URL（仅面向前缀串判定，不解析）。串前缀 + scheme 归小写，
+// 与 isNetworkStream 同款：不用 QUrl::scheme()——它会把 Windows 盘符 "C:\dir"
+// 误判为 scheme。
+// "URL 语义只对 http(s) 生效"这一判据的唯一持有者：key / toNative / fileName 的网络
+// 分支、stripCredentials、WebDAV 条目的 scheme 白名单（N48）共用。N48 由匿名命名空间
+// 改为公开——判据持有者已跨文件，多份同口径拷贝必然漂移。
+// N56 收族更名 isHttpUrl → isHttp。
+bool isHttp(const QString &path);
+
+// 是否网络/流路径（含 :// 且非 file: 前缀）：本地目录提供者据此拒绝、mpv 源据此保持原样。
+// 用串前缀判定，避免 QUrl::scheme() 把 Windows 盘符 "C:\dir" 误判为 scheme、
+// 也避免 QUrl::fromUserInput 把相对名（如 "a"）误判为非本地。
+// N56 收族更名 isNetworkStreamPath → isNetworkStream。
+bool isNetworkStream(const QString &path);
+
+// 是否本地来源路径：经 toIdentity（含 mpvqt:// 折叠）后**不是**网络/流形态。
+// 判据单点在此——isMissingLocal 用它，书签失效清理与书签跳转的本地/远端分流也
+// 用它（两处同口径，不各写一遍 !isNetworkStream(toIdentity(...))）。
+// N56 收族更名 isLocalSourcePath → isLocal；归属不变（书签层纯字符串，不归实体）。
+bool isLocal(const QString &path);
+
+// N54：本地来源是否已从磁盘消失——入参为显示路径，先经 toIdentity（含
+// mpvqt:// 折叠），网络/流路径恒假（不可判定 ≠ 缺失），否则按 QFileInfo::exists 判定。
+// 与实体侧 isLocalFile() && !exists() 同口径，是"这条来源能不能就地播"的判据单点
+// （书签失效清理与书签跳转共用）。目录不算缺失（mpv 能播目录）。
+// N56 收族更名 isMissingLocalSource → isMissingLocal。
+bool isMissingLocal(const QString &path);
+
+} // namespace Url
 
 } // namespace Util

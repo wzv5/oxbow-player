@@ -20,7 +20,7 @@ void BookmarkManager::load() {
         if (path.isEmpty())
             continue;
         // 键归一化（Windows 统一小写）；原始形态保留给 UI 展示
-        const QString key = Util::normalizePathForMatch(path);
+        const QString key = Util::Url::key(path);
         const int count = s.value(prefix + QStringLiteral("/count"), 0).toInt();
         QList<Bookmark> list;
         list.reserve(count);
@@ -85,12 +85,11 @@ void BookmarkManager::addBookmark(const QString &rawPath, double time, const QSt
     if (rawPath.isEmpty())
         return;
     // 键归一化（与仓/跳转匹配口径一致）；原始路径供展示
-    const QString key = Util::normalizePathForMatch(rawPath);
-    // N48：展示路径不留凭据——rawPath 取自 mpv 的 path，播放 WebDAV 时是带凭据的
-    // 播放形态，原样落盘会让密码与 davPassword 并列存进同一个 INI、"展示保原样"
-    // 的例外仅此一项。只约束写侧：load 不为已有值做任何处理（旧数据的兼容问题
-    // 已知且接受，不做清理）
-    const QString display = Util::stripUrlCredentials(rawPath);
+    const QString key = Util::Url::key(rawPath);
+    // N56 §2.3/§2.4：书签层完全豁免显示纪律——存串取自正播实体的 path()，不含
+    // 提供者注入的凭据（N48 的写侧剥除取消），用户显式提供的凭据原样保留并展示。
+    // 展示路径 = 身份串原样（首见即定）
+    const QString display = rawPath;
     auto it = m_data.find(key);
     if (it == m_data.end()) {
         m_data[key] = QList<Bookmark>{{time, title}};
@@ -163,17 +162,17 @@ int BookmarkManager::removeInvalid(const ListAlivePredicate &listAlive) {
     int removed = 0;
     QStringList toRemove;
     for (const QString &key : std::as_const(m_order)) {
-        // 校验以原始显示路径为准（而非小写归一键）。本地项判据收在 Util::isMissingLocalSource
+        // 校验以原始显示路径为准（而非小写归一键）。本地项判据收在 Util::Url::isMissingLocal
         // 单点（与书签跳转的本地闸门同一口径，N54 §2.7）：file:// 与 mpvqt:// 先还原成
         // 来源路径，目录不算缺失（mpv 能播目录）
         const QString disp = m_displayOf.value(key, key);
-        if (Util::isMissingLocalSource(disp)) {
+        if (Util::Url::isMissingLocal(disp)) {
             toRemove.append(key);
             continue;
         }
         // 本地且存在 → 有效：磁盘就是它的归属，列表在不在都能就地播（§2.2 第 4 步的
         // 本地回退档）
-        if (Util::isLocalSourcePath(disp))
+        if (Util::Url::isLocal(disp))
             continue;
         // 远端项看归属（N54）：无来源 uuid 属数据异常（本篇不做 INI 兼容与迁移），来源
         // uuid 在现存列表里查不到则跳转必被拒（远端不回退，凭据与转接端点都随列表没了）

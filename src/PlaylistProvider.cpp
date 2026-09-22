@@ -4,7 +4,7 @@
 #include "ProviderCatalog.h"
 #include "ServiceRegistry.h" // resolve<StreamRelayIf>（模板实例化需完整类型）
 
-// N52：deliveryUrl 的转接分支取用面——StreamRelayIf 为纯头抽象基（无实现体），
+// N52：playUrl 的转接分支取用面——StreamRelayIf 为纯头抽象基（无实现体），
 // 测试链接不携带 L4；StreamTransit / Util 为 L1 与纯函数。依赖方向：
 // 提供者基类 → L1 + L4 取用接缝，不碰 HttpClient、不碰任何传输头
 #include "StreamEndpoint.h"
@@ -78,13 +78,13 @@ void PlaylistProvider::setTransitPreference(bool preferred) { m_transitPreferred
 // Unsupported 时必空（基类恒等实现）；Optional/Required 返空 = 编程错误（调用侧断言守候）
 std::shared_ptr<StreamEndpoint> PlaylistProvider::createStreamEndpoint() const { return nullptr; }
 
-// N52 §2.8：下发形态模板方法（非虚公开出口，约 10 行，必须轻——零网络）
-QString PlaylistProvider::deliveryUrl(const QString &playUrl) const {
-    // 端点缓存与发布只在 GUI 线程发生（playbackFiles 整表逐条调用的既有线程口径），
+// N52 §2.8：播放形态模板方法（非虚公开出口，约 10 行，必须轻——零网络）
+QString PlaylistProvider::playUrl(const QString &path) const {
+    // 端点缓存与发布只在 GUI 线程发生（playUrls 整表逐条调用的既有线程口径），
     // 故缓存无需加锁；demux 线程只经 relay 表中的 weak_ptr 取用
     Q_ASSERT(QThread::currentThread() == QCoreApplication::instance()->thread());
     if (!usesTransit())
-        return playbackUrl(playUrl);
+        return directPlayUrl(path);
 
     auto relay = registry() ? registry()->resolve<StreamRelayIf>() : nullptr;
     Q_ASSERT(relay); // 空 = 装配顺序错误（编程错误）；Release 仍铸 URI——open 必失败，显影不静默
@@ -96,7 +96,7 @@ QString PlaylistProvider::deliveryUrl(const QString &playUrl) const {
         relay->publish(listUuid(), m_transitEndpoint);
     // 入参先剥凭据（N48 纪律在协议出口的延伸）；L1 侧另有凭据双保险（Q_ASSERT +
     // Release 拒铸返空串，调用方按 open 必失败处理）
-    return StreamTransit::mint(listUuid(), Util::stripUrlCredentials(playUrl));
+    return StreamTransit::mint(listUuid(), Util::Url::stripCredentials(path));
 }
 
 void PlaylistProvider::setSortRule(int key, bool ascending) {

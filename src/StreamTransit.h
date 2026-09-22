@@ -24,11 +24,11 @@ namespace StreamTransit {
 inline constexpr char kProtocol[] = "mpvqt";  // mpv_stream_cb_add_ro 的注册名
 inline constexpr char kScheme[] = "mpvqt://"; // URI 前缀 = kProtocol + "://"
 
-// 仅前缀判定（大小写不敏感，与 Util::isHttpUrl 同款串前缀口径，不解析 QUrl）。
+// 仅前缀判定（大小写不敏感，与 Util::Url::isHttp 同款串前缀口径，不解析 QUrl）。
 bool isTransitUri(const QString &path);
 
 // 铸造转接 URI：mpvqt://<uuid>/<percent-encoded identity>。
-// 入参应为无凭据身份（由调用方——基类下发点——先 stripUrlCredentials 保证，
+// 入参应为无凭据身份（由调用方——基类下发点——先 Util::Url::stripCredentials 保证，
 // 本层不依赖 Util、不代剥）；uuid 为不含路径分隔符的列表身份。
 // 凭据双保险：Debug 用 Q_ASSERT 守候；Release 下检出 userinfo 形态即拒绝铸造
 // （返回空串，调用方按 open 必失败处理），绝不产出含凭据的 URI。
@@ -37,7 +37,7 @@ QString mint(const QString &uuid, const QString &identity);
 
 // 还原条目身份：unwrap(mint(u, i)) == i。
 // 非本协议、authority 空（uuid 段缺失）、无条目段、解出空串一律原样返回。
-// 幂等：可安全重复施加——这是还原折叠点（Util::resolveSourcePath）能常驻
+// 幂等：可安全重复施加——这是还原折叠点（Util::Url::toIdentity）能常驻
 // 首行的前提。
 QString unwrap(const QString &path);
 

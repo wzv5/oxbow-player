@@ -19,7 +19,7 @@ QString mint(const QString &uuid, const QString &identity) {
     if (uuid.isEmpty() || identity.isEmpty())
         return {};
 
-    // 凭据双保险：调用方（基类下发点）应已 stripUrlCredentials；此处守候。
+    // 凭据双保险：调用方（基类下发点）应已 Util::Url::stripCredentials；此处守候。
     // 检测不依赖 Util：仅当身份含 "://" 才存在 authority，取其区间查 '@'。
     const qsizetype schemeSep = identity.indexOf(QStringLiteral("://"));
     if (schemeSep > 0) {

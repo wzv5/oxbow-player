@@ -20,8 +20,8 @@
 namespace {
 class TestEntity : public PlaylistEntity {
   public:
-    explicit TestEntity(QString playUrl, const std::shared_ptr<ServiceRegistry> &registry)
-        : PlaylistEntity(std::move(playUrl), registry) {}
+    explicit TestEntity(QString path, const std::shared_ptr<ServiceRegistry> &registry)
+        : PlaylistEntity(std::move(path), registry) {}
 
     Ptr clone() const override { return std::make_shared<TestEntity>(*this); }
 
@@ -81,7 +81,7 @@ class TestPlaylistEntity : public QObject {
     void factoryDispatchesLocalAndNetwork();
     // N35 工厂分派：http(s) + registry → HttpEntity（大小写不敏感前缀）
     void factoryDispatchesHttpWithRegistry();
-    // N35 HttpEntity 往返不变式：fromPlayUrl(e->playUrl(), registry)->playUrl() 相等
+    // N35 HttpEntity 往返不变式：fromPath(e->path(), registry)->path() 相等
     void httpEntityRoundtrip();
     // N39 HttpEntity 能力位与元数据回落（两类能力位均为假，无网络求值）
     void httpEntityCapabilities();
@@ -89,7 +89,7 @@ class TestPlaylistEntity : public QObject {
     void httpEntityDisplayName();
     // N35 key：网络路径保留原始大小写（逐字节）
     void httpEntityKeyPreservesCase();
-    // 工厂往返幂等：fromPlayUrl(e->playUrl(), registry)->playUrl() == e->playUrl()
+    // 工厂往返幂等：fromPath(e->path(), registry)->path() == e->path()
     // （含相对路径加工；registry 必填，各用例显式传入）
     void factoryRoundtripIdempotent();
     // 构造期命名派生：fileName / suffix（无点小写）/ title（回退文件名）
@@ -116,20 +116,24 @@ class TestPlaylistEntity : public QObject {
     void localFileEntityExists();
     // clone 深拷贝：副本携带已解析缓存，此后与原实体互不影响
     void cloneDeepCopiesCache();
-    // key 默认实现 == normalizePathForMatch(playUrl)
+    // key 默认实现 == Util::Url::key(path())
     void keyIsNormalizedPlayUrl();
+    // N56 §2.5：键级判等——matches 原样串（形态漂移仍命中、不同串不命中）
+    void matchesKeyLevelEquality();
+    // N56 §2.4：显示出口——displayUrl 剥除 userinfo，path 原样保留
+    void displayUrlStripsCredentials();
 };
 
 void TestPlaylistEntity::factoryDispatchesLocalAndNetwork() {
     auto registry = std::make_shared<ServiceRegistry>();
     const QString local = QDir::tempPath() + QStringLiteral("/mpvqt_entity_dispatch.mp4");
-    auto l = PlaylistEntity::fromPlayUrl(local, registry);
+    auto l = PlaylistEntity::fromPath(local, registry);
     QVERIFY(dynamic_cast<LocalFileEntity *>(l.get()) != nullptr);
     QVERIFY(dynamic_cast<UnknownEntity *>(l.get()) == nullptr);
 
     // N35：非 http 网络路径仍落 UnknownEntity 兜底（http 已改分派 HttpEntity）
     auto u =
-        PlaylistEntity::fromPlayUrl(QStringLiteral("ftp://example.com/dir/video/a.mp4"), registry);
+        PlaylistEntity::fromPath(QStringLiteral("ftp://example.com/dir/video/a.mp4"), registry);
     QVERIFY(dynamic_cast<UnknownEntity *>(u.get()) != nullptr);
     QVERIFY(dynamic_cast<LocalFileEntity *>(u.get()) == nullptr);
     QVERIFY(dynamic_cast<HttpEntity *>(u.get()) == nullptr);
@@ -137,17 +141,17 @@ void TestPlaylistEntity::factoryDispatchesLocalAndNetwork() {
 
 void TestPlaylistEntity::factoryDispatchesHttpWithRegistry() {
     auto registry = std::make_shared<ServiceRegistry>();
-    auto h = PlaylistEntity::fromPlayUrl(QStringLiteral("https://example.com/dir/video/a.mp4"),
-                                         registry);
+    auto h =
+        PlaylistEntity::fromPath(QStringLiteral("https://example.com/dir/video/a.mp4"), registry);
     QVERIFY(dynamic_cast<HttpEntity *>(h.get()) != nullptr);
     QVERIFY(dynamic_cast<UnknownEntity *>(h.get()) == nullptr);
 
     // 前缀大小写不敏感
-    auto upper = PlaylistEntity::fromPlayUrl(QStringLiteral("HTTP://example.com/a.mp4"), registry);
+    auto upper = PlaylistEntity::fromPath(QStringLiteral("HTTP://example.com/a.mp4"), registry);
     QVERIFY(dynamic_cast<HttpEntity *>(upper.get()) != nullptr);
 
     // 本地路径忽略 registry（类型不受影响）
-    auto l = PlaylistEntity::fromPlayUrl(
+    auto l = PlaylistEntity::fromPath(
         QDir::tempPath() + QStringLiteral("/mpvqt_entity_http_local.mp4"), registry);
     QVERIFY(dynamic_cast<LocalFileEntity *>(l.get()) != nullptr);
 }
@@ -155,15 +159,15 @@ void TestPlaylistEntity::factoryDispatchesHttpWithRegistry() {
 void TestPlaylistEntity::httpEntityRoundtrip() {
     auto registry = std::make_shared<ServiceRegistry>();
     const QString url = QStringLiteral("https://user:pw@example.com/dir/a.mp4?token=x");
-    auto e = PlaylistEntity::fromPlayUrl(url, registry);
+    auto e = PlaylistEntity::fromPath(url, registry);
     QVERIFY(dynamic_cast<HttpEntity *>(e.get()) != nullptr);
-    QCOMPARE(e->playUrl(), url); // 网络路径原样（含 userinfo / query）
-    QCOMPARE(PlaylistEntity::fromPlayUrl(e->playUrl(), registry)->playUrl(), e->playUrl());
+    QCOMPARE(e->path(), url); // 网络路径原样（含 userinfo / query）
+    QCOMPARE(PlaylistEntity::fromPath(e->path(), registry)->path(), e->path());
 }
 
 void TestPlaylistEntity::httpEntityCapabilities() {
     auto registry = std::make_shared<ServiceRegistry>();
-    auto e = PlaylistEntity::fromPlayUrl(QStringLiteral("https://example.com/a.mp4"), registry);
+    auto e = PlaylistEntity::fromPath(QStringLiteral("https://example.com/a.mp4"), registry);
     QVERIFY(!e->isLocalFile());
     QVERIFY(e->exists()); // 不可判定，恒 true（不参与失效清理）
     // N39：两类能力位均为假——HttpEntity 已无任何取得元数据的途径（惰性 HEAD 已删），
@@ -179,7 +183,7 @@ void TestPlaylistEntity::httpEntityCapabilities() {
     // clone：身份一致，类型不变
     auto c = e->clone();
     QVERIFY(dynamic_cast<HttpEntity *>(c.get()) != nullptr);
-    QCOMPARE(c->playUrl(), e->playUrl());
+    QCOMPARE(c->path(), e->path());
     QVERIFY(!c->isLocalFile());
     QVERIFY(c->exists());
     QVERIFY(!c->supportsFileMeta());
@@ -190,21 +194,21 @@ void TestPlaylistEntity::httpEntityDisplayName() {
     auto registry = std::make_shared<ServiceRegistry>();
 
     // percent-encoded 中文与空格正确解码
-    auto zh = PlaylistEntity::fromPlayUrl(
+    auto zh = PlaylistEntity::fromPath(
         QStringLiteral("https://example.com/dir/%E4%B8%AD%E6%96%87%20name.mp4"), registry);
     QCOMPARE(zh->fileName(), QStringLiteral("中文 name.mp4"));
     QCOMPARE(zh->title(), QStringLiteral("中文 name.mp4"));
     QCOMPARE(zh->suffix(), QStringLiteral("mp4"));
 
     // query / fragment 剥离：末段不混入 token
-    auto q = PlaylistEntity::fromPlayUrl(
+    auto q = PlaylistEntity::fromPath(
         QStringLiteral("https://example.com/v/movie.mkv?token=ab%2Fcd#frag"), registry);
     QCOMPARE(q->fileName(), QStringLiteral("movie.mkv"));
     QCOMPARE(q->title(), QStringLiteral("movie.mkv"));
     QCOMPARE(q->suffix(), QStringLiteral("mkv"));
 
-    // 空末段（以 / 结尾）：解后为空回退基类行为（title = playUrl，fileName 空）
-    auto root = PlaylistEntity::fromPlayUrl(QStringLiteral("https://example.com/"), registry);
+    // 空末段（以 / 结尾）：解后为空回退基类行为（title = 身份串，fileName 空）
+    auto root = PlaylistEntity::fromPath(QStringLiteral("https://example.com/"), registry);
     QCOMPARE(root->fileName(), QString());
     QCOMPARE(root->title(), QStringLiteral("https://example.com/"));
 }
@@ -212,29 +216,30 @@ void TestPlaylistEntity::httpEntityDisplayName() {
 void TestPlaylistEntity::httpEntityKeyPreservesCase() {
     auto registry = std::make_shared<ServiceRegistry>();
     const QString url = QStringLiteral("https://Example.COM/V/a.mp4");
-    auto e = PlaylistEntity::fromPlayUrl(url, registry);
+    auto e = PlaylistEntity::fromPath(url, registry);
     // N37：key 为匹配形态——scheme / host 归小写，path 大小写敏感逐字节保留
-    // （N35 的"逐字节 key"口径随匹配形态收敛改写）；playUrl 本身不受影响
-    QCOMPARE(e->playUrl(), url);
+    // （N35 的"逐字节 key"口径随匹配形态收敛改写）；path() 本身不受影响
+    QCOMPARE(e->path(), url);
     QCOMPARE(e->key(), QStringLiteral("https://example.com/V/a.mp4"));
 }
 
 void TestPlaylistEntity::factoryRoundtripIdempotent() {
-    // 本地路径：resolveSourcePath 加工（相对→绝对 + 原生分隔符）后往返不变
+    // 本地路径：入参已定形（绝对 + 原生分隔符），往返不变
     auto registry = std::make_shared<ServiceRegistry>();
     const QString local = QDir::tempPath() + QStringLiteral("/mpvqt_entity_roundtrip.mp4");
-    auto e = PlaylistEntity::fromPlayUrl(local, registry);
-    QCOMPARE(PlaylistEntity::fromPlayUrl(e->playUrl(), registry)->playUrl(), e->playUrl());
+    auto e = PlaylistEntity::fromPath(local, registry);
+    QCOMPARE(PlaylistEntity::fromPath(e->path(), registry)->path(), e->path());
 
-    // 相对路径：加工为绝对路径
-    auto rel = PlaylistEntity::fromPlayUrl(QStringLiteral("relative_dir/c.mp4"), registry);
-    QVERIFY(QDir::isAbsolutePath(rel->playUrl()));
-    QCOMPARE(PlaylistEntity::fromPlayUrl(rel->playUrl(), registry)->playUrl(), rel->playUrl());
+    // N56 §2.6：工厂不再代做定形（相对→绝对等加工上移到造实体的一方），契约改为
+    // "入参必须是已定形的身份串"；未定形串（相对路径、裸文件名）属调用方违约，
+    // 由 Debug 断言守候——测试环境即 Debug，不可在此构造（断言会中止进程），
+    // 改以"未定形输入不再被悄悄救回"为契约口径，定形正确性由入口处（Util::Url::toNative）
+    // 的既有用例覆盖
 
     // 网络 / 流路径：原样保留（N35：用非 http scheme 验证，http 分派见 httpEntity* 用例）
-    auto n = PlaylistEntity::fromPlayUrl(QStringLiteral("ftp://example.com/v/a.mp4"), registry);
-    QCOMPARE(n->playUrl(), QStringLiteral("ftp://example.com/v/a.mp4"));
-    QCOMPARE(PlaylistEntity::fromPlayUrl(n->playUrl(), registry)->playUrl(), n->playUrl());
+    auto n = PlaylistEntity::fromPath(QStringLiteral("ftp://example.com/v/a.mp4"), registry);
+    QCOMPARE(n->path(), QStringLiteral("ftp://example.com/v/a.mp4"));
+    QCOMPARE(PlaylistEntity::fromPath(n->path(), registry)->path(), n->path());
 }
 
 void TestPlaylistEntity::namesDerivedInConstructor() {
@@ -328,8 +333,7 @@ void TestPlaylistEntity::unsupportedMediaMetaNeverComputes() {
 
 void TestPlaylistEntity::unknownEntityCapabilities() {
     // N35：http(s) 已分派 HttpEntity，兜底能力位用例换 ftp://（UnknownEntity 形态不变）
-    auto u =
-        PlaylistEntity::fromPlayUrl(QStringLiteral("ftp://example.com/v/a.mp4"), testRegistry());
+    auto u = PlaylistEntity::fromPath(QStringLiteral("ftp://example.com/v/a.mp4"), testRegistry());
     QVERIFY(!u->isLocalFile());
     QVERIFY(u->exists()); // 不可判定，恒 true（不参与失效清理）
     QVERIFY(!u->supportsFileMeta());
@@ -340,7 +344,7 @@ void TestPlaylistEntity::unknownEntityCapabilities() {
     QVERIFY(u->cachedMediaMeta() == nullptr);
     // 插件不做额外加工：clone 后身份与能力一致
     auto c = u->clone();
-    QCOMPARE(c->playUrl(), u->playUrl());
+    QCOMPARE(c->path(), u->path());
     QVERIFY(!c->isLocalFile());
     QVERIFY(c->exists());
     QVERIFY(!c->supportsFileMeta());
@@ -356,7 +360,7 @@ void TestPlaylistEntity::localFileEntityFileMeta() {
     f.write(QByteArray(2048, 'x'));
     f.close();
 
-    auto e = PlaylistEntity::fromPlayUrl(path, testRegistry());
+    auto e = PlaylistEntity::fromPath(path, testRegistry());
     QVERIFY(dynamic_cast<LocalFileEntity *>(e.get()) != nullptr);
     QVERIFY(e->supportsFileMeta());
     const FileMeta &fm = e->fileMeta();
@@ -364,8 +368,8 @@ void TestPlaylistEntity::localFileEntityFileMeta() {
     QVERIFY(fm.modified.has_value() && fm.modified->isValid());
 
     // 不存在文件：三字段全空（"值未知"），能力位不变
-    auto missing = PlaylistEntity::fromPlayUrl(
-        QDir(dir.path()).filePath(QStringLiteral("nope.mp4")), testRegistry());
+    auto missing = PlaylistEntity::fromPath(QDir(dir.path()).filePath(QStringLiteral("nope.mp4")),
+                                            testRegistry());
     QVERIFY(dynamic_cast<LocalFileEntity *>(missing.get()) != nullptr);
     QVERIFY(!missing->fileMeta().size.has_value());
     QVERIFY(!missing->fileMeta().created.has_value());
@@ -381,12 +385,12 @@ void TestPlaylistEntity::localFileEntityExists() {
     QVERIFY(f.open(QIODevice::WriteOnly));
     f.close();
 
-    auto e = PlaylistEntity::fromPlayUrl(path, testRegistry());
+    auto e = PlaylistEntity::fromPath(path, testRegistry());
     QVERIFY(e->isLocalFile());
     QVERIFY(e->exists());
 
-    auto missing = PlaylistEntity::fromPlayUrl(
-        QDir(dir.path()).filePath(QStringLiteral("gone.mp4")), testRegistry());
+    auto missing = PlaylistEntity::fromPath(QDir(dir.path()).filePath(QStringLiteral("gone.mp4")),
+                                            testRegistry());
     QVERIFY(!missing->exists());
 }
 
@@ -415,10 +419,47 @@ void TestPlaylistEntity::cloneDeepCopiesCache() {
 
 void TestPlaylistEntity::keyIsNormalizedPlayUrl() {
     TestEntity e(QStringLiteral("dir/k.mp4"), testRegistry());
-    QCOMPARE(e.key(), Util::normalizePathForMatch(e.playUrl()));
-    auto u =
-        PlaylistEntity::fromPlayUrl(QStringLiteral("ftp://example.com/v/a.mp4"), testRegistry());
-    QCOMPARE(u->key(), Util::normalizePathForMatch(u->playUrl()));
+    QCOMPARE(e.key(), Util::Url::key(e.path()));
+    auto u = PlaylistEntity::fromPath(QStringLiteral("ftp://example.com/v/a.mp4"), testRegistry());
+    QCOMPARE(u->key(), Util::Url::key(u->path()));
+}
+
+// N56 §2.5：键级判等经 matches——回显原样进判据，归一在实体内部完成；键级刻意宽松
+// （大小写 / 分隔符形态漂移仍认得出同一条内容，N30），回刷的形态级比对不走它
+void TestPlaylistEntity::matchesKeyLevelEquality() {
+    auto registry = std::make_shared<ServiceRegistry>();
+    // 本地：大小写 / 分隔符漂移仍命中
+    const QString local = QDir::tempPath() + QStringLiteral("/mpvqt_entity_matches.mp4");
+    auto l = PlaylistEntity::fromPath(local, registry);
+    QVERIFY(l->matches(l->path()));
+    QVERIFY(l->matches(local.toLower()));
+    QVERIFY(!l->matches(QDir::tempPath() + QStringLiteral("/mpvqt_entity_other.mp4")));
+    // http：无凭据身份 matches 带凭据回显（N56 §2.3——凭据准入后回显含注入凭据，
+    // 判据侧零加工、剥凭据在键内完成）；scheme / host 大小写漂移亦命中
+    auto h = PlaylistEntity::fromPath(QStringLiteral("https://example.com/dir/a.mp4"), registry);
+    QVERIFY(h->matches(QStringLiteral("https://example.com/dir/a.mp4")));
+    QVERIFY(h->matches(QStringLiteral("https://user:pw@example.com/dir/a.mp4")));
+    QVERIFY(h->matches(QStringLiteral("HTTPS://EXAMPLE.COM/dir/a.mp4")));
+    QVERIFY(!h->matches(QStringLiteral("https://example.com/dir/b.mp4")));
+    // UnknownEntity（非 http 网络）：matches 自身原样；不同串不命中
+    auto n = PlaylistEntity::fromPath(QStringLiteral("ftp://example.com/v/a.mp4"), testRegistry());
+    QVERIFY(n->matches(QStringLiteral("ftp://example.com/v/a.mp4")));
+    QVERIFY(!n->matches(QStringLiteral("ftp://example.com/v/b.mp4")));
+}
+
+// N56 §2.4：显示出口——path() 剥除 userinfo 的形态（构造期缓存）；凭据准入后
+// 身份串可含用户凭据，tooltip / 属性对话框经此不再明文可见
+void TestPlaylistEntity::displayUrlStripsCredentials() {
+    auto registry = std::make_shared<ServiceRegistry>();
+    auto h =
+        PlaylistEntity::fromPath(QStringLiteral("https://user:pw@example.com/dir/a.mp4"), registry);
+    // 身份保留凭据（播放 / 落盘面），显示面剥除
+    QCOMPARE(h->path(), QStringLiteral("https://user:pw@example.com/dir/a.mp4"));
+    QCOMPARE(h->displayUrl(), QStringLiteral("https://example.com/dir/a.mp4"));
+    // 无凭据输入：displayUrl == path()
+    auto plain =
+        PlaylistEntity::fromPath(QStringLiteral("https://example.com/dir/a.mp4"), registry);
+    QCOMPARE(plain->displayUrl(), plain->path());
 }
 
 // 一类一可执行（R5）：自带 main（QTEST_GUILESS_MAIN），无 GUI 依赖

@@ -18,47 +18,57 @@ const PlaylistEntity::MediaMeta &s_emptyMediaMeta() {
 }
 } // namespace
 
-PlaylistEntity::PlaylistEntity(QString playUrl, const std::shared_ptr<ServiceRegistry> &registry)
-    : m_playUrl(std::move(playUrl)), m_registry(registry) {
+PlaylistEntity::PlaylistEntity(QString path, const std::shared_ptr<ServiceRegistry> &registry)
+    : m_path(std::move(path)), m_registry(registry) {
     deriveNames();
 }
 
-PlaylistEntity::Ptr PlaylistEntity::fromPlayUrl(const QString &playUrl,
-                                                const std::shared_ptr<ServiceRegistry> &registry) {
-    // 本地来源唯一出口：相对 → 绝对 + 原生分隔符；网络 / 流路径原样。
-    // 加工对已加工路径幂等，保证往返不变式
-    const QString url = Util::resolveSourcePath(playUrl);
-    if (Util::isNetworkStreamPath(url)) {
+PlaylistEntity::Ptr PlaylistEntity::fromPath(const QString &path,
+                                             const std::shared_ptr<ServiceRegistry> &registry) {
+    // N56 §2.6：定形（mpvqt:// 折叠、相对转绝对、file:// 转本地）上移到造实体的
+    // 一方，工厂只按前缀分派——它可能不属于任何已知协议，只是"提供者当初拿来
+    // 标识这条内容的那个串"，工厂对着读不懂的串加工等于猜。
+    // Debug 断言：既非绝对路径、也非含 "://" 的形态即调用方违约——撤掉兜底后，
+    // 未定形的串会静默落成 LocalFileEntity（exists() 按磁盘判、键按本地收敛），
+    // 必须显影（release 不拦，行为与违约后契约一致）
+    Q_ASSERT(QFileInfo(path).isAbsolute() || path.contains(QStringLiteral("://")));
+    if (Util::Url::isNetworkStream(path)) {
         // N35 前缀分派：http(s) → HttpEntity（需非空 registry）；其余网络 / 流
-        // 路径仍落 UnknownEntity 兜底。N48：判据改用 Util::isHttpUrl（唯一持有者，
+        // 路径仍落 UnknownEntity 兜底。N48：判据改用 Util::Url::isHttp（唯一持有者，
         // 串前缀 + scheme 归小写，天然免疫 QUrl::scheme() 误判 Windows 盘符）——
         // 原内联前缀判定是同一判据的第三份拷贝
-        if (!Util::isHttpUrl(url))
-            return std::make_shared<UnknownEntity>(url, registry);
+        if (!Util::Url::isHttp(path))
+            return std::make_shared<UnknownEntity>(path, registry);
         if (!registry) {
             // http(s) + 空 registry 属调用错误（registry 必填，正常调用点恒非空）；
             // Q_ASSERT 守候，release 降级 UnknownEntity 保"恒返回实体"契约
             Q_ASSERT(false);
-            return std::make_shared<UnknownEntity>(url, registry);
+            return std::make_shared<UnknownEntity>(path, registry);
         }
-        return std::make_shared<HttpEntity>(url, registry);
+        return std::make_shared<HttpEntity>(path, registry);
     }
-    return std::make_shared<LocalFileEntity>(url, registry);
+    return std::make_shared<LocalFileEntity>(path, registry);
 }
 
 QString PlaylistEntity::key() const {
     return m_key; // 构造期缓存（见 deriveNames）
 }
 
-// 构造期派生 title / fileName / suffix / key（纯字符串运算 + 一次规范化，
-// 与 playUrl 同生命周期；key() 被委托绘制热路径逐行调用，必须缓存）
+// N56 §2.5：键级判等的唯一实现点——将来 key() 若换形（如远端改服务端 id），
+// 等价规则只改这一处，外部不假设键长什么样
+bool PlaylistEntity::matches(const QString &path) const { return m_key == Util::Url::key(path); }
+
+// 构造期派生 title / fileName / suffix / key / displayUrl（纯字符串运算 + 一次规范化，
+// 与身份串同生命周期；key() 被委托绘制热路径逐行调用，必须缓存）
 void PlaylistEntity::deriveNames() {
-    const QFileInfo fi(m_playUrl);
+    const QFileInfo fi(m_path);
     m_fileName = fi.fileName();
     m_suffix = fi.suffix().toLower();
-    m_key = Util::normalizePathForMatch(m_playUrl);
+    m_key = Util::Url::key(m_path);
+    // N56 §2.4：显示形态构造期定死——displayUrl() 非虚，显示纪律不可被子类破坏
+    m_displayUrl = Util::Url::stripCredentials(m_path);
     if (!m_titleSet)
-        m_title = m_fileName.isEmpty() ? m_playUrl : m_fileName;
+        m_title = m_fileName.isEmpty() ? m_path : m_fileName;
 }
 
 // 子类修正文件名：同步重算 suffix，并在 title 未被显式设置时一并同步
