@@ -94,11 +94,9 @@ void ListSettingsDialog::accept() {
         QMessageBox::warning(this, tr("List Settings"), tr("List name cannot be empty."));
         return;
     }
-    if (name == tr("Default")) {
-        QMessageBox::warning(this, tr("List Settings"),
-                             tr("Cannot use the name of the default list."));
-        return;
-    }
+    // N57 §2.5：原"名称不得等于 tr(\"Default\")"这条自带判据删除——默认列表名换到
+    // PlaylistRegistry 上下文后，本类那份源文案已不相干（正是拆串要消除的跨语境耦合）；
+    // 该情形的拒判由注册表清单承担（names() 含默认列表名 ⇒ 走下面的重名档）
     if (m_occupiedNames.contains(name)) {
         QMessageBox::warning(this, tr("List Settings"),
                              tr("This name is already used by another list."));
@@ -115,14 +113,12 @@ void ListSettingsDialog::accept() {
     // 未变更（存量同类型且参数未动）→ 不产出新提供者，调用方仅应用改名
     if (page->hasChanges()) {
         m_result = page->build();
-        // N52 §2.7 / §2.8：身份传接收进本对话框一处——build() 产出新提供者后统一
-        // adoptListUuid（allowBusy=true，编辑换身接回旧身份），新增提供者不需要知道
-        // 身份传接这回事。转接偏好仅对 Optional 写（hasTransitOption() 即 Optional 行）
-        if (*m_result) {
-            (*m_result)->adoptListUuid(m_seed ? m_seed->listUuid() : QString(), /*allowBusy=*/true);
-            if (page->hasTransitOption())
-                (*m_result)->setTransitPreference(page->transitEnabled());
-        }
+        // N57 §2.4：身份传接（原 adoptListUuid 一处收口）随提供者不再持有身份而消失
+        // ——换身保身份此后由 Playlist::setProvider 天然承载，本对话框不再认识身份；
+        // 种子只用于回显与变更判定。转接偏好仅对 Optional 写（hasTransitOption() 即
+        // Optional 行）
+        if (*m_result && page->hasTransitOption())
+            (*m_result)->setTransitPreference(page->transitEnabled());
     }
     QDialog::accept();
 }

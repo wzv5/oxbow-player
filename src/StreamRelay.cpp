@@ -87,32 +87,21 @@ void closeCb(void *cookiePtr) {
     delete cookie; // 释放最后一份 shared_ptr 即触发流析构
 }
 
-// uuid 段提取：形态已经 isTransitUri（L1）判定，这里只用通用 URI 语法 "://"
-// 定位 authority——协议名与前缀长度的知识全部留在 L1，本文件不复制一份。
-QString uuidSegmentOf(const QString &uri) {
-    const qsizetype schemeEnd = uri.indexOf(QStringLiteral("://"));
-    if (schemeEnd < 0)
-        return {};
-    const qsizetype start = schemeEnd + 3;
-    const qsizetype slash = uri.indexOf(u'/', start);
-    if (slash < 0)
-        return {};
-    return uri.mid(start, slash - start);
-}
-
+// uuid 段提取归 L1（N57 §2.4）：与 mint 成对的 StreamTransit::listUuidOfUri，
+// 解不出合法身份即 nil——nil 恒不命中任何端点，本文件不再自持一份 URI 语法知识
 int openCb(void *user_data, char *uri, mpv_stream_cb_info *info) {
     auto *relay = static_cast<StreamRelay *>(user_data);
     const QString path = QString::fromUtf8(uri);
     const QString identity = StreamTransit::unwrap(path);
-    const QString uuid = uuidSegmentOf(path);
+    const QUuid listUuid = StreamTransit::listUuidOfUri(path);
     auto fail = [&](const QString &why) {
         qDebug() << "[mpvqt] open" << path << "failed:" << why;
         return int(MPV_ERROR_LOADING_FAILED); // 不静默降级为无凭据直连（N51 §2.3 纪律）
     };
 
-    if (uuid.isEmpty() || identity == path)
+    if (listUuid.isNull() || identity == path)
         return fail(QStringLiteral("malformed transit uri"));
-    const std::shared_ptr<StreamEndpoint> endpoint = relay->takeEndpoint(uuid);
+    const std::shared_ptr<StreamEndpoint> endpoint = relay->takeEndpoint(listUuid);
     if (!endpoint)
         return fail(QStringLiteral(
             "no endpoint for list (deleted, or stale uri from a previous session?)"));
@@ -122,7 +111,10 @@ int openCb(void *user_data, char *uri, mpv_stream_cb_info *info) {
     if (!opened)
         return fail(opened.error());
 
-    auto *cookie = new StreamCookie{opened.value(), uuid.left(8), QElapsedTimer(), 0};
+    auto *cookie = new StreamCookie{
+        opened.value(),
+        listUuid.toString(QUuid::StringFormat::WithoutBraces).left(8), // 日志短前缀
+        QElapsedTimer(), 0};
     cookie->clock.start();
     info->cookie = cookie;
     info->read_fn = &readCb;
@@ -150,15 +142,14 @@ bool StreamRelay::install(mpv_handle *handle) {
     return true;
 }
 
-void StreamRelay::publish(const QString &listUuid,
-                          const std::shared_ptr<StreamEndpoint> &endpoint) {
+void StreamRelay::publish(const QUuid &listUuid, const std::shared_ptr<StreamEndpoint> &endpoint) {
     QMutexLocker l(&m_mutex);
-    m_endpoints.insert(listUuid.toLower(), endpoint);
+    m_endpoints.insert(listUuid, endpoint);
 }
 
-std::shared_ptr<StreamEndpoint> StreamRelay::takeEndpoint(const QString &listUuid) {
+std::shared_ptr<StreamEndpoint> StreamRelay::takeEndpoint(const QUuid &listUuid) {
     QMutexLocker l(&m_mutex);
-    const auto it = m_endpoints.constFind(listUuid.toLower());
+    const auto it = m_endpoints.constFind(listUuid);
     if (it == m_endpoints.constEnd())
         return nullptr;
     std::shared_ptr<StreamEndpoint> ep = it->lock();

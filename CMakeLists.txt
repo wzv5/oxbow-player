@@ -54,6 +54,12 @@ add_library(mpvqtcore MODULE
     src/PlaylistDelegate.h
     src/PlaylistEntity.cpp
     src/PlaylistEntity.h
+    src/Playlist.cpp
+    src/Playlist.h
+    src/PlaylistRegistry.cpp
+    src/PlaylistRegistry.h
+    src/PlaylistListView.cpp
+    src/PlaylistListView.h
     src/LocalFileEntity.cpp
     src/LocalFileEntity.h
     src/HttpEntity.cpp
@@ -206,6 +212,10 @@ if(MPVQT_BUILD_TESTS)
         src/BookmarkManager.h
         src/PlaylistEntity.cpp
         src/PlaylistEntity.h
+        src/Playlist.cpp
+        src/Playlist.h
+        src/PlaylistRegistry.cpp
+        src/PlaylistRegistry.h
         src/LocalFileEntity.cpp
         src/LocalFileEntity.h
         src/HttpEntity.cpp
@@ -262,6 +272,7 @@ if(MPVQT_BUILD_TESTS)
     mpvqt_add_test(Util)
     mpvqt_add_test(BookmarkManager)
     mpvqt_add_test(StreamTransit)
+    mpvqt_add_test(PlaylistRegistry)
     mpvqt_add_test(HttpByteStream)
     mpvqt_add_test(FilterList)
 endif()

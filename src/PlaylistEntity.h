@@ -11,6 +11,43 @@ struct FileMeta {
     std::optional<QDateTime> modified;
 };
 
+// ——N57 §2.9：排序键与默认规则归位——键的定义与"键 → 元数据类别"映射属实体侧
+// （它们描述"按实体的哪个字段排"，文件派生名、文件元数据、媒体元数据本就是实体
+// 属性层面的概念）；规则**值**与默认规则归提供者，执行面归视图。
+
+// 排序规则枚举（N4/N9/N18）：None = 添加顺序。取值随提供者持久化（int 落盘）。
+// N18：枚举序与菜单显示顺序解耦——菜单 action 通过 setData(int(SortKey)) 显式携带
+// 键值，派发时按 data 取键，不依赖数组下标 +1 的隐式映射。
+// N57：既有取值冻结在 0..8，新键只准追加末尾（实现侧 static_assert 守候）
+enum class SortKey {
+    None,
+    FileName,
+    FileNameNumeric,
+    Extension,
+    Created,
+    Modified,
+    FileSize,
+    Duration,
+    ReleaseDate,
+};
+
+// 排序规则值对象（N57 §2.9）：取代提供者侧的两个散字段与视图里的散参数
+struct SortRule {
+    SortKey key = SortKey::None;
+    bool ascending = true;
+};
+
+// N29：预读元数据类别（排序键经 metaCategoryOf 映射；None = 该键不依赖元数据）
+enum class MetaCategory {
+    None,
+    File,
+    Media,
+};
+
+// N29 的唯一映射（各判定点共用，防散写漂移；N57 §2.9 随键搬到实体侧）：
+// Created/Modified/FileSize → File；Duration/ReleaseDate → Media；其余 → None
+MetaCategory metaCategoryOf(SortKey key);
+
 // 播放项实体（N26）：提供者 ↔ 视图层交换数据的唯一媒介，也是元数据的唯一载体。
 // 缓存由基类统一持有（模板方法），子类只实现三个求值函数与能力位。
 // 能力位与静态空回落（两类元数据同形）：fileMeta() / mediaMeta() 首行各判自身能力位，

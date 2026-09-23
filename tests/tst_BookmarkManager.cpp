@@ -41,8 +41,8 @@ class TestBookmarkManager : public QObject {
     int m_seq = 0;
     QTemporaryDir m_dir;
 
-    static Origin
-    makeOrigin(const QString &uuid = QStringLiteral("2f1a9c33-7b04-4e58-9a2d-1c6f0b3d8e44")) {
+    static Origin makeOrigin(const QUuid &uuid = QUuid::fromString(
+                                 QStringLiteral("2f1a9c33-7b04-4e58-9a2d-1c6f0b3d8e44"))) {
         return Origin{uuid,
                       {QStringLiteral("D:/media/动漫"), QStringLiteral("D:/media/动漫/2024")}};
     }
@@ -65,7 +65,8 @@ void TestBookmarkManager::originRoundTrip() {
     again.load();
     const QString key = Util::Url::key(path);
     const Origin got = again.bookmarkOrigin(key);
-    QCOMPARE(got.listUuid, o.listUuid);
+    // QUuid 无 QTest 字符串转换，判等两侧统一取字面串比对（等价：同一 toString 形态）
+    QCOMPARE(got.listUuid.toString(), o.listUuid.toString());
     QCOMPARE(got.levelIds, o.levelIds);
     // 书签本体不受来源字段影响：一条、时间原样
     const auto marks = again.bookmarks(key);
@@ -84,9 +85,10 @@ void TestBookmarkManager::numericSubkeysNoAlias() {
         mgr.load();
         mgr.addBookmark(fileA, 10.0, QStringLiteral("A1"), makeOrigin());
         mgr.addBookmark(fileA, 20.0, QStringLiteral("A2"), makeOrigin()); // 同文件第二条：数字子键
-        mgr.addBookmark(fileB, 30.0, QStringLiteral("B1"),
-                        Origin{QStringLiteral("bbbbbbbb-1111-2222-3333-444444444444"),
-                               {QStringLiteral("D:/single")}}); // 第二条书签组
+        mgr.addBookmark(
+            fileB, 30.0, QStringLiteral("B1"),
+            Origin{QUuid::fromString(QStringLiteral("bbbbbbbb-1111-2222-3333-444444444444")),
+                   {QStringLiteral("D:/single")}}); // 第二条书签组
     }
     BookmarkManager again(m_ini);
     again.load();
@@ -107,7 +109,7 @@ void TestBookmarkManager::numericSubkeysNoAlias() {
 
 void TestBookmarkManager::oddIdsAndPaths() {
     const QString file = QString::fromUtf8("D:/媒体;带,逗号%号/第3季#final.mkv");
-    const Origin o{QStringLiteral("cafe0000-0000-0000-0000-000000000001"),
+    const Origin o{QUuid::fromString(QStringLiteral("cafe0000-0000-0000-0000-000000000001")),
                    {QString::fromUtf8("D:/媒体/a;b"), QString::fromUtf8("D:/媒体/c,d"),
                     QStringLiteral("D:/media/100%"), QStringLiteral("D:\\win\\native\\path"),
                     QString::fromUtf8("https://host/dav/目录")}};
@@ -120,7 +122,7 @@ void TestBookmarkManager::oddIdsAndPaths() {
     again.load();
     const Origin got = again.bookmarkOrigin(Util::Url::key(file));
     QCOMPARE(got.levelIds, o.levelIds); // 逐字节：分隔符、百分号、反斜杠、非 ASCII 均不转义丢
-    QCOMPARE(got.listUuid, o.listUuid);
+    QCOMPARE(got.listUuid.toString(), o.listUuid.toString());
     QCOMPARE(again.displayPath(Util::Url::key(file)), file);
 }
 
@@ -160,7 +162,7 @@ void TestBookmarkManager::missingKeysYieldEmptyOrigin() {
     QCOMPARE(mgr.bookmarks(key).at(0).time, 42.0);
     const Origin o = mgr.bookmarkOrigin(key);
     QVERIFY(!o.isValid());
-    QVERIFY(o.listUuid.isEmpty());
+    QVERIFY(o.listUuid.isNull()); // N57 §2.4：nil 即无身份（旧为空串）
     QVERIFY(o.levelIds.isEmpty());
     // 回写一次也不无中生有：仍不落来源键
     mgr.save();
@@ -172,7 +174,7 @@ void TestBookmarkManager::missingKeysYieldEmptyOrigin() {
 void TestBookmarkManager::rootLevelDistinguishedFromNoOrigin() {
     const QString fileRoot = QStringLiteral("D:/root-level.mkv");
     const QString fileNone = QStringLiteral("D:/no-origin.mkv");
-    const QString uuid = QStringLiteral("9e8d7c6b-5a49-3b2c-1d0e-fabcdef01234");
+    const QUuid uuid = QUuid::fromString(QStringLiteral("9e8d7c6b-5a49-3b2c-1d0e-fabcdef01234"));
     {
         BookmarkManager mgr(m_ini);
         mgr.load();
@@ -191,21 +193,26 @@ void TestBookmarkManager::rootLevelDistinguishedFromNoOrigin() {
 void TestBookmarkManager::originFirstWriteWins() {
     const QString file = QStringLiteral("D:/twice.mkv");
     const QString key = Util::Url::key(file);
-    const Origin first = makeOrigin(QStringLiteral("11111111-1111-1111-1111-111111111111"));
-    const Origin later = makeOrigin(QStringLiteral("22222222-2222-2222-2222-222222222222"));
+    const Origin first =
+        makeOrigin(QUuid::fromString(QStringLiteral("11111111-1111-1111-1111-111111111111")));
+    const Origin later =
+        makeOrigin(QUuid::fromString(QStringLiteral("22222222-2222-2222-2222-222222222222")));
     BookmarkManager mgr(m_ini);
     mgr.load();
     mgr.addBookmark(file, 1.0, QStringLiteral("First"), first);
     mgr.addBookmark(file, 2.0, QStringLiteral("Second"), later);
-    QCOMPARE(mgr.bookmarkOrigin(key).listUuid, first.listUuid);
+    QCOMPARE(mgr.bookmarkOrigin(key).listUuid.toString(), first.listUuid.toString());
     QCOMPARE(mgr.bookmarks(key).size(), 2); // 条目照常追加
     BookmarkManager again(m_ini);
     again.load();
-    QCOMPARE(again.bookmarkOrigin(key).listUuid, first.listUuid); // 落盘后仍是首见者
+    QCOMPARE(again.bookmarkOrigin(key).listUuid.toString(),
+             first.listUuid.toString()); // 落盘后仍是首见者
 }
 
 // removeInvalid 的目录形态口径（N54 §2.7）：判据取 QFileInfo::exists，目录不再被当
-// 失效清除（mpv 能播目录，实体侧 exists() 同形）；不存在的文件照清，且来源一并清掉
+// 失效清除（mpv 能播目录，实体侧 exists() 同形）；不存在的文件照清，且来源一并清掉。
+// N57 §2.4：谓参必传——本例两项都是本地项，磁盘就是归属，存活判据根本不参与，故给
+// 一个恒真谓词（原"无谓词"入参形态随未接档一并消失）
 void TestBookmarkManager::removeInvalidKeepsDirectories() {
     const QString dir = m_dir.path(); // 真实存在的目录
     const QString missing = m_dir.filePath(QStringLiteral("gone.mkv"));
@@ -214,7 +221,7 @@ void TestBookmarkManager::removeInvalidKeepsDirectories() {
     mgr.addBookmark(dir, 1.0, QStringLiteral("Dir"), makeOrigin());
     mgr.addBookmark(missing, 2.0, QStringLiteral("Gone"), makeOrigin());
     QCOMPARE(mgr.allFiles().size(), 2);
-    QCOMPARE(mgr.removeInvalid(), 1);
+    QCOMPARE(mgr.removeInvalid([](const QUuid &) { return true; }), 1);
     QCOMPARE(mgr.allFiles().size(), 1);
     const QString dirKey = Util::Url::key(dir);
     QVERIFY(mgr.bookmarks(dirKey).size() == 1);
@@ -225,12 +232,16 @@ void TestBookmarkManager::removeInvalidKeepsDirectories() {
     QVERIFY(!s.contains(QStringLiteral("Bookmarks/1/listUuid")));
 }
 
-// N54：远端项按归属判失效（不做 INI 兼容与迁移 → 无来源 uuid 即数据异常；来源列表已删
+// N54：远端项按归属判失效（不做 INI 兼容与迁移 → 无来源身份即数据异常；来源列表已删
 // → 跳转必被拒，因为远端不回退、凭据与转接端点都随列表一起没了）。本地项不看归属：
-// 磁盘就是它的归属。判据回调未接时只按“无来源”那一半清，有来源的无从判定即不删
+// 磁盘就是它的归属。
+// N57 §2.4：原"判据未接只清无来源那一半"的档已删（生产侧唯一调用方恒接入谓词，该档
+// 无调用形态），锁它的那半条用例随之退场——"未接谓词"这一入参形态自本版不存在
 void TestBookmarkManager::removeInvalidDropsRemoteWithoutLiveList() {
-    const QString liveUuid = QStringLiteral("aaaaaaaa-0000-0000-0000-000000000001");
-    const QString goneUuid = QStringLiteral("bbbbbbbb-0000-0000-0000-000000000002");
+    const QUuid liveUuid =
+        QUuid::fromString(QStringLiteral("aaaaaaaa-0000-0000-0000-000000000001"));
+    const QUuid goneUuid =
+        QUuid::fromString(QStringLiteral("bbbbbbbb-0000-0000-0000-000000000002"));
     const QString remoteLive = QStringLiteral("https://host/dav/live.mkv");
     const QString remoteDead = QStringLiteral("https://host/dav/dead.mkv");
     const QString remoteOrphan = QStringLiteral("https://host/dav/orphan.mkv");
@@ -249,16 +260,9 @@ void TestBookmarkManager::removeInvalidDropsRemoteWithoutLiveList() {
         mgr.addBookmark(localFile, 4.0, QStringLiteral("F"), Origin{});
     };
 
-    // 判据未接：只清"无来源的远端项"这一半，有来源的一律留（不据未知信息误删）
+    // 来源列表已删者一并清，本地项恒留
     repopulate();
-    QCOMPARE(mgr.removeInvalid(BookmarkManager::ListAlivePredicate{}), 1);
-    QCOMPARE(mgr.allFiles().size(), 3);
-    QCOMPARE(mgr.bookmarks(Util::Url::key(remoteLive)).size(), 1);
-    QCOMPARE(mgr.bookmarks(Util::Url::key(remoteDead)).size(), 1);
-
-    // 判据接上：来源列表已删者一并清，本地项恒留
-    repopulate();
-    const auto alive = [&](const QString &uuid) { return uuid == liveUuid; };
+    const auto alive = [&](const QUuid &uuid) { return uuid == liveUuid; };
     QCOMPARE(mgr.removeInvalid(alive), 2);
     QCOMPARE(mgr.allFiles().size(), 2);
     QCOMPARE(mgr.bookmarks(Util::Url::key(remoteLive)).size(), 1);

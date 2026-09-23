@@ -10,16 +10,15 @@ class BookmarkEditorDialog : public QDialog {
     // 归一化键向 manager 现取，主窗口据此分"回绑定列表 / 回默认 tab"两条路
     using JumpCallback =
         std::function<void(const QString &, double, const BookmarkManager::Origin &)>;
-    // N54：列表名现查回调（列表身份 uuid → tab 标题，查不到返回空串）。名字**不落盘**：
-    // 运行期查即改名即刻生效，也免存一份必然漂移的副本
-    using ListNameLookup = std::function<QString(const QString &listUuid)>;
-    // N54：列表是否仍存在的判据（"移除失效项"据此清掉所属列表已删的远端书签）。未接
-    // 时该半条规则不生效——无从判定就不删，另半条（远端且无来源 uuid = 数据异常）不
-    // 依赖它，照删
-    using ListAliveLookup = std::function<bool(const QString &listUuid)>;
+    // N54：列表名现查回调（列表身份 → 显示名，查不到返回空串）。名字**不落盘**：
+    // 运行期查即改名即刻生效，也免存一份必然漂移的副本。
+    // N57 §2.6：原 `ListNameLookup` + `ListAliveLookup` 塌成这一个出口——"列表还在不在"
+    // 与"列表叫什么"本就是同一次按身份直查的两面（空返回即无此列表），存活谓词在
+    // onRemoveInvalid 里由它就地派生，不再让调用方传两份同源判据。
+    // 落点在注册表（`PlaylistRegistry::nameOf`），不经视图反查 tab
+    using ListLookup = std::function<QString(const QUuid &listUuid)>;
     // currentPath：当前播放文件归一化键（N16：打开即聚焦该文件）；空表示不聚焦
-    explicit BookmarkEditorDialog(BookmarkManager *mgr, JumpCallback jumpCb,
-                                  ListNameLookup nameLookup, ListAliveLookup listAlive,
+    explicit BookmarkEditorDialog(BookmarkManager *mgr, JumpCallback jumpCb, ListLookup listLookup,
                                   const QString &currentPath = QString(),
                                   QWidget *parent = nullptr);
 
@@ -41,8 +40,7 @@ class BookmarkEditorDialog : public QDialog {
 
     BookmarkManager *m_mgr;
     JumpCallback m_jumpCb;
-    ListNameLookup m_nameLookup; // N54：根节点标题里的列表名
-    ListAliveLookup m_listAlive; // N54：移除失效项用的"列表是否还在"判据
+    ListLookup m_listLookup; // N57 §2.6：名字与"还在不在"共用一次按身份直查
     QString
         m_focusFile; // N16：refresh
                      // 重建后应选中并展开的文件父节点（归一化键）；非空时仅展开该文件、其余收起，空时全部展开

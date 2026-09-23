@@ -29,11 +29,18 @@ bool isTransitUri(const QString &path);
 
 // 铸造转接 URI：mpvqt://<uuid>/<percent-encoded identity>。
 // 入参应为无凭据身份（由调用方——基类下发点——先 Util::Url::stripCredentials 保证，
-// 本层不依赖 Util、不代剥）；uuid 为不含路径分隔符的列表身份。
+// 本层不依赖 Util、不代剥）；listUuid 为列表身份，字面形态恒为 toString 的
+// WithoutBraces 小写串（N57 §2.4：内存中一律 QUuid，大小写与花括号不再参与判等）。
 // 凭据双保险：Debug 用 Q_ASSERT 守候；Release 下检出 userinfo 形态即拒绝铸造
 // （返回空串，调用方按 open 必失败处理），绝不产出含凭据的 URI。
 // 身份不含 "://"（条目 id、本地路径等）时无 userinfo 可言，不受影响。
-QString mint(const QString &uuid, const QString &identity);
+// nil 身份属编程错误（Debug 断言显影；Release 同样返空串，但不作为可测分支）。
+QString mint(const QUuid &listUuid, const QString &identity);
+
+// 从转接 URI 取回列表身份（N57 §2.4，与 mint 成对）：非本协议、无 authority 段、
+// 或该段解不出合法 uuid 一律返回 nil——nil 恒不命中任何列表。
+// 纯字符串运算，可在 mpv 的 demux 线程调用（不触注册表与视图）。
+QUuid listUuidOfUri(const QString &uri);
 
 // 还原条目身份：unwrap(mint(u, i)) == i。
 // 非本协议、authority 空（uuid 段缺失）、无条目段、解出空串一律原样返回。

@@ -13,8 +13,9 @@ class NavigatorPanel;
 class ActionManager;
 class BookmarkEditorDialog;
 class ChapterSlider;
-class MarkAggregator; // N15：章节+书签标记聚合器（定义于 MainWindow.cpp）
-class StreamRelay;    // N52：mpv 自定义协议适配层（定义于 StreamRelay.h）
+class MarkAggregator;   // N15：章节+书签标记聚合器（定义于 MainWindow.cpp）
+class PlaylistRegistry; // N57：列表注册表（装配顶点创建并持有，注入 PlaylistWidget）
+class StreamRelay;      // N52：mpv 自定义协议适配层（定义于 StreamRelay.h）
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -70,7 +71,8 @@ class MainWindow : public QMainWindow {
     void onMpvShutdown();
     // N54：书签层级定位的两种结局（PlaylistWidget 只切层与定位，播放与报错在此决定）。
     // entityIndex 是目标层的实体序（即 mpv playlist-pos 语义）
-    void onLevelItemReady(const PlaylistWidget::LevelJump &req, int entityIndex);
+    // N57 §2.8：tabIndex 是视图在发射时刻由列表身份现场换算的坐标（待办状态里只有身份）
+    void onLevelItemReady(const PlaylistWidget::LevelJump &req, int tabIndex, int entityIndex);
     void onLevelItemFailed(const PlaylistWidget::LevelJump &req, PlaylistWidget::JumpFailure why,
                            const QString &detail);
 
@@ -186,6 +188,10 @@ class MainWindow : public QMainWindow {
     // N56 §2.7：服务注册表由装配顶点（本类）创建并持有，注入 PlaylistWidget；
     // relay 的 provide<StreamRelayIf> 亦在此完成（早于任何提供者出生）
     std::shared_ptr<ServiceRegistry> m_registry;
+    // N57 §2.3：播放列表注册表（列表模型的唯一所有者）由本类创建并持有，注入
+    // PlaylistWidget；后备提供者在本类构造期经 createDefaultProvider 造好交入。
+    // 不入服务注册表（可变模型对象与"resolve 任意线程"的线程契约不符）
+    std::shared_ptr<PlaylistRegistry> m_listRegistry;
     QSplitter *m_splitter = nullptr;
     // 视频显示区域（mpv wid 嵌入目标）：主窗直接子控件（N3），
     // 脱离布局管理由 syncVideoGeometry 手动同步，父链构造期定死后全程不动
@@ -235,7 +241,7 @@ class MainWindow : public QMainWindow {
     // isVisible() 等活体状态会被读错（playlistExpanded 曾被覆写为 false）
     bool m_settingsSaved = false;
     // 本次进程是否发生过播放（A13）：未播放就关闭属于会话延续，
-    // 不得清除上次保存的 lastTabName
+    // 不得清除上次保存的 lastListUuid（N57 §2.7）
     bool m_playedThisSession = false;
     // ---- N7：VideoOverlay 视频叠加层（A3 顶级 Tool 浮窗，仅 OSD/字幕/弹幕，不含控制栏）----
     QWidget *m_videoOverlay = nullptr; // 顶级浮窗容器（VideoOverlay），几何始终跟随 m_videoWidget

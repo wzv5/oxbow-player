@@ -103,17 +103,10 @@ class PlaylistProvider {
     // URI 并把端点发布进注册表（发布即下发，N52 §2.6）。这样"把直接形态误当播放
     // 串下发"在编译期就不可能——directPlayUrl 降为 protected，外部拿不到那个钩子。
     // 实现必须轻（playUrls 是整表逐条调用）：一次哈希查找 + 一次前缀判定 +
-    // 一次百分号编码，零网络。仅在 GUI 线程经 PlaylistWidget::playUrls 调用。
-    QString playUrl(const QString &path) const;
-
-    // ——N52 §2.7：列表身份 listUuid——
-    // 构造期新铸（会话占用表查重），listUuid() 读口；adoptListUuid 接回存量身份。
-    // 写盘随 writeProviderKey 同点落（INI 键取 uuid）；旧 INI 无该键按缺键处理
-    // （新铸身份，不迁移）。默认 tab 不落盘 → 无持久 UUID，其 URI 仅会话内有效。
-    QString listUuid() const { return m_listUuid; }
-    // 存量身份接回：allowBusy=false（load 读回路径）撞占用即弃存量自铸保新；
-    // allowBusy=true（编辑换身路径）接回旧身份（占用表幂等认领）。
-    void adoptListUuid(const QString &stored, bool allowBusy);
+    // 一次百分号编码，零网络。仅在 GUI 线程经 Playlist::playUrls 调用。
+    // N57 §2.4：列表身份由调用方按值传入——提供者不认识列表、也不持有它的身份，
+    // 转接铸造与端点发布所需的身份只是入参（nil 属编程错误，Debug 断言显影）
+    QString playUrl(const QUuid &listUuid, const QString &path) const;
 
     // 转接偏好（持久化值）：Optional 返偏好值；Required / Unsupported 返 nullopt
     // （形态不由偏好决定）。参数页回显与 hasChanges 共用此出口
@@ -132,19 +125,19 @@ class PlaylistProvider {
     static std::shared_ptr<PlaylistProvider> load(QSettings &settings,
                                                   const std::shared_ptr<ServiceRegistry> &registry);
 
-    // ——排序规则（非虚，统一持有；取值域见 PlaylistWidget::SortKey，
-    // 提供者仅作不透明值存储并自行持久化）——
-    int sortKey() const { return m_sortKey; }
-    bool sortAscending() const { return m_sortAscending; }
-    void setSortRule(int key, bool ascending);
+    // ——排序规则（N57 §2.9：值对象化）——规则**值**归提供者持久化，键的定义归实体侧
+    // （取值域见 `PlaylistEntity.h` 的 `SortKey`）。默认规则由提供者自述，视图不再
+    // 绕能力位推导：基类不排序，目录与 WebDAV 覆写为按修改时间升序，静态沿用基类
+    SortRule sortRule() const { return m_sortRule; }
+    void setSortRule(SortRule rule) { m_sortRule = rule; }
+    virtual SortRule defaultSortRule() const { return {}; }
 
   private:
-    int m_sortKey = 0; // 0 = None
-    bool m_sortAscending = true;
+    SortRule m_sortRule;                         // N57 §2.9：规则值（键 + 方向）
     std::shared_ptr<ServiceRegistry> m_registry; // N35：服务注册表（基类统一持有）
-    // N52：列表身份（构造期新铸，会话占用表查重）与转接偏好；端点惰性建一次
-    // 并缓存（参数不可变故无需重建；playUrl 仅 GUI 线程调用，缓存无需加锁）
-    QString m_listUuid;
+    // N57 §2.4：列表身份不再镜像于此（归 Playlist / PlaylistRegistry 持有）。
+    // 转接偏好与端点：端点惰性建一次并缓存（参数不可变故无需重建；playUrl 仅
+    // GUI 线程调用，缓存无需加锁）
     bool m_transitPreferred = false;
     mutable std::shared_ptr<StreamEndpoint> m_transitEndpoint;
 
@@ -163,7 +156,8 @@ class PlaylistProvider {
     // 写 INI 的 provider 键（N44）：取值即 typeKey()。各提供者 saveSettings 首行
     // 调用它——写侧（typeKey()）与读侧（登记表条目）共用同一点定义的键常量，
     // 杜绝"键写错导致重启后退化为默认提供者"的静默失败。
-    // N52：本函数同时落列表身份（uuid）与转接偏好（transit），三键同点写出；
+    // N52：本函数同时落转接偏好（transit），两键同点写出；N57 §2.4：列表身份
+    // （uuid 键）改由 Playlist::save 一侧写，本函数不再认识身份。
     // transit 键只对 Optional 类型有意义，Unsupported / Required 不写（并清掉
     // 可能的存量键）——偏好不决定形态，形态由三态表承载
     void writeProviderKey(QSettings &settings) const;

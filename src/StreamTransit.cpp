@@ -15,8 +15,9 @@ bool isTransitUri(const QString &path) {
     return path.startsWith(QLatin1String(StreamTransit::kScheme), Qt::CaseInsensitive);
 }
 
-QString mint(const QString &uuid, const QString &identity) {
-    if (uuid.isEmpty() || identity.isEmpty())
+QString mint(const QUuid &listUuid, const QString &identity) {
+    Q_ASSERT(!listUuid.isNull()); // nil 身份属调用方违约；Release 按下式返空串
+    if (listUuid.isNull() || identity.isEmpty())
         return {};
 
     // 凭据双保险：调用方（基类下发点）应已 Util::Url::stripCredentials；此处守候。
@@ -32,11 +33,25 @@ QString mint(const QString &uuid, const QString &identity) {
         if (hasUserinfo)
             return {};
     }
-    Q_ASSERT(!uuid.contains(u'/'));
 
     // unreserved 之外全编码（含 '/' → %2F）：整段只占一个路径段。
     const QByteArray segment = identity.toUtf8().toPercentEncoding();
-    return QLatin1String(StreamTransit::kScheme) + uuid + u'/' + QString::fromUtf8(segment);
+    return QLatin1String(StreamTransit::kScheme) +
+           listUuid.toString(QUuid::StringFormat::WithoutBraces) + u'/' +
+           QString::fromUtf8(segment);
+}
+
+QUuid listUuidOfUri(const QString &uri) {
+    // 形态已由 isTransitUri（或调用方）判定过才走到这里；只用通用 URI 语法 "://"
+    // 定位 authority，协议名与前缀长度的知识全在 L1（N51 坑 1 的纪律照旧）
+    const qsizetype schemeEnd = uri.indexOf(QStringLiteral("://"));
+    if (schemeEnd < 0)
+        return {};
+    const qsizetype start = schemeEnd + 3;
+    const qsizetype slash = uri.indexOf(u'/', start);
+    if (slash < 0)
+        return {};
+    return QUuid::fromString(uri.mid(start, slash - start)); // 解不出即 nil，nil 恒不命中
 }
 
 QString unwrap(const QString &path) {

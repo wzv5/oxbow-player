@@ -26,7 +26,7 @@ typedef struct mpv_handle mpv_handle; // 与 client.h 的 typedef 重复声明�
 class StreamRelayIf {
   public:
     virtual ~StreamRelayIf() = default;
-    virtual void publish(const QString &listUuid,
+    virtual void publish(const QUuid &listUuid,
                          const std::shared_ptr<StreamEndpoint> &endpoint) = 0;
 };
 
@@ -47,15 +47,16 @@ class StreamRelay final : public StreamRelayIf {
     // 注销 = 端点寿命终点：表存弱引用，提供者析构后表项自然 expired，取用时
     // 顺手 erase；不提供 unregister API，因而没有"谁该调、误删别人表项、
     // 指针比对"的问题。GUI 线程调用。
-    void publish(const QString &listUuid, const std::shared_ptr<StreamEndpoint> &endpoint) override;
+    void publish(const QUuid &listUuid, const std::shared_ptr<StreamEndpoint> &endpoint) override;
 
     // —— 以下仅 .cpp 内的 mpv 回调桩使用，勿在适配层之外调用 ——
-    // 端点表取用（demux 线程）：键大小写不敏感（内部恒以小写入库，防中间层按
-    // host 语义折叠 authority）。命中已失效表项（提供者已析构）顺手 erase 并返空。
-    std::shared_ptr<StreamEndpoint> takeEndpoint(const QString &listUuid);
+    // 端点表取用（demux 线程）：键为 QUuid，判等全在代码侧（N57 §2.4 删去两侧 toLower
+    // 归一——大小写与花括号自本版起归一命中）。命中已失效表项（提供者已析构）顺手
+    // erase 并返空。
+    std::shared_ptr<StreamEndpoint> takeEndpoint(const QUuid &listUuid);
 
   private:
     mpv_handle *m_handle = nullptr;
-    mutable QMutex m_mutex;                                    // 只保护端点表这一瞬间
-    QHash<QString, std::weak_ptr<StreamEndpoint>> m_endpoints; // 键恒小写
+    mutable QMutex m_mutex;                                  // 只保护端点表这一瞬间
+    QHash<QUuid, std::weak_ptr<StreamEndpoint>> m_endpoints; // 键即身份，无字面形态
 };

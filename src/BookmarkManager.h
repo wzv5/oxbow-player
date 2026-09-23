@@ -11,14 +11,17 @@ class BookmarkManager : public QObject {
 
     // N54：书签来源——它出生时所属的列表与所在层。文件级属性（同归一键下的多条
     // 书签共享一个来源，与 m_displayOf 同层），跳转据此"回绑定的列表 → 换入该层 →
-    // 定位条目"。listUuid 为空即整条来源无效（默认 tab 出生 / 旧 INI），此时
-    // levelIds 不参与解读——空 levelIds 配上有效 uuid 表示根层，两者须可区分。
+    // 定位条目"。listUuid 为 nil 即整条来源无效（旧 INI / 损坏数据；N57 §2.5 后
+    // 默认 tab 出生的书签改记默认列表的保留身份，不再是无归属），此时 levelIds
+    // 不参与解读——空 levelIds 配上有效身份表示根层，两者须可区分。
+    // N57 §2.4：身份在内存中恒为 QUuid（判等全在代码侧，大小写与花括号不参与），
+    // 字面串形态只在 load / save 各一处转换
     struct Origin {
-        QString listUuid;     // 列表身份（PlaylistProvider::listUuid），空 = 无身份
+        QUuid listUuid;       // 列表身份（Playlist::uuid），nil = 无身份
         QStringList levelIds; // 队列根层 id 序列（enumerate 的 parent 形态）
 
-        // 有效性只看 uuid：空 levelIds 配有效 uuid 是"根层"，与整条无来源可区分
-        bool isValid() const { return !listUuid.isEmpty(); }
+        // 有效性只看身份：空 levelIds 配有效身份是"根层"，与整条无来源可区分
+        bool isValid() const { return !listUuid.isNull(); }
     };
 
     explicit BookmarkManager(const QString &configFile, QObject *parent = nullptr);
@@ -48,11 +51,14 @@ class BookmarkManager : public QObject {
     void clearAll();
     // 移除失效项。本地项看磁盘：不存在即失效（判据单点 Util::Url::isMissingLocal）。
     // 远端项看归属（N54）：本篇不做 INI 兼容与迁移，故"没有可用归属"就是数据异常——
-    // 既无来源 uuid、或来源 uuid 在现存列表里查不到，这类项按 §2.2 跳转必被拒（远端不
-    // 回退），留着只是列表里的死条目。listAlive 未接时"列表是否还在"这一半无从判定，
-    // 只按"无来源"那一半清，绝不把有来源的项误删
-    using ListAlivePredicate = std::function<bool(const QString &listUuid)>;
-    int removeInvalid(const ListAlivePredicate &listAlive = {});
+    // 既无来源身份、或来源身份在现存列表里查不到，这类项按 §2.2 跳转必被拒（远端不
+    // 回退），留着只是列表里的死条目。
+    // N57 §2.4：谓参改为**必传**（形参换 QUuid）——原"未接即不删"那一档在仓内从无
+    // 调用形态（唯一调用方恒接入谓词），只是多一条无人走的分支；锁着它的两条测试用例
+    // 随之改写。存活判据与列表名现查同出一条查询（空返回即无此列表），故由调用方就地
+    // 派生，不另设第二份判据
+    using ListAlivePredicate = std::function<bool(const QUuid &listUuid)>;
+    int removeInvalid(const ListAlivePredicate &listAlive);
 
   signals:
     void changed();

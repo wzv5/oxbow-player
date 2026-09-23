@@ -6,6 +6,29 @@
 #include "LocalFileEntity.h"
 #include "Util.h"
 
+// N57 §2.9：排序键取值冻结（对 N58 的契约③）——既有 0..8 不得重编，新键只准追加末尾
+static_assert(int(SortKey::ReleaseDate) == 8, "新键只准追加末尾，既有取值不得重编");
+
+// N29：排序键 → 预读元数据类别的唯一映射（各判定点共用，防散写漂移）。
+// N57 §2.9：随键搬到实体侧，视图的菜单灰态判据仍调它
+MetaCategory metaCategoryOf(SortKey key) {
+    switch (key) {
+    case SortKey::Created:
+    case SortKey::Modified:
+    case SortKey::FileSize:
+        return MetaCategory::File;
+    case SortKey::Duration:
+    case SortKey::ReleaseDate:
+        return MetaCategory::Media;
+    case SortKey::None:
+    case SortKey::FileName:
+    case SortKey::FileNameNumeric:
+    case SortKey::Extension:
+        return MetaCategory::None;
+    }
+    return MetaCategory::None;
+}
+
 namespace {
 // 能力位为假时元数据入口的静态空回落值（函数内 static 惰性构造）
 const FileMeta &s_emptyFileMeta() {

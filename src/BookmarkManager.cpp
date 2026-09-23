@@ -37,10 +37,12 @@ void BookmarkManager::load() {
             m_order.append(key);
         m_displayOf[key] = path;
         // N54：来源两键。缺键（旧 INI / 无身份书签）即空 Origin，不设迁移；
-        // listUuid 为空时 levelIds 不参与解读（整条来源无效）。同键多组（理论不该
-        // 出现，出现即历史脏数据）按"首见即定"取前一组，与 addBookmark 同纪律
-        const Origin origin{s.value(prefix + QStringLiteral("/listUuid")).toString(),
-                            s.value(prefix + QStringLiteral("/levelIds")).toStringList()};
+        // listUuid 为 nil 时 levelIds 不参与解读（整条来源无效）。同键多组（理论不该
+        // 出现，出现即历史脏数据）按"首见即定"取前一组，与 addBookmark 同纪律。
+        // N57 §2.4：字符串→身份的转换只落这一处（fromString 对空串与非法串返 nil）
+        const Origin origin{
+            QUuid::fromString(s.value(prefix + QStringLiteral("/listUuid")).toString()),
+            s.value(prefix + QStringLiteral("/levelIds")).toStringList()};
         if (origin.isValid() && !m_originOf.contains(key))
             m_originOf[key] = origin;
         m_data[key] = list;
@@ -59,11 +61,13 @@ void BookmarkManager::save() const {
         const QString prefix = QStringLiteral("Bookmarks/%1").arg(i);
         // 落盘原始形态（展示保原样），载入时再归一为键
         s.setValue(prefix + QStringLiteral("/path"), m_displayOf.value(key, key));
-        // N54：来源两键。无效来源（默认 tab 出生 / 旧数据）两个键都不写，不留空串
-        // 占位——"缺键即无来源"是 load 的唯一判据
+        // N54：来源两键。无效来源（旧数据 / 损坏）两个键都不写，不留空串占位——
+        // "缺键即无来源"是 load 的唯一判据。N57 §2.4：身份→串只落这一处，
+        // 字面形态（无花括号小写）与改前逐字相同
         const Origin origin = m_originOf.value(key);
         if (origin.isValid()) {
-            s.setValue(prefix + QStringLiteral("/listUuid"), origin.listUuid);
+            s.setValue(prefix + QStringLiteral("/listUuid"),
+                       origin.listUuid.toString(QUuid::StringFormat::WithoutBraces));
             s.setValue(prefix + QStringLiteral("/levelIds"), origin.levelIds);
         }
         s.setValue(prefix + QStringLiteral("/count"), list.size());
@@ -174,11 +178,11 @@ int BookmarkManager::removeInvalid(const ListAlivePredicate &listAlive) {
         // 本地回退档）
         if (Util::Url::isLocal(disp))
             continue;
-        // 远端项看归属（N54）：无来源 uuid 属数据异常（本篇不做 INI 兼容与迁移），来源
-        // uuid 在现存列表里查不到则跳转必被拒（远端不回退，凭据与转接端点都随列表没了）
-        // ——两类都是死条目。listAlive 未接时不据"列表是否还在"删有来源的项（无从判定）
+        // 远端项看归属（N54）：无来源身份属数据异常（本篇不做 INI 兼容与迁移），来源
+        // 身份在现存列表里查不到则跳转必被拒（远端不回退，凭据与转接端点都随列表没了）
+        // ——两类都是死条目。N57 §2.4：谓词必传，原"未接即不删"档已删
         const Origin origin = m_originOf.value(key);
-        if (!origin.isValid() || (listAlive && !listAlive(origin.listUuid)))
+        if (!origin.isValid() || !listAlive(origin.listUuid))
             toRemove.append(key);
     }
     for (const QString &p : toRemove) {

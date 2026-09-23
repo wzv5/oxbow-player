@@ -26,9 +26,9 @@ QString formatDuration(double seconds) {
 }
 } // namespace
 
-PlaylistDelegate::PlaylistDelegate(const QHash<QString, std::optional<double>> *duration,
-                                   QObject *parent)
-    : QStyledItemDelegate(parent), m_duration(duration) {}
+PlaylistDelegate::PlaylistDelegate(
+    std::shared_ptr<const QHash<QString, std::optional<double>>> duration, QObject *parent)
+    : QStyledItemDelegate(parent), m_duration(std::move(duration)) {}
 
 void PlaylistDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
                              const QModelIndex &index) const {

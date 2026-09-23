@@ -11,7 +11,10 @@
 #include "HttpClient.h"
 #include "MpvController.h"
 #include "NavigatorPanel.h"
+#include "Playlist.h"         // N57 §2.6：经 PlaylistWidget::listOf 取身份，需完整类型
+#include "PlaylistRegistry.h" // N57 §2.3：装配顶点创建列表注册表（默认名与保留身份的出处）
 #include "PlaylistWidget.h"
+#include "ProviderCatalog.h" // N57 §2.3：后备提供者经登记表第 0 项出生，只此一处调用
 #include "ServiceRegistry.h"
 #include "SettingsDialog.h"
 #include "StreamRelay.h"
@@ -144,6 +147,9 @@ MainWindow::MainWindow(MpvController *controller, const QString &configFile,
         m_registry->provide<StreamRelayIf>(m_relay);
     provideHttpServices();
     provideTraversalPolicy();
+    // N57 §2.3：列表注册表同由装配顶点创建并持有——后备提供者在此经登记表第 0 项
+    // 造好交入（"谁调提供者工厂"只此一处），注册表只收成品、不认识服务注册表
+    m_listRegistry = std::make_shared<PlaylistRegistry>(createDefaultProvider(m_registry));
 
     m_splitter = new QSplitter(Qt::Horizontal, this);
     m_splitter->addWidget(createLeftArea());
@@ -166,7 +172,7 @@ MainWindow::MainWindow(MpvController *controller, const QString &configFile,
     m_clickTimer->setSingleShot(true);
     connect(m_clickTimer, &QTimer::timeout, this, &MainWindow::onVideoClickTimeout);
 
-    m_playlist = new PlaylistWidget(configFile, m_registry, m_splitter);
+    m_playlist = new PlaylistWidget(configFile, m_registry, m_listRegistry, m_splitter);
     m_playlist->attachController(m_controller); // N4：四步式停止前读取 time-pos
     m_splitter->addWidget(m_playlist);
     m_splitter->setStretchFactor(0, 1);
@@ -831,7 +837,7 @@ void MainWindow::togglePause() {
             if (idx < 0 || idx >= int(entities.size()))
                 idx = 0;
         }
-        // 载入即转移同步目标：mpv 列表回刷写进当前 tab，关闭时 lastTabName 随之正确；
+        // 载入即转移同步目标：mpv 列表回刷写进当前 tab，关闭时 lastListUuid 随之正确；
         // 续播进度经统一入口的挂起 seek 机制恢复
         onPlayRequested(entities, cur, idx, restoreTime > 0.0 ? restoreTime : -1.0);
         return;
@@ -1893,20 +1899,25 @@ void MainWindow::saveSettings() {
 
     // N10：窗口几何/最大化不再落盘（启动恒为固定默认尺寸 960×600）
 
-    // 会话恢复入口（Q1 方案 A）：记录播放中的非默认 tab 名。
+    // 会话恢复入口（Q1 方案 A）：记录正播的非默认列表。N57 §2.7 把键从名字换成身份
+    // （`lastListUuid`），三条分支与旧 `lastTabName` 逐一对应，判据由"索引 0"这一
+    // 位置判据改为 `isDefault()` 身份判据。
     // 仅当本次进程发生过播放才更新/清除（A13）：未播放就关闭属于会话延续，
-    // 上次保存的 lastTabName 与各 tab 记忆仍然有效，不得清空。
-    // N53 变更记录 V3：同步目标归位默认 tab（刷新失败停播 / 祖先层整枝）不再
-    // 连坐清键——用户仍停留在非默认 tab 时按停留 tab 落盘，重启回到停留处；
-    // 停留在默认 tab（如收编后）才删除
+    // 上次保存的键与各列表记忆仍然有效，不得清空。
+    // N53 变更记录 V3 的口径原样保留：同步目标归位默认列表（刷新失败停播 / 祖先层
+    // 整枝）不连坐清键——仍停留在非默认列表时按停留列表落盘，两者都在默认列表才删。
+    // （"停留档是否该存在"另案登记于 N59，本篇不动）
     if (m_playedThisSession) {
-        const int playingTab = m_playlist->playingTabIndex();
-        if (playingTab > 0)
-            settings.setValue(QStringLiteral("lastTabName"), m_playlist->tabText(playingTab));
-        else if (const int currentTab = m_playlist->currentIndex(); currentTab > 0)
-            settings.setValue(QStringLiteral("lastTabName"), m_playlist->tabText(currentTab));
+        const Playlist *playing = m_playlist->listOf(m_playlist->playingTabIndex());
+        const Playlist *current = m_playlist->listOf(m_playlist->currentIndex());
+        const Playlist *target = playing && !playing->isDefault()
+                                     ? playing
+                                     : (current && !current->isDefault() ? current : nullptr);
+        if (target)
+            settings.setValue(QStringLiteral("lastListUuid"),
+                              target->uuid().toString(QUuid::StringFormat::WithoutBraces));
         else
-            settings.remove(QStringLiteral("lastTabName"));
+            settings.remove(QStringLiteral("lastListUuid"));
     }
 
     // per-tab 记忆随各播放列表一并落盘
@@ -1946,13 +1957,15 @@ void MainWindow::restoreSettings() {
     if (settings.value(QStringLiteral("playlistExpanded"), false).toBool())
         setPlaylistVisible(true);
 
-    // 上次播放的非默认 tab：按名定位并切换，currentChanged 联动会自动选中
-    // 该 tab 记忆的最后播放项；找不到则停留默认 tab。旧全局键一次性弃用不迁移。
-    const QString lastTabName = settings.value(QStringLiteral("lastTabName")).toString();
-    if (!lastTabName.isEmpty()) {
-        const int idx = m_playlist->indexOfName(lastTabName);
+    // N57 §2.7：会话键改用身份——上次播放的非默认列表按身份直查注册表，命中才换算
+    // 视图坐标并切换（currentChanged 联动自动选中该表记忆的最后播放项）；查不到或
+    // 停在默认列表则不动。旧键 lastTabName 不读也不删（与 windowMaximized 等遗留键
+    // 同一口径：读侧删除即自然忽略）
+    if (const Playlist *last = m_listRegistry->find(
+            QUuid::fromString(settings.value(QStringLiteral("lastListUuid")).toString()))) {
+        const int idx = m_playlist->tabIndexOfList(last->uuid());
         if (idx > 0)
-            m_playlist->setCurrentIndex(idx);
+            m_playlist->requestTab(idx); // 空闲时逐字等价于 setCurrentIndex，忙时自动排队
     }
 
     updateNavigationActions(); // A16：启动恢复完成后的初始启停状态
@@ -2454,30 +2467,24 @@ void MainWindow::jumpToBookmark(const QString &path, double time,
     PlaylistWidget::LevelJump req;
     req.itemKey = Util::Url::key(path);
     req.time = time;
-    if (origin.isValid()) {
-        const int tab = m_playlist->tabIndexOfListUuid(origin.listUuid);
-        if (tab >= 0) {
-            req.tab = tab;
-            req.levelIds = origin.levelIds;
-            m_playlist->requestLevelItemJump(req);
-            return;
-        }
-    }
-    // 无身份、或所属列表已删：目标退化为默认 tab 的队列根层——那里可能还留着这一项
-    // （无身份书签本就出生于此）。不为“列表已删”另设早退分支：定位成败统一由回报通道
-    // 裁决，失败策略见 onLevelItemFailed
-    req.tab = 0;
-    req.levelIds = m_playlist->queueRootIdsOf(0);
+    // N57 §2.8：目标改持身份——先在注册表直查一次，查不到（无身份或列表已删）才落
+    // 默认列表的保留身份，与现状"tab 反查失败即退化默认 tab"逐分支等价。坐标由视图
+    // 在需要动作与发射的时刻现换算，不在这里出生
+    const bool targetAlive = origin.isValid() && m_listRegistry->find(origin.listUuid);
+    req.listUuid = targetAlive ? origin.listUuid : kDefaultListUuid;
+    req.levelIds = targetAlive ? origin.levelIds : m_playlist->queueRootIdsOf(0);
     m_playlist->requestLevelItemJump(req);
 }
 
 // N54 §2.2 第 3 步：命中即播，三档全走既有出口（与 jumpToChapter 的三档同一形状）。
-// widget 已把目标层换入前台（不变式：req.tab 的显示层 == req.levelIds），故新队列直取
-// 当前层出口；entityIndex 是实体序，即 mpv playlist-pos 语义
-void MainWindow::onLevelItemReady(const PlaylistWidget::LevelJump &req, int entityIndex) {
+// widget 已把目标层换入前台（不变式：目标列表的显示层 == req.levelIds），故新队列直取
+// 当前层出口；entityIndex 是实体序，即 mpv playlist-pos 语义；tabIndex 是视图在发射
+// 时刻由 req.listUuid 现换算的坐标（N57 §2.8），本槽是它唯一的消费者
+void MainWindow::onLevelItemReady(const PlaylistWidget::LevelJump &req, int tabIndex,
+                                  int entityIndex) {
     const QString path = m_bookmarkMgr->displayPath(req.itemKey);
-    const bool sameQueue = req.tab == m_playlist->playingTabIndex() &&
-                           req.levelIds == m_playlist->queueRootIdsOf(req.tab);
+    const bool sameQueue = tabIndex == m_playlist->playingTabIndex() &&
+                           req.levelIds == m_playlist->queueRootIdsOf(tabIndex);
     if (sameQueue) {
         // 目标层就是此刻这份队列：内容基准没变，重推纯属自扰（重载文件、转接流重开、
         // 可听中断）——同列表内只切条目
@@ -2491,9 +2498,9 @@ void MainWindow::onLevelItemReady(const PlaylistWidget::LevelJump &req, int enti
         }
         return;
     }
-    m_playlist->markPlayingTab(req.tab); // 队列根在此重锚到该层（N45 §2.1）
-    m_playlist->requestTab(req.tab);
-    onPlayRequested(m_playlist->currentLayerEntitiesOf(req.tab), req.tab, entityIndex, req.time);
+    m_playlist->markPlayingTab(tabIndex); // 队列根在此重锚到该层（N45 §2.1）
+    m_playlist->requestTab(tabIndex);
+    onPlayRequested(m_playlist->currentLayerEntitiesOf(tabIndex), tabIndex, entityIndex, req.time);
 }
 
 // N54 §2.2 第 4 步 + §2.5：失败策略是一个布尔。本地项在磁盘上，回默认 tab 必然可播，
@@ -2565,9 +2572,9 @@ void MainWindow::ensureBookmarkEditor() {
         [this](const QString &p, double t, const BookmarkManager::Origin &origin) {
             jumpToBookmark(p, t, origin); // N54：来源由对话框按选中项的键现取后随行
         },
-        [this](const QString &uuid) { return m_playlist->listNameOfUuid(uuid); }, // N54 列表名
-        [this](const QString &uuid) { return m_playlist->tabIndexOfListUuid(uuid) >= 0; }, curKey,
-        this);
+        // N57 §2.6：一个出口同时供"叫什么名字"与"还在不在"（对话框就地派生存活判据），
+        // 按身份直查注册表——名字住列表对象，改名即刻生效，不经视图反查 tab
+        [this](const QUuid &listUuid) { return m_listRegistry->nameOf(listUuid); }, curKey, this);
     m_bookmarkEditor->setAttribute(Qt::WA_DeleteOnClose, true);
     connect(m_bookmarkEditor, &QObject::destroyed, this, [this] { m_bookmarkEditor = nullptr; });
     m_bookmarkEditor->show();
@@ -2603,11 +2610,15 @@ void MainWindow::onAddBookmark() {
     const QString title = tr("Bookmark %1").arg(Util::nextSequenceNumber(tr("Bookmark "), titles));
     // N54：来源 = 播放 tab 的列表身份 + 其队列根层 id 序列。此刻正播项必在播放 tab 的
     // 队列根层（凡 mpv 侧语义一律在队列根层上工作，N45 §2.4.2），所以"这条书签在哪一层"
-    // 是现成且无歧义的，无需推断。默认 tab 不落盘、无持久身份（N52 §2.7）→ 存空
-    BookmarkManager::Origin origin;
+    // 是现成且无歧义的，无需推断。
+    // N57 §2.5（P3 修复，随守卫删除生效）：默认 tab 出生的书签**不再记空身份**——默认
+    // 列表带恒定保留身份 kDefaultListUuid，于是这类书签不再被 removeInvalid 当数据异常
+    // 清除，回跳按身份命中默认列表、换算到 tab 0、在其队列根层定位。"归属默认列表"由此
+    // 是一个真实身份，既不在 uuid 命名空间里塞哨兵，也不另设显式编码位
     const int playingTab = m_playlist->playingTabIndex();
-    if (playingTab > 0)
-        origin = {m_playlist->listUuidOf(playingTab), m_playlist->queueRootIdsOf(playingTab)};
+    BookmarkManager::Origin origin;
+    if (const Playlist *playing = m_playlist->listOf(playingTab))
+        origin = {playing->uuid(), m_playlist->queueRootIdsOf(playingTab)};
     m_bookmarkMgr->addBookmark(rawPath, t, title, origin);
     showOsd(tr("Bookmark added: [%1] %2").arg(Util::formatTimeHMSms(t), title));
 }

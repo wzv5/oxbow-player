@@ -19,11 +19,13 @@ class TestStreamTransit : public QObject {
     void unwrapMalformedReturnsAsIs();
     void isTransitUriPrefixOnly();
     void perFileOptionsByScheme();
-    void mintEmptyInputRefused();
+    void nilIdentityNeverMatches();
     void prefixNotHandTruncated();
 };
 
-static const char *kUuid = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0";
+// 列表身份（N57 §2.4）：入参一律 QUuid，字面串只是 mint 的产物与 INI 形态
+static const QString kUuidText = QStringLiteral("0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0");
+static const QUuid kUuid = QUuid::fromString(kUuidText);
 
 void TestStreamTransit::roundtripPreservesIdentity() {
     // 身份 → URI → 身份 严格互逆
@@ -34,7 +36,7 @@ void TestStreamTransit::roundtripPreservesIdentity() {
         QStringLiteral("item-id-12345"),
     };
     for (const QString &id : identities) {
-        const QString uri = StreamTransit::mint(QLatin1String(kUuid), id);
+        const QString uri = StreamTransit::mint(kUuid, id);
         QVERIFY(!uri.isEmpty());
         QVERIFY(uri.startsWith(QLatin1String("mpvqt://")));
         QCOMPARE(StreamTransit::unwrap(uri), id);
@@ -44,7 +46,7 @@ void TestStreamTransit::roundtripPreservesIdentity() {
 void TestStreamTransit::roundtripUnicodeAndSpecials() {
     // '/' 编成 %2F（整段只占一个路径段）；中文与空格经 UTF-8 百分号编码往返无损
     const QString id = QStringLiteral("https://dav.example.com/dav/中文 目录/影片 第1集.mp4");
-    const QString uri = StreamTransit::mint(QLatin1String(kUuid), id);
+    const QString uri = StreamTransit::mint(kUuid, id);
     QVERIFY(!uri.contains(QStringLiteral("中文")));
     QCOMPARE(uri.count(u'/'), 3); // scheme 后两个 + 条目段分隔一个（段内 '/' 已编码）
     QCOMPARE(StreamTransit::unwrap(uri), id);
@@ -52,7 +54,7 @@ void TestStreamTransit::roundtripUnicodeAndSpecials() {
 
 void TestStreamTransit::unwrapIdempotent() {
     const QString id = QStringLiteral("https://dav.example.com/dav/a.mp4");
-    const QString uri = StreamTransit::mint(QLatin1String(kUuid), id);
+    const QString uri = StreamTransit::mint(kUuid, id);
     const QString once = StreamTransit::unwrap(uri);
     QCOMPARE(StreamTransit::unwrap(once), once);
 }
@@ -64,8 +66,8 @@ void TestStreamTransit::unwrapMalformedReturnsAsIs() {
         QStringLiteral("https://dav.example.com/dav/a.mp4"),
         QStringLiteral("mpvqt:"),
         QStringLiteral("mpvqt://"),
-        QStringLiteral("mpvqt://") + QLatin1String(kUuid),
-        QStringLiteral("mpvqt://") + QLatin1String(kUuid) + QStringLiteral("/"),
+        QStringLiteral("mpvqt://") + kUuidText,
+        QStringLiteral("mpvqt://") + kUuidText + QStringLiteral("/"),
         QStringLiteral("mpvqt:///"),
     };
     for (const QString &p : malformed)
@@ -81,8 +83,8 @@ void TestStreamTransit::isTransitUriPrefixOnly() {
 }
 
 void TestStreamTransit::perFileOptionsByScheme() {
-    const QString uri = StreamTransit::mint(QLatin1String(kUuid),
-                                            QStringLiteral("https://dav.example.com/dav/a.mp4"));
+    const QString uri =
+        StreamTransit::mint(kUuid, QStringLiteral("https://dav.example.com/dav/a.mp4"));
     const QVariantMap opts = StreamTransit::perFileOptions(uri);
     QCOMPARE(opts.size(), 1);
     QCOMPARE(opts.value(QStringLiteral("cache")).toString(), QStringLiteral("yes"));
@@ -91,19 +93,33 @@ void TestStreamTransit::perFileOptionsByScheme() {
     QVERIFY(StreamTransit::perFileOptions(QStringLiteral("C:/dir/a.mp4")).isEmpty());
 }
 
-void TestStreamTransit::mintEmptyInputRefused() {
-    // 空入参拒绝铸造（凭据拒绝分支由 Q_ASSERT 守候，Debug 下不构造该输入）
-    QVERIFY(StreamTransit::mint(QString(), QStringLiteral("https://x/a")).isEmpty());
-    QVERIFY(StreamTransit::mint(QLatin1String(kUuid), QString()).isEmpty());
+void TestStreamTransit::nilIdentityNeverMatches() {
+    // N57 §2.4：身份入参改 QUuid 后，"传空串即拒铸"这一档换为 **nil 身份的往返判等**
+    // ——mint / playUrl 入口的 nil 守候是 Q_ASSERT，Debug 下先中止，Release 的返空分支
+    // 不可与之共存于同一用例，故本用例根本不传 nil 去铸造。
+    // 空串与非法串一律解析为 nil（全零 = 无身份；INI 缺键即走这条路）
+    QVERIFY(QUuid::fromString(QString()).isNull());
+    QVERIFY(QUuid::fromString(QStringLiteral("nope")).isNull());
+    QVERIFY(QUuid{} != kUuid); // nil 恒不命中任何在册身份
+    // 可观察差分②：手改大小写与带花括号的存量值自本版起归一命中（旧为 toLower 串比，不认）
+    QVERIFY(QUuid::fromString(kUuidText.toUpper()) == kUuid);
+    QVERIFY(QUuid::fromString(QStringLiteral("{%1}").arg(kUuidText)) == kUuid);
+    // mint 与 listUuidOfUri 成对：URI 段取回的身份与铸造时所用同一
+    const QString uri = StreamTransit::mint(kUuid, QStringLiteral("https://x/a"));
+    QVERIFY(StreamTransit::listUuidOfUri(uri) == kUuid);
+    QVERIFY(StreamTransit::listUuidOfUri(QStringLiteral("mpvqt://nope/x")).isNull());
+    QVERIFY(StreamTransit::listUuidOfUri(QStringLiteral("https://x/a")).isNull());
+    // 条目身份为空仍拒铸（纯数据判据，前面没有断言拦路）
+    QVERIFY(StreamTransit::mint(kUuid, QString()).isEmpty());
 }
 
 void TestStreamTransit::prefixNotHandTruncated() {
     // N51 坑 1 的回归位：前缀长度吃掉 UUID 头两位时，unwrap 产出即错。
     // uuid 段本身含 '-' 与十六进制字符，一旦被截断往返必失配。
     const QString id = QStringLiteral("https://dav.example.com/dav/0123456789abcdef.mp4");
-    const QString uri = StreamTransit::mint(QLatin1String(kUuid), id);
+    const QString uri = StreamTransit::mint(kUuid, id);
     QCOMPARE(StreamTransit::unwrap(uri), id);
-    QVERIFY(uri.mid(8).startsWith(QLatin1String(kUuid))); // 偏移 8 = sizeof("mpvqt://")-1
+    QVERIFY(uri.mid(8).startsWith(kUuidText)); // 偏移 8 = sizeof("mpvqt://")-1
 }
 
 QTEST_GUILESS_MAIN(TestStreamTransit)

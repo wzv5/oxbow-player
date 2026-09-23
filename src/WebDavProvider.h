@@ -59,6 +59,8 @@ class WebDavProvider : public PlaylistProvider {
     bool supportsModify() const override;
     // 显式 true：内容以枚举为准不可增删，但可排序并持久化规则（与目录表同形）
     bool supportsSort() const override;
+    // N57 §2.9：默认规则由提供者自述（取代视图按能力位推导的启发式）——按修改时间升序
+    SortRule defaultSortRule() const override { return {SortKey::Modified, true}; }
     // N52：直链与转接都合法（首个 Optional 来源）；端点在 createStreamEndpoint 现造
     TransitCapability transitCapability() const override;
     std::shared_ptr<StreamEndpoint> createStreamEndpoint() const override;

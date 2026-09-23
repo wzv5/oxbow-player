@@ -8,32 +8,36 @@
 #include "MediaInfoHelper.h"
 #include "MpvController.h"
 #include "PlaylistDelegate.h"
-#include "ProviderCatalog.h"
+#include "PlaylistListView.h" // N57 §2.2：视图即状态载体，本页所有列表页由 createView 出生
+#include "PlaylistRegistry.h" // N57 §2.3：默认 tab 的列表与默认名出口
 #include "ServiceRegistry.h"
 #include "StreamTransit.h"
 #include "Util.h"
 
 PlaylistWidget::PlaylistWidget(const QString &configFile, std::shared_ptr<ServiceRegistry> registry,
-                               QWidget *parent)
-    : QTabWidget(parent), m_configFile(configFile), m_registry(std::move(registry)) {
+                               std::shared_ptr<PlaylistRegistry> lists, QWidget *parent)
+    : QTabWidget(parent), m_configFile(configFile), m_registry(std::move(registry)),
+      m_lists(std::move(lists)) {
     // N56 §2.7：registry 由装配顶点（MainWindow）创建并注入，本类不再自造；
     // HttpClient / TraversalPolicy 的注册与设置变更更新同样上移装配顶点，本类
     // 只经注入的 registry 取用（提供者构造注入、实体求值现查），不做任何 provide。
     // relay 的 provide<StreamRelayIf> 同样上移（MainWindow 在构造本对象之前完成），
     // 硬顺序②"早于任何提供者出生"由装配顶点保证
-    Q_ASSERT(m_registry);
-    // N35：装配仍须前置——createList 出生即配 StaticProvider 并注入 registry
+    Q_ASSERT(m_registry && m_lists);
+    // N35：装配仍须前置——造实体经注入的 registry，提供者由装配顶点交入注册表
     setAcceptDrops(true);
     setDocumentMode(true);
     setMinimumWidth(220);
-    auto *defTab = createList();
-    addTab(defTab, tr("Default"));
+    // N57 §2.3：tab 0 由注册表的默认列表建视图挂 tab，名取注册表自持的默认名出口
+    // （本类不再自造提供者，也不再有作 tab 名的 tr("Default")）
+    auto *defTab = createView(m_lists->defaultList());
+    addTab(defTab, defaultListDisplayName());
     // N30：默认 tab 内容不经枚举取得，由两条直写路径维护（setDefaultTabFiles / 回刷收编），
     // 恒视为已就位——否则切回默认 tab 会发起枚举，而其 StaticProvider 只在刷新回推时才
     // setItems，枚举必返回空表，把直写内容清空。刷新按 refreshCurrentTab 显式发起枚举，
     // 不受此拦截（N28 的"默认 tab 不参与枚举"口径随本篇改写）。
     // N45：直写即层入缓存（层在缓存即"已加载"，§2.5）
-    ensureLevel(defTab, {});
+    defTab->ensureLevel({}); // 直写路径的层入缓存（根层）
     connect(this, &QTabWidget::currentChanged, this, &PlaylistWidget::onTabChanged);
     // ——N49 底部工具条：面板级常驻，全 tab 共享一行，不随 tab 切换重建——
     // 创建顺序：各列表之后、遮罩之前——工具条自然压在页面栈之上，遮罩仍最后创建并置顶
@@ -121,36 +125,33 @@ PlaylistWidget::~PlaylistWidget() {
 
 // ——N35 服务注册表装配——
 
-QListWidget *PlaylistWidget::createList() {
-    auto *list = new QListWidget;
+// N57 §2.2：全仓唯一的列表页诞生点。所属列表在构造期一次注入（不再有"无提供者的
+// 中间态"，也不再预置默认提供者——提供者由调用方交进注册表）
+PlaylistListView *PlaylistWidget::createView(Playlist *list) {
+    auto *view = new PlaylistListView(list);
     // 子列表不接受拖放，事件会上溯到本 QTabWidget 统一处理
-    list->setAcceptDrops(false);
+    view->setAcceptDrops(false);
     // N5：列表集中创建点统一安装过滤器（ShortcutOverride 认领导航键）
-    list->installEventFilter(this);
+    view->installEventFilter(this);
     // 播放列表不允许多选（显式声明，锁定约束）
-    list->setSelectionMode(QAbstractItemView::SingleSelection);
-    // N26：委托绘制（时长经实体 key 查时长仓，兜底实体缓存元数据）
-    list->setItemDelegate(new PlaylistDelegate(&m_duration, list));
-    // 序号位数随总数自适应（绘制时实时计算）；增删行后强制整表重绘，
-    // 避免未受影响行保留旧的位数宽度造成混排
-    {
-        auto *model = list->model();
-        auto touch = [list]() { list->viewport()->update(); };
-        connect(model, &QAbstractItemModel::rowsInserted, list, touch);
-        connect(model, &QAbstractItemModel::rowsRemoved, list, touch);
-        connect(model, &QAbstractItemModel::modelReset, list, touch);
-    }
-    connect(list, &QListWidget::itemDoubleClicked, this, &PlaylistWidget::onItemDoubleClicked);
-    // N9：每个 tab 出生即配静态提供者（默认 tab 同样，仅持久化侧跳过）；
-    // N35：registry 随构造注入（基类持有）；m_registry 于初始化列表创建，恒非空
-    // N44：默认 tab 的提供者出生点——经登记表第 0 项（默认提供者），
-    // 视图层不再认识具体提供者类型
-    m_providerOf.emplace(list, createDefaultProvider(m_registry));
-    return list;
+    view->setSelectionMode(QAbstractItemView::SingleSelection);
+    // N26：委托绘制（时长经实体 key 查时长仓，兜底实体缓存元数据）。仓与委托共享，
+    // 不指向面板成员——页面晚于成员销毁
+    view->setItemDelegate(new PlaylistDelegate(m_duration, view));
+    // 序号位数自适应的"行变更 → 整表重绘"接线归视图自身（N57 §2.2：它是渲染关注点，
+    // 且连接句柄须在视图析构开头断开）
+    connect(view, &QListWidget::itemDoubleClicked, this, &PlaylistWidget::onItemDoubleClicked);
+    return view;
 }
 
-QListWidget *PlaylistWidget::listAt(int index) const {
-    return qobject_cast<QListWidget *>(widget(index));
+PlaylistListView *PlaylistWidget::viewAt(int index) const {
+    return qobject_cast<PlaylistListView *>(widget(index));
+}
+
+// 不变式（§2.2）：视图非空时其列表非空、身份非 nil、提供者非空
+Playlist *PlaylistWidget::listOfView(const PlaylistListView *view) const {
+    const auto *listView = qobject_cast<const PlaylistListView *>(view);
+    return listView ? listView->list() : nullptr;
 }
 
 // N5：列表持焦时认领全部导航键，抑制全局音量动作（↑/↓）；
@@ -185,81 +186,28 @@ bool PlaylistWidget::eventFilter(QObject *watched, QEvent *event) {
     return QTabWidget::eventFilter(watched, event);
 }
 
-// ——N26 实体所有权——
-
-// 缺省插入空层（当前显示层）；调用点均伴随建行 / 回传。
-// N45：实体仓归属层缓存，插入即宣告该层"已加载"——只准建行 / 回传 / 直写路径调用
-PlaylistEntity::List &PlaylistWidget::entitiesOf(QListWidget *list) {
-    return levelOf(list).entities;
-}
-
-// ——N45 §2.5 层缓存定位——
-
-// 浏览路径 → id 序列（enumerate 的 parent 形态；标题列不进键，§2.5）
-QStringList PlaylistWidget::browsePathIdsOf(const QListWidget *list) const {
-    QStringList ids;
-    if (const auto it = m_browsePath.constFind(list); it != m_browsePath.end())
-        for (const PathSeg &seg : it.value())
-            ids << seg.id;
-    return ids;
-}
-
-// 队列根（id 序列，§2.1）。随双击入队 / 收编 / 会话恢复经 markPlayingTab 重锚；
-// 回刷比对、切曲归位、recordPlayback 以它为硬依赖——队列根层被逐出必与播放目标
-// 归位同步（祖先层刷新整枝时一并作废锚点并归位，N53 §2.2），故这些读取恒有层可读
-QStringList PlaylistWidget::queueRootIdsOf(const QListWidget *list) const {
-    QStringList ids;
-    if (const auto it = m_queueRoot.constFind(list); it != m_queueRoot.end())
-        for (const PathSeg &seg : it.value())
-            ids << seg.id;
-    return ids;
-}
-
-QStringList PlaylistWidget::displayedIdsOf(const QListWidget *list) const {
-    return m_displayedIds.value(list);
-}
-
-const PlaylistWidget::Level *PlaylistWidget::findLevel(const QListWidget *list,
-                                                       const QStringList &ids) const {
-    const auto it = m_levels.constFind(list);
-    if (it == m_levels.end())
-        return nullptr;
-    const auto lit = it->constFind(ids);
-    return lit == it->end() ? nullptr : &lit.value();
-}
-
-PlaylistWidget::Level &PlaylistWidget::ensureLevel(QListWidget *list, const QStringList &ids) {
-    return m_levels[list][ids];
-}
-
-PlaylistWidget::Level &PlaylistWidget::levelOf(QListWidget *list) {
-    return ensureLevel(list, browsePathIdsOf(list));
-}
-
-bool PlaylistWidget::layerLoaded(const QListWidget *list, const QStringList &ids) const {
-    const Level *lvl = findLevel(list, ids);
-    return lvl && lvl->loadError.isEmpty();
-}
-
-QString PlaylistWidget::levelErrorOf(const QListWidget *list, const QStringList &ids) const {
-    const Level *lvl = findLevel(list, ids);
-    return lvl ? lvl->loadError : QString();
-}
+// N57 §2.8：层缓存与路径 / 显示层 / 记忆的定位访问器（browsePathIdsOf /
+// queueRootIdsOf(list) / displayedIdsOf / findLevel / ensureLevel / levelOf /
+// layerLoaded / levelErrorOf / entitiesOf）已随状态搬进 PlaylistListView——
+// 取用形态 `list->findLevel(ids)` 等，外层键不复存在
 
 // filesOf 双出口的实体版（共用体）：层的实体序列（实体序）。旧 filesOf 读显示行
 // （跳占位行），实体序与显示行在无特殊行时一致；失败层既无实体也无内容行
 // （内容一律清空），读层实体与旧行读取等价。空位原样保留，调用方自判
 PlaylistEntity::List PlaylistWidget::layerEntitiesOf(int tabIndex, const QStringList &ids) const {
-    const Level *lvl = findLevel(listAt(tabIndex), ids);
+    const PlaylistListView *view = viewAt(tabIndex);
+    const Level *lvl = view ? view->findLevel(ids) : nullptr;
     return lvl ? lvl->entities : PlaylistEntity::List{};
 }
 
 PlaylistEntity::List PlaylistWidget::queueEntitiesOf(int tabIndex) const {
-    return layerEntitiesOf(tabIndex, queueRootIdsOf(listAt(tabIndex)));
+    const PlaylistListView *view = viewAt(tabIndex);
+    return view ? layerEntitiesOf(tabIndex, view->queueRootIds()) : PlaylistEntity::List{};
 }
 
 PlaylistEntity::List PlaylistWidget::currentLayerEntitiesOf(int tabIndex) const {
-    return layerEntitiesOf(tabIndex, browsePathIdsOf(listAt(tabIndex)));
+    const PlaylistListView *view = viewAt(tabIndex);
+    return view ? layerEntitiesOf(tabIndex, view->browsePathIds()) : PlaylistEntity::List{};
 }
 
 // N56 §2.7：正播实体——队列根层第 entityIndex 项（mpv playlist-pos 语义）。
@@ -267,7 +215,8 @@ PlaylistEntity::List PlaylistWidget::currentLayerEntitiesOf(int tabIndex) const 
 PlaylistEntity::Ptr PlaylistWidget::playingEntityOf(int tabIndex, int entityIndex) const {
     if (tabIndex < 0 || entityIndex < 0)
         return nullptr;
-    const Level *lvl = findLevel(listAt(tabIndex), queueRootIdsOf(listAt(tabIndex)));
+    const PlaylistListView *view = viewAt(tabIndex);
+    const Level *lvl = view ? view->findLevel(view->queueRootIds()) : nullptr;
     if (!lvl || entityIndex >= int(lvl->entities.size()))
         return nullptr;
     return lvl->entities.at(entityIndex);
@@ -277,47 +226,50 @@ PlaylistEntity::Ptr PlaylistWidget::playingEntityOf(int tabIndex, int entityInde
 // 方法——usesTransit() 为假走 directPlayUrl（直发形态），为真铸 mpvqt:// 转接 URI；
 // 本出口由此成为全仓唯一能取得"直接形态"的生产调用点（directPlayUrl 已 protected）。
 // 凭据只在此处与 PROPFIND 请求两个使用点注入；本出口只服务下发 mpv 的 loadfile
-// 循环，在途快照 / 收编索引与它同源同形（N56 §2.5）。providerAt 为空（无提供者的
-// 异常态）按恒等兜底——与基类默认恒等一致
+// 循环，在途快照 / 收编索引与它同源同形（N56 §2.5）。
+// N57 §2.2：整表映射归列表对象（逐实体传它自身身份），本出口只是薄适配——
+// 提供者恒非空后不再有"无提供者按恒等兜底"那一支，越界（无表可寻）按下发空串集
 QStringList PlaylistWidget::playUrls(int tabIndex, const PlaylistEntity::List &entities) const {
-    const PlaylistProvider *p = providerAt(tabIndex);
-    QStringList out;
-    out.reserve(int(entities.size()));
-    for (const auto &entity : entities)
-        out.append(p && entity ? p->playUrl(entity->path())
-                               : (entity ? entity->path() : QString()));
-    return out;
+    const Playlist *list = listOfView(viewAt(tabIndex));
+    return list ? list->playUrls(entities) : QStringList{};
 }
 
 // ——N54 列表身份只读出口（书签按身份回跳的查询面）——
+// N57 §2.6：原 listUuidOf 删除——身份经 listOf(tab)->uuid() 直查；本出口只读，
+// 不得经它直写（改名换源走 openListSettings 等显式方法）
 
-QString PlaylistWidget::listUuidOf(int tabIndex) const {
-    const PlaylistProvider *p = providerAt(tabIndex);
-    return p ? p->listUuid() : QString();
-}
+const Playlist *PlaylistWidget::listOf(int tabIndex) const { return listOfView(viewAt(tabIndex)); }
 
 QStringList PlaylistWidget::queueRootIdsOf(int tabIndex) const {
-    return queueRootIdsOf(listAt(tabIndex));
+    const PlaylistListView *view = viewAt(tabIndex);
+    return view ? view->queueRootIds() : QStringList{};
 }
 
-// 按列表身份找 tab。比对两侧统一 toLower——QUuid 的 WithoutBraces 形态本已小写，
-// 但落盘/读取经 INI 与用户手改都可能换大小写，与 StreamRelay 端点表同一口径，
-// 不再自造第二套规则。默认 tab 恒跳过：它的身份不落盘（N52 §2.7），重启后必是
-// 另一个值，认它等于认错——无身份书签因此一律落默认 tab 兜底目标（N54 §2.2 第 1 步）
-int PlaylistWidget::tabIndexOfListUuid(const QString &uuid) const {
-    const QString want = uuid.toLower();
-    if (want.isEmpty())
+// 按列表身份找 tab：判等全在代码侧（QUuid 比较，N57 §2.4 删去两侧 toLower 归一，
+// 手改大小写与带花括号自本版起归一命中）。不跳过 tab 0——默认列表带恒定保留
+// 身份（§2.5），命中即 0；nil 入参恒不命中
+int PlaylistWidget::tabIndexOfList(const QUuid &uuid) const {
+    if (uuid.isNull())
         return -1;
-    for (int i = 1; i < count(); ++i)
-        if (listUuidOf(i).toLower() == want)
+    for (int i = 0; i < count(); ++i)
+        if (const Playlist *list = listOfView(viewAt(i)); list && list->uuid() == uuid)
             return i;
     return -1;
 }
 
-QString PlaylistWidget::listNameOfUuid(const QString &uuid) const {
-    const int tab = tabIndexOfListUuid(uuid);
-    return tab >= 0 ? tabText(tab) : QString();
+// N57 §2.8：播放目标改持身份，坐标现算（个位数条目的一次扫描）。它恒可解析——初值与
+// 各归位点都取 kDefaultListUuid，而默认列表恒定且不可摘除（§2.5 的咬合关系在此）
+int PlaylistWidget::playingTabIndex() const { return tabIndexOfList(m_playingUuid); }
+
+// 层级定位的目标换算：身份 → 页面。换算不出坐标即空指针，是 ListGone 的唯一判据；
+// 坐标只在需要动作的那一刻现取，不进待办状态（§1.5）
+PlaylistListView *PlaylistWidget::jumpTarget(const LevelJump &req) const {
+    return viewAt(tabIndexOfList(req.listUuid));
 }
+
+// N57 §2.6：原 listNameOfUuid 退场——名字属列表，按身份直查注册表
+// （`PlaylistRegistry::nameOf`，前提"空名列表不存在"由 readTabGroup 跳无名节与
+// `append` 侧的重名校验共同保证）
 
 // ——N45 §2.4 双坐标系换算与三类行谓词——
 
@@ -335,7 +287,7 @@ bool PlaylistWidget::isEntityRow(const QListWidgetItem *item) {
 }
 
 // 实体序 → 行序：扫描行，数到第 entityIndex 个实体行即其行号
-int PlaylistWidget::entityIndexToRow(const QListWidget *list, int entityIndex) const {
+int PlaylistWidget::entityIndexToRow(const PlaylistListView *list, int entityIndex) const {
     if (!list || entityIndex < 0)
         return -1;
     int idx = 0;
@@ -350,7 +302,7 @@ int PlaylistWidget::entityIndexToRow(const QListWidget *list, int entityIndex) c
 }
 
 // 行序 → 实体序：非实体行（占位 / 容器 / 上一级）返回 -1
-int PlaylistWidget::rowToEntityIndex(const QListWidget *list, int row) const {
+int PlaylistWidget::rowToEntityIndex(const PlaylistListView *list, int row) const {
     if (!list || row < 0 || row >= list->count() || !isEntityRow(list->item(row)))
         return -1;
     int idx = 0;
@@ -363,7 +315,7 @@ int PlaylistWidget::rowToEntityIndex(const QListWidget *list, int row) const {
 // ——N45 §2.4/§2.5 导航与换入——
 
 // 实体行构造（视图侧孪生，不入仓）：所有权已在 Level 的实体经此建行
-QListWidgetItem *PlaylistWidget::makeEntityRow(QListWidget *list,
+QListWidgetItem *PlaylistWidget::makeEntityRow(PlaylistListView *list,
                                                const PlaylistEntity::Ptr &entity) {
     auto *item = new QListWidgetItem(list);
     setItemEntity(item, entity);
@@ -379,10 +331,10 @@ static QString relativePathText(QStringList titles) { return titles.join(QLatin1
 // 上一级行（视图合成，§2.4.1）：文案固定为 ".."（维护者裁决：文件系统惯例符号，
 // 不经 tr）、双击语义为导航、tooltip = 父层相对路径；容器行：ContainerRole 存 id、
 // tooltip = 目标层相对路径
-void PlaylistWidget::buildSpecialRows(QListWidget *list, const QStringList &ids,
+void PlaylistWidget::buildSpecialRows(PlaylistListView *list, const QStringList &ids,
                                       const QList<PlaylistProvider::Container> &containers) {
-    const QList<PathSeg> path = m_browsePath.value(list);
-    Q_ASSERT(ids == browsePathIdsOf(list)); // 特殊行的标题列取自浏览路径，二者必须同源
+    const QList<PathSeg> path = list->browsePath();
+    Q_ASSERT(ids == list->browsePathIds()); // 特殊行的标题列取自浏览路径，二者必须同源
     QStringList titlesSoFar;
     for (const PathSeg &seg : path)
         titlesSoFar << seg.title;
@@ -414,24 +366,18 @@ void PlaylistWidget::buildSpecialRows(QListWidget *list, const QStringList &ids,
 
 // 整层行重建（视图侧）：行只引用 Level 持有的实体，所有权不动。
 // 播放标记不在此点亮——由调用方按 tab 角色走 restorePlayingState / 记忆选中
-void PlaylistWidget::rebuildRowsForLevel(QListWidget *list, const Level &lvl,
+void PlaylistWidget::rebuildRowsForLevel(PlaylistListView *list, const Level &lvl,
                                          const QStringList &ids) {
     clearPlaceholder(list);
     list->clear();
     buildSpecialRows(list, ids, lvl.containers);
     for (const auto &entity : lvl.entities)
         makeEntityRow(list, entity);
-    m_displayedIds[list] = ids;
+    list->setDisplayedIds(ids);
 }
 
-void PlaylistWidget::saveLayerSelection(QListWidget *list, const QStringList &ids) {
-    Level *lvl = [this, list, &ids]() -> Level * {
-        auto it = m_levels.find(list);
-        if (it == m_levels.end())
-            return nullptr;
-        auto lit = it->find(ids);
-        return lit == it->end() ? nullptr : &lit.value();
-    }();
+void PlaylistWidget::saveLayerSelection(PlaylistListView *list, const QStringList &ids) {
+    Level *lvl = list->findLevel(ids); // 可写重载：只改本层簿记字段，不插新层
     if (!lvl)
         return;
     const int row = list->currentRow();
@@ -443,7 +389,7 @@ void PlaylistWidget::saveLayerSelection(QListWidget *list, const QStringList &id
         lvl->lastSelectedKey = entity->key();
 }
 
-void PlaylistWidget::restoreLayerSelection(QListWidget *list, const Level &lvl) {
+void PlaylistWidget::restoreLayerSelection(PlaylistListView *list, const Level &lvl) {
     if (lvl.lastSelectedKey.isEmpty())
         return;
     for (int r = 0; r < list->count(); ++r) {
@@ -464,16 +410,16 @@ void PlaylistWidget::restoreLayerSelection(QListWidget *list, const Level &lvl) 
 // 切层统一入口（§2.5）：显示层 != 浏览层时按层换入。命中缓存同步重建
 // （不起任务、无遮罩）；失败层只剩骨架与占位行（切入不自动重试，N53 变更
 // 记录 V1）；未加载层异步枚举
-void PlaylistWidget::showLayer(QListWidget *list) {
+void PlaylistWidget::showLayer(PlaylistListView *list) {
     if (!list)
         return;
-    const QStringList ids = browsePathIdsOf(list);
-    if (displayedIdsOf(list) == ids)
+    const QStringList ids = list->browsePathIds();
+    if (list->displayedIds() == ids)
         return; // 行已对齐，无需换入
-    const Level *lvl = findLevel(list, ids);
+    const Level *lvl = list->findLevel(ids);
     if (lvl && lvl->loadError.isEmpty()) {
         rebuildRowsForLevel(list, *lvl, ids);
-        if (indexOf(list) == m_playingTab && ids == queueRootIdsOf(list))
+        if (indexOf(list) == playingTabIndex() && ids == list->queueRootIds())
             restorePlayingState(list, indexOf(list)); // 队列根层：标记与选中由归位权威出口重建
         else
             restoreLayerSelection(list, *lvl);
@@ -488,36 +434,36 @@ void PlaylistWidget::showLayer(QListWidget *list) {
     }
 }
 
-void PlaylistWidget::navigateDown(QListWidget *list, QListWidgetItem *containerRow) {
+void PlaylistWidget::navigateDown(PlaylistListView *list, QListWidgetItem *containerRow) {
     if (!list || !containerRow || m_busy)
         return;
-    saveLayerSelection(list, browsePathIdsOf(list));
+    saveLayerSelection(list, list->browsePathIds());
     PathSeg seg;
     seg.id = containerRow->data(ContainerRole).toString();
     seg.title = containerRow->data(Qt::DisplayRole).toString();
-    m_browsePath[list].append(seg);
+    QList<PathSeg> down = list->browsePath();
+    down.append(seg);
+    list->setBrowsePath(down);
     showLayer(list);
     reactivateIfStale(list);
 }
 
-void PlaylistWidget::navigateUp(QListWidget *list) {
+void PlaylistWidget::navigateUp(PlaylistListView *list) {
     if (!list || m_busy)
         return;
-    const QStringList ids = browsePathIdsOf(list); // 离开层（删失败层条目与存选中共用）
+    const QStringList ids = list->browsePathIds(); // 离开层（删失败层条目与存选中共用）
     saveLayerSelection(list, ids);
-    if (!m_browsePath[list].isEmpty()) {
+    QList<PathSeg> up = list->browsePath();
+    if (!up.isEmpty()) {
         // 失败层不长期驻留缓存，回到上一级即删（N53 §2.4）——清空后条目只剩一句
         // loadError，钻取重进即走异步重举（服务端已恢复时不必再等手动刷新）。删除点
         // 只此一处且不得铺开：切入失败层按缓存渲染零请求（变更记录 V1），删层若挂
         // 在切 tab 等高频路径上才构成反复打服务端。失败当场不删：条目须在缓存承载
         // loadError（占位行文案来源 + 手动刷新的 ensureLevel 清文案落点）。不连带删
         // 子孙——刷新发起时已按前缀整枝逐出，能留在缓存里的只可能是它自己
-        if (auto it = m_levels.find(list); it != m_levels.end()) {
-            const auto lit = it->constFind(ids);
-            if (lit != it->constEnd() && !lit->loadError.isEmpty())
-                it->erase(lit);
-        }
-        m_browsePath[list].removeLast();
+        list->eraseFailedLevel(ids);
+        up.removeLast();
+        list->setBrowsePath(up);
     }
     showLayer(list);
     reactivateIfStale(list);
@@ -529,7 +475,7 @@ void PlaylistWidget::navigateUp(QListWidget *list) {
 // 初始序，若不在显示时补排，缓存命中会永久呈现旧序（违反 §2.6"每一层施加同一
 // 条规则"）。播放中 tab 的队列根层经 reactivateRescan 的 syncAfterRefresh 三分
 // 支自愈（重排后与 mpv 序不一致即四步式重推）
-void PlaylistWidget::reactivateIfStale(QListWidget *list) {
+void PlaylistWidget::reactivateIfStale(PlaylistListView *list) {
     if (m_busy)
         return;
     const int tab = indexOf(list);
@@ -543,14 +489,14 @@ void PlaylistWidget::reactivateIfStale(QListWidget *list) {
 // N45 §2.9 归位：浏览路径置为队列根层并滚动到正播项（restorePlayingState 的层级版）。
 // 播放中读队列根层时它恒在缓存（逐出必与归位同步，N53 §2.2），归位是同步的；
 // 层未在缓存（会话恢复早期）则仅归位状态，其载入完成即换入（onLoadFinished 的收尾补换入）
-void PlaylistWidget::revealQueueRoot(QListWidget *list) {
+void PlaylistWidget::revealQueueRoot(PlaylistListView *list) {
     if (!list)
         return;
-    m_browsePath[list] = m_queueRoot.value(list);
-    const QStringList ids = queueRootIdsOf(list);
-    if (displayedIdsOf(list) == ids)
+    list->setBrowsePath(list->queueRoot());
+    const QStringList ids = list->queueRootIds();
+    if (list->displayedIds() == ids)
         return;
-    const Level *lvl = findLevel(list, ids);
+    const Level *lvl = list->findLevel(ids);
     if (lvl && lvl->loadError.isEmpty()) {
         rebuildRowsForLevel(list, *lvl, ids);
         restorePlayingState(list, indexOf(list)); // 标记 + 选中 + 滚动一次完成
@@ -577,7 +523,7 @@ void PlaylistWidget::revealPlayingItem() {
         m_pendingReveal = true; // last-wins：归位幂等，多次触发一次执行
         return;
     }
-    QListWidget *list = listAt(m_playingTab);
+    PlaylistListView *list = viewAt(playingTabIndex());
     if (!list)
         return;
     revealQueueRoot(list);
@@ -595,10 +541,10 @@ const PlaylistEntity *PlaylistWidget::entityFromItem(const QListWidgetItem *item
 
 // 行实体的共享计数副本：跨嵌套事件循环（右键菜单 exec）持有，防收编重建致悬空。
 // 实体序 == 实体行序定位容器下标，并与行 EntityRole 交叉校验（不变式被破坏即拒绝）
-PlaylistEntity::Ptr PlaylistWidget::entityPtrAt(QListWidget *list, int row) const {
+PlaylistEntity::Ptr PlaylistWidget::entityPtrAt(PlaylistListView *list, int row) const {
     if (!list || row < 0 || row >= list->count())
         return nullptr;
-    const Level *lvl = findLevel(list, browsePathIdsOf(list));
+    const Level *lvl = list->findLevel(list->browsePathIds());
     if (!lvl)
         return nullptr;
     int idx = 0;
@@ -618,11 +564,11 @@ PlaylistEntity::Ptr PlaylistWidget::entityPtrAt(QListWidget *list, int row) cons
 // N47：行容器的按值副本——容器行按"容器序 == 容器行序"定位容器下标（占位 /
 // 上一级行不占位，与 entityPtrAt 同形），并与行 ContainerRole 交叉校验
 // （不变式被破坏即拒绝）；按值返回，跨菜单嵌套事件循环持有安全
-std::optional<PlaylistProvider::Container> PlaylistWidget::containerAt(QListWidget *list,
+std::optional<PlaylistProvider::Container> PlaylistWidget::containerAt(PlaylistListView *list,
                                                                        int row) const {
     if (!list || row < 0 || row >= list->count())
         return std::nullopt;
-    const Level *lvl = findLevel(list, browsePathIdsOf(list));
+    const Level *lvl = list->findLevel(list->browsePathIds());
     if (!lvl)
         return std::nullopt;
     int idx = 0;
@@ -642,14 +588,13 @@ std::optional<PlaylistProvider::Container> PlaylistWidget::containerAt(QListWidg
 // 按行序批量删除实体（rows 必须降序；须在删行前调用）。
 // 单遍自顶向下计实体行数定位各行容器下标（实体序 == 实体行序，占位 / 容器 /
 // 上一级行不占位——N45 §2.4.3），随后按容器下标降序批量 erase
-void PlaylistWidget::eraseEntitiesAt(QListWidget *list, const QList<int> &rows) {
-    auto lit = m_levels.find(list);
-    if (lit == m_levels.end() || rows.isEmpty())
+void PlaylistWidget::eraseEntitiesAt(PlaylistListView *list, const QList<int> &rows) {
+    if (rows.isEmpty())
         return;
-    auto it = lit->find(browsePathIdsOf(list));
-    if (it == lit->end())
+    Level *lvl = list->findLevel(list->browsePathIds()); // 只取不插（删实体不造层）
+    if (!lvl)
         return;
-    auto &entities = it.value().entities;
+    auto &entities = lvl->entities;
     QList<int> ascRows = rows;
     std::sort(ascRows.begin(), ascRows.end()); // 升序扫描，容器下标随之升序
     QList<int> idxs;
@@ -681,13 +626,13 @@ void PlaylistWidget::setItemEntity(QListWidgetItem *item, const PlaylistEntity::
 
 // 统一的条目构造：显示名 / 图标 / tooltip 全部取自实体；
 // EntityRole 存实体裸指针（quintptr），实体所有权随行同步 push 进容器
-QListWidgetItem *PlaylistWidget::makeItem(QListWidget *list, PlaylistEntity::Ptr entity) {
+QListWidgetItem *PlaylistWidget::makeItem(PlaylistListView *list, PlaylistEntity::Ptr entity) {
     QListWidgetItem *item = makeEntityRow(list, entity);
-    entitiesOf(list).push_back(std::move(entity)); // 所有权随行同步入仓（统一经 entitiesOf）
+    list->entities().push_back(std::move(entity)); // 所有权随行同步入仓（统一经 entitiesOf）
     return item;
 }
 
-int PlaylistWidget::playingRowOf(const QListWidget *list) const {
+int PlaylistWidget::playingRowOf(const PlaylistListView *list) const {
     if (!list)
         return -1;
     for (int i = 0; i < list->count(); ++i) {
@@ -738,37 +683,39 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
     if (pushed.isEmpty())
         return;
 
-    QListWidget *list = listAt(m_playingTab);
+    PlaylistListView *list = viewAt(playingTabIndex());
     if (!list)
         return;
 
     // 3. 占位/枚举失败态：N45 §2.9——比对基准 = 队列根层的实体序列（播放中读它时
     // 层恒在缓存：逐出必与归位同步，N53 §2.2）；显示层的占位行与之无关；
     // 队列根层枚举失败（loadError 非空）维持"忽略"现状
-    if (!levelErrorOf(list, queueRootIdsOf(list)).isEmpty())
+    if (!list->levelErrorOf(list->queueRootIds()).isEmpty())
         return;
 
     // 4. 逐行一致即静默：只翻转播放标记，正播行变化才迁移选中+滚动（无重建、无闪烁）。
     // 比对与标记都作用于队列根层；显示层非队列根层时不触碰任何行（标记随层状态，
     // 下次渲染队列根层时由归位权威出口按 mpv 现状重建）。
-    // R：实体侧现算形态 = providerAt(m_playingTab)->playUrl(entity->path())，
-    // 与 playUrls 的下发路径同源；提供者缺失的异常态按恒等兜底（与 playUrls 一致）
-    const Level *ql = findLevel(list, queueRootIdsOf(list));
-    const PlaylistProvider *pp = providerAt(m_playingTab);
+    // R：实体侧现算形态 = 正播列表以自身身份问提供者，与 playUrls 的下发路径同源；
+    // 无表的异常态按恒等兜底（与 playUrls 一致）
+    const Level *ql = list->findLevel(list->queueRootIds());
+    const Playlist *playingList = listOfView(viewAt(playingTabIndex()));
     const bool sameAsQueueRoot =
-        ql && int(ql->entities.size()) == pushed.size() && [ql, pp, &pushed]() {
+        ql && int(ql->entities.size()) == pushed.size() && [ql, playingList, &pushed]() {
             for (int i = 0; i < int(ql->entities.size()); ++i) {
                 if (!ql->entities.at(i))
                     return false;
                 const QString form =
-                    pp ? pp->playUrl(ql->entities.at(i)->path()) : ql->entities.at(i)->path();
+                    playingList ? playingList->provider()->playUrl(playingList->uuid(),
+                                                                   ql->entities.at(i)->path())
+                                : ql->entities.at(i)->path();
                 if (form != pushed.at(i))
                     return false;
             }
             return true;
         }();
     if (sameAsQueueRoot) {
-        if (displayedIdsOf(list) == queueRootIdsOf(list)) {
+        if (list->displayedIds() == list->queueRootIds()) {
             const int oldPlaying = playingRowOf(list);
             int newPlaying = -1;
             int entityIdx = 0; // current 按队列序（实体序），行按序对位到实体行
@@ -792,7 +739,7 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
     }
 
     // 5. 差异＝外部变更：整体收编到默认 tab，原 playing tab 一字不动
-    QListWidget *def = listAt(0);
+    PlaylistListView *def = viewAt(0);
     if (!def)
         return;
     // N32：默认 tab 亦会异步刷新，收编重建即作废在途批次（cancel + 递增代际 + 清槽位 +
@@ -809,11 +756,13 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
     // 现算、与 noteLocalPush 快照同一形态），命中即克隆源实体——克隆携带源实体原
     // 身份串与缓存，克隆再经第 4 步现算仍得同一形态，下一次回显必静默（自愈不变式）
     QHash<QString, PlaylistEntity::Ptr> reuse;
-    if (const Level *srcLvl = findLevel(list, queueRootIdsOf(list))) {
+    if (const Level *srcLvl = list->findLevel(list->queueRootIds())) {
         for (const auto &src : srcLvl->entities) {
             if (!src)
                 continue;
-            const QString key = pp ? pp->playUrl(src->path()) : src->path();
+            const QString key =
+                playingList ? playingList->provider()->playUrl(playingList->uuid(), src->path())
+                            : src->path();
             if (!reuse.contains(key))
                 reuse.insert(key, src);
         }
@@ -825,7 +774,7 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
     def->clear();
     // N45：收编重建＝直写默认 tab 队列根层（层在缓存即"已加载"，§2.5）：
     // 先清实体仓再随建行 push_back；条目集合已变，两类已读元数据一并失效
-    Level &defLvl = ensureLevel(def, queueRootIdsOf(def));
+    Level &defLvl = def->ensureLevel(def->queueRootIds());
     defLvl.entities.clear();
     defLvl.loadError.clear();
     defLvl.mediaMetaLoaded = false; // N29
@@ -852,12 +801,12 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
         }
     }
     // N45：收编重建即根层显示——显式落显示层记录，不依赖"默认 tab 恒平铺"不变式
-    m_displayedIds[def] = queueRootIdsOf(def);
+    def->setDisplayedIds(def->queueRootIds());
     // N31：收编内容序 == mpv 会话序，随收编复位默认 tab 排序规则为无序（保留方向，
     // 与 addFiles 同一形状）；否则存量元数据规则会让下次切入经 reactivateRescan
     // 重排并四步式重推，吃掉推送序
-    if (auto *p = providerAt(0))
-        p->setSortRule(int(SortKey::None), p->sortAscending());
+    if (auto *p = providerOfView(viewAt(0)))
+        p->setSortRule({SortKey::None, p->sortRule().ascending}); // N57 §2.9：值对象复位
     if (newCurrent) {
         def->setCurrentItem(newCurrent);
         // 跟随滚动（N4）：正播项变动时最小位移滚入可见范围
@@ -876,7 +825,7 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
 }
 
 void PlaylistWidget::addFiles(const QStringList &files) {
-    QListWidget *list = listAt(currentIndex());
+    PlaylistListView *list = viewAt(currentIndex());
     if (!list || files.isEmpty() || m_busy)
         return; // N19：忙时不接受手工增补（预读快照防污染）
 
@@ -884,11 +833,11 @@ void PlaylistWidget::addFiles(const QStringList &files) {
     // 静态 tab 增删即回无序态：复位排序规则（保留方向）
     if (!isModifiableTab(currentIndex()))
         return;
-    if (auto *p = providerAt(currentIndex()))
-        p->setSortRule(int(SortKey::None), p->sortAscending());
+    if (auto *p = providerOfView(viewAt(currentIndex())))
+        p->setSortRule({SortKey::None, p->sortRule().ascending}); // N57 §2.9：值对象复位
     // N29：条目集合变化，两类已读元数据一并失效（N45：落在当前显示层）
     {
-        Level &lvl = levelOf(list);
+        Level &lvl = list->levelOf();
         lvl.mediaMetaLoaded = false;
         lvl.fileMetaLoaded = false;
     }
@@ -933,7 +882,7 @@ void PlaylistWidget::noteLocalPush(const QStringList &snapshot) {
 // 也不发 filesAdded：立即播放由 MainWindow 经统一入口 onPlayRequested 驱动，
 // 避免误入播放中 append 分支
 PlaylistEntity::List PlaylistWidget::setDefaultTabFiles(const QStringList &files) {
-    QListWidget *list = listAt(0);
+    PlaylistListView *list = viewAt(0);
     if (!list || files.isEmpty())
         return {};
     // N30：主菜单"打开文件"与书签跳转不受 m_busy 限制，此时可能有本表的刷新批次在途。
@@ -946,9 +895,9 @@ PlaylistEntity::List PlaylistWidget::setDefaultTabFiles(const QStringList &files
     // 内容由本函数直写即已就位：不置回会让下次切入默认 tab 误触发一次枚举，
     // 用提供者里的旧 m_urls 覆盖刚打开的文件。
     // N45：直写即层入缓存（根层；层在缓存即"已加载"，§2.5）
-    Level &lvl = ensureLevel(list, queueRootIdsOf(list));
+    Level &lvl = list->ensureLevel(list->queueRootIds());
     lvl.loadError.clear();
-    m_memory.remove(list);
+    list->clearMemory(); // N11：直写作废续播记忆
     list->clear();
     lvl.entities.clear();        // 同步点：重建＝先清实体仓再随建行 push_back
     lvl.mediaMetaLoaded = false; // N29：条目集合变化，两类已读元数据一并失效
@@ -961,19 +910,19 @@ PlaylistEntity::List PlaylistWidget::setDefaultTabFiles(const QStringList &files
         makeItem(list, std::move(entity));
     }
     // N45：直写重建即根层显示（与收编同款，显式落显示层记录）
-    m_displayedIds[list] = queueRootIdsOf(list);
+    list->setDisplayedIds(list->queueRootIds());
     // N31：内容序 == 打开顺序，随直写复位排序规则为无序（保留方向）——否则存量
     // 元数据规则会在下次切入默认 tab 时经 reactivateRescan 重排，吃掉刚打开的顺序。
     // 静态源 enumerate 不读排序键，与被作废的在途枚举批次无实际竞争
-    if (auto *p = providerAt(0))
-        p->setSortRule(int(SortKey::None), p->sortAscending());
+    if (auto *p = providerOfView(viewAt(0)))
+        p->setSortRule({SortKey::None, p->sortRule().ascending}); // N57 §2.9：值对象复位
     // N56 §2.7：回传造好的实体表，调用方据此驱动统一播放入口
     return created;
 }
 
 void PlaylistWidget::repaintAllLists() {
     for (int i = 0; i < count(); ++i) {
-        if (QListWidget *l = listAt(i))
+        if (PlaylistListView *l = viewAt(i))
             l->viewport()->update();
     }
 }
@@ -984,7 +933,7 @@ void PlaylistWidget::repaintAllLists() {
 void PlaylistWidget::applyDuration(const QString &key, double seconds) {
     if (key.isEmpty())
         return;
-    m_duration[key] = seconds > 0 ? std::optional<double>(seconds) : std::nullopt;
+    (*m_duration)[key] = seconds > 0 ? std::optional<double>(seconds) : std::nullopt;
     repaintAllLists();
 }
 
@@ -993,9 +942,9 @@ void PlaylistWidget::applyDuration(const QString &key, double seconds) {
 // playlist-pos），不受"当前显示的是哪一层"影响。以下读写一律在队列根层的
 // 实体序列上进行，不再触碰显示行
 
-QString PlaylistWidget::captureMemoryPath(QListWidget *list) const {
-    const TabMemory mem = m_memory.value(list);
-    const Level *lvl = findLevel(list, queueRootIdsOf(list));
+QString PlaylistWidget::captureMemoryPath(PlaylistListView *list) const {
+    const Memory mem = list->memory();
+    const Level *lvl = list->findLevel(list->queueRootIds());
     if (!lvl || mem.lastPos < 0 || mem.lastPos >= int(lvl->entities.size()))
         return {};
     if (const PlaylistEntity *entity = lvl->entities.at(mem.lastPos).get())
@@ -1003,24 +952,25 @@ QString PlaylistWidget::captureMemoryPath(QListWidget *list) const {
     return {};
 }
 
-void PlaylistWidget::restoreMemoryPath(QListWidget *list, const QString &captured, bool hadMemory) {
+void PlaylistWidget::restoreMemoryPath(PlaylistListView *list, const QString &captured,
+                                       bool hadMemory) {
     if (!hadMemory)
         return;
-    TabMemory mem = m_memory.value(list);
-    const Level *lvl = findLevel(list, queueRootIdsOf(list));
+    Memory mem = list->memory();
+    const Level *lvl = list->findLevel(list->queueRootIds());
     const int n = lvl ? int(lvl->entities.size()) : 0;
     if (!captured.isEmpty()) {
         for (int i = 0; i < n; ++i) {
             if (const PlaylistEntity *entity = lvl->entities.at(i).get();
                 entity && entity->key() == captured) {
                 mem.lastPos = i;
-                m_memory[list] = mem;
+                list->setMemory(mem);
                 return;
             }
         }
     }
     mem.lastPos = -1; // 记忆条目已在本次变更中被删除
-    m_memory[list] = mem;
+    list->setMemory(mem);
 }
 
 // N30：回刷收编后的记忆重建（替代原先的整体作废）。内容虽被整体替换，mpv 仍在播
@@ -1028,10 +978,10 @@ void PlaylistWidget::restoreMemoryPath(QListWidget *list, const QString &capture
 // 优先用推送自带的 current 行；推送无 current 时退回 mpv 的 path 定位
 // （与 restorePlayingState 同口径，经 matches 键级判等）。两者都定位不到即 mpv
 // 未播，此时才作废记忆——与"不在播就不续播"同义，不是记忆缺失
-void PlaylistWidget::rebuildMemoryAfterAdopt(QListWidget *list, int playingRow) {
+void PlaylistWidget::rebuildMemoryAfterAdopt(PlaylistListView *list, int playingRow) {
     if (!list)
         return;
-    const Level *lvl = findLevel(list, queueRootIdsOf(list));
+    const Level *lvl = list->findLevel(list->queueRootIds());
     // N45：入参 playingRow 是行序，记忆 lastPos 是队列根层实体序，先换算
     int idx = rowToEntityIndex(list, playingRow);
     if (idx < 0 && m_mpv) {
@@ -1049,16 +999,16 @@ void PlaylistWidget::rebuildMemoryAfterAdopt(QListWidget *list, int playingRow) 
                                        ? lvl->entities.at(idx).get()
                                        : nullptr;
     if (!entity) {
-        m_memory.remove(list);
+        list->clearMemory();
         return;
     }
-    TabMemory mem;
+    Memory mem;
     mem.lastPos = idx;
     mem.lastPath = entity->key();
     // 进度即时取一次：播放中随后会被 timePosChanged 心跳覆盖，暂停态没有心跳，
     // 不取则记忆缺进度，四步式重推后回到开头（同 recordPlayback 的写法）
     mem.lastTimePos = m_mpv ? m_mpv->propertyDouble(QStringLiteral("time-pos"), -1.0) : -1.0;
-    m_memory[list] = mem;
+    list->setMemory(mem);
 }
 
 void PlaylistWidget::loadPlaylists() {
@@ -1070,57 +1020,63 @@ void PlaylistWidget::loadPlaylists() {
     const int savedCount = settings.value(QStringLiteral("count"), 0).toInt();
     settings.endGroup();
 
-    for (int i = 0; i < savedCount; ++i) {
-        const QString section = QStringLiteral("Playlist_%1").arg(i);
-        settings.beginGroup(section);
-        const QString name = settings.value(QStringLiteral("name")).toString();
-        // 仅跳过无名节（C3）：默认 tab 从不落盘（索引 0 即默认），文本比较
-        // 在 i18n 下脆弱、且会误伤被改名为“默认”的正常列表
-        if (name.isEmpty()) {
-            settings.endGroup();
-            continue;
-        }
+    for (int i = 0; i < savedCount; ++i)
+        readTabGroup(settings, i);
+}
 
-        auto *list = createList();
-        TabMemory mem;
-        mem.lastPos = settings.value(QStringLiteral("lastPos"), -1).toInt();
-        mem.lastTimePos = settings.value(QStringLiteral("lastTimePos"), -1.0).toDouble();
-        mem.lastPath = settings.value(QStringLiteral("lastPath")).toString();
-        // N26：记忆存条目 key（Util::Url::key 归一形态）。旧 INI 存原始形态，
-        // 读取侧归一桥接（新写入的 key 再归一幂等，往返无损）；空值防归一成 CWD
-        if (!mem.lastPath.isEmpty())
-            mem.lastPath = Util::Url::key(mem.lastPath);
-
-        // N9：提供者反序列化完全自治（静态回填条目、目录读参数与排序键），
-        // 内容统一经 enumerate 取得（N28：静态表同样延迟到首次激活）；
-        // N35：registry 转交（静态持久化的 http 条目重载后仍得 HttpEntity）
-        auto provider = PlaylistProvider::load(settings, m_registry);
-        // N45 §2.8：队列根恢复——重启后浏览路径直接取 queueRoot（§2.8：与续播记忆
-        // 会打架的另一份浏览位置不持久化）。两列各读一个数组键，尺寸失配降级为
-        // id 自兼标题（不维护旧键映射）
-        const QStringList qrIds = settings.value(QStringLiteral("queueRootIds")).toStringList();
-        const QStringList qrTitles =
-            settings.value(QStringLiteral("queueRootTitles")).toStringList();
-        QList<PathSeg> queueRoot;
-        queueRoot.reserve(qrIds.size());
-        for (int k = 0; k < qrIds.size(); ++k)
-            queueRoot.append({qrIds.at(k), k < qrTitles.size() ? qrTitles.at(k) : qrIds.at(k)});
+// N57 §2.7 读序：逐节读三段（名字与身份 / 提供者参数 / 记忆与队列根）→ 登记进注册表
+// （接回存量身份或撞车新铸）→ 建视图 → 装视图态 → 状态齐备**后**才挂 tab。
+// N28：addTab 一旦触发 currentChanged，onTabChanged 会拿尚未装配到位的提供者发起首载，
+// 把本该来自 INI 的内容填成空表——先备齐再挂，根除该窗口
+void PlaylistWidget::readTabGroup(QSettings &settings, int index) {
+    settings.beginGroup(QStringLiteral("Playlist_%1").arg(index));
+    const QString name = settings.value(QStringLiteral("name")).toString();
+    // 仅跳过无名节（C3）：默认 tab 从不落盘（结构上不在持久列表里），文本比较
+    // 在 i18n 下脆弱、且会误伤被改名为“默认”的正常列表
+    if (name.isEmpty()) {
         settings.endGroup();
-        // insert_or_assign：createList 已预置静态默认，此处必须覆盖
-        m_providerOf.insert_or_assign(list, std::move(provider));
-        if (!queueRoot.isEmpty()) {
-            m_queueRoot[list] = queueRoot;
-            m_browsePath[list] = queueRoot;
-        }
-        if (mem.lastPos >= 0 || !mem.lastPath.isEmpty())
-            m_memory[list] = mem;
-        // N28：所有 tab 内容一律经异步枚举填充，延迟到首次激活
-        // （N45：层不在缓存即未加载，无独立标志可置）
-        // N28：状态装配完毕再挂 tab。addTab 一旦触发 currentChanged，onTabChanged
-        // 会拿尚未装配到位的默认提供者发起首载，把本该来自 INI 的内容填成空表；
-        // 先备齐提供者 / 记忆 / 加载态再挂，根除该窗口
-        addTab(list, name);
+        return;
     }
+    // N57 §2.4：列表身份的读回在编排点——提供者不认识身份。fromString 对空串与
+    // 非法串一律返回 nil ⇒ 按缺键另铸新值（不迁移旧形态）；INI 里手改大小写或带
+    // 花括号的存量值自此归一命中（可观察差分②）
+    const QUuid storedUuid = QUuid::fromString(settings.value(QStringLiteral("uuid")).toString());
+
+    Memory mem;
+    mem.lastPos = settings.value(QStringLiteral("lastPos"), -1).toInt();
+    mem.lastTimePos = settings.value(QStringLiteral("lastTimePos"), -1.0).toDouble();
+    mem.lastPath = settings.value(QStringLiteral("lastPath")).toString();
+    // N26：记忆存条目 key（Util::Url::key 归一形态）。旧 INI 存原始形态，
+    // 读取侧归一桥接（新写入的 key 再归一幂等，往返无损）；空值防归一成 CWD
+    if (!mem.lastPath.isEmpty())
+        mem.lastPath = Util::Url::key(mem.lastPath);
+
+    // N9：提供者反序列化完全自治（静态回填条目、目录读参数与排序键），
+    // 内容统一经 enumerate 取得（N28：静态表同样延迟到首次激活）；
+    // N35：registry 转交（静态持久化的 http 条目重载后仍得 HttpEntity）
+    auto provider = PlaylistProvider::load(settings, m_registry);
+    // N45 §2.8：队列根恢复——重启后浏览路径直接取 queueRoot（§2.8：与续播记忆
+    // 会打架的另一份浏览位置不持久化）。两列各读一个数组键，尺寸失配降级为
+    // id 自兼标题（不维护旧键映射）
+    const QStringList qrIds = settings.value(QStringLiteral("queueRootIds")).toStringList();
+    const QStringList qrTitles = settings.value(QStringLiteral("queueRootTitles")).toStringList();
+    QList<PathSeg> queueRoot;
+    queueRoot.reserve(qrIds.size());
+    for (int k = 0; k < qrIds.size(); ++k)
+        queueRoot.append({qrIds.at(k), k < qrTitles.size() ? qrTitles.at(k) : qrIds.at(k)});
+    settings.endGroup();
+
+    PlaylistListView *list = createView(m_lists->append(name, std::move(provider), storedUuid));
+    if (!queueRoot.isEmpty()) {
+        // N45 §2.8：重启后浏览路径直接取队列根（另一份浏览位置不持久化）
+        list->setQueueRoot(queueRoot);
+        list->setBrowsePath(queueRoot);
+    }
+    if (mem.lastPos >= 0 || !mem.lastPath.isEmpty())
+        list->setMemory(mem);
+    // N28：所有 tab 内容一律经异步枚举填充，延迟到首次激活
+    // （N45：层不在缓存即未加载，无独立标志可置）
+    addTab(list, name);
 }
 
 void PlaylistWidget::savePlaylists() {
@@ -1128,38 +1084,39 @@ void PlaylistWidget::savePlaylists() {
         return;
 
     QSettings settings(m_configFile, QSettings::IniFormat);
-    // 清理旧的播放列表节
+    // 清理旧的播放列表节（节名的第三处知识点）
     for (const QString &g : settings.childGroups()) {
         if (g.startsWith(QStringLiteral("Playlist_")) || g == QLatin1String("Playlists"))
             settings.remove(g);
     }
 
-    int savedIdx = 0;
-    for (int i = 0; i < count(); ++i) {
-        // 仅不保存"默认"tab（索引 0）；非默认 tab 即使是播放目标也持久化内容与记忆
-        if (i == 0)
-            continue;
+    // N57 §2.7：节序权威源是注册表的有序 vector，遍历只走 persistentAt——
+    // 结构上不含默认列表，无需"跳过索引 0"那一类位置判据
+    for (int i = 0; i < m_lists->persistentCount(); ++i)
+        writeTabGroup(settings, m_lists->persistentAt(i), i);
 
-        QListWidget *list = listAt(i);
-        auto *provider = providerAt(i);
-        // N9：静态列表内容先回写提供者（内容跟提供者走），序列化统一走 saveSettings。
-        // N26：回传实体集合（StaticProvider 从实体提取身份串落最小表示）；
-        // N27：回传条件收口为能力位，走基类虚调用——不可修改的提供者（目录）走空实现，
-        // 落盘内容恒为参数与排序键。回传与落盘是同一动作的两半，不得拆开。
-        // N28：回传守卫——仅对已加载的表执行：未加载表实体集合为空，
-        // 回传会清空 StaticProvider::m_urls 造成永久丢数据，跳过即保住提供者自持内容。
-        // 先判状态再取实体容器，避免 entitiesOf 给未加载层插入幽灵已加载层。
-        // 在途加载的目标层在加载成功前不在缓存（或失败层带 loadError），故 setItems
-        // 与工作线程的 enumerate() 不可能并发——日后改动加载置位时序须同步复核本条。
-        // N45：已加载 = 层在缓存且 loadError 为空（§2.5）
-        if (provider && provider->supportsModify() && layerLoaded(list, browsePathIdsOf(list)))
-            provider->setItems(entitiesOf(list));
-        const QString section = QStringLiteral("Playlist_%1").arg(savedIdx);
-        settings.beginGroup(section);
-        settings.setValue(QStringLiteral("name"), tabText(i));
-        if (provider)
-            provider->saveSettings(settings); // 静态：类型+条目；目录：类型+参数
-        const TabMemory mem = m_memory.value(list);
+    settings.beginGroup(QStringLiteral("Playlists"));
+    settings.setValue(QStringLiteral("count"), m_lists->persistentCount());
+    settings.endGroup();
+}
+
+// N57 §2.7 写序：静态条目的回传 → 名字与身份（`Playlist::save`）→ 提供者
+// （类型键、转接偏好、自身参数、排序两键）→ 视图写记忆与队列根。
+// **回传必须与落盘同处**（N27）：守卫条件与回传形态归视图，拆开会静默丢内容。
+// N28 回传守卫：仅对已加载的表执行——未加载表实体集合为空，回传会清空
+// StaticProvider 自持内容造成永久丢数据。先判状态再取实体容器，避免给未加载层
+// 插入幽灵"已加载"层。在途加载的目标层在成功前不在缓存（或带 loadError），故
+// setItems 与工作线程的 enumerate() 不可能并发——日后改动加载置位时序须复核本条
+void PlaylistWidget::writeTabGroup(QSettings &settings, Playlist *list, int index) {
+    PlaylistListView *view = viewAt(tabIndexOfList(list->uuid()));
+    if (view && list->provider()->supportsModify() && view->layerLoaded(view->browsePathIds()))
+        list->provider()->setItems(view->entities());
+
+    settings.beginGroup(QStringLiteral("Playlist_%1").arg(index));
+    list->save(settings);                     // name + uuid
+    list->provider()->saveSettings(settings); // 静态：类型+条目；目录：类型+参数
+    if (view) {
+        const Memory mem = view->memory();
         // N9：记忆三字段（路径+序号+进度）静态/动态均持久化
         if (mem.lastPos >= 0 || !mem.lastPath.isEmpty()) {
             settings.setValue(QStringLiteral("lastPos"), mem.lastPos);
@@ -1169,7 +1126,7 @@ void PlaylistWidget::savePlaylists() {
         // N45 §2.8：队列根持久化——id 与标题两列各写一个数组键（QSettings 原生
         // QStringList，不自造分隔符）。重启后浏览路径直接取它：落在记忆项所在层，
         // 且拼"上一级"相对路径的祖先标题现成
-        const QList<PathSeg> queueRoot = m_queueRoot.value(list);
+        const QList<PathSeg> queueRoot = view->queueRoot();
         if (!queueRoot.isEmpty()) {
             QStringList ids, titles;
             ids.reserve(queueRoot.size());
@@ -1181,13 +1138,8 @@ void PlaylistWidget::savePlaylists() {
             settings.setValue(QStringLiteral("queueRootIds"), ids);
             settings.setValue(QStringLiteral("queueRootTitles"), titles);
         }
-        // N9：排序规则已随提供者序列化（saveSettings 内部），此处无额外处理
-        settings.endGroup();
-        ++savedIdx;
     }
-
-    settings.beginGroup(QStringLiteral("Playlists"));
-    settings.setValue(QStringLiteral("count"), savedIdx);
+    // N9：排序规则已随提供者序列化（saveSettings 内部），此处无额外处理
     settings.endGroup();
 }
 
@@ -1199,14 +1151,14 @@ void PlaylistWidget::savePlaylists() {
 void PlaylistWidget::recordPlayback(int tabIndex, int pos, double seconds) {
     if (tabIndex < 0 || pos < 0) // 负索引无效；默认 tab 允许进程内记忆（不持久化）
         return;
-    QListWidget *list = listAt(tabIndex);
+    PlaylistListView *list = viewAt(tabIndex);
     if (!list)
         return;
     // N45 §2.4.2：pos 是 mpv 的 playlist-pos，即队列根层内的实体序下标——
     // 不再当显示行行号用（层级化后"浏览别层期间切曲"会取到别层的行、key 比对
     // 失败、静默早退）。队列根层被逐出必与播放目标归位同步（N53 §2.2），
     // 播放中读它时恒在缓存，未在缓存即无记忆可写
-    const Level *lvl = findLevel(list, queueRootIdsOf(list));
+    const Level *lvl = list->findLevel(list->queueRootIds());
     if (!lvl || pos >= int(lvl->entities.size()))
         return;
     const QString mpvPath = m_mpv ? m_mpv->propertyString(QStringLiteral("path")) : QString();
@@ -1214,7 +1166,7 @@ void PlaylistWidget::recordPlayback(int tabIndex, int pos, double seconds) {
     // N56 §2.5：键级判等经 matches（回显原样进判据，归一在实体内部完成）
     if (mpvPath.isEmpty() || !entity || !entity->matches(mpvPath))
         return; // 索引与正播文件对不上：结构变更在途，不写本表记忆
-    TabMemory &mem = m_memory[list];
+    Memory &mem = list->memory();
     mem.lastPos = pos;
     mem.lastTimePos = seconds;
     // N9/N26：路径随写入点采集（路径+序号双存）。存条目 key（身份），比对免疫来源形态漂移
@@ -1222,31 +1174,27 @@ void PlaylistWidget::recordPlayback(int tabIndex, int pos, double seconds) {
 }
 
 void PlaylistWidget::clearResumeProgress(int tabIndex) {
-    QListWidget *list = listAt(tabIndex);
-    if (!list)
-        return;
-    auto it = m_memory.find(list);
-    if (it != m_memory.end())
-        it.value().lastTimePos = -1.0;
+    if (PlaylistListView *list = viewAt(tabIndex))
+        list->clearResumeProgress(); // B9：清进度、留最后播放项
 }
 
 int PlaylistWidget::resolveResumeRow(int tabIndex) const {
     // N45 §2.8：寻位一律在队列根层的实体序上做、再换算行序返回（本函数返回行序，
     // 供选中与滚动；队列语义的调用点直接用 resumeEntityIndexOf 的实体序）
     const int idx = resumeEntityIndexOf(tabIndex);
-    return idx < 0 ? -1 : entityIndexToRow(listAt(tabIndex), idx);
+    return idx < 0 ? -1 : entityIndexToRow(viewAt(tabIndex), idx);
 }
 
 // N45：记忆定位内核——序号校验优先（含重复项场景的精确恢复），序号失效按路径
 // 取首命中；一律在队列根层的实体序列上进行。队列根层不在缓存（未加载）返回 -1
 int PlaylistWidget::resumeEntityIndexOf(int tabIndex) const {
-    const QListWidget *list = listAt(tabIndex);
+    const PlaylistListView *list = viewAt(tabIndex);
     if (!list)
         return -1;
-    const TabMemory mem = m_memory.value(list);
+    const Memory mem = list->memory();
     if (mem.lastPos < 0 && mem.lastPath.isEmpty())
         return -1;
-    const Level *lvl = findLevel(list, queueRootIdsOf(list));
+    const Level *lvl = list->findLevel(list->queueRootIds());
     if (!lvl)
         return -1;
     const int n = int(lvl->entities.size());
@@ -1268,23 +1216,17 @@ int PlaylistWidget::resumeEntityIndexOf(int tabIndex) const {
 }
 
 double PlaylistWidget::lastTimePosOf(int tabIndex) const {
-    const QListWidget *list = listAt(tabIndex);
-    return list ? m_memory.value(list).lastTimePos : -1.0;
+    const PlaylistListView *list = viewAt(tabIndex);
+    return list ? list->memory().lastTimePos : -1.0;
 }
 
-int PlaylistWidget::indexOfName(const QString &name) const {
-    for (int i = 0; i < count(); ++i) {
-        if (tabText(i) == name)
-            return i;
-    }
-    return -1;
-}
+// N57 §2.6：原 indexOfName 退场——按名反查的唯一调用点（会话恢复）已改按身份直查
 
 void PlaylistWidget::onTabChanged(int index) {
     if (index < 0)
         return;
     updateBottomBarState(); // N49：切 tab 后刷新定位按钮启用态
-    QListWidget *list = listAt(index);
+    PlaylistListView *list = viewAt(index);
     if (!list)
         return;
     // N19：未加载的 tab 走首次激活链（选中/滚动在枚举续作收尾）。
@@ -1296,8 +1238,8 @@ void PlaylistWidget::onTabChanged(int index) {
     // N53 变更记录 V1：失败层（在缓存且带 loadError）切入不自动重试——落到下方
     // showLayer 按缓存渲染骨架与占位行（行未对齐才换入，对齐即原样保留），切入
     // 零请求，重试入口只剩手动刷新；层不在缓存（从未加载）才走首载
-    if (!layerLoaded(list, browsePathIdsOf(list)) &&
-        levelErrorOf(list, browsePathIdsOf(list)).isEmpty()) {
+    if (!list->layerLoaded(list->browsePathIds()) &&
+        list->levelErrorOf(list->browsePathIds()).isEmpty()) {
         startLoadAsync(list);
         return;
     }
@@ -1319,39 +1261,37 @@ void PlaylistWidget::onTabChanged(int index) {
 bool PlaylistWidget::needsMetaRescan(int tabIndex) const {
     if (m_busy)
         return false;
-    const QListWidget *list = listAt(tabIndex);
+    const PlaylistListView *list = viewAt(tabIndex);
     if (!list)
         return false;
-    if (!layerLoaded(list, browsePathIdsOf(list)))
+    if (!list->layerLoaded(list->browsePathIds()))
         return false; // 未加载层走首载；占位层（loadError 非空）切入只渲染缓存，均不走预读
-    const PlaylistProvider *p = providerAt(tabIndex);
+    const PlaylistProvider *p = providerOfView(viewAt(tabIndex));
     if (!p)
         return false;
-    return pendingMetaCategory(list, browsePathIdsOf(list), SortKey(p->sortKey())) !=
-           MetaCategory::None;
+    return pendingMetaCategory(list, list->browsePathIds(), p->sortRule()) != MetaCategory::None;
 }
 
 // N30/N32：切入已加载 tab 的重读——与刷新共用同一套"比对 → 三分支"，差别只在"不换入"。
 // N32 起为薄壳：只组装意图上下文（旧值采集挪进推进函数，见 advanceTab），
 // 预读在任务槽内异步跑，不再有"同步路径不传 generation"这条分支
-void PlaylistWidget::reactivateRescan(QListWidget *list, int tabIndex) {
+void PlaylistWidget::reactivateRescan(PlaylistListView *list, int tabIndex) {
     if (!list)
         return;
     clearPlaceholder(list); // 与枚举收尾对称：占位行不参与比对，也不进实体序列
     JobContext ctx;
     ctx.intent = Intent::Reactivate;
     ctx.list = list;
-    ctx.tab = tabIndex;
-    ctx.parent = browsePathIdsOf(list); // N45：目标层 = 当前显示层
+    ctx.parent = list->browsePathIds(); // N45：目标层 = 当前显示层
     advanceTab(ctx, false);
 }
 
 // N19：原 onTabChanged 体。切入正在播放的列表：居中滚动到正播项。
 // 选中态由 mpv 同步高亮驱动，此处只滚不改选
 void PlaylistWidget::activateTab(int index) {
-    if (index == m_playingTab) {
+    if (index == playingTabIndex()) {
         QTimer::singleShot(0, this, [this, index]() {
-            if (QListWidget *l = listAt(index)) {
+            if (PlaylistListView *l = viewAt(index)) {
                 const int pr = playingRowOf(l);
                 if (pr >= 0)
                     l->scrollToItem(l->item(pr), QListWidget::PositionAtCenter);
@@ -1362,15 +1302,15 @@ void PlaylistWidget::activateTab(int index) {
     // 切换到非播放 tab 时自动选中该 tab 记忆的最后播放项（N9：路径+序号解析）。
     // N45 §2.8：记忆行只在"显示层 == 队列根层"时参与选中与滚动，其余情形由该层
     // 自己的 lastSelectedKey 负责恢复（showLayer 换入时已完成）
-    QListWidget *list = listAt(index);
-    const bool displayedIsQueueRoot = list && browsePathIdsOf(list) == queueRootIdsOf(list);
+    PlaylistListView *list = viewAt(index);
+    const bool displayedIsQueueRoot = list && list->browsePathIds() == list->queueRootIds();
     const int row = displayedIsQueueRoot ? resolveResumeRow(index) : -1;
     if (list && row >= 0 && row < list->count()) {
         list->setCurrentRow(row);
         // 跟随滚动（N4）：currentChanged 到达时新 tab 尚未完成首次布局，
         // 立即滚动会打在零尺寸视口上无效，推迟到事件循环下一拍
         QTimer::singleShot(0, this, [this, index]() {
-            if (QListWidget *l = listAt(index)) {
+            if (PlaylistListView *l = viewAt(index)) {
                 const int r = resolveResumeRow(index);
                 if (r >= 0 && r < l->count() && l->currentRow() == r)
                     l->scrollToItem(l->currentItem(), QListWidget::PositionAtCenter);
@@ -1380,7 +1320,7 @@ void PlaylistWidget::activateTab(int index) {
 }
 
 int PlaylistWidget::currentSelectedRow() const {
-    const QListWidget *list = listAt(currentIndex());
+    const PlaylistListView *list = viewAt(currentIndex());
     if (!list || list->selectedItems().isEmpty())
         return -1;
     return list->currentRow();
@@ -1388,7 +1328,7 @@ int PlaylistWidget::currentSelectedRow() const {
 
 // N45：当前选中行的实体序——停止态起播的选中行回退用（mpv 侧语义一律实体序）
 int PlaylistWidget::currentSelectedEntityIndex() const {
-    QListWidget *list = listAt(currentIndex());
+    PlaylistListView *list = viewAt(currentIndex());
     if (!list || list->selectedItems().isEmpty())
         return -1;
     return rowToEntityIndex(list, list->currentRow());
@@ -1401,21 +1341,25 @@ int PlaylistWidget::currentSelectedEntityIndex() const {
 // （早退前执行：播放中 tab 换层双击也要换队列根）
 void PlaylistWidget::markPlayingTab(int tabIndex) {
     updateBottomBarState(); // N49：同步目标转移后刷新定位按钮启用态
-    if (QListWidget *list = listAt(tabIndex))
-        m_queueRoot[list] = m_browsePath.value(list);
-    if (tabIndex == m_playingTab)
+    PlaylistListView *list = viewAt(tabIndex);
+    if (list)
+        list->setQueueRoot(list->browsePath()); // 队列根 = 该 tab 当前浏览层（N45 §2.1）
+    if (tabIndex == playingTabIndex())
         return;
-    if (QListWidget *old = listAt(m_playingTab)) {
+    if (PlaylistListView *old = viewAt(playingTabIndex())) {
         for (int i = 0; i < old->count(); ++i)
             old->item(i)->setData(PlayingRole, false);
     }
-    m_playingTab = tabIndex;
+    // N57 §2.8：转移播放目标 = 换身份。表必在（不变式：tab ⇔ 视图 ⇔ 列表），越界兜回
+    // 默认列表身份——恒可解析由 §2.5 的保留身份承载，不再有"索引悬空"这一说
+    m_playingUuid = list && list->list() ? list->list()->uuid() : kDefaultListUuid;
 }
 
 void PlaylistWidget::onItemDoubleClicked(QListWidgetItem *item) {
     if (!item)
         return;
-    QListWidget *list = item->listWidget();
+    // 行必出自本类出生的页面（createView 是全仓唯一列表页诞生点），故 cast 恒命中
+    PlaylistListView *list = qobject_cast<PlaylistListView *>(item->listWidget());
     const int tab = indexOf(list);
     if (!list || tab < 0)
         return;
@@ -1464,35 +1408,27 @@ void PlaylistWidget::flushPendingTab() {
 // 整段替换某表的浏览路径。标题列不进层缓存键（N45 §2.5）、只服务"上一级"行的
 // tooltip 相对路径，故按 loadPlaylists 的同一降级形态取 id 自兼（书签来源不另存
 // 标题列）。替换前保存离开层的选中，与钻取 / 返回同一纪律
-void PlaylistWidget::setBrowsePath(QListWidget *list, const QStringList &ids) {
-    if (!list || browsePathIdsOf(list) == ids)
+void PlaylistWidget::setBrowsePath(PlaylistListView *list, const QStringList &ids) {
+    if (!list || list->browsePathIds() == ids)
         return;
-    saveLayerSelection(list, browsePathIdsOf(list));
+    saveLayerSelection(list, list->browsePathIds());
     QList<PathSeg> path;
     path.reserve(ids.size());
     for (const QString &id : ids)
         path.append({id, id});
-    m_browsePath[list] = std::move(path);
+    list->setBrowsePath(path);
 }
 
-// 删除某层的失败条目，使其落回"未加载"从而能被重新枚举。N54 §2.4：书签跳转是用户
-// 点名的显式重试入口（与手动刷新同类），不受 N53"切入失败层不自动重试"约束。
-// 删除形态与 navigateUp 那处一致——只删这一层、不连带子孙
-void PlaylistWidget::eraseFailedLevel(QListWidget *list, const QStringList &ids) {
-    auto it = m_levels.find(list);
-    if (it == m_levels.end())
-        return;
-    const auto lit = it->find(ids);
-    if (lit != it->end() && !lit->loadError.isEmpty())
-        it->erase(lit);
-}
+// N57 §2.8：原 eraseFailedLevel 转发函数退场——"删单层不连带子孙"的形态已在
+// PlaylistListView 上，调用点直接 `list->eraseFailedLevel(ids)`（N54 §2.4 的显式
+// 重试入口，与 navigateUp 同一实现）
 
 // 目标层内定位：返回首个 matches(itemKey) 的**实体序**下标（即 mpv playlist-pos 语义，
 // 非行序，N45 §2.4.2）。入参是书签存下的键（Util::Url::key 产出，N56 §2.5）——
 // 键级判等经实体自己的 matches 出口，外部不假设键长什么样
-int PlaylistWidget::entityIndexInLevel(const QListWidget *list, const QStringList &ids,
+int PlaylistWidget::entityIndexInLevel(const PlaylistListView *list, const QStringList &ids,
                                        const QString &itemKey) const {
-    const Level *lvl = findLevel(list, ids);
+    const Level *lvl = list->findLevel(ids);
     if (!lvl)
         return -1;
     for (int i = 0; i < int(lvl->entities.size()); ++i)
@@ -1502,7 +1438,7 @@ int PlaylistWidget::entityIndexInLevel(const QListWidget *list, const QStringLis
 }
 
 void PlaylistWidget::requestLevelItemJump(const LevelJump &req) {
-    if (!listAt(req.tab)) { // 当场失败：调用方只有一条失败出口，不设返回值分支
+    if (!jumpTarget(req)) { // 当场失败：调用方只有一条失败出口，不设返回值分支
         emit levelItemFailed(req, JumpFailure::ListGone, QString());
         return;
     }
@@ -1518,28 +1454,30 @@ void PlaylistWidget::advanceLevelJump() {
     if (!m_pendingJump.active || m_busy)
         return;
     const LevelJump req = m_pendingJump.req; // 副本：出结果即作废，不残留待办意图
-    QListWidget *list = listAt(req.tab);
+    // N57 §2.8：待办里只有身份，页面与坐标每次推进都现换算——延后期间目标 tab 被关闭
+    // 就落 ListGone，不会按旧坐标漂移误命中别的表
+    PlaylistListView *list = jumpTarget(req);
     if (!list) {
         m_pendingJump = PendingJump{};
         emit levelItemFailed(req, JumpFailure::ListGone, QString());
         return;
     }
-    const Level *lvl = findLevel(list, req.levelIds);
+    const Level *lvl = list->findLevel(req.levelIds);
     if (lvl && !lvl->loadError.isEmpty()) {
         if (m_pendingJump.enumerated) { // 已重试过一轮仍失败：出结果
             m_pendingJump = PendingJump{};
             emit levelItemFailed(req, JumpFailure::LevelLoadFailed, lvl->loadError);
             return;
         }
-        eraseFailedLevel(list, req.levelIds); // 显式重试一次，落回下面的未加载分支
+        list->eraseFailedLevel(req.levelIds); // 显式重试一次，落回下面的未加载分支
         lvl = nullptr;
     }
     if (lvl) {
         // 已加载：先同步换入（换入自身可能起一轮预读——切入已加载层时 needsMetaRescan
         // 判定通过），再判能否立刻出结果
         setBrowsePath(list, req.levelIds);
-        requestTab(req.tab); // 非忙即切，currentChanged 走 onTabChanged 的换入路径
-        showLayer(list);     // 目标 tab 本就是当前 tab 时无回调，此处补换入（缓存命中同步重建）
+        requestTab(indexOf(list)); // 非忙即切，currentChanged 走 onTabChanged 的换入路径
+        showLayer(list); // 目标 tab 本就是当前 tab 时无回调，此处补换入（缓存命中同步重建）
         m_pendingJump.enumerated = true; // 目标层已在手，绝不再起第二轮枚举
         if (m_busy)
             // 预读在途：实体序仍会被排序改动，此刻定位会把索引打在旧序上，且重推与
@@ -1549,7 +1487,7 @@ void PlaylistWidget::advanceLevelJump() {
         m_pendingJump = PendingJump{};
         const int idx = entityIndexInLevel(list, req.levelIds, req.itemKey);
         if (idx >= 0)
-            emit levelItemReady(req, idx);
+            emit levelItemReady(req, indexOf(list), idx); // 坐标在发射时刻现取
         else
             emit levelItemFailed(req, JumpFailure::ItemNotFound, QString());
         return;
@@ -1562,7 +1500,7 @@ void PlaylistWidget::advanceLevelJump() {
     }
     m_pendingJump.enumerated = true;
     setBrowsePath(list, req.levelIds); // 先落路径：未加载分支按当前浏览路径发起首载
-    requestTab(req.tab);
+    requestTab(indexOf(list));
     // 不经 showLayer 起枚举：第二次跳转到同一失败层时，行内容已与该层"对齐"（残留的
     // 骨架 + 占位行），showLayer 首行即按 displayedIds == ids 早退，于是整次跳转静默
     // 无事发生——既不重举也不回报。失败层条目刚被 eraseFailedLevel 删掉，此处必然
@@ -1595,14 +1533,13 @@ void PlaylistWidget::dropEvent(QDropEvent *event) {
 
 // ——N9 提供者——
 
-PlaylistProvider *PlaylistWidget::providerAt(int tabIndex) const {
-    const auto it = m_providerOf.find(listAt(tabIndex));
-    return it == m_providerOf.end() ? nullptr : it.value().get();
+PlaylistProvider *PlaylistWidget::providerOfView(const PlaylistListView *view) const {
+    Playlist *list = listOfView(view);
+    return list ? list->provider().get() : nullptr;
 }
 
 bool PlaylistWidget::isModifiableTab(int tabIndex) const {
-    const auto *p = providerAt(tabIndex);
-    Q_ASSERT(listAt(tabIndex) == nullptr || p != nullptr); // I1：tab 与 provider 一一对应
+    const auto *p = providerOfView(viewAt(tabIndex));
     return p != nullptr && p->supportsModify();
 }
 
@@ -1612,7 +1549,7 @@ bool PlaylistWidget::isModifiableTab(int tabIndex) const {
 //    元素，零悬空窗口）；③ 新实体更多则经 makeItem 追加；④ 更少则删尾部行并同步缩容器。
 // 旧实体连同 fileMeta / mediaMeta / icon 缓存全部丢弃——换绑即换新，保留任何缓存都不叫刷新。
 // 调用前提：目标层即显示层，Level.containers 已由调用方先行写入
-void PlaylistWidget::applyEntitiesToRows(QListWidget *list, PlaylistEntity::List &&entities) {
+void PlaylistWidget::applyEntitiesToRows(PlaylistListView *list, PlaylistEntity::List &&entities) {
     if (!list)
         return;
     // ① 摘除既有特殊行（恒居行序前缀——[上一级行][容器行…]）
@@ -1623,7 +1560,7 @@ void PlaylistWidget::applyEntitiesToRows(QListWidget *list, PlaylistEntity::List
     // ② 实体行换绑（此时行全为实体行，容器下标 == 行号）
     const int oldRows = list->count();
     const int n = int(entities.size());
-    auto &owned = entitiesOf(list);
+    auto &owned = list->entities();
     const int m = qMin(oldRows, n);
     if (int(owned.size()) < m)
         owned.resize(m); // 不变式兜底：容器不得短于待换绑行数，防下标越界
@@ -1638,14 +1575,14 @@ void PlaylistWidget::applyEntitiesToRows(QListWidget *list, PlaylistEntity::List
         delete list->takeItem(i); // 先删行（此时实体仍在），再缩容器
     owned.resize(n);              // 容器序恒等于实体行序
     // ③ 前导特殊行重建（上一级行 + 容器行插回顶部）
-    buildSpecialRows(list, browsePathIdsOf(list), levelOf(list).containers);
-    m_displayedIds[list] = browsePathIdsOf(list);
+    buildSpecialRows(list, list->browsePathIds(), list->levelOf().containers);
+    list->setDisplayedIds(list->browsePathIds());
 }
 
 // ——N32 上下文采集（一律到"用到它的那一步之前一刻"才采）——
 
 // 行序 key 序列（比对用；占位行跳过）
-QStringList PlaylistWidget::keysOf(const QListWidget *list) const {
+QStringList PlaylistWidget::keysOf(const PlaylistListView *list) const {
     QStringList keys;
     if (!list)
         return keys;
@@ -1659,19 +1596,19 @@ QStringList PlaylistWidget::keysOf(const QListWidget *list) const {
 }
 
 // 换入前的视图快照（换入后行号语义失效，按记忆行 key 复原）
-PlaylistWidget::ViewSnapshot PlaylistWidget::captureViewSnapshot(QListWidget *list) const {
+PlaylistWidget::ViewSnapshot PlaylistWidget::captureViewSnapshot(PlaylistListView *list) const {
     ViewSnapshot snap;
     if (!list)
         return snap;
     const bool hadRows = list->count() > 0;
     snap.memoryPath = hadRows ? captureMemoryPath(list) : QString{};
-    snap.hadMemory = hadRows && m_memory.contains(list) && m_memory.value(list).lastPos >= 0;
+    snap.hadMemory = hadRows && list->memory().lastPos >= 0;
     return snap;
 }
 
 // N30：记忆修正 + 选中与滚动，幂等（行是否换过都可调用）。
 // 播放表不在此滚动——滚动与选中由归位一次性完成，否则视觉跳两下
-void PlaylistWidget::restoreViewState(QListWidget *list, int tab, const ViewSnapshot &snap) {
+void PlaylistWidget::restoreViewState(PlaylistListView *list, int tab, const ViewSnapshot &snap) {
     if (!list)
         return;
     if (snap.selectFirst) {
@@ -1680,7 +1617,7 @@ void PlaylistWidget::restoreViewState(QListWidget *list, int tab, const ViewSnap
         return;                     // 换源已清除记忆，无记忆可复；不得被 activateTab 覆盖
     }
     restoreMemoryPath(list, snap.memoryPath, snap.hadMemory);
-    if (tab >= 0 && tab == currentIndex() && tab != m_playingTab)
+    if (tab >= 0 && tab == currentIndex() && tab != playingTabIndex())
         activateTab(tab); // 非播放表：按记忆行选中并滚动
 }
 
@@ -1688,12 +1625,12 @@ void PlaylistWidget::restoreViewState(QListWidget *list, int tab, const ViewSnap
 // 清除路径，故对每个未走四步式的分支在收尾末尾调用一次：在播且能定位即重建在正播行，
 // 否则清除本表全部标记。走了四步式的分支在此早退——stop 只是入队，此刻读到的
 // path / idle-active 仍是发起前的值，按旧值判断会把"未重推"误判为在播
-void PlaylistWidget::restorePlayingState(QListWidget *list, int tab) {
-    if (!list || tab < 0 || tab != m_playingTab)
+void PlaylistWidget::restorePlayingState(PlaylistListView *list, int tab) {
+    if (!list || tab < 0 || tab != playingTabIndex())
         return;
     // N45 §2.9：播放标记随层状态归属队列根层——显示层非队列根层时行上本无标记
     // 可重建（下次渲染队列根层时由本函数按 mpv 现状点亮），选中与滚动亦不归它管
-    if (browsePathIdsOf(list) != queueRootIdsOf(list))
+    if (list->browsePathIds() != list->queueRootIds())
         return;
     const bool idle = m_mpv ? m_mpv->propertyFlag(QStringLiteral("idle-active"), false) : true;
     const QString cur = m_mpv ? m_mpv->propertyString(QStringLiteral("path")) : QString();
@@ -1732,14 +1669,15 @@ void PlaylistWidget::restorePlayingState(QListWidget *list, int tab) {
 // mutate = 停止之后、重推之前的结构变更（重排 / 删行；调用前已排好则传空）
 // N30：清除本表全部播放标记。stop 已入队时 mpv 属性查询反映的是发起前的状态，
 // 故此类出口一律显式清除，不按归位判断
-void PlaylistWidget::clearPlayingMarks(QListWidget *list) {
+void PlaylistWidget::clearPlayingMarks(PlaylistListView *list) {
     if (!list)
         return;
     for (int i = 0; i < list->count(); ++i)
         list->item(i)->setData(PlayingRole, false);
 }
 
-void PlaylistWidget::runFourStep(QListWidget *list, int tab, const std::function<void()> &mutate) {
+void PlaylistWidget::runFourStep(PlaylistListView *list, int tab,
+                                 const std::function<void()> &mutate) {
     const bool keepPaused =
         m_mpv ? m_mpv->propertyFlag(QStringLiteral("pause"), false) : false; // stop 之前读
     emit stopRequested();
@@ -1848,7 +1786,7 @@ void PlaylistWidget::runJob(const JobContext &ctx, LoadingOverlay::Mode mode, in
 // 不可能与任务线程的 enumerate() 并发。跨线程只带 shared_ptr 与实体快照：
 // QPointer 禁止在任务线程读写，有效性由任务槽判定。
 // N45 §2.10：枚举目标 = (list, parent) 二维——任务体与续作一律按 parent 读写层缓存
-void PlaylistWidget::startLoadAsync(QListWidget *list) {
+void PlaylistWidget::startLoadAsync(PlaylistListView *list) {
     if (!list)
         return;
     // 意图在发起处定死并按值随任务走（异步边界不靠成员承载）。m_pendingLoad 只作
@@ -1858,23 +1796,24 @@ void PlaylistWidget::startLoadAsync(QListWidget *list) {
     const Intent intent = pend.refresh
                               ? Intent::Refresh
                               : (pend.selectFirst ? Intent::SwitchSource : Intent::InitialLoad);
-    startEnumAsync(list, intent, browsePathIdsOf(list));
+    startEnumAsync(list, intent, list->browsePathIds());
 }
 
-void PlaylistWidget::startEnumAsync(QListWidget *list, Intent intent, const QStringList &parent) {
+void PlaylistWidget::startEnumAsync(PlaylistListView *list, Intent intent,
+                                    const QStringList &parent) {
     if (!list)
         return;
-    const auto it = m_providerOf.find(list);
-    if (it == m_providerOf.end())
-        return;                 // 防御：提供者缺失不加载
-    auto provider = it.value(); // 任务持有 shared_ptr 副本：枚举期间提供者恒存活
+    Playlist *owning = listOfView(list);
+    if (!owning)
+        return; // 防御：视图未配列表（提供者随之缺失）不加载
+    // 任务持有 shared_ptr 副本：换源 / 删 tab 后在途提供者的销毁自动延后到线程结束（N28）
+    auto provider = owning->provider();
 
-    if (parent == browsePathIdsOf(list))
+    if (parent == list->browsePathIds())
         clearPlaceholder(list); // 失败重试先清占位（仅显示层——非显示层重建不动显示行）
     JobContext ctx;
     ctx.intent = intent;
     ctx.list = list;
-    ctx.tab = indexOf(list);
     ctx.parent = parent;
 
     auto result = std::make_shared<std::expected<PlaylistProvider::Enumeration, QString>>();
@@ -1892,8 +1831,8 @@ void PlaylistWidget::startEnumAsync(QListWidget *list, Intent intent, const QStr
 // N45 §2.9：显示层非队列根层时，刷新纯粹是该层视图重建——比对与播放同步无意义
 // （mpv 队列的内容基准是队列根层；该情形已由 N53 §2.2 在刷新发起时整枝清除
 // 前置处置，本函数不再轮得到执行）
-bool PlaylistWidget::syncAfterRefresh(QListWidget *list, int tab, const QStringList &oldKeys) {
-    if (browsePathIdsOf(list) != queueRootIdsOf(list))
+bool PlaylistWidget::syncAfterRefresh(PlaylistListView *list, int tab, const QStringList &oldKeys) {
+    if (list->browsePathIds() != list->queueRootIds())
         return false;
     const int n = oldKeys.size();
     bool prefix = list->count() >= n; // 行数更少必然不是前缀一致
@@ -1904,7 +1843,7 @@ bool PlaylistWidget::syncAfterRefresh(QListWidget *list, int tab, const QStringL
     // 正播时长回填（三分支通用）：静默与追加不重建播放列表，正播行时长不会再有 mpv 推送补回。
     // 不前置判断——duration <= 0 由 applyDuration 记 nullopt，时长列回落到实体缓存元数据。
     // N56 §2.5：定位正播行经 matches（回显原样进判据）；落仓键取实体 key
-    if (m_mpv && tab >= 0 && tab == m_playingTab) {
+    if (m_mpv && tab >= 0 && tab == playingTabIndex()) {
         const QString cur = m_mpv->propertyString(QStringLiteral("path"));
         if (!cur.isEmpty()) {
             for (int i = 0; i < list->count(); ++i) {
@@ -1921,7 +1860,7 @@ bool PlaylistWidget::syncAfterRefresh(QListWidget *list, int tab, const QStringL
         return false; // 完全相同：静默，mpv 不动
     // 守卫：停止态 / 非播放表 / 空表刷出内容一律只做视图更新（append-play 在空列表时会起播）
     const bool canSync =
-        tab == m_playingTab && !oldKeys.isEmpty() &&
+        tab == playingTabIndex() && !oldKeys.isEmpty() &&
         !(m_mpv ? m_mpv->propertyFlag(QStringLiteral("idle-active"), false) : true);
     if (!canSync)
         return false;
@@ -1952,20 +1891,20 @@ bool PlaylistWidget::syncAfterRefresh(QListWidget *list, int tab, const QStringL
 void PlaylistWidget::onLoadFinished(const JobContext &ctx,
                                     std::expected<PlaylistProvider::Enumeration, QString> &r,
                                     JobVerdict v) {
-    QListWidget *list = ctx.list;
+    PlaylistListView *list = ctx.list;
     if (!list || v == JobVerdict::Discarded)
         return;
     // N45 §2.4.1/§2.10：失败与换入的处置按层分派——显示层（行上可见）与队列根层
     // （播放基准）各有专属语义
-    const bool targetsDisplayed = (ctx.parent == browsePathIdsOf(list));
-    const bool targetsQueueRoot = (ctx.parent == queueRootIdsOf(list));
+    const bool targetsDisplayed = (ctx.parent == list->browsePathIds());
+    const bool targetsQueueRoot = (ctx.parent == list->queueRootIds());
     if (targetsDisplayed)
         clearPlaceholder(list);
     if (!r.has_value()) {
         // 失败层内容可信度归零：先毁行、再清内容、后重建骨架（N53 §2.1）。清空不分
         // 显示层与否——枚举没成功，保留只会在下次渲染时复现陈旧行。毁行前置于清仓：
         // 行上 EntityRole 是实体裸指针，先清仓会让现有行悬空
-        Level &lvl = ensureLevel(list, ctx.parent);
+        Level &lvl = list->ensureLevel(ctx.parent);
         lvl.loadError = r.error();
         if (targetsDisplayed)
             list->clear();
@@ -1984,9 +1923,9 @@ void PlaylistWidget::onLoadFinished(const JobContext &ctx,
         // 队列内容仍有效，不停播）。stop 不带 keep-playlist，一并清空 mpv 播放列表
         // （随后的空列表推送由回刷"空列表忽略"吸收）。行已重建、天然无播放标记
         const int failTab = indexOf(list);
-        if (targetsQueueRoot && failTab >= 0 && failTab == m_playingTab) {
+        if (targetsQueueRoot && failTab >= 0 && failTab == playingTabIndex()) {
             emit stopRequested();
-            m_playingTab = 0; // 同步目标归位默认 tab（恒 >= 0，不悬空）
+            m_playingUuid = kDefaultListUuid; // 同步目标归位默认列表（身份恒定，恒可解析）
         }
         emit contentsChanged(); // 占位行计入行数，导航启停需刷新
         return;                 // 忙时与遮罩由唯一出口第 ⑤ 步复位（本续作未起新任务）
@@ -1998,7 +1937,7 @@ void PlaylistWidget::onLoadFinished(const JobContext &ctx,
     // N45 §2.5：层入缓存即"已加载"——覆盖旧层（刷新的收尾就在此完成）。
     // 失败文案清空；元数据标志不动（刷新路径已由 evictListKeys 全层复位，
     // 首载 / 换源的新层缺省即 false，与旧 entriesLoaded 语义一致）
-    Level &lvl = ensureLevel(list, ctx.parent);
+    Level &lvl = list->ensureLevel(ctx.parent);
     lvl.loadError.clear();
 
     PlaylistProvider::Enumeration enumeration = std::move(r.value());
@@ -2024,7 +1963,7 @@ void PlaylistWidget::onLoadFinished(const JobContext &ctx,
     // 本层同实体序位置），而本层非队列根层，restorePlayingState 按 §2.9 守卫不清它
     // ——表现为子层级把某个不相干文件标成正在播放
     // N45：跨层换入按层 clear 重建；同层换入不动（行级换绑已保住选中，恢复反而打扰）
-    const bool rowsWereElsewhere = (displayedIdsOf(list) != ctx.parent);
+    const bool rowsWereElsewhere = (list->displayedIds() != ctx.parent);
     if (rowsWereElsewhere) {
         list->clear(); // 毁行在前：行上 EntityRole 是实体裸指针，先动实体仓即悬空
         lvl.entities = std::move(enumeration.entities);
@@ -2042,23 +1981,21 @@ void PlaylistWidget::onLoadFinished(const JobContext &ctx,
 // "已读"标志未置位，若再判一次会立刻重起一轮，用户刚取消又被弹回遮罩。
 // 收尾顺序照搬现状：排序 → 视图恢复 → 比对与播放同步（含落盘）→ 播放态归位 → contentsChanged
 void PlaylistWidget::advanceTab(JobContext ctx, bool fromMetaScan) {
-    QListWidget *list = ctx.list;
+    PlaylistListView *list = ctx.list;
     if (!list)
         return;
     const int tab = indexOf(list);
     if (tab < 0)
         return;
-    const auto *p = providerAt(tab);
+    const auto *p = providerOfView(viewAt(tab));
     // 判类别不得读提供者的排序键：Sort 意图的规则写点在收尾步，取消即不写，
     // 而"先写规则才能判类别"会让取消也落盘
     const bool isSort = (ctx.intent == Intent::Sort);
-    const SortKey key = isSort ? ctx.sortKey : (p ? SortKey(p->sortKey()) : SortKey::None);
-    const bool asc = isSort ? ctx.ascending : (p ? p->sortAscending() : true);
+    const SortRule rule = isSort ? ctx.rule : (p ? p->sortRule() : SortRule{});
 
     if (!fromMetaScan) {
-        const MetaCategory cat = pendingMetaCategory(list, ctx.parent, key);
+        const MetaCategory cat = pendingMetaCategory(list, ctx.parent, rule);
         if (cat != MetaCategory::None) {
-            ctx.tab = tab;
             startMetaScan(std::move(ctx), cat); // 续作 = 自己（fromMetaScan=true 再入）
             return;
         }
@@ -2073,23 +2010,23 @@ void PlaylistWidget::advanceTab(JobContext ctx, bool fromMetaScan) {
 
     if (isSort) {
         // 排序规则写点只此一处（且取消即不写）；applySort 内部自带播放表的四步式
-        applySort(list, key, asc, /*writeRule=*/true);
+        applySort(list, rule, /*writeRule=*/true);
         emit contentsChanged();
         return;
     }
 
-    if (key != SortKey::None)
-        sortListItems(list, key, asc);
+    if (rule.key != SortKey::None)
+        sortListItems(list, rule);
     restoreViewState(list, tab, ctx.snap);
 
     bool fourStep = false;
     if (ctx.intent == Intent::Refresh) {
-        if (tab > 0 && tab != m_playingTab)
+        if (tab > 0 && tab != playingTabIndex())
             savePlaylists(); // 非播放非默认 tab 落盘（播放中 tab 不落盘为既有语义）
-        else if (tab == m_playingTab)
+        else if (tab == playingTabIndex())
             fourStep = syncAfterRefresh(list, tab, ctx.oldKeys);
     } else if (ctx.intent == Intent::Reactivate) {
-        if (tab == m_playingTab)
+        if (tab == playingTabIndex())
             fourStep = syncAfterRefresh(list, tab, ctx.oldKeys);
     }
     if (!fourStep)
@@ -2101,7 +2038,7 @@ void PlaylistWidget::advanceTab(JobContext ctx, bool fromMetaScan) {
 // 续作把批次注入快照实体——这是实体缓存的唯一写点，故缓存（含绘制路径读的）只在 GUI 线程写。
 // 快照天然正确：活动容器的行序会被换源 / 删行 / 排序改变，而快照注入按实体而非行号
 void PlaylistWidget::startMetaScan(JobContext ctx, MetaCategory cat) {
-    QListWidget *list = ctx.list;
+    PlaylistListView *list = ctx.list;
     if (!list || cat == MetaCategory::None)
         return;
     // MediaInfo 进线程池的前提①：显式预载一次（shim 的模块加载惰性且无锁）。
@@ -2112,7 +2049,7 @@ void PlaylistWidget::startMetaScan(JobContext ctx, MetaCategory cat) {
     auto pending = std::make_shared<PlaylistEntity::List>(); // 待求值者（共享计数快照）
     int baseline = 0; // 已求值 / 不支持者：无需计算，但计入进度分母（现状口径）
     // N45 §2.10：预读快照限于任务目标层（ctx.parent）的实体，不再整表采集
-    if (const Level *lvl = findLevel(list, ctx.parent)) {
+    if (const Level *lvl = list->findLevel(ctx.parent)) {
         for (const auto &entity : lvl->entities) {
             // 能力位为假的类别不进求值；已求值者（含"值未知"入缓存）也不重算——
             // 缓存判定必须在 GUI 线程做：任务只算不写，读缓存会与 GUI 侧写入构成数据竞争
@@ -2205,7 +2142,7 @@ void PlaylistWidget::startMetaScan(JobContext ctx, MetaCategory cat) {
 // 只是不置已读标志（切入时会重新预读，但全程命中缓存）、不排序、不写规则
 void PlaylistWidget::onMetaScanFinished(JobContext ctx, const std::shared_ptr<MetaResult> &r,
                                         JobVerdict v) {
-    QListWidget *list = ctx.list;
+    PlaylistListView *list = ctx.list;
     if (!list || v == JobVerdict::Discarded)
         return; // 批次已作废：不注入、不排序、不动记忆
     const size_t n = r->entities.size();
@@ -2227,9 +2164,9 @@ void PlaylistWidget::onMetaScanFinished(JobContext ctx, const std::shared_ptr<Me
 // N32：取消收尾——按意图分支，不可一刀切。枚举 / 刷新 / 重读侧有 ViewSnapshot
 // （行已换入或记忆待修正）→ 做视图恢复再归位；Sort 侧无快照 → 一律不动：
 // 给 Sort 补一次视图恢复会经 restoreViewState 的 tab == currentIndex() &&
-// tab != m_playingTab 分支调 activateTab，产生重新选中与滚动的可见副作用
+// tab != playingTabIndex() 分支调 activateTab，产生重新选中与滚动的可见副作用
 void PlaylistWidget::finishCanceled(const JobContext &ctx) {
-    QListWidget *list = ctx.list;
+    PlaylistListView *list = ctx.list;
     if (!list || ctx.intent == Intent::Sort)
         return;
     const int tab = indexOf(list);
@@ -2270,14 +2207,10 @@ void PlaylistWidget::abandonJob() {
 // 排序施加顺序 = 容器组内排 → 实体组内排（两组分界即模型不变式）；
 // 取值面对容器扩为 title 顶 fileName/suffix、元数据取 FileMeta；"未知值恒归末尾组"
 // 只在组内成立（容器组内部全为未知值时退化为保持提供者初始序，稳定排序保序）
-void PlaylistWidget::sortListItems(QListWidget *list, SortKey key, bool ascending) {
-    Level *lvl = [this, list]() -> Level * {
-        auto it = m_levels.find(list);
-        if (it == m_levels.end())
-            return nullptr;
-        auto lit = it->find(browsePathIdsOf(list));
-        return lit == it->end() ? nullptr : &lit.value();
-    }();
+void PlaylistWidget::sortListItems(PlaylistListView *list, SortRule rule) {
+    const SortKey key = rule.key; // N57 §2.9：入参值对象化，函数体不动
+    const bool ascending = rule.ascending;
+    Level *lvl = list ? list->findLevel(list->browsePathIds()) : nullptr; // 只取不插
     if (!list || key == SortKey::None || !lvl || list->count() < 2)
         return;
 
@@ -2452,7 +2385,9 @@ void PlaylistWidget::sortListItems(QListWidget *list, SortKey key, bool ascendin
 // **元数据只读缓存（cachedXxxMeta），未解析一律按未知**——本函数作用于任意缓存层
 // （可能从未预读），绝不触发同步求值（GUI 线程冻结隐患，N26 的懒求值 getter 在
 // 此禁用）；未排全的层被显示时经 needsMetaRescan 预读后由 advanceTab 重排补全
-void PlaylistWidget::sortLevelData(Level &lvl, SortKey key, bool ascending) {
+void PlaylistWidget::sortLevelData(Level &lvl, SortRule rule) {
+    const SortKey key = rule.key; // N57 §2.9：入参值对象化，函数体不动
+    const bool ascending = rule.ascending;
     if (key == SortKey::None)
         return;
     auto flip = [ascending](int c) { return ascending ? c < 0 : c > 0; };
@@ -2562,37 +2497,28 @@ void PlaylistWidget::sortLevelData(Level &lvl, SortKey key, bool ascending) {
 
 // ——排序（N4 第五节）——
 
-// tab 排序规则的收敛读取点（规则存于提供者，随其持久化）
-PlaylistWidget::SortKey PlaylistWidget::ruleKeyOf(QListWidget *list) const {
-    const PlaylistProvider *p = providerAt(indexOf(list));
-    return p ? SortKey(p->sortKey()) : SortKey::None;
-}
+// N57 §2.9：原 `ruleKeyOf` / `ruleAscendingOf` 两个收敛读取点删除——它们在 N18 把
+// 菜单 action 改为显式携带键值后即失去全部调用点（现取规则一律直读提供者 sortRule()），
+// 属零调用死代码，删除不改任何行为。
 
-bool PlaylistWidget::ruleAscendingOf(QListWidget *list) const {
-    const PlaylistProvider *p = providerAt(indexOf(list));
-    return p ? p->sortAscending() : true;
-}
-
-// N32：手动排序链——只组装意图上下文（含判类别与写规则共用的 key/asc，不预写规则），
+// N32：手动排序链——只组装意图上下文（含判类别与写规则共用的规则，不预写规则），
 // 预读与收尾一律由推进函数负责。取消由 finishCanceled 按意图分支处理：Sort 侧无快照，
 // 一律不动（顺序不动、规则不落盘）
-void PlaylistWidget::sortCurrent(SortKey key, bool ascending) {
-    QListWidget *list = listAt(currentIndex());
+void PlaylistWidget::sortCurrent(SortRule rule) {
+    PlaylistListView *list = viewAt(currentIndex());
     const int tab = currentIndex();
     // N19：忙时（菜单已禁用，此为兜底）与未加载/占位 tab 不排序。
     // N45：判定对象是当前显示层
-    if (!list || tab < 0 || key == SortKey::None || m_busy)
+    if (!list || tab < 0 || rule.key == SortKey::None || m_busy)
         return;
-    if (!layerLoaded(list, browsePathIdsOf(list)))
+    if (!list->layerLoaded(list->browsePathIds()))
         return;
 
     JobContext ctx;
     ctx.intent = Intent::Sort;
     ctx.list = list;
-    ctx.tab = tab;
-    ctx.parent = browsePathIdsOf(list); // N45：目标层 = 当前显示层
-    ctx.sortKey = key;
-    ctx.ascending = ascending;
+    ctx.parent = list->browsePathIds(); // N45：目标层 = 当前显示层
+    ctx.rule = rule;
     advanceTab(ctx, false);
 }
 
@@ -2600,7 +2526,7 @@ void PlaylistWidget::sortCurrent(SortKey key, bool ascending) {
 // N45 §2.6：四步式判据 = "当前显示层是不是队列根层"——排序非队列根层纯粹是视图
 // 重排，mpv 队列不受影响；规则是全树统一的，改规则时队列根层一并按新规则重排，
 // 并在需要时按四步式重推 mpv——即使此刻显示的是另一层
-void PlaylistWidget::applySort(QListWidget *list, SortKey key, bool ascending, bool writeRule) {
+void PlaylistWidget::applySort(PlaylistListView *list, SortRule rule, bool writeRule) {
     if (!list)
         return;
     const int tab = indexOf(list);
@@ -2609,60 +2535,52 @@ void PlaylistWidget::applySort(QListWidget *list, SortKey key, bool ascending, b
 
     // N9：排序规则落位于提供者（随其持久化）
     if (writeRule) {
-        if (auto *p = providerAt(tab))
-            p->setSortRule(int(key), ascending);
+        if (auto *p = providerOfView(viewAt(tab)))
+            p->setSortRule(rule);
     }
-    const bool hadMemory = m_memory.contains(list) && m_memory.value(list).lastPos >= 0;
+    const bool hadMemory = list->memory().lastPos >= 0;
     const QString captured = captureMemoryPath(list);
 
-    const bool displayedIsQueueRoot = (browsePathIdsOf(list) == queueRootIdsOf(list));
+    const bool displayedIsQueueRoot = (list->browsePathIds() == list->queueRootIds());
     if (displayedIsQueueRoot) {
         // 显示层即队列根层：与旧行为同形——有正播行走四步式（重排 = 重排队列），
         // 否则直排
-        if (tab == m_playingTab && playingRowOf(list) >= 0)
-            runFourStep(list, tab, [&] { sortListItems(list, key, ascending); });
+        if (tab == playingTabIndex() && playingRowOf(list) >= 0)
+            runFourStep(list, tab, [&] { sortListItems(list, rule); });
         else
-            sortListItems(list, key, ascending);
+            sortListItems(list, rule);
     } else {
         // 显示层非队列根层：视图重排不动 mpv；队列根层（若已加载）数据一并重排，
         // 播放中再走四步式重推（停止 → 数据已排好 → 整表重推 → 续播）
-        sortListItems(list, key, ascending);
-        if (tab == m_playingTab) {
-            if (const Level *ql = findLevel(list, queueRootIdsOf(list));
+        sortListItems(list, rule);
+        if (tab == playingTabIndex()) {
+            if (const Level *ql = list->findLevel(list->queueRootIds());
                 ql && ql->loadError.isEmpty()) {
-                runFourStep(list, tab, [this, list, key, ascending] {
-                    Level *ql = [this, list]() -> Level * {
-                        auto it = m_levels.find(list);
-                        if (it == m_levels.end())
-                            return nullptr;
-                        auto lit = it->find(queueRootIdsOf(list));
-                        return lit == it->end() ? nullptr : &lit.value();
-                    }();
-                    if (ql)
-                        sortLevelData(*ql, key, ascending);
+                runFourStep(list, tab, [this, list, rule] {
+                    if (Level *ql = list->findLevel(list->queueRootIds()))
+                        sortLevelData(*ql, rule);
                 });
             }
-        } else if (Level *ql = [this, list]() -> Level * {
-                       auto it = m_levels.find(list);
-                       if (it == m_levels.end())
-                           return nullptr;
-                       auto lit = it->find(queueRootIdsOf(list));
-                       return lit == it->end() ? nullptr : &lit.value();
-                   }()) {
-            sortLevelData(*ql, key, ascending);
+        } else if (Level *ql = list->findLevel(list->queueRootIds())) {
+            sortLevelData(*ql, rule);
         }
     }
     // N45 §2.6：规则是全树统一的——其余已缓存层一并按新规则重排。纯数据、
     // 只读缓存元数据（sortLevelData 零求值）；显示层与播放中 tab 的队列根层
     // 已在上方处理，此处跳过，避免双重排序
     {
-        auto &cache = m_levels[list];
+        // 循环外一次取好：现算的坐标换算与两个 id 序列不该摊到每一层（本循环纯数据，
+        // sortLevelData 只重排层内容，不动浏览路径 / 队列根 / 播放目标）
+        const int playingTab = playingTabIndex();
+        const QStringList shownIds = list->browsePathIds();
+        const QStringList queueIds = list->queueRootIds();
+        auto &cache = list->levels();
         for (auto lit = cache.begin(); lit != cache.end(); ++lit) {
-            if (lit.key() == browsePathIdsOf(list))
+            if (lit.key() == shownIds)
                 continue; // 显示层已排（sortListItems）
-            if (tab == m_playingTab && lit.key() == queueRootIdsOf(list))
+            if (tab == playingTab && lit.key() == queueIds)
                 continue; // 播放中 tab 的队列根层已排（四步式 mutate）
-            sortLevelData(lit.value(), key, ascending);
+            sortLevelData(lit.value(), rule);
         }
     }
 
@@ -2672,7 +2590,7 @@ void PlaylistWidget::applySort(QListWidget *list, SortKey key, bool ascending, b
 // ——清理操作（N4 第六节）——
 
 void PlaylistWidget::executeRemoval(const QList<int> &rowsIn) {
-    QListWidget *list = listAt(currentIndex());
+    PlaylistListView *list = viewAt(currentIndex());
     const int tab = currentIndex();
     if (!list || rowsIn.isEmpty() || tab < 0 || m_busy)
         return; // N19：忙时菜单已禁用，此为兜底
@@ -2687,15 +2605,15 @@ void PlaylistWidget::executeRemoval(const QList<int> &rowsIn) {
 
     // N29：条目集合变化，两类已读元数据一并失效（N45：落在当前显示层）
     {
-        Level &lvl = levelOf(list);
+        Level &lvl = list->levelOf();
         lvl.mediaMetaLoaded = false;
         lvl.fileMetaLoaded = false;
     }
-    const bool playingTab = (tab == m_playingTab);
+    const bool playingTab = (tab == playingTabIndex());
     // N45 §2.6：四步式判据 = 显示层即队列根层——删除队列根层的条目才动 mpv 队列；
     // 删除非队列根层的条目纯粹是本地视图变更
-    const bool queueLayerPlaying = playingTab && browsePathIdsOf(list) == queueRootIdsOf(list);
-    const bool hadMemory = m_memory.contains(list) && m_memory.value(list).lastPos >= 0;
+    const bool queueLayerPlaying = playingTab && list->browsePathIds() == list->queueRootIds();
+    const bool hadMemory = list->memory().lastPos >= 0;
     const QString captured = captureMemoryPath(list);
     // 从大到小删除避免行号漂移
     QList<int> sorted = rows;
@@ -2727,7 +2645,7 @@ void PlaylistWidget::executeRemoval(const QList<int> &rowsIn) {
 
 // N25：播放中 tab 的本地先行删行（供"删除选中"走逐行 playlist-remove 同步通道时用）。
 // 不含四步式的停止/重推——删除不需要中断播放，mpv 逐个移除后推送的最终序列即本地序列
-void PlaylistWidget::removeRowsLocal(QListWidget *list, const QList<int> &rowsIn) {
+void PlaylistWidget::removeRowsLocal(PlaylistListView *list, const QList<int> &rowsIn) {
     if (!list || rowsIn.isEmpty())
         return;
     const int tab = indexOf(list);
@@ -2740,11 +2658,11 @@ void PlaylistWidget::removeRowsLocal(QListWidget *list, const QList<int> &rowsIn
         return;
     // N29：条目集合变化，两类已读元数据一并失效（N45：落在当前显示层）
     {
-        Level &lvl = levelOf(list);
+        Level &lvl = list->levelOf();
         lvl.mediaMetaLoaded = false;
         lvl.fileMetaLoaded = false;
     }
-    const bool hadMemory = m_memory.contains(list) && m_memory.value(list).lastPos >= 0;
+    const bool hadMemory = list->memory().lastPos >= 0;
     const QString captured = captureMemoryPath(list);
 
     QList<int> sorted = rows;
@@ -2763,7 +2681,7 @@ void PlaylistWidget::removeRowsLocal(QListWidget *list, const QList<int> &rowsIn
 }
 
 void PlaylistWidget::removeInvalidItems() {
-    QListWidget *list = listAt(currentIndex());
+    PlaylistListView *list = viewAt(currentIndex());
     if (!list)
         return;
     QList<int> rows;
@@ -2778,7 +2696,7 @@ void PlaylistWidget::removeInvalidItems() {
 }
 
 void PlaylistWidget::removeDuplicateItems() {
-    QListWidget *list = listAt(currentIndex());
+    PlaylistListView *list = viewAt(currentIndex());
     if (!list)
         return;
     QSet<QString> seen;
@@ -2804,40 +2722,31 @@ void PlaylistWidget::removeDuplicateItems() {
 // N30：静态与动态同路——一律回推后重枚举，收尾走统一的三单元 + 比对三分支。
 // 静态表刷新同样吸收提供者侧变化（旧路径对本表实体逐个 refresh 后重绘，不吸收外部新增）
 void PlaylistWidget::refreshCurrentTab() {
-    QListWidget *list = listAt(currentIndex());
+    PlaylistListView *list = viewAt(currentIndex());
     if (!list || m_busy)
         return; // N19：忙时菜单已禁用，此为兜底
     const int tab = currentIndex();
     // ① 回推：已加载且可修改的表把当前内容写回提供者。默认 tab 同样回推——其提供者
     // 从不落盘，不回推则枚举返回空表，刷新即清空内容。回推只改内存，不落盘。
     // N45：已加载 = 层在缓存且无失败文案（§2.5）
-    if (auto *p = providerAt(tab);
-        layerLoaded(list, browsePathIdsOf(list)) && p && p->supportsModify())
-        p->setItems(entitiesOf(list));
+    if (auto *p = providerOfView(viewAt(tab));
+        list->layerLoaded(list->browsePathIds()) && p && p->supportsModify())
+        p->setItems(list->entities());
     // ② 置位：旧代码在此清 entriesLoaded + loadError。N45 层模型下"未加载"由
     // 收尾覆盖表达：当前层的层仓保留（在途期显示行与实体须保活——recordPlayback
     // 与回刷仍读旧内容），仅清失败文案（旧②同样清它，使回刷在途比对不被失败态拦下）；
     // 成功收尾在 onLoadFinished 就地覆盖层内容
-    ensureLevel(list, browsePathIdsOf(list)).loadError.clear();
+    list->ensureLevel(list->browsePathIds()).loadError.clear();
     // ②' N45 §2.5：失效当前层及其全部子孙层（按键的前缀匹配）。保留例外只剩浏览层
     // 一项——在途期显示行上的实体必须存活（Refresh 续作的 oldKeys 采集、回刷比对、
     // recordPlayback 均是硬依赖），由本批收尾覆盖；其余被失效层（含队列根层，
     // N53 §2.2）移出缓存，下次被显示时按需重枚举
-    const QStringList browseIds = browsePathIdsOf(list);
-    const QStringList queueIds = queueRootIdsOf(list);
-    {
-        auto &cache = m_levels[list];
-        for (auto it = cache.begin(); it != cache.end();) {
-            const QStringList &k = it.key();
-            const bool inSubtree = k.size() >= browseIds.size() &&
-                                   std::equal(browseIds.begin(), browseIds.end(), k.begin());
-            if (!inSubtree || k == browseIds) {
-                ++it; // 浏览层保留：本批收尾覆盖（行上实体在途期必须存活）
-                continue;
-            }
-            it = cache.erase(it);
-        }
-    }
+    const QStringList browseIds = list->browsePathIds();
+    const QStringList queueIds = list->queueRootIds();
+    // ②' N45 §2.5：失效当前层及其全部子孙层（按键的前缀匹配）。浏览层自身保留
+    // ——在途期显示行上的实体必须存活（Refresh 续作的 oldKeys 采集、回刷比对、
+    // recordPlayback 均是硬依赖），由本批收尾覆盖
+    list->invalidateDescendantsOf(browseIds);
     // ②'' N53 §2.2：浏览层是队列根层的严格祖先且该 tab 是播放 tab ⇒ 整棵子树不可信
     // ——发起即一个同帧完成的原子动作组，成败都不回头：停播；同步目标无条件归位
     // （空闲时也归位，不留指向空队列基准的播放 tab）；清旧播放 tab 行上的播放标记
@@ -2851,11 +2760,11 @@ void PlaylistWidget::refreshCurrentTab() {
     const bool ancestorOfQueueRoot =
         queueIds.size() > browseIds.size() &&
         std::equal(browseIds.begin(), browseIds.end(), queueIds.begin());
-    if (ancestorOfQueueRoot && tab == m_playingTab) {
+    if (ancestorOfQueueRoot && tab == playingTabIndex()) {
         emit stopRequested();
-        m_playingTab = 0;
+        m_playingUuid = kDefaultListUuid; // 同步目标归位默认列表（N57 §2.8：换身份）
         clearPlayingMarks(list);
-        m_queueRoot.remove(list);
+        list->setQueueRoot({}); // 队列根锚点作废（空序列 ⇒ savePlaylists 不写该两键）
     }
     // ③ 驱逐：N20 条目只驱逐本表；flag 重置所有表（N45：全部层的两类标志一并复位）
     evictListKeys(list);
@@ -2869,7 +2778,7 @@ void PlaylistWidget::refreshCurrentTab() {
 // N20/N26：按表精确驱逐。遍历该表全部非占位行，按实体 key 逐个删 m_duration；
 // flag 重置所有表（N20 语义保留：本表驱逐可能清掉他表共享 key 的 mpv 推送时长，
 // 他表切入经预读重读恢复）。N45：标志复位覆盖全部 tab 的全部层
-void PlaylistWidget::evictListKeys(QListWidget *list) {
+void PlaylistWidget::evictListKeys(PlaylistListView *list) {
     if (!list)
         return;
     for (int i = 0; i < list->count(); ++i) {
@@ -2877,24 +2786,23 @@ void PlaylistWidget::evictListKeys(QListWidget *list) {
         if (isPlaceholderRow(item))
             continue;
         if (const PlaylistEntity *entity = entityFromItem(item))
-            m_duration.remove(entity->key());
+            m_duration->remove(entity->key());
     }
-    for (auto it = m_levels.begin(); it != m_levels.end(); ++it) {
-        for (auto lit = it->begin(); lit != it->end(); ++lit) {
-            lit->mediaMetaLoaded = false; // N29：两类标志位对称复位
-            lit->fileMetaLoaded = false;
-        }
+    // 标志复位覆盖全部 tab 的全部层（N45）：跨表遍历留在本类，逐表交给自己清
+    for (int i = 0; i < count(); ++i) {
+        if (PlaylistListView *every = viewAt(i))
+            every->resetMetaFlags();
     }
 }
 
 // ——N26 元数据能力谓词（一对，同形）：遍历该层实体，任一支持即真；
 // 空表 / 未加载层为假——
 
-bool PlaylistWidget::anyEntitySupportsMediaMeta(const QListWidget *list,
+bool PlaylistWidget::anyEntitySupportsMediaMeta(const PlaylistListView *list,
                                                 const QStringList &ids) const {
     if (!list)
         return false;
-    const Level *lvl = findLevel(list, ids);
+    const Level *lvl = list->findLevel(ids);
     if (!lvl)
         return false;
     for (const auto &entity : lvl->entities) {
@@ -2904,11 +2812,11 @@ bool PlaylistWidget::anyEntitySupportsMediaMeta(const QListWidget *list,
     return false;
 }
 
-bool PlaylistWidget::anyEntitySupportsFileMeta(const QListWidget *list,
+bool PlaylistWidget::anyEntitySupportsFileMeta(const PlaylistListView *list,
                                                const QStringList &ids) const {
     if (!list)
         return false;
-    const Level *lvl = findLevel(list, ids);
+    const Level *lvl = list->findLevel(ids);
     if (!lvl)
         return false;
     for (const auto &entity : lvl->entities) {
@@ -2919,40 +2827,22 @@ bool PlaylistWidget::anyEntitySupportsFileMeta(const QListWidget *list,
 }
 
 // ——N29 类别映射与判定收敛点——
-
-// 排序键 → 预读元数据类别的唯一映射
-PlaylistWidget::MetaCategory PlaylistWidget::metaCategoryOf(SortKey key) {
-    switch (key) {
-    case SortKey::Created:
-    case SortKey::Modified:
-    case SortKey::FileSize:
-        return MetaCategory::File;
-    case SortKey::Duration:
-    case SortKey::ReleaseDate:
-        return MetaCategory::Media;
-    case SortKey::None:
-    case SortKey::FileName:
-    case SortKey::FileNameNumeric:
-    case SortKey::Extension:
-        return MetaCategory::None;
-    }
-    return MetaCategory::None;
-}
+// N57 §2.9：排序键 → 类别的唯一映射 `metaCategoryOf` 已随键搬到 `PlaylistEntity.cpp`
+// （本类不再持有），菜单灰态判据与本节的判定都直调那个全局函数。
 
 // 对应类别支持者谓词：Media / File 各取其一（None 由调用方上游挡掉）
-bool PlaylistWidget::anyEntitySupports(const QListWidget *list, const QStringList &ids,
+bool PlaylistWidget::anyEntitySupports(const PlaylistListView *list, const QStringList &ids,
                                        MetaCategory cat) const {
     return cat == MetaCategory::Media ? anyEntitySupportsMediaMeta(list, ids)
                                       : anyEntitySupportsFileMeta(list, ids);
 }
 
-// 切入重读判定内核：该层该排序键仍需预读的类别（无需预读返回 None）。
+// 切入重读判定内核：该层该排序规则仍需预读的类别（无需预读返回 None）。
 // 注意只含"类别 / 支持者 / 标志位"三要素，busy / 已加载 / 占位等
 // 外围条件由调用方自判
-PlaylistWidget::MetaCategory PlaylistWidget::pendingMetaCategory(const QListWidget *list,
-                                                                 const QStringList &ids,
-                                                                 SortKey key) const {
-    const auto cat = metaCategoryOf(key);
+MetaCategory PlaylistWidget::pendingMetaCategory(const PlaylistListView *list,
+                                                 const QStringList &ids, SortRule rule) const {
+    const auto cat = metaCategoryOf(rule.key);
     if (cat == MetaCategory::None)
         return MetaCategory::None;
     if (!anyEntitySupports(list, ids, cat))
@@ -2960,17 +2850,17 @@ PlaylistWidget::MetaCategory PlaylistWidget::pendingMetaCategory(const QListWidg
     return metaLoadedOf(list, ids, cat) ? MetaCategory::None : cat;
 }
 
-bool PlaylistWidget::metaLoadedOf(const QListWidget *list, const QStringList &ids,
+bool PlaylistWidget::metaLoadedOf(const PlaylistListView *list, const QStringList &ids,
                                   MetaCategory cat) const {
-    const Level *lvl = findLevel(list, ids);
+    const Level *lvl = list->findLevel(ids);
     if (!lvl)
         return false;
     return cat == MetaCategory::File ? lvl->fileMetaLoaded : lvl->mediaMetaLoaded;
 }
 
-void PlaylistWidget::setMetaLoadedOf(QListWidget *list, const QStringList &ids, MetaCategory cat,
-                                     bool on) {
-    Level &lvl = ensureLevel(list, ids);
+void PlaylistWidget::setMetaLoadedOf(PlaylistListView *list, const QStringList &ids,
+                                     MetaCategory cat, bool on) {
+    Level &lvl = list->ensureLevel(ids);
     if (cat == MetaCategory::File)
         lvl.fileMetaLoaded = on;
     else
@@ -3018,7 +2908,7 @@ void PlaylistWidget::setBusy(bool on) {
 void PlaylistWidget::setListsEnabled(bool on) {
     tabBar()->setEnabled(on); // protected 成员，子类可用
     for (int i = 0; i < count(); ++i)
-        if (QListWidget *l = listAt(i))
+        if (PlaylistListView *l = viewAt(i))
             l->setEnabled(on);
     // N49：工具条随列表一并禁用（与遮罩覆盖构成双保险，沿用列表的既有做法）
     if (m_bottomBar)
@@ -3072,9 +2962,12 @@ void PlaylistWidget::tabInserted(int index) {
 void PlaylistWidget::tabRemoved(int index) {
     QTabWidget::tabRemoved(index);
     reserveBottomBarSpace();
-    // N54：删 tab 即作废挂起的层级定位——挂起态按 tab 索引记，索引会随删除漂移，
-    // 不作废就会把定位打到别的列表上。忙时 tab 栏与列表整体禁用（setListsEnabled），
-    // 正常流程走不到"在途删 tab"，此项属防御；作废是静默的（不回报，MainWindow 不弹错）
+    // N54：删 tab 即作废挂起的层级定位——作废是静默的（不回报，MainWindow 不弹错）。
+    // 忙时 tab 栏与列表整体禁用（setListsEnabled），正常流程走不到"在途删 tab"，此项属防御。
+    // N57 §2.8 待办目标已改持身份，"索引漂移打到别的表"在结构上已不可能；但"被删的正是
+    // 待办目标"这一情形下，本处静默作废与 §2.8 说的"换算不到坐标 ⇒ 出 ListGone"仍不一致
+    // ——现状因忙时拦截不可达，**若日后放开忙时对删除的拦截，须回到此处复核**：应改为
+    // 不在此清、交给 advanceLevelJump 换算失败出 ListGone，用户才拿得到一句解释
     m_pendingJump = PendingJump{};
 }
 
@@ -3108,17 +3001,17 @@ void PlaylistWidget::locatePlayingItem() {
     }
     if (!hasPlayingItem())
         return;
-    if (currentIndex() != m_playingTab)
-        setCurrentIndex(m_playingTab); // 切 tab 可能经 onTabChanged 起异步加载
-    if (m_busy) {                      // 切完复查：加载在途则延后，由 busy 结束补执行
+    if (currentIndex() != playingTabIndex())
+        setCurrentIndex(playingTabIndex()); // 切 tab 可能经 onTabChanged 起异步加载
+    if (m_busy) {                           // 切完复查：加载在途则延后，由 busy 结束补执行
         m_pendingLocate = true;
         return;
     }
-    QListWidget *list = listAt(m_playingTab);
+    PlaylistListView *list = viewAt(playingTabIndex());
     if (!list)
         return;
-    if (displayedIdsOf(list) == queueRootIdsOf(list))
-        restorePlayingState(list, m_playingTab); // 已是队列根层：只补选中与滚动，不重建行
+    if (list->displayedIds() == list->queueRootIds())
+        restorePlayingState(list, playingTabIndex()); // 已是队列根层：只补选中与滚动，不重建行
     else
         revealQueueRoot(list); // 下钻后的子层：归位队列根层（内部已含选中与滚动）
 }
@@ -3134,7 +3027,7 @@ bool PlaylistWidget::isSearchableRow(const QListWidgetItem *item) {
 void PlaylistWidget::searchNextInCurrentList() {
     if (m_busy)
         return;
-    QListWidget *list = listAt(currentIndex());
+    PlaylistListView *list = viewAt(currentIndex());
     const QString query = m_searchBox ? m_searchBox->text() : QString();
     if (query.isEmpty() || !list) {
         m_search = {}; // 空串回车不动作：不回绕、不发声、不报错
@@ -3186,7 +3079,7 @@ bool PlaylistWidget::isPlaceholderRow(const QListWidgetItem *item) {
     return item && item->data(PlaceholderRole).toBool();
 }
 
-void PlaylistWidget::showPlaceholder(QListWidget *list, const QString &error) {
+void PlaylistWidget::showPlaceholder(PlaylistListView *list, const QString &error) {
     if (!list)
         return;
     clearPlaceholder(list);
@@ -3197,7 +3090,7 @@ void PlaylistWidget::showPlaceholder(QListWidget *list, const QString &error) {
     item->setFlags(item->flags() & ~Qt::ItemIsSelectable); // 不可选中，防选中态残留
 }
 
-bool PlaylistWidget::clearPlaceholder(QListWidget *list) {
+bool PlaylistWidget::clearPlaceholder(PlaylistListView *list) {
     if (!list)
         return false;
     bool removed = false;
@@ -3693,18 +3586,18 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
     }
 
     // ——列表主体菜单（原全量菜单剔除新建/删除/重命名三项）——
-    QListWidget *list = listAt(currentIndex());
+    PlaylistListView *list = viewAt(currentIndex());
     const int tab = currentIndex();
-    const bool isPlayingTab = (tab == m_playingTab);
+    const bool isPlayingTab = (tab == playingTabIndex());
     const bool modifiable = isModifiableTab(tab);
 
     // 右键落点命中检测：条目级操作以命中的行为作用对象。
     // 注意 childAt 命中的是 QListWidget 的 viewport（孙级），需回溯一级
     m_menuTargetList = nullptr;
     m_menuTargetRow = -1;
-    QListWidget *hitList = underMouse ? qobject_cast<QListWidget *>(underMouse) : nullptr;
+    PlaylistListView *hitList = underMouse ? qobject_cast<PlaylistListView *>(underMouse) : nullptr;
     if (!hitList && underMouse)
-        hitList = qobject_cast<QListWidget *>(underMouse->parentWidget());
+        hitList = qobject_cast<PlaylistListView *>(underMouse->parentWidget());
     if (hitList) {
         const int row =
             hitList->indexAt(hitList->viewport()->mapFromGlobal(event->globalPos())).row();
@@ -3737,7 +3630,7 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
     QString containerFallback;
     if (targetContainer) {
         QStringList titles;
-        for (const PathSeg &seg : m_browsePath.value(m_menuTargetList))
+        for (const PathSeg &seg : m_menuTargetList->browsePath())
             titles << seg.title;
         containerFallback = relativePathText(titles + QStringList{targetContainer->title});
     }
@@ -3772,15 +3665,15 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
     for (QAction *a : sortActions)
         a->setCheckable(true);
     QActionGroup *ruleGroup = new QActionGroup(sortMenu);
-    auto *curProvider = providerAt(tab);
-    const auto curKey = curProvider ? curProvider->sortKey() : int(SortKey::None);
-    const bool curAsc = curProvider ? curProvider->sortAscending() : true;
+    auto *curProvider = providerOfView(viewAt(tab));
+    // N57 §2.9：两读点塌成一个值对象读（无提供者时落 {None, 升序}，与现状同形）
+    const SortRule cur = curProvider ? curProvider->sortRule() : SortRule{};
     for (QAction *a : sortActions)
         ruleGroup->addAction(a);
-    if (curKey != int(SortKey::None)) {
+    if (cur.key != SortKey::None) {
         // N18：从 action data 反查 SortKey 对应 action，避免下标耦合
         for (QAction *a : sortActions) {
-            if (a->data().toInt() == curKey) {
+            if (a->data().toInt() == int(cur.key)) {
                 a->setChecked(true);
                 break;
             }
@@ -3794,8 +3687,8 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
     QActionGroup *dirGroup = new QActionGroup(sortMenu);
     dirGroup->addAction(ascAction);
     dirGroup->addAction(descAction);
-    ascAction->setChecked(curAsc);
-    descAction->setChecked(!curAsc);
+    ascAction->setChecked(cur.ascending);
+    descAction->setChecked(!cur.ascending);
 
     QMenu *removeMenu = menu.addMenu(tr("Remove"));
     QAction *removeSelAction = removeMenu->addAction(tr("Remove Selected"));
@@ -3817,9 +3710,10 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
     const int itemCount = hasList ? list->count() : 0;
     // N19：枚举失败占位态仅启用刷新与排序（排序只改持久化规则，不执行）。
     // N45：失败口径 = 当前显示层的 loadError 非空
-    const bool loadFailed = hasList && !levelErrorOf(list, browsePathIdsOf(list)).isEmpty();
+    const bool loadFailed = hasList && !list->levelErrorOf(list->browsePathIds()).isEmpty();
     addAction->setEnabled(modifiable && !loadFailed); // 不可修改的 tab 内容来自枚举，禁手工添加
-    auto *menuProvider = providerAt(tab); // 排序能力遵从提供者（单项目录亦可持久化规则）
+    auto *menuProvider =
+        providerOfView(viewAt(tab)); // 排序能力遵从提供者（单项目录亦可持久化规则）
     sortMenu->setEnabled(hasList && menuProvider && menuProvider->supportsSort());
     // N30：统一后静态表刷新同样走枚举，"静态空表禁刷新"的前提已不成立，保持默认启用
     // （refreshAction 无额外限制，此处不调用 setEnabled）
@@ -3845,7 +3739,7 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
 
     // N26：依赖实体能力的排序项按本层支持者启用；其余排序项不受影响
     if (list) {
-        const QStringList layerIds = browsePathIdsOf(list);
+        const QStringList layerIds = list->browsePathIds();
         if (!anyEntitySupportsMediaMeta(list, layerIds)) {
             for (QAction *a : sortActions) {
                 const int k = a->data().toInt();
@@ -3898,7 +3792,7 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
         for (QListWidgetItem *sel : list->selectedItems())
             rows.append(list->row(sel));
         // N45 §2.6：只有显示层即队列根层时，删除才同步进 mpv（逐行 playlist-remove）
-        const bool queueLayer = browsePathIdsOf(list) == queueRootIdsOf(list);
+        const bool queueLayer = list->browsePathIds() == list->queueRootIds();
         if (isPlayingTab && queueLayer) {
             // N25：本地先行删行，再走既有同步通道——mpv 侧按实体序（队列序）移除，
             // 行序先行换算；mpv 逐个移除推送的中间态以本地序列为子序列，最终序列
@@ -3919,7 +3813,7 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
         for (int i = 0; i < list->count(); ++i)
             all.append(i);
         // N45：清空的若不是队列根层，mpv 队列不受影响，无需停止
-        if (isPlayingTab && browsePathIdsOf(list) == queueRootIdsOf(list))
+        if (isPlayingTab && list->browsePathIds() == list->queueRootIds())
             emit stopRequested(); // N25：先停（stop 不带 keep-playlist 即清空 mpv 列表），
                                   // 空列表推送被回刷忽略；随后 executeRemoval 本地清空
         executeRemoval(all);
@@ -3931,21 +3825,22 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
         // 切向即时重排：有生效规则立即按新方向执行；无规则仅记录方向；
         // N19：失败占位态只写规则不执行（无内容可排，下次加载成功后生效）
         const bool ascending = (chosen == ascAction);
-        if (auto *p = providerAt(tab)) {
-            p->setSortRule(p->sortKey(), ascending);
-            if (!loadFailed && p->sortKey() != int(SortKey::None))
-                sortCurrent(SortKey(p->sortKey()), ascending);
+        if (auto *p = providerOfView(viewAt(tab))) {
+            p->setSortRule({p->sortRule().key, ascending});
+            if (!loadFailed && p->sortRule().key != SortKey::None)
+                sortCurrent(p->sortRule());
         }
     } else {
         // 排序规则命中：按当前方向执行一次并迁移勾选（sortCurrent 落位状态）
         // N18：从 action data 取 SortKey 而非数组下标 +1（避免菜单顺序与枚举序耦合）
         const int keyInt = chosen->data().toInt();
         if (keyInt > int(SortKey::None)) {
+            const SortRule picked{static_cast<SortKey>(keyInt), cur.ascending};
             if (loadFailed) {
-                if (auto *p = providerAt(tab))
-                    p->setSortRule(keyInt, curAsc); // 仅持久化记忆，随下次成功加载生效
+                if (auto *p = providerOfView(viewAt(tab)))
+                    p->setSortRule(picked); // 仅持久化记忆，随下次成功加载生效
             } else {
-                sortCurrent(static_cast<SortKey>(keyInt), curAsc);
+                sortCurrent(picked);
             }
         }
     }
@@ -3958,30 +3853,37 @@ void PlaylistWidget::removeTabAt(int tabIndex) {
     const int idx = tabIndex;
     if (idx <= 0 || idx >= count() || m_busy)
         return; // N19：忙时表头菜单已禁用，此为兜底
-    if (idx == m_playingTab) {
+    PlaylistListView *closing = viewAt(idx);
+    QUuid gone; // 待摘除列表的身份；无页面即无列表可摘
+    if (closing)
+        gone = closing->list()->uuid();
+    if (idx == playingTabIndex()) {
         emit stopRequested();
         emit clearRequested();
-        m_playingTab = 0;
+        m_playingUuid = kDefaultListUuid; // 同步目标归位默认列表（身份判据，不是位置）
     }
-    if (QListWidget *closing = listAt(idx)) {
-        // N28：shared_ptr 引用计数回收（含排序规则）；若旧提供者在途，
-        // 任务 lambda 仍持副本，销毁自动延后到枚举任务结束
-        // N32：在途批次一并作废，统一走 abandonJob（仅当目标表即本表）
+    if (closing) {
+        // ①（§2.7 关闭定序）在途批次若目标即本表，先作废
         if (m_job.target == closing)
             abandonJob();
-        m_providerOf.remove(closing);
-        // N45：实体所有权随层缓存一并回收；浏览路径、队列根与显示层记录随 tab 清除
-        m_levels.remove(closing);
-        m_browsePath.remove(closing);
-        m_queueRoot.remove(closing);
-        m_displayedIds.remove(closing);
-        m_memory.remove(closing);
         if (m_pendingLoad.list == closing)
             m_pendingLoad = PendingLoad{};
     }
-    if (m_playingTab > idx)
-        --m_playingTab;
-    removeTab(idx);
+    // N57 §2.8：旧代码此处有一段"播放目标索引 > 被删索引则 --"的漂移修正——目标改持
+    // 身份后 tab 序号与本对象无关，整段消失（现状下 m_busy 本就拦住在途删除，修正从不
+    // 可达，属架构纯化而非修缺陷）
+    removeTab(idx); // ② 此后 viewAt 的 index 域不再含它 ⇒ 注册表与视图之间无读者
+    // ③ 注册表摘除即列表对象的唯一析构点（N28：若旧提供者仍在途，任务 lambda 持有的
+    // shared_ptr 副本令其销毁自动延后到枚举任务结束）。状态随视图对象一并回收——
+    // 原五张平行表的 remove 在此塌成"对象销毁"一件事
+    if (!gone.isNull())
+        m_lists->remove(gone);
+    // ④ 页面 widget 必须显式销毁：QTabWidget::removeTab 只把它移出页面栈、不销毁
+    // 对象（Qt 契约），状态进视图后留着即是把一切视图态挂在泄漏页面上。
+    // deleteLater 而非立即 delete：本轮栈里仍可能持该 view 裸指针的调用点
+    // （右键菜单收尾、信号回传）要活过本次事件处理
+    if (closing)
+        closing->deleteLater();
     savePlaylists();
 }
 
@@ -3991,31 +3893,26 @@ void PlaylistWidget::removeTabAt(int tabIndex) {
 void PlaylistWidget::createNewList() {
     if (m_busy)
         return;
-    // 默认名 = 既有 tab 名里 "Playlist <n>" 的最大序号 +1（Util::nextSequenceNumber，
+    // 默认名 = 既有列表名里 "Playlist <n>" 的最大序号 +1（Util::nextSequenceNumber，
     // 与书签自动命名同一份算法）。同一份名清单兼作对话框的重名占位表：采集一次、两处
-    // 同源，不再各扫一遍 tab
-    QStringList occupied;
-    occupied.reserve(count());
-    for (int i = 0; i < count(); ++i)
-        occupied << tabText(i);
+    // 同源。N57 §2.7：唯一判据源是注册表清单（含默认列表名 ⇒"改成与默认同名"同处拒判），
+    // 视图与对话框不再各扫一遍 tab
+    const QStringList occupied = m_lists->names();
     const int nextN = Util::nextSequenceNumber(tr("Playlist "), occupied);
     ListSettingsDialog dlg(this, tr("Playlist %1").arg(nextN), nullptr, occupied, m_registry);
     if (dlg.exec() != QDialog::Accepted)
         return;
     const QString name = dlg.listName();
 
-    auto *list = createList();
     // 新建必产出提供者（对话框入口 m_current 为 null，不会走"未变更"分支）；
-    // 断言守候不变量——空值插入会让下面的解引用直接崩，宁可 Debug 期炸出
+    // 断言守候不变量——空值会让注册表登记崩在 Debug 期，宁可炸出
     auto result = dlg.takeProvider();
     Q_ASSERT(result.has_value() && *result != nullptr);
-    // 排序默认按能力位施加（不可修改的源默认按修改时间）。
-    // N28：插入与取值拆两步——Qt 的 key_value_iterator 无 operator->，
-    // 不能经 insert_or_assign 返回值直接取实例指针
-    m_providerOf.insert_or_assign(list, std::move(*result));
-    auto *p = m_providerOf.find(list).value().get();
-    const bool modifiable = p->supportsModify();
-    p->setSortRule(modifiable ? int(SortKey::None) : int(SortKey::Modified), true);
+    // N57 §2.7 新建序：登记（一次成型，身份随附）→ 建视图与 tab → 触发首载 → 保存。
+    // 排序默认由提供者自述（不可修改的源默认按修改时间）
+    auto *pl = m_lists->append(name, std::move(*result), QUuid());
+    pl->provider()->setSortRule(pl->provider()->defaultSortRule());
+    auto *list = createView(pl);
     addTab(list, name);
     // N28：静态表不再同步填充，切入（setCurrentIndex）触发首次异步加载
     setCurrentIndex(count() - 1);
@@ -4028,21 +3925,23 @@ void PlaylistWidget::createNewList() {
 void PlaylistWidget::openListSettings(int tabIndex) {
     if (tabIndex <= 0 || m_busy)
         return; // N19：忙时表头菜单已禁用，此为兜底
-    QListWidget *list = listAt(tabIndex);
+    PlaylistListView *list = viewAt(tabIndex);
     if (!list)
         return;
 
-    QStringList occupied;
-    for (int i = 0; i < count(); ++i) {
-        if (i != tabIndex)
-            occupied << tabText(i);
-    }
-    ListSettingsDialog dlg(this, tabText(tabIndex), providerAt(tabIndex), occupied, m_registry);
+    // N57 §2.7：重名判据单点——注册表清单剔除自身身份（含默认列表名）。对话框不再
+    // 自带第二份"默认"源文案，改判成与默认列表同名由这份清单拒掉
+    const QStringList occupied = m_lists->names(list->list()->uuid());
+    // 种子取列表对象的名字（tab 文本只是它的镜像）：只用于回显与变更判定
+    ListSettingsDialog dlg(this, list->list()->name(), providerOfView(list), occupied, m_registry);
     if (dlg.exec() != QDialog::Accepted)
         return;
     const QString name = dlg.listName();
     auto result = dlg.takeProvider();
 
+    Playlist *pl = list->list();
+    // N57 §2.6 不变式：名字住列表对象，tab 文本只是它的镜像，两处同点改
+    pl->setName(name);
     setTabText(tabIndex, name);
     if (!result.has_value()) {
         // 仅改名（对话框判定提供者未变）：内容与提供者不动
@@ -4050,27 +3949,21 @@ void PlaylistWidget::openListSettings(int tabIndex) {
         return;
     }
 
-    const bool wasPlaying = (tabIndex == m_playingTab);
+    const bool wasPlaying = (tabIndex == playingTabIndex());
     if (wasPlaying) {
-        emit stopRequested(); // 纯 stop 清空 mpv 侧列表（AGENTS 陷阱条目）
-        m_playingTab = 0;     // N25：同步目标归位默认 tab（空列表推送由回刷忽略，无需悬空）
+        emit stopRequested();             // 纯 stop 清空 mpv 侧列表（AGENTS 陷阱条目）
+        m_playingUuid = kDefaultListUuid; // 同步目标归位默认列表（空列表推送由回刷忽略）
     }
 
-    // N27：同 insert_or_assign——不经 operator[]，键缺失时不静默插入空值
-    m_providerOf.insert_or_assign(list, std::move(*result));
+    // N57 §2.7 换身：替换提供者即换身，身份与名字不动（视图不再持有提供者）
+    pl->setProvider(std::move(*result));
+    // 排序规则重置为新提供者类型默认（N57 §2.9：自述默认）
+    pl->provider()->setSortRule(pl->provider()->defaultSortRule());
 
-    // 原记忆随源失效一并清除；排序规则重置为新提供者类型默认
-    m_memory.remove(list);
-    if (auto *np = providerAt(tabIndex))
-        np->setSortRule(np->supportsModify() ? int(SortKey::None) : int(SortKey::Modified), true);
-
-    // N45 §2.5：换源清整个 tab 的层缓存；浏览路径、队列根与显示层记录复位为空（根层）。
-    // 行与实体一并回收（list->clear()），随后以新提供者异步重建
-    m_levels.remove(list);
-    m_browsePath.remove(list);
-    m_queueRoot.remove(list);
-    m_displayedIds.remove(list);
-    list->clear();
+    // N45 §2.5 + N57 §2.8：换源即整个 tab 的视图态作废——层缓存、浏览路径、队列根、
+    // 显示层记录、续播记忆全清 + 行与实体一并回收，随后以新提供者异步重建。
+    // 原"五张表各 remove 一处 + list->clear()"塌成视图的一个方法
+    list->resetForNewSource();
     // N28：换源不再区分能力位，一律异步填充；当前 tab 索引未变（onTabChanged
     // 不会触发），显式发起以保留"换源即出内容"的体验，完成后选中首项（不播放）
     m_pendingLoad = PendingLoad{};

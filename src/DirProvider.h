@@ -38,6 +38,8 @@ class DirProvider : public PlaylistProvider {
     bool supportsModify() const override;
     // 显式 true：目录表内容以枚举为准不可增删，但仍可排序并持久化规则
     bool supportsSort() const override;
+    // N57 §2.9：默认规则由提供者自述（取代视图按能力位推导的启发式）——按修改时间升序
+    SortRule defaultSortRule() const override { return {SortKey::Modified, true}; }
 
     // 当前语言下的显示名（无译文时即英文源）；登记表以函数指针引用（N44）
     static QString displayName();

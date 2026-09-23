@@ -4,10 +4,10 @@
 #include "pch.h"
 
 BookmarkEditorDialog::BookmarkEditorDialog(BookmarkManager *mgr, JumpCallback jumpCb,
-                                           ListNameLookup nameLookup, ListAliveLookup listAlive,
-                                           const QString &currentPath, QWidget *parent)
-    : QDialog(parent), m_mgr(mgr), m_jumpCb(std::move(jumpCb)), m_nameLookup(std::move(nameLookup)),
-      m_listAlive(std::move(listAlive)) {
+                                           ListLookup listLookup, const QString &currentPath,
+                                           QWidget *parent)
+    : QDialog(parent), m_mgr(mgr), m_jumpCb(std::move(jumpCb)),
+      m_listLookup(std::move(listLookup)) {
     setWindowTitle(tr("Bookmark Editor"));
     resize(640, 420);
     auto *layout = new QVBoxLayout(this);
@@ -61,16 +61,17 @@ BookmarkEditorDialog::BookmarkEditorDialog(BookmarkManager *mgr, JumpCallback ju
     onSelectionChanged();
 }
 
-// N54：根节点呈现 = "[列表名] 文件显示路径"。列表名按来源 uuid 运行期现查（不落盘，
-// 改名即刻生效）；查不到（无身份书签、来源列表已删、或查名回调未接）前缀显示 Unknown
-// ——维护者裁决保留占位：编辑器里"没有归属"要显式可见，才能与"能回原列表"的项一眼
-// 分开（N54 变更记录 6）。显示路径仍取 displayPath（归一化小写键经它恢复原样；
-// B15：网络书签不额外 toNativeSeparators）
+// N54：根节点呈现 = "[列表名] 文件显示路径"。列表名按来源身份运行期现查（不落盘，
+// 改名即刻生效）；查不到前缀显示 Unknown——两类成因：旧 INI / 损坏数据带来的无身份
+// 书签，或来源列表已被删除（N57 §2.5 后**默认 tab 出生的书签不再落"无身份"**，它记
+// 默认列表的保留身份）——维护者裁决保留占位：编辑器里"没有归属"要显式可见，才能与
+// "能回原列表"的项一眼分开（N54 变更记录 6）。显示路径仍取 displayPath（归一化小写
+// 键经它恢复原样；B15：网络书签不额外 toNativeSeparators）
 QString BookmarkEditorDialog::fileItemText(const QString &key) const {
     const BookmarkManager::Origin origin = m_mgr->bookmarkOrigin(key);
     QString listName;
-    if (origin.isValid() && m_nameLookup)
-        listName = m_nameLookup(origin.listUuid);
+    if (origin.isValid() && m_listLookup)
+        listName = m_listLookup(origin.listUuid);
     if (listName.isEmpty())
         listName = tr("Unknown");
     return QStringLiteral("[%1] %2").arg(listName, m_mgr->displayPath(key));
@@ -210,8 +211,12 @@ void BookmarkEditorDialog::onRemoveSelected() {
 void BookmarkEditorDialog::onRemoveInvalid() {
     // 有删除必发 changed（无删除早退不发），刷新经主窗口级联。
     // N54：判据两半——本地项看磁盘、远端项看归属，后者要问"列表还在不在"，本对话框
-    // 不认识播放列表，故经构造期注入的 m_listAlive 现问主窗口
-    m_mgr->removeInvalid(m_listAlive);
+    // 不认识播放列表，故问注入的那一次按身份直查。
+    // N57 §2.6：存活判据由名字查询就地派生——"查得到名字"与"列表还在"是同一次直查的
+    // 两面（前提"空名列表不存在"由注册表一侧保证），不再要调用方传第二份同源判据
+    m_mgr->removeInvalid([this](const QUuid &listUuid) {
+        return m_listLookup && !m_listLookup(listUuid).isEmpty();
+    });
 }
 
 void BookmarkEditorDialog::onClearAll() {

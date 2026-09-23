@@ -634,9 +634,10 @@ void WebDavProvider::saveSettings(QSettings &settings) const {
     // N46：浏览模式一值替代原 davRecursive（不做旧键兼容与迁移，§2.1）
     settings.setValue(QStringLiteral("davBrowseMode"), int(m_browseMode));
     settings.setValue(QStringLiteral("davExtensions"), m_extensions);
-    // 排序规则随提供者持久化（与目录表同形，含 None——显式记录用户未选择规则）
-    settings.setValue(QStringLiteral("sortKey"), sortKey());
-    settings.setValue(QStringLiteral("sortAscending"), sortAscending());
+    // 排序规则随提供者持久化（与目录表同形，含 None——显式记录用户未选择规则）。
+    // N57 §2.9：改从值对象取，两键键名与取值逐字不变
+    settings.setValue(QStringLiteral("sortKey"), int(sortRule().key));
+    settings.setValue(QStringLiteral("sortAscending"), sortRule().ascending);
 }
 
 std::shared_ptr<PlaylistProvider>
@@ -649,8 +650,10 @@ WebDavProvider::load(QSettings &settings, const std::shared_ptr<ServiceRegistry>
         // 钻取，破坏性变更已由维护者确认接受，§2.1）
         browseModeFromInt(settings.value(QStringLiteral("davBrowseMode"), 0).toInt()),
         settings.value(QStringLiteral("davExtensions")).toStringList(), registry);
-    provider->setSortRule(settings.value(QStringLiteral("sortKey"), 0).toInt(),
-                          settings.value(QStringLiteral("sortAscending"), true).toBool());
+    // N57 §2.9：读回组装值对象（缺键落 {None, 升序}，取值域不变）
+    const SortRule rule{static_cast<SortKey>(settings.value(QStringLiteral("sortKey"), 0).toInt()),
+                        settings.value(QStringLiteral("sortAscending"), true).toBool()};
+    provider->setSortRule(rule);
     return provider;
 }
 

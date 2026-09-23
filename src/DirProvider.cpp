@@ -393,9 +393,10 @@ void DirProvider::saveSettings(QSettings &settings) const {
     // N45：浏览模式一值替代原 dirRecursive（不做旧键兼容与迁移，§2.11）
     settings.setValue(QStringLiteral("dirBrowseMode"), int(m_browseMode));
     settings.setValue(QStringLiteral("dirExtensions"), m_extensions);
-    // 目录绑定列表持久化排序键（含 None——显式记录用户未选择规则）
-    settings.setValue(QStringLiteral("sortKey"), sortKey());
-    settings.setValue(QStringLiteral("sortAscending"), sortAscending());
+    // 目录绑定列表持久化排序键（含 None——显式记录用户未选择规则）。
+    // N57 §2.9：改从值对象取，两键键名与取值逐字不变
+    settings.setValue(QStringLiteral("sortKey"), int(sortRule().key));
+    settings.setValue(QStringLiteral("sortAscending"), sortRule().ascending);
 }
 
 std::shared_ptr<PlaylistProvider>
@@ -406,8 +407,10 @@ DirProvider::load(QSettings &settings, const std::shared_ptr<ServiceRegistry> &r
         // 钻取，破坏性变更已由维护者确认接受，§2.11）
         browseModeFromInt(settings.value(QStringLiteral("dirBrowseMode"), 0).toInt()),
         settings.value(QStringLiteral("dirExtensions")).toStringList(), registry);
-    provider->setSortRule(settings.value(QStringLiteral("sortKey"), 0).toInt(),
-                          settings.value(QStringLiteral("sortAscending"), true).toBool());
+    // N57 §2.9：读回组装值对象（缺键落 {None, 升序}，取值域不变）
+    const SortRule rule{static_cast<SortKey>(settings.value(QStringLiteral("sortKey"), 0).toInt()),
+                        settings.value(QStringLiteral("sortAscending"), true).toBool()};
+    provider->setSortRule(rule);
     return provider;
 }
 
