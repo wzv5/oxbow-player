@@ -63,7 +63,8 @@ class PlaylistWidget : public QTabWidget {
                             std::shared_ptr<PlaylistRegistry> lists, QWidget *parent = nullptr);
     ~PlaylistWidget() override; // N32：非阻塞收尾——作废并取消在途任务后立即返回（不再等待）
 
-    // 注入控制器（弱引用）：N30 起四步式在停止前读 pause、归位读 path / idle-active
+    // 注入控制器（只借不拥有，寿命须晚于本表——裸指针不随控制器销毁自动归零）：
+    // N30 起四步式在停止前读 pause、归位读 path / idle-active
     void attachController(MpvController *mpv) { m_mpv = mpv; }
 
     // N60：mpv 播放列表回刷。吞域（推送会话在册）→ 空列表忽略 → 与"正在播放"tab
@@ -79,7 +80,7 @@ class PlaylistWidget : public QTabWidget {
     PlaylistEntity::List setDefaultTabFiles(const QStringList &files);
 
     // ——N45 §2.8：filesOf 拆双出口的实体版。凡 mpv 侧语义（上一/下一、循环判定、
-    // 回刷比对、在途回显、正播名等）一律读队列根层出口；唯一当前层语义是双击入队。
+    // 回刷比对、收编索引、正播名等）一律读队列根层出口；唯一当前层语义是双击入队。
     // N56 §2.7：字符串表出口退到"喂 mpv 前最后一刻"——凡 mpv 侧语义一律传实体表，
     // 下发形态（playUrls）在 MainWindow 的统一入口现场映射
     PlaylistEntity::List queueEntitiesOf(int tabIndex) const; // 队列根层（mpv 队列的内容基准）
@@ -620,7 +621,7 @@ class PlaylistWidget : public QTabWidget {
     // 与本字段无关（旧 --m_playingTab 那类修正整段消失）
     QUuid m_playingUuid = kDefaultListUuid;
     QString m_configFile;
-    MpvController *m_mpv = nullptr; // 弱引用，attachController 注入（N4 进度恢复用）
+    MpvController *m_mpv = nullptr; // 借用的裸指针（不随控制器销毁归零），attachController 注入
     // N35：服务注册表（初始化列表创建，此后恒非空；设置变更时只覆盖其内部实例，
     // 注册表身份恒定——收编 / 拖放 / 打开 URL 经工厂注入实体，实体每次求值现查）
     // N36：TraversalPolicy 同注册于此；创建与装配分离，两个 provide 函数各管一项

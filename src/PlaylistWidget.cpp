@@ -226,7 +226,7 @@ PlaylistEntity::Ptr PlaylistWidget::playingEntityOf(int tabIndex, int entityInde
 // 方法——usesTransit() 为假走 directPlayUrl（直发形态），为真铸 mpvqt:// 转接 URI；
 // 本出口由此成为全仓唯一能取得"直接形态"的生产调用点（directPlayUrl 已 protected）。
 // 凭据只在此处与 PROPFIND 请求两个使用点注入；本出口只服务下发 mpv 的 loadfile
-// 循环，在途快照 / 收编索引与它同源同形（N56 §2.5）。
+// 循环，收编索引与回刷判据和它同源同形（N56 §2.5）。
 // N57 §2.2：整表映射归列表对象（逐实体传它自身身份），本出口只是薄适配——
 // 提供者恒非空后不再有"无提供者按恒等兜底"那一支，越界（无表可寻）按下发空串集
 QStringList PlaylistWidget::playUrls(int tabIndex, const PlaylistEntity::List &entities) const {
@@ -875,6 +875,8 @@ void PlaylistWidget::endLocalPush(quint64 gen) {
     // 发射失败（或无控制器）不会产生 reply，世代号就地摘除——批内变更的迟投回显
     // 会自然到达并走正常判定。残余见规格 §2.2：该路径只在 mpv 正在退出 / 参数非法
     // 时出现，下一轮回显即自愈，不为此加超时兜底（否则世代泄漏成永久吞域）
+    if (!m_mpv)
+        qDebug() << "[mpvqt] push barrier skipped, no controller: gen" << gen; // 装配异常才到这
     m_openPushGens.remove(gen);
 }
 
@@ -890,7 +892,11 @@ void PlaylistWidget::onPushBarrier(quint64 gen, bool ok, const QVariantList &ite
     if (gen >= m_lastBarrier.gen)
         m_lastBarrier = Barrier{gen, ok, items};
 
-    if (!m_openPushGens.isEmpty())
+    // 观测点（§四.3）：摘除后在册规模须在下面对账**之前**取——对账的收编会就地
+    // 再起会话，事后读到的集合规模不是这一瞬的
+    const int stillOpen = int(m_openPushGens.size());
+    qDebug() << "[mpvqt] push barrier gen" << gen << "ok" << ok << "still open" << stillOpen;
+    if (stillOpen > 0)
         return;
 
     const Barrier settled = m_lastBarrier;
@@ -900,8 +906,7 @@ void PlaylistWidget::onPushBarrier(quint64 gen, bool ok, const QVariantList &ite
     // 世代的 ok 载荷——只递减返回（§2.3 第 2 条）
     if (settled.ok)
         setPlaylist(settled.items);
-    qDebug() << "[mpvqt] push barrier settled gen" << settled.gen << "ok" << settled.ok
-             << "open sessions" << m_openPushGens.size();
+    qDebug() << "[mpvqt] push barrier settled with gen" << settled.gen << "ok" << settled.ok;
 }
 
 // N11：主菜单"打开文件"固定落点——整体替换默认 tab 内容并作废其续播记忆
@@ -1891,7 +1896,7 @@ bool PlaylistWidget::syncAfterRefresh(PlaylistListView *list, int tab, const QSt
         !(m_mpv ? m_mpv->propertyFlag(QStringLiteral("idle-active"), false) : true);
     if (!canSync)
         return false;
-    if (prefix) { // 末尾追加：登记在途回显后追加新项，播放零中断
+    if (prefix) { // 末尾追加：只把新项交给喂入侧，播放零中断
         // N45 §2.8：比对与追加的基准是 mpv 队列 → 队列根层出口。
         // N56 §2.7：追加段以实体表随 filesAdded 信号交 MainWindow
         const PlaylistEntity::List entities = queueEntitiesOf(tab);
@@ -3819,8 +3824,8 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
         const bool queueLayer = list->browsePathIds() == list->queueRootIds();
         if (isPlayingTab && queueLayer) {
             // N25：本地先行删行，再走既有同步通道——mpv 侧按实体序（队列序）移除，
-            // 行序先行换算；mpv 逐个移除推送的中间态以本地序列为子序列，最终序列
-            // 与本地一致，回刷均静默
+            // 行序先行换算；逐个移除推送的中间态落在喂入侧会话的吞域内（N60），
+            // 最终序列与本地一致由屏障终值对账兜住
             QList<int> entityIdxs;
             for (int r : rows) {
                 const int idx = rowToEntityIndex(list, r);
