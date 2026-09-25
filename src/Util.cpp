@@ -564,19 +564,6 @@ QDateTime parseReleaseDate(const QString &s) {
     return {};
 }
 
-// N25：按序子序列判定（回刷在途中间态识别用）
-bool isOrderedSubsequence(const QStringList &sub, const QStringList &full) {
-    int j = 0;
-    for (const QString &s : sub) {
-        while (j < full.size() && full.at(j) != s)
-            ++j;
-        if (j == full.size())
-            return false;
-        ++j;
-    }
-    return true;
-}
-
 // N49：图标淡化。合成底取素材最大可用尺寸——源分辨率不低于最终显示尺寸
 // （16px × 最大缩放率），后续由 QIcon 下采样显示不会糊；透明度经
 // QPainter::setOpacity 施加，与缩放无关，故随后缩放不丢效果

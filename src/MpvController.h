@@ -17,6 +17,10 @@ class MpvController : public QObject {
     explicit MpvController(mpv_handle *mpv, QObject *parent = nullptr);
 
     // 发送命令：单行命令字符串，或参数数组（推荐用于含路径的命令，避免转义问题）
+    // N60 §2.1 硬约束：**播放列表内容的喂入侧必须保持同步 API**。本类与
+    // setProperty / loadFile 一样走 mpv_command*，命令返回即已在 core 执行完毕
+    // ——推送会话的屏障读正是据这一点成立（发读请求时本批已是终态）。若把任一
+    // 喂入点改走 *_async，该不变式即失效，须改成"等本批 reply 全到齐再发屏障读"
     void command(const QString &cmd);
     void command(const QStringList &args);
 
@@ -26,7 +30,14 @@ class MpvController : public QObject {
     // 条目起播生效、播完自动还原）。空选项走既有三参数字符串通道，本地项命令
     // 与原行为逐字相同；非空走节点通道。appendMode 由调用方原样传入
     // append / append-play。
+    // N60 §2.1 硬约束：同步语义（经 command / mpv_command_node），不得改异步——
+    // 它是最主要的列表喂入点
     void loadFile(const QString &url, const QString &appendMode);
+
+    // N60 §2.2：推送会话的屏障读——异步读 playlist，reply 自带发出时刻的队列
+    // 终值，gen 作 reply_userdata 与终点对账配对。返回 false 表示发射失败
+    // （不会产生 reply），调用方据此就地摘除世代
+    bool pushBarrier(quint64 gen);
 
     // N42：String 型 set 改判返回值——下发失败（顶层语法错误 / 未知滤镜名等，
     // mpv 保持原值不清理）由调用方决定不写 conf；既有调用点忽略返回值，零波及。
@@ -86,6 +97,10 @@ class MpvController : public QObject {
     void volumeMaxChanged(double newMax);
     // items 为 QVariantMap 列表，键：filename / title / current
     void playlistChanged(const QVariantList &items);
+    // N60 §2.2：屏障读的终点回显——items 与 playlistChanged 同形（同一条解析
+    // 出口），ok 为假（读失败 / 载荷非数组 / 属性不可读）时不对账。gen 是发出
+    // 屏障读时登记的世代号，与 playlistChanged 投同一接收者故保序
+    void pushBarrierResult(quint64 gen, bool ok, const QVariantList &items);
     void playlistPosChanged(int pos);
     // mpv 进入/离开空闲状态（列表播完或停止后无当前文件）
     void idleActive(bool active);
@@ -127,6 +142,8 @@ class MpvController : public QObject {
     class EventThread; // 事件专用线程（定义见 .cpp）
 
     void handlePropertyChange(const mpv_event *event);
+    // N60 §2.2：屏障读的 reply 分派（事件线程就地解析并释放 node 后发射）
+    void handleBarrierReply(const mpv_event *event);
     // B18：生命周期事件分派（均在事件线程执行）
     void handleStartFile();  // START_FILE：刷新当前文件缓存
     void handleFileLoaded(); // FILE_LOADED：以缓存为归属键主动读 5 项属性并发射

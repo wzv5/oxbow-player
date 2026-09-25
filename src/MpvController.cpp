@@ -249,6 +249,11 @@ class MpvController::EventThread : public QThread {
             case MPV_EVENT_PROPERTY_CHANGE:
                 m_ctrl->handlePropertyChange(e);
                 break;
+            case MPV_EVENT_GET_PROPERTY_REPLY:
+                // N60：屏障读的终点。独立分派，不并入 handlePropertyChange 的
+                // observe token switch（两者共用 reply_userdata 但按 event_id 分流）
+                m_ctrl->handleBarrierReply(e);
+                break;
             case MPV_EVENT_START_FILE:
                 m_ctrl->handleStartFile();
                 break;
@@ -475,6 +480,17 @@ void MpvController::loadFile(const QString &url, const QString &appendMode) {
         qDebug() << "[mpvqt] loadfile(node) failed:" << err << url;
 }
 
+bool MpvController::pushBarrier(quint64 gen) {
+    // N60 §2.2：只发请求不候结果——reply 由 EventThread 的 GET_PROPERTY_REPLY
+    // 分派发回 pushBarrierResult，gen 作 reply_userdata 与终点配对。playlist
+    // 属性恒可读（观察它拿回显的正是同一属性），失败只在 mpv 正在退出 / 参数
+    // 非法时出现，故此处不重试也不排队；发射失败不产生 reply，调用方就地摘除
+    const int err = mpv_get_property_async(m_mpv, gen, "playlist", MPV_FORMAT_NODE);
+    if (err != 0)
+        qDebug() << "[mpvqt] push barrier failed:" << err << "gen" << gen;
+    return err == 0;
+}
+
 bool MpvController::setProperty(const QString &name, const QString &value) {
     // N42：返回实际写入结果——失败（顶层语法错误 / 未知滤镜名等）时 mpv 保持
     // 原值不清理（F5），调用方据其决定不写 conf
@@ -532,6 +548,31 @@ qint64 MpvController::propertyInt64(const QString &name, qint64 fallback) {
     if (mpv_get_property(m_mpv, name.toUtf8().constData(), MPV_FORMAT_INT64, &v) < 0)
         return fallback;
     return v;
+}
+
+// N60 §2.2：屏障读的 reply——在事件线程解析并释放 node 后把终值投 GUI。
+// 载荷是 mpv_event_property*，数组性判的是 **data 所指 node 的格式**：`prop->format`
+// 只是请求格式（NODE），拿它判数组性永不得到 NODE_ARRAY；取不到值时它是 NONE 且
+// data 为 NULL（client.h 原文），故 NONE 一律按 ok = false 且不 free
+void MpvController::handleBarrierReply(const mpv_event *event) {
+    const quint64 gen = event->reply_userdata;
+    auto *prop = static_cast<mpv_event_property *>(event->data);
+    if (!prop) {
+        emit pushBarrierResult(gen, false, QVariantList());
+        return;
+    }
+
+    // 属性不可读（卸载中 / 出错）时 format 为 NONE 且 data 无效，不得 free
+    if (event->error != 0 || prop->format != MPV_FORMAT_NODE || !prop->data) {
+        emit pushBarrierResult(gen, false, QVariantList());
+        return;
+    }
+
+    auto *node = static_cast<mpv_node *>(prop->data);
+    const bool ok = node->format == MPV_FORMAT_NODE_ARRAY;
+    const QVariantList items = parsePlaylist(node); // 非数组时它自己返回空表
+    mpv_free_node_contents(node);                   // 与 mpv_get_property 同口径
+    emit pushBarrierResult(gen, ok, items);
 }
 
 void MpvController::handlePropertyChange(const mpv_event *event) {

@@ -642,17 +642,28 @@ int PlaylistWidget::playingRowOf(const PlaylistListView *list) const {
     return -1;
 }
 
-// N25：回刷策略——本地在途回显 → 空列表忽略 → 一致静默 → 占位/枚举失败忽略 → 差异收编默认 tab。
-// 回刷不再重建正在播放的 tab：本地发起的变更一律本地先行，回刷因此恒为一致而静默；
-// 真正的外部变更统一收编到默认 tab（mpv 会话镜像：临时、不持久化、可随时被替换）。
+// N25 + N60：回刷策略——吞域（推送会话在册）→ 空列表忽略 → 一致静默 → 占位/枚举失败
+// 忽略 → 差异收编默认 tab。回刷不再重建正在播放的 tab：本地发起的变更一律本地先行，
+// 回刷因此恒为一致而静默；真正的外部变更统一收编到默认 tab（mpv 会话镜像：临时、
+// 不持久化、可随时被替换）。
+// N60 §2.2：第 1 步从"内容域比对在途中间态"换成**因果域吞域**——本地批次执行期内
+// 的回显无条件忽略，终点由屏障 reply 自带终值对账（onPushBarrier），无声吞掉成为
+// 结构不可达。其余各步的判据不动
 // N56 §2.5 判据 R：回显**原样**进判据（视图零加工），实体侧按所在 tab 的提供者
 // **现算**它会下发的形态（playUrls 的同源产物），逐字节比对——语义是"mpv 手里
-// 那条串，正是我此刻会推的那条"。在途快照（noteLocalPush）与 reuse 索引键与判据
-// **同源同形**（同为这份形态），否则"命中即克隆、克隆形态 ≠ 回显形态"会让下一次
-// 回显又判不一致而重复收编永续
+// 那条串，正是我此刻会推的那条"。reuse 索引键与判据**同源同形**（同为这份形态），
+// 否则"命中即克隆、克隆形态 ≠ 回显形态"会让下一次回显又判不一致而重复收编永续
 void PlaylistWidget::setPlaylist(const QVariantList &items) {
     // N49：回刷入口是正播态的最新真相（覆盖停止 / 起播 / 外部变更收编），在此刷新按钮态
     updateBottomBarState();
+
+    // 1. N60 §2.2 吞域：会话在册（本地批次执行期）的一切 playlist 回显**无条件忽略**，
+    // 不做任何内容比对——"这条回显是不是我自己那批命令的中间态"是因果问题，旧的
+    // 子序列判据属内容域、与因果无必然联系（命中即静默吞掉真外部改动）。批次终点由
+    // 屏障 reply 自带终值在 onPushBarrier 对账兜底，故吞掉的都补得回来
+    if (!m_openPushGens.isEmpty())
+        return;
+
     QStringList pushed;
     QList<bool> current;
     pushed.reserve(items.size());
@@ -664,19 +675,6 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
         // 判据侧不做任何定形（toIdentity / 剥凭据均已随 N56 删除）
         pushed.append(map.value(QStringLiteral("filename")).toString());
         current.append(map.value(QStringLiteral("current")).toBool());
-    }
-
-    // 1. 本地在途回显：本地下发的是多命令序列，mpv 可能分批推送中间态（空列表/部分列表）。
-    // 这些中间态若被判为差异会把列表搬去默认 tab，故按"同序子序列关系"识别并忽略
-    if (m_localPush.pending) {
-        if (pushed == m_localPush.snapshot) {
-            m_localPush.pending = false; // 回显确认：继续走常规判定（翻转播放标记）
-        } else if (Util::isOrderedSubsequence(pushed, m_localPush.snapshot) ||
-                   Util::isOrderedSubsequence(m_localPush.snapshot, pushed)) {
-            return; // 同一变更的在途中间态
-        } else {
-            m_localPush.pending = false; // 回显失配：放弃，按外部变更处理
-        }
     }
 
     // 2. 空列表无正播项、无收编意义（本地 stop/clear/删 tab/换源均已本地先行），一律忽略
@@ -753,7 +751,7 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
     // 复用落空无正确性代价（缺失元数据按需链自补）。
     // N45：收编源 = 正在播放 tab 队列根层的实体序列（§2.9）。
     // R：索引键与判据**同源同形**——对每个源实体现算它会下发的形态（与第 4 步同一
-    // 现算、与 noteLocalPush 快照同一形态），命中即克隆源实体——克隆携带源实体原
+    // 现算），命中即克隆源实体——克隆携带源实体原
     // 身份串与缓存，克隆再经第 4 步现算仍得同一形态，下一次回显必静默（自愈不变式）
     QHash<QString, PlaylistEntity::Ptr> reuse;
     if (const Level *srcLvl = list->findLevel(list->queueRootIds())) {
@@ -855,26 +853,55 @@ void PlaylistWidget::addFiles(const QStringList &files) {
     // 非默认本地 tab 添加后持久化（默认 tab 永不落盘，N9/N4 既定）
     if (currentIndex() != 0)
         savePlaylists();
-    // 仅播放中 tab 的增删会同步进 mpv（MainWindow::onFilesAdded 同款守卫）：
-    // 非播放 tab 不会引发推送，登记在途会留下永不回显的快照。
-    // N45：在途回显基准是 mpv 队列 → 队列根层出口（§2.8；该处二者同层——addFiles
-    // 仅对静态来源生效、静态来源不产容器——按队列语义写以免将来放开时错判）。
-    // R：登记的是下发给 mpv 的形态（经 playUrls 现算，与回显同形）
-    if (currentIsPlayingTab())
-        noteLocalPush(playUrls(currentIndex(), queueEntitiesOf(currentIndex())));
+    // N60 §2.4：会话只在**喂入侧**开——播放中 tab 的追加经 filesAdded 落到
+    // MainWindow::onFilesAdded，那里才是喂 mpv 的地方，守卫也在那里
     emit filesAdded(std::move(created));
 }
 
-// N25：本地在途回显登记。空序列不登记——清空/删 tab 之后 mpv 侧本就变空，
-// 由回刷的"空列表忽略"兜底，登记反而会让后续推送被误判为在途中间态。
-// R（N56 §2.5）：入参是**下发给 mpv 的形态**（调用方经 playUrls 现算，字符串
-// 出口退到喂 mpv 前最后一刻），与 setPlaylist 的原样回显、reuse 索引键同源同形
-// ——三者同为这份形态，判等才成立；此处不做任何加工
-void PlaylistWidget::noteLocalPush(const QStringList &snapshot) {
-    if (snapshot.isEmpty())
+// N60 §2.2：推送会话的开与闭。**只在喂入侧成对出现**（§2.4：四个喂 mpv 列表内容的
+// 入口各持一个 PushSession 局部对象），配对由 RAII 保证、不靠纪律——世代泄漏等价
+// 于永久全静默吞域（集合非空则一切回显被吞），比原缺陷更重（§2.3 第 3 条）
+quint64 PlaylistWidget::beginLocalPush() {
+    const quint64 gen = ++m_pushGenCounter; // 自 1 起，0 留作"非世代"防御值
+    m_openPushGens.insert(gen);
+    return gen;
+}
+
+void PlaylistWidget::endLocalPush(quint64 gen) {
+    // 关批发屏障读：reply 自带队列终值，是本次会话的终点（§2.1——喂入全同步，
+    // 此刻 mpv 队列已是本批终态，故该读取到的即终态）
+    if (m_mpv && m_mpv->pushBarrier(gen))
         return;
-    m_localPush.snapshot = snapshot;
-    m_localPush.pending = true;
+    // 发射失败（或无控制器）不会产生 reply，世代号就地摘除——批内变更的迟投回显
+    // 会自然到达并走正常判定。残余见规格 §2.2：该路径只在 mpv 正在退出 / 参数非法
+    // 时出现，下一轮回显即自愈，不为此加超时兜底（否则世代泄漏成永久吞域）
+    m_openPushGens.remove(gen);
+}
+
+// N60 §2.2 / §2.3：屏障 reply 的终点对账。世代递减只发生在 GUI 线程的本槽内
+// （§2.3 第 1 条：部分态回显在迟投规则下排在 reply 之前，若先减再处理会被误收编）；
+// 对账在本槽内同步完成，不得延后（§2.3 第 2 条：延后可能落进下一个会话的吞域）
+void PlaylistWidget::onPushBarrier(quint64 gen, bool ok, const QVariantList &items) {
+    if (!m_openPushGens.remove(gen))
+        return; // 未命中即忽略（防御未来新增 async 请求者）
+
+    // 暂存按世代覆盖、与 ok 无关（§2.3 第 4 条——async 之间亦无到达顺序保证，
+    // 取"已收到 reply 中的最大世代"，不取"最后到达的那条"）
+    if (gen >= m_lastBarrier.gen)
+        m_lastBarrier = Barrier{gen, ok, items};
+
+    if (!m_openPushGens.isEmpty())
+        return;
+
+    const Barrier settled = m_lastBarrier;
+    m_lastBarrier = Barrier();
+    // 合成回显：走与原生回显完全相同的一条管线（含 current 标记，勾选标记随既有
+    // 比对校正）。ok 为假（读失败 / 载荷非法，mpv 正在退出）时不判、也不回落次新
+    // 世代的 ok 载荷——只递减返回（§2.3 第 2 条）
+    if (settled.ok)
+        setPlaylist(settled.items);
+    qDebug() << "[mpvqt] push barrier settled gen" << settled.gen << "ok" << settled.ok
+             << "open sessions" << m_openPushGens.size();
 }
 
 // N11：主菜单"打开文件"固定落点——整体替换默认 tab 内容并作废其续播记忆
@@ -1871,11 +1898,10 @@ bool PlaylistWidget::syncAfterRefresh(PlaylistListView *list, int tab, const QSt
         PlaylistEntity::List added;
         for (int i = n; i < int(entities.size()); ++i)
             added.push_back(entities.at(i));
-        if (!added.empty()) {
-            // R：登记"下发给 mpv 的形态"（与原样回显同形，N56 §2.5）
-            noteLocalPush(playUrls(tab, entities)); // 登记先于发射：避免 mpv 回刷被判为外部变更
+        if (!added.empty())
+            // N60 §2.4：不再在这里登记在途回显——会话由喂入侧（MainWindow::onFilesAdded）
+            // 的守卫开闭；守卫不通过而不喂的情形见规格 §2.4 的等价性论证
             emit filesAdded(std::move(added));
-        }
         return false;
     }
     runFourStep(list, tab, nullptr); // 收尾前已排好，mutate 为空
@@ -2648,7 +2674,6 @@ void PlaylistWidget::executeRemoval(const QList<int> &rowsIn) {
 void PlaylistWidget::removeRowsLocal(PlaylistListView *list, const QList<int> &rowsIn) {
     if (!list || rowsIn.isEmpty())
         return;
-    const int tab = indexOf(list);
     // N45 §2.4.3：容器行 / 上一级行不参与删除——过滤掉非实体行
     QList<int> rows;
     for (int r : rowsIn)
@@ -2673,10 +2698,9 @@ void PlaylistWidget::removeRowsLocal(PlaylistListView *list, const QList<int> &r
             delete list->takeItem(row);
     }
     restoreMemoryPath(list, captured, hadMemory);
-    if (tab >= 0)
-        // N45 §2.8：在途回显基准是 mpv 序列（队列根层）；R 之下登记"下发给 mpv 的
-        // 形态"（与原样回显同形，N56 §2.5）
-        noteLocalPush(playUrls(tab, queueEntitiesOf(tab)));
+    // N60 §2.4：不再登记在途回显——本函数的唯一调用点（右键"删除选中"在
+    // isPlayingTab && queueLayer 分支内）随后 emit removeRequested，会话由喂入侧
+    // MainWindow::onRemoveRequested 的守卫开闭
     emit contentsChanged(); // A17：本地删行条目数已变，刷新导航启停
 }
 

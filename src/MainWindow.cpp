@@ -547,6 +547,10 @@ void MainWindow::connectController() {
             [this](double v) { applyVolumeMax(qRound(v)); });
     connect(m_controller, &MpvController::playlistChanged, m_playlist,
             &PlaylistWidget::setPlaylist);
+    // N60 §2.2：屏障 reply 的终点对账**直投 playlist**（与上一行同一接收者）——
+    // 吞域与对账的保序前提系于"两者投进同一 GUI 队列、按投递序处理"，不得绕本窗转调
+    connect(m_controller, &MpvController::pushBarrierResult, m_playlist,
+            &PlaylistWidget::onPushBarrier);
     // 播放态列表长度变化影响步进启停（A16）
     connect(m_controller, &MpvController::playlistChanged, this,
             [this](const QVariantList &) { updateNavigationActions(); });
@@ -1759,12 +1763,13 @@ void MainWindow::onPlayRequested(const PlaylistEntity::List &entities, int tab, 
     m_pendingSeekTime = -1.0;
     if (entities.empty())
         return;
-    // N25：整表载入是多命令序列（stop→clear→N×append→pos），登记本地在途回显基准，
-    // 使回刷把空列表/部分列表的中间态识别为本变更在途而忽略（files 即本地列表内容）。
-    // R（N56 §2.5）：下发与登记都取 playUrls(tab, entities)——喂 mpv 前最后一刻
-    // 映射的播放形态，与回显侧的原样回显、reuse 索引键同源同形
+    // N60 §2.4：整表载入是多命令序列（stop→clear→N×append→pos），以推送会话守卫
+    // 覆盖整个函数体——析构关批并发屏障读，终点由 onPushBarrier 按屏障自带终值对账。
+    // 守卫作用域含末尾的 pause 与图标更新：本批的迟投回显全在吞域之内
+    const PlaylistWidget::PushSession session(m_playlist);
+    // R（N56 §2.5）：下发取 playUrls(tab, entities)——喂 mpv 前最后一刻映射的播放
+    // 形态，与回显侧的原样回显、reuse 索引键同源同形
     const QStringList playFiles = m_playlist->playUrls(tab, entities);
-    m_playlist->noteLocalPush(playFiles);
     // mpv 的 playlist-clear 会保留当前播放的条目，先 stop 才能真正清空
     m_controller->command({QStringLiteral("stop")});
     m_controller->command({QStringLiteral("playlist-clear")});
@@ -1789,6 +1794,10 @@ void MainWindow::onPlayRequested(const PlaylistEntity::List &entities, int tab, 
 }
 
 void MainWindow::onRemoveRequested(QList<int> rows) {
+    if (rows.isEmpty())
+        return; // N60 §2.4：空清单早退先于开批
+    // N60 §2.4：逐行 playlist-remove 是一批多命令，会话守卫覆盖整个下发循环
+    const PlaylistWidget::PushSession session(m_playlist);
     // 从后往前删，避免索引失效
     std::sort(rows.rbegin(), rows.rend());
     for (int row : rows)
@@ -1796,6 +1805,9 @@ void MainWindow::onRemoveRequested(QList<int> rows) {
 }
 
 void MainWindow::onClearRequested() {
+    // N60 §2.4：恒喂 stop→playlist-clear，无空情形；关批后的屏障终值恒为空列表，
+    // 由对账走既有"空列表忽略"兜住
+    const PlaylistWidget::PushSession session(m_playlist);
     // 同样需要先 stop，否则当前播放的条目会被保留
     m_controller->command({QStringLiteral("stop")});
     m_controller->command({QStringLiteral("playlist-clear")});
@@ -1810,6 +1822,9 @@ void MainWindow::onFilesAdded(const PlaylistEntity::List &entities) {
         return;
     // R（N56 §2.5）：下发取喂 mpv 前最后一刻映射的播放形态（与回显同形）
     const QStringList playFiles = m_playlist->playUrls(m_playlist->playingTabIndex(), entities);
+    if (playFiles.isEmpty()) // N60 §2.4：空清单早退先于开批（不投屏障、不留空会话）
+        return;
+    const PlaylistWidget::PushSession session(m_playlist); // N60 §2.4：逐条 append-play 后关批
     for (const QString &file : playFiles)
         m_controller->loadFile(file, QStringLiteral("append-play"));
 }

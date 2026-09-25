@@ -60,7 +60,8 @@ static bool resolveMpvSymbols() {
     RESOLVE(mpv_free_node_contents); // B18：FILE_LOADED 主动读 NODE 属性后释放
     RESOLVE(mpv_command_node);       // N52：loadfile 逐文件选项的节点通道
     RESOLVE(mpv_wait_event);
-    RESOLVE(mpv_stream_cb_add_ro); // N52：mpvqt:// 转接协议注册
+    RESOLVE(mpv_stream_cb_add_ro);   // N52：mpvqt:// 转接协议注册
+    RESOLVE(mpv_get_property_async); // N60：推送会话的屏障读（playlist 终值自带终点）
 #undef RESOLVE
 
     if (missing) {

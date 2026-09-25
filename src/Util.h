@@ -71,12 +71,6 @@ QString trimTrailingZeros(const QString &fixed);
 // 故 "List 03 " 与 "List 3" 同样按 3 计入
 int nextSequenceNumber(const QString &prefix, const QStringList &existing);
 
-// N25：按序子序列判定——sub 的元素能否在 full 中按原序不跳序地逐一命中（双指针，O(n)）。
-// 空序列是任何序列的子序列；两序列相等亦返回 true。
-// 用于回刷的本地在途回显：识别"同一变更的在途中间态"（整表载入的部分列表是最终列表的前缀，
-// 批量删除的部分列表以最终列表为子序列）
-bool isOrderedSubsequence(const QStringList &sub, const QStringList &full);
-
 // N49：图标按给定 alpha 淡化——取素材最大可用尺寸为合成底（源分辨率不低于
 // 最终显示尺寸，后续由 QIcon 缩放显示不糊），以 QPainter::setOpacity 合成到
 // 透明底新位图后再建 QIcon。透明度与缩放无关，故随后缩放不丢效果。
