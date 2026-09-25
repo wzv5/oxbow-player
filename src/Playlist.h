@@ -24,12 +24,20 @@ class Playlist {
     // 改名一律走视图的显式方法（tab 文本是名字的镜像，§2.6 不变式）；默认列表拒绝
     void setName(QString name);
 
-    // 返回引用是硬要求：playUrls 整表逐条取提供者，按值返回即每项两次原子引用计数
+    // 返回引用是硬要求：N55 §2.2 起逐条取它的是视图侧的入列盖章（每个实体一份弱引用，
+    // 按值返回即每项两次原子引用计数）；playUrls 反而不再经它——形态由实体问自身归属
     const std::shared_ptr<PlaylistProvider> &provider() const { return m_provider; }
-    // 换身即替换，身份与名字不动；不向提供者下推任何东西。默认列表拒绝
+    // 换身即替换，身份与名字不动；不向提供者下推任何东西。默认列表拒绝。
+    // N55 §2.6 实施约束 1：换身恰好等于"来源参数变了"，换身后旧实例若仍被在途任务
+    // 的 shared_ptr 吊着，归属该列表的显示中实体的弱引用仍能 lock 成功——来源失效
+    // 清扫（PlaylistWidget::applySourceRetired，由本函数全仓唯一调用点
+    // PlaylistWidget::openListSettings 同栈触发）保证这批实体先于新参数首次 publish
+    // 被移除；漏调即静默拿到别家端点，本注释指回 N55 §2.6 兜（文档，不是机制）
     void setProvider(std::shared_ptr<PlaylistProvider> provider);
 
-    // 播放形态：逐实体交自身身份（凭据注入与转接铸造在提供者侧，§2.4）
+    // 播放形态：逐项走实体的归属出口 entity->playUrl()（N55 §2.3）——本类既不交自身
+    // 身份也不取提供者，收编进默认列表的转接项因此仍由原列表加工。凭据注入与转接
+    // 铸造仍在提供者侧（§2.4），空槽位回空串以保队列对位
     QStringList playUrls(const PlaylistEntity::List &entities) const;
 
     // 列表自己那两键（名字与身份）——一个 INI 组要三段合写，其余由编排点接续

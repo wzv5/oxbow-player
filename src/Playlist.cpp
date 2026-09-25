@@ -25,8 +25,11 @@ void Playlist::setProvider(std::shared_ptr<PlaylistProvider> provider) {
 QStringList Playlist::playUrls(const PlaylistEntity::List &entities) const {
     QStringList out;
     out.reserve(int(entities.size()));
+    // N55 §2.3：归属化后形态解析只剩唯一出口 entity->playUrl()——锁实体自己的归属
+    // 提供者现算，"所在列表代答"的分岔整体删除（收编搬走内容后来源不再被换掉）。
+    // 空槽位仍回空串：队列对位需要占位，非"恒等退化"
     for (const auto &entity : entities)
-        out.append(entity ? provider()->playUrl(uuid(), entity->path()) : QString());
+        out.append(entity ? entity->playUrl() : QString());
     return out;
 }
 

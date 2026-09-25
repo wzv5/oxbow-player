@@ -18,6 +18,7 @@
 #include "ServiceRegistry.h"
 #include "SettingsDialog.h"
 #include "StreamRelay.h"
+#include "StreamTransit.h" // N55 §2.7：书签存储串的转接形态分岔（判据与 §3.6 同一条）
 #include "TraversalPolicy.h"
 #include "Util.h"
 
@@ -2482,12 +2483,37 @@ void MainWindow::jumpToBookmark(const QString &path, double time,
     PlaylistWidget::LevelJump req;
     req.itemKey = Util::Url::key(path);
     req.time = time;
-    // N57 §2.8：目标改持身份——先在注册表直查一次，查不到（无身份或列表已删）才落
-    // 默认列表的保留身份，与现状"tab 反查失败即退化默认 tab"逐分支等价。坐标由视图
-    // 在需要动作与发射的时刻现换算，不在这里出生
+    // N55 §3.4：主判据是书签承诺的归属。真列表在位 ⇒ 回绑该列表与层（现状语义）；
+    // 已删 ⇒ 就地分流，不再发任何请求——N57 §2.8 的"查不到就把目标改写成
+    // kDefaultListUuid 再找一遍"的复找删除：那次复找按 N55 §3.6 第二条注定落空
+    // （未命中的转接回显是异常数据），且正是把"归属真列表已删"与"归属默认列表"
+    // 糊成一团、销毁归属信息的环节。本槽握着 origin 原值、注册表直查结果与
+    // isLocal(path)，第 1 / 2 / 3 行分流够用，不需要任何新载荷与新通道
     const bool targetAlive = origin.isValid() && m_listRegistry->find(origin.listUuid);
-    req.listUuid = targetAlive ? origin.listUuid : kDefaultListUuid;
-    req.levelIds = targetAlive ? origin.levelIds : m_playlist->queueRootIdsOf(0);
+    if (targetAlive) {
+        req.listUuid = origin.listUuid;
+        req.levelIds = origin.levelIds;
+        m_playlist->requestLevelItemJump(req);
+        return;
+    }
+    if (origin.isValid()) {
+        // 归属真列表但列表已删：本地项静默落默认 tab 播；远端项不回退、不试播——
+        // 即使书签的存储串自带凭据快照、技术上播得开，也不得回退（§3.4：这是归属
+        // 纪律，不是可播性判断——把它捞进默认 tab 播一条来路不正的串，是把"归属
+        // 失效"这个事实藏起来）。文案与请求路径的 ListGone 档同源
+        if (Util::Url::isLocal(path)) {
+            fallbackPlayInDefaultTab(path, time);
+            return;
+        }
+        warnBookmarkJump(tr("The list this bookmark belongs to no longer exists."), path,
+                         QString());
+        return;
+    }
+    // Origin 缺键 / 无效：按硬性前置规定视为旧数据（不识别旧形态、不猜测、不回填），
+    // 与归属默认列表同路——请求进默认 tab 的队列根层，失败支由 onLevelItemFailed
+    // 按默认归属补项播
+    req.listUuid = kDefaultListUuid;
+    req.levelIds = m_playlist->queueRootIdsOf(0);
     m_playlist->requestLevelItemJump(req);
 }
 
@@ -2518,14 +2544,23 @@ void MainWindow::onLevelItemReady(const PlaylistWidget::LevelJump &req, int tabI
     onPlayRequested(m_playlist->currentLayerEntitiesOf(tabIndex), tabIndex, entityIndex, req.time);
 }
 
-// N54 §2.2 第 4 步 + §2.5：失败策略是一个布尔。本地项在磁盘上，回默认 tab 必然可播，
-// 静默回退不打扰；远端项回不去所属列表就没有可靠的播放形态（N48 之后 URL 恒无凭据、
-// N52 的转接 URI 又依赖所属列表的端点），故一律弹窗中止，不做注定失败的尝试。
-// 三类原因共用同一条弹窗，detail 只改正文不改行为
+// N54 §2.2 第 4 步 + §2.5 + N55 §3.4：失败策略按三件原料分流——req.listUuid 是否
+// 保留身份、JumpFailure 是哪一档、Util::Url::isLocal（三件原料本槽本来就都有，
+// 不需要任何新载荷）。归属默认列表的失败支：默认 tab 的根层内容只存在于层缓存、
+// 其删除点只有清扫一处 ⇒ "目标层恒已加载"，ListGone 与 LevelLoadFailed 在默认 tab
+// 上实际不可达，"定位失败"等价于"这项不在默认 tab 里"——本地补项播（现状），远端
+// 的直接形态（含凭据快照，§2.7 落盘的那份）同样补项播：P10 的解，书签承诺的
+// "把这一项送回默认列表"在此兑现。真列表在位但该层失败 / 该层中无指定文件：本地项
+// 在磁盘上，落默认 tab 必然可播，静默回退；远端项回不去所属列表就没有可靠的播放
+// 形态（N52 的转接 URI 依赖所属列表的端点），故一律弹窗中止并按档说准原因，
+// 不做注定失败的尝试
 void MainWindow::onLevelItemFailed(const PlaylistWidget::LevelJump &req,
                                    PlaylistWidget::JumpFailure why, const QString &detail) {
     const QString path = m_bookmarkMgr->displayPath(req.itemKey);
-    // 本地/远端判据单点在 Util::Url::isLocal（与书签失效清理同一份）
+    if (req.listUuid == kDefaultListUuid) {
+        fallbackPlayInDefaultTab(path, req.time);
+        return;
+    }
     if (Util::Url::isLocal(path)) {
         fallbackPlayInDefaultTab(path, req.time);
         return;
@@ -2606,13 +2641,34 @@ PlaylistEntity::Ptr MainWindow::playingEntity() const {
 }
 
 void MainWindow::onAddBookmark() {
-    // N56 §2.3/§2.7：书签的存储串与键同源取自正播实体——实体 path() 不含提供者
-    // 注入的凭据（用户显式提供的凭据如实保留，许可），BookmarkManager 内部归一为键，
-    // 展示保原样（大小写/分隔符，B15）
+    // N56 §2.3/§2.7 + N55 §2.7：书签的存储串 = 该项的下发形态（entity->playUrl()）。
+    // 直接形态（含提供者注入的凭据快照）原样落盘——N48 的"凭据不落盘"约束随之作废
+    // （事实上早已破，见规格 §2.7）；键侧不受影响（BookmarkManager 内部归一为键，
+    // Util::Url::key 先剥凭据），展示保原样（大小写/分隔符，B15）
     const auto entity = playingEntity();
     if (!entity)
         return;
-    const QString rawPath = entity->path();
+    QString rawPath = entity->playUrl();
+    // N55 §2.7：形态带 mpvqt:// 前缀时按归属分岔——归属真列表（Origin 有效且非
+    // 保留身份）⇒ 改存 entity->path() 身份（跳回所属列表能重铸 URI，N54 不退化）；
+    // 归属默认列表 ⇒ 拒收：那条 URI 的端点是会话内的，跨会话必死，它本来就不该有
+    // 书签。判据只有一个前缀判断加一次身份比对，不新增概念。拒收时经 showOsd 给
+    // 一条失败提示（与成功那条同一通道、同一强度——用户按了键就得当场听到回音，
+    // 静默早退等于没响应），不调 addBookmark、不发成功 OSD
+    if (StreamTransit::isTransitUri(rawPath)) {
+        // 此处"归属"取书签承诺的归属（正播 tab 的列表，即下面 origin 的算法），
+        // 不是实体的 m_ownerUuid——变更记录 2。二者在"默认 tab 播收编来的转接项"
+        // 这一格分叉：按实体归属该存身份，可那条书签的 origin 必是默认列表，回跳
+        // 落到默认 tab 的补项播分支，存的又是无凭据身份 → 跨会话必静默放不开。
+        // 拒收（验收 7）才是那条承诺能落地的形状
+        const int playingTab = m_playlist->playingTabIndex();
+        const Playlist *playing = m_playlist->listOf(playingTab);
+        if (!playing || playing->uuid() == kDefaultListUuid) {
+            showOsd(tr("This item does not support bookmarks."));
+            return;
+        }
+        rawPath = entity->path();
+    }
     const QString path = entity->key();
     const double t = m_timePos;
     // 自动命名：取"本文件既有书签名的最大序号 +1"，与播放列表自动命名共用同一份算法

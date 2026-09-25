@@ -584,6 +584,23 @@ class PlaylistWidget : public QTabWidget {
     // 逆序删行 + 记忆复位 + 刷新导航，不含四步式的停止/重推
     void removeRowsLocal(PlaylistListView *list, const QList<int> &rows);
 
+    // N55 §2.2：盖章落点共用——取列表的归属两件套（身份 + 当前提供者弱引用）对实体
+    // 显式赋盖。盖与不盖由每个入列落点各自决定（收编 clone() 携带原归属的落点不调
+    // 本函数）；实体入列即盖章是归属不变式的入口
+    void stampOwnership(PlaylistEntity &entity, const Playlist *owner);
+
+    // N55 §2.6：来源失效清扫——删列表（removeTabAt）与换源（openListSettings）两
+    // 触发点各接一处，与触发动作同点同步做完，只把告知弹窗延后。stopAlreadyDone：
+    // 触发点的既有停止语义是否已因"正播就是 U"而执行
+    void applySourceRetired(const QUuid &retiredUuid, const QString &retiredName,
+                            bool stopAlreadyDone);
+    // N55 §3.5：三类告知（收编 / 清扫 / 异常数据）共用的记账入口——只入待发队列并
+    // 调度一次投递，判断处一律不 exec()。投递步是 pumpDeferredNotices
+    void queueDeferredNotice(const QString &text);
+    // 延后出口的投递步：队列非空且无弹窗在幕才合成一扇；弹窗在幕时记账者照记账，
+    // 本扇关掉的收尾处再自排下一轮（不叠第二扇）
+    void pumpDeferredNotices();
+
     // 右键菜单动作实现（第七节）
     void refreshCurrentTab();
     // N35：改收共享计数副本——异步属性对话框跨嵌套事件循环持有实体，
@@ -629,6 +646,11 @@ class PlaylistWidget : public QTabWidget {
     // N57 §2.3：列表注册表（装配顶点创建并注入，携共享计数，恒非空）。提供者不再
     // 由本类以控件指针为键持有——身份、名字与提供者三件套活在 Playlist 里
     std::shared_ptr<PlaylistRegistry> m_lists;
+    // N55 §3.5：待发告知文案队列（同串去重——收编文案恒同串，天然合并）；
+    // singleShot(0) 触发时把队列合成一次模态弹窗（分段显示）后清空。
+    // m_noticeDialogUp：那扇窗此刻在幕——延后出口的投递步据此不叠第二扇
+    QStringList m_pendingNotices;
+    bool m_noticeDialogUp = false;
 
     // N32 忙时与单飞行（N32：枚举与预读共用一个任务槽）——
     JobSlot m_job;                // 当前在途任务（枚举 / 预读同一槽位，全插件同一时刻至多一个）

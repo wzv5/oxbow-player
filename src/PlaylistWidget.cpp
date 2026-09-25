@@ -624,6 +624,19 @@ void PlaylistWidget::setItemEntity(QListWidgetItem *item, const PlaylistEntity::
     item->setToolTip(entity->displayUrl());
 }
 
+// ——N55 §2.2：盖章落点共用——归属 = 列表身份 + 该列表当前提供者的弱引用。
+// 实体入列（进入层缓存或行）即盖章是归属不变式的入口；显式赋盖而非"空则补盖"——
+// 盖与不盖由每个入列落点各自决定（收编 clone() 携带原归属的落点不调本函数）。
+// owner 恒非空：各列表的 list() 与 defaultList() 都有"表必在"不变式兜着；万一为空，
+// 与实体侧同调——不静默造一份"半盖章"（提供者空而身份非空那种组合根本无人能答形态），
+// 早退回未盖章态，由 playUrl() 的断言把违约显影在真正的消费点上
+void PlaylistWidget::stampOwnership(PlaylistEntity &entity, const Playlist *owner) {
+    Q_ASSERT(owner);
+    if (!owner)
+        return;
+    entity.setOwnership(owner->uuid(), owner->provider());
+}
+
 // 统一的条目构造：显示名 / 图标 / tooltip 全部取自实体；
 // EntityRole 存实体裸指针（quintptr），实体所有权随行同步 push 进容器
 QListWidgetItem *PlaylistWidget::makeItem(PlaylistListView *list, PlaylistEntity::Ptr entity) {
@@ -700,20 +713,16 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
     // 4. 逐行一致即静默：只翻转播放标记，正播行变化才迁移选中+滚动（无重建、无闪烁）。
     // 比对与标记都作用于队列根层；显示层非队列根层时不触碰任何行（标记随层状态，
     // 下次渲染队列根层时由归位权威出口按 mpv 现状重建）。
-    // R：实体侧现算形态 = 正播列表以自身身份问提供者，与 playUrls 的下发路径同源；
-    // 无表的异常态按恒等兜底（与 playUrls 一致）
+    // R：实体侧现算形态 = 归属提供者现算——N55 §2.3 归属化后与 playUrls 的下发路径
+    // 是同一个出口 entity->playUrl()，判据与 reuse 键同形自动成立；"无表按恒等兜底"
+    // 的分岔随归属化删除（归属不变式保证显示中实体恒有归属，无表异常态不再可达）
     const Level *ql = list->findLevel(list->queueRootIds());
-    const Playlist *playingList = listOfView(viewAt(playingTabIndex()));
     const bool sameAsQueueRoot =
-        ql && int(ql->entities.size()) == pushed.size() && [ql, playingList, &pushed]() {
+        ql && int(ql->entities.size()) == pushed.size() && [ql, &pushed]() {
             for (int i = 0; i < int(ql->entities.size()); ++i) {
                 if (!ql->entities.at(i))
                     return false;
-                const QString form =
-                    playingList ? playingList->provider()->playUrl(playingList->uuid(),
-                                                                   ql->entities.at(i)->path())
-                                : ql->entities.at(i)->path();
-                if (form != pushed.at(i))
+                if (ql->entities.at(i)->playUrl() != pushed.at(i))
                     return false;
             }
             return true;
@@ -752,24 +761,50 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
     if (m_job.target == def)
         abandonJob();
 
+    // N55 §3.5：收编告知判据就地记账——"跨列表"（playingTabIndex() != 0）必须在
+    // markPlayingTab(0) 之前取值：playingListAdopted 发射时 playingTabIndex() 已是 0，
+    // 判据带不出来。"存在远端项"在收编处逐条对回显串判 Util::Url::isLocal（下方
+    // 循环内累计）。两样都在本步内算好记账，playingListAdopted 签名不变、不加载荷
+    const int prevPlayingTab = playingTabIndex();
+    bool hasRemote = false;
+
     // N31：清前快照收编源实体，建"下发形态 → 源实体"索引（constFind 拷贝只延长源寿命，
     // 自覆盖情形清表后克隆仍可用）。同形态取首个；首个未解析而重复项已解析时
     // 复用落空无正确性代价（缺失元数据按需链自补）。
     // N45：收编源 = 正在播放 tab 队列根层的实体序列（§2.9）。
-    // R：索引键与判据**同源同形**——对每个源实体现算它会下发的形态（与第 4 步同一
-    // 现算），命中即克隆源实体——克隆携带源实体原
-    // 身份串与缓存，克隆再经第 4 步现算仍得同一形态，下一次回显必静默（自愈不变式）
+    // R：索引键与判据**同源同形**——N55 §2.3 归属化后同为唯一出口 entity->playUrl()，
+    // 命中即克隆源实体——克隆携带源实体原身份串、缓存与原归属，克隆再经第 4 步现算
+    // 仍得同一形态，下一次回显必静默（自愈不变式）
     QHash<QString, PlaylistEntity::Ptr> reuse;
     if (const Level *srcLvl = list->findLevel(list->queueRootIds())) {
         for (const auto &src : srcLvl->entities) {
             if (!src)
                 continue;
-            const QString key =
-                playingList ? playingList->provider()->playUrl(playingList->uuid(), src->path())
-                            : src->path();
+            const QString key = src->playUrl();
             if (!reuse.contains(key))
                 reuse.insert(key, src);
         }
+    }
+
+    // N55 §3.6：未命中的转接回显＝异常数据。合法的 mpvqt:// 只有两条来路——插件自己
+    // 从归属真列表的实体现算下发（必命中 reuse，索引键就是同一个函数），或收编项经
+    // clone() 带着原归属进默认 tab（同样命中）。故"转接形态且未命中"当且仅当外部把
+    // 本仓私有协议的串喂进了 mpv 队列（IPC loadfile / append，或清单文件里写着它）。
+    // 不按串里的 uuid 折给那个列表——那等于把私有协议当对外承诺的入口，拿真列表的
+    // 凭据与端点替来路不明的串背书。判据只认 StreamTransit::isTransitUri（不越面），
+    // 命中 reuse 的合法转接串（收编项所在队列被再次回显）不判异常
+    bool hasAnomaly = false;
+    for (const QString &echo : pushed) {
+        if (StreamTransit::isTransitUri(echo) && !reuse.contains(echo))
+            hasAnomaly = true;
+    }
+    if (hasAnomaly) {
+        // 处置 1：停播 + 清正播表标记——异常项就在正播队列里，这份队列已不可信，
+        // 不逐条挑。先停后剔不可调换：先剔后停会留一个"表已短而队列仍在"的窗口；
+        // 先 stop 则 mpv 侧队列当场清空，随后的空列表回显被第 2 步忽略，对位关系
+        // 已作废，剔除才安全
+        emit stopRequested();
+        clearPlayingMarks(list);
     }
 
     // 记录收编前的选中行（单选）：推送无 current 项（如停止态外部编辑）时
@@ -786,6 +821,11 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
 
     QListWidgetItem *newCurrent = nullptr;
     for (int i = 0; i < pushed.size(); ++i) {
+        // N55 §3.6 处置 2：异常行就地剔除——不进默认 tab（不盖归属也不留表），剩余项
+        // 照常走收编；判据在未命中支之前逐行施判
+        if (hasAnomaly && StreamTransit::isTransitUri(pushed.at(i)) &&
+            !reuse.contains(pushed.at(i)))
+            continue;
         // N31：命中索引复用源实体克隆（携带已解析缓存，身份串与源实体一致，不破静默
         // 不变式）；未命中经工厂新建（网络路径落 UnknownEntity）。
         // R：未命中项的回显是"播放形态"，先经 StreamTransit::unwrap 折回身份再进
@@ -797,16 +837,29 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
         // 两条路不得互换：索引键若改用折叠键（小写归一）就与判据不同形，命中的克隆会被
         // 下次回显判成"外部改动"而重复收编永续；建实体若改用折叠键，则展示形态被
         // 小写化（破 B15）
+        // N55 §2.2：未命中项盖默认列表归属——默认列表是收编未命中、命令行与手工添加
+        // 项的归属来源；命中项经 clone() 携带原归属，不再盖（显式赋盖纪律下靠"不再盖"
+        // 保住原归属）。含补不出形态落占位的 UnknownEntity：isLocalFile() 为假 ⇒
+        // StaticProvider 恒等下发 ⇒ 判据两侧同为那份原串 ⇒ 静默，不落重复收编
         const auto rit = reuse.constFind(pushed.at(i));
+        const bool hit = rit != reuse.constEnd();
         PlaylistEntity::Ptr entity =
-            rit != reuse.constEnd()
-                ? rit.value()->clone()
+            hit ? rit.value()->clone()
                 : PlaylistEntity::fromMpvEcho(StreamTransit::unwrap(pushed.at(i)), m_registry);
+        if (!hit)
+            stampOwnership(*entity, m_lists->defaultList());
         QListWidgetItem *item = makeItem(def, std::move(entity));
-        if (current.at(i)) {
+        // N55 §3.6 处置 2：异常支的重建不写 PlayingRole——队列即将作废，回显里的
+        // current 是停播前的旧值，照抄会挂出一个 mpv 已不持有的正播行（与 runFourStep
+        // 里"stop 即标记同步失效"同一口径）
+        if (!hasAnomaly && current.at(i)) {
             item->setData(PlayingRole, true);
             newCurrent = item;
         }
+        // N55 §3.5："存在远端项"对回显串逐条判 isLocal（被收编项集合；N61 占位行
+        // 对空串误报为远端，按规格接受——多余的模态告知，方向上"宁可多告知"）
+        if (!Util::Url::isLocal(pushed.at(i)))
+            hasRemote = true;
     }
     // N45：收编重建即根层显示——显式落显示层记录，不依赖"默认 tab 恒平铺"不变式
     def->setDisplayedIds(def->queueRootIds());
@@ -819,7 +872,10 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
         def->setCurrentItem(newCurrent);
         // 跟随滚动（N4）：正播项变动时最小位移滚入可见范围
         def->scrollToItem(newCurrent, QListWidget::EnsureVisible);
-    } else if (prevRow >= 0 && prevRow < def->count()) {
+    } else if (!hasAnomaly && prevRow >= 0 && prevRow < def->count()) {
+        // 异常支不按旧位置设选：那一步剔过行，prevRow 这个下标已不指着收编前的同一条
+        // 目，按它设选等于把选中随手落到别处；而队列即将作废，此处也没有"接着播这一
+        // 行"的语义要护。非异常支的按位恢复是既有语义，不动
         def->setCurrentRow(prevRow);
     }
     markPlayingTab(0); // B10：异 tab 转移清旧标记；同 tab 早退（默认 tab 自覆盖不误清）
@@ -829,7 +885,20 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
     rebuildMemoryAfterAdopt(def, newCurrent ? def->row(newCurrent) : -1);
     emit contentsChanged();    // A17：条目数已变，刷新导航启停
     emit playingListAdopted(); // N25：镜像已重新一致，MainWindow 刷新标题/OSD 正播名
-    requestTab(0);             // 可见 tab 跟随；N19 忙时排队，枚举/预读结束后补执行
+    // N55 §3.5：收编告知——跨列表收编且被收编项中存在远端项才弹（全本地收编免告知；
+    // 命令行启动 prevPlayingTab 恒为 0，不告知）。文案只述"远端项已收编、可能含访问
+    // 凭据"，不做逐项断言、不提项数与逐项清单
+    if (prevPlayingTab != 0 && hasRemote)
+        queueDeferredNotice(tr("The playing list was changed externally. Remote entries have "
+                               "been adopted into the default list and may contain access "
+                               "credentials."));
+    // N55 §3.6 处置 4：异常数据告知（与收编告知合用出口；同一次第 5 步既判出异常又
+    // 触发收编告知时，两条文案并入同一次弹窗）。不点列表名——那条串的来源本就不可信，
+    // 也不得按它读 uuid。不恢复播放：用户要继续，从默认 tab 手动双击剩余项
+    if (hasAnomaly)
+        queueDeferredNotice(tr("An invalid playback address was detected and removed. "
+                               "Playback has been stopped."));
+    requestTab(0); // 可见 tab 跟随；N19 忙时排队，枚举/预读结束后补执行
 }
 
 void PlaylistWidget::addFiles(const QStringList &files) {
@@ -857,6 +926,7 @@ void PlaylistWidget::addFiles(const QStringList &files) {
     created.reserve(files.size());
     for (const QString &file : files) {
         auto entity = PlaylistEntity::fromPath(file, m_registry);
+        stampOwnership(*entity, list->list()); // N55 §2.2：入列即盖章（归属 = 当前列表）
         created.push_back(entity);
         makeItem(list, std::move(entity));
     }
@@ -948,6 +1018,10 @@ PlaylistEntity::List PlaylistWidget::setDefaultTabFiles(const QStringList &files
     created.reserve(files.size());
     for (const QString &file : files) {
         auto entity = PlaylistEntity::fromPath(file, m_registry);
+        // N55 §2.2：入列即盖章——归属 = 默认列表（经 PlaylistRegistry::defaultList()
+        // 取得，与 providerOfView(viewAt(0)) 同一实例；默认列表跨会话恒定、不可删
+        // 不可换源，以它为归属的实体来源永不过期）
+        stampOwnership(*entity, m_lists->defaultList());
         created.push_back(entity);
         makeItem(list, std::move(entity));
     }
@@ -1722,6 +1796,89 @@ void PlaylistWidget::clearPlayingMarks(PlaylistListView *list) {
         list->item(i)->setData(PlayingRole, false);
 }
 
+// N55 §3.5：单一延后告知出口。判断处只记账（文案入待发队列；队列已有完全相同的
+// 文案则不重复入队——收编文案恒同串，天然合并），QTimer::singleShot(0) 把投递锚在
+// 事件循环顶层：两处判断栈（setPlaylist / 清扫所在的设置对话框 accept() 栈）都不能
+// 自己 exec()——清扫侧从 accept() 栈内调度，定时器只在设置对话框 exec() 退出、控制权
+// 交还外层后才触发；收编侧同理离开 mpv 事件栈。模态期间事件照常流动是特性：弹窗
+// 自身的事件循环照常分派 mpv 回显，setPlaylist 若再入那是全新栈帧的新调用
+void PlaylistWidget::queueDeferredNotice(const QString &text) {
+    if (m_pendingNotices.contains(text))
+        return;
+    m_pendingNotices.append(text);
+    QTimer::singleShot(0, this, [this] { pumpDeferredNotices(); });
+}
+
+// 投递步：待发队列合成一次模态弹窗（仅确认、分段显示、不可取消）后清队列。
+// singleShot 在弹窗自己的嵌套循环里照常触发，故"弹窗在幕"时必须只记账不叠窗——
+// 一窗压一窗既读不出有几条，也把第二窗顶到不易察觉的位置；本扇关掉后再自排下一轮，
+// 队列不丢（早退时队列未动，尾部那次重排是唯一的续命点）
+void PlaylistWidget::pumpDeferredNotices() {
+    if (m_noticeDialogUp || m_pendingNotices.isEmpty())
+        return;
+    const QStringList pending = std::move(m_pendingNotices);
+    m_pendingNotices.clear();
+    m_noticeDialogUp = true;
+    QMessageBox box(QMessageBox::Warning, tr("Playlist Notice"), pending.join(QLatin1Char('\n')),
+                    QMessageBox::Ok, this);
+    box.exec();
+    m_noticeDialogUp = false;
+    if (!m_pendingNotices.isEmpty())
+        QTimer::singleShot(0, this, [this] { pumpDeferredNotices(); });
+}
+
+// N55 §2.6：来源失效清扫——保证"弱引用能 lock 到的那个实例，永远是当前唯一有资格
+// 代言这个身份的实例"。换源侧：旧提供者实例若仍被在途任务的 shared_ptr 吊着，归属
+// U 的显示中实体还能 lock 到旧实例，新旧同身份向 StreamRelay 同槽位 publish 争用；
+// 删列表侧：列表死后弱引用同样能临时 lock 成功。两触发点（removeTabAt / openListSettings）
+// 各接一处，均与触发动作同栈同步调用；retiredName 须在摘除前采集（摘除后 nameOf 即
+// 空返回）。清扫面封闭：归属 U 的显示中实体只可能在默认 tab 的收编层——其余列表的
+// 实体归属即自身列表，随列表同生死；默认列表归属的提供者永生且 U 恒非保留身份。
+// 行面依赖"默认 tab 恒平铺"：默认列表的提供者是 StaticProvider、无容器 ⇒ 显示层 ==
+// 队列根层，removeRowsLocal 作用的 levelOf() 即队列根层，清扫不必先归位显示层
+// （若将来给默认列表配可钻取的提供者，须显式先 setDisplayedIds(queueRootIds())）
+void PlaylistWidget::applySourceRetired(const QUuid &retiredUuid, const QString &retiredName,
+                                        bool stopAlreadyDone) {
+    PlaylistListView *def = viewAt(0);
+    if (!def)
+        return;
+    QList<int> rows;
+    for (int r = 0; r < def->count(); ++r) {
+        // 归属不参与判等的另一面：按"归属身份 == U"过滤是归属唯一的读取点
+        if (const PlaylistEntity *e = entityFromItem(def->item(r));
+            e && e->m_ownerUuid == retiredUuid)
+            rows.append(r);
+    }
+    if (rows.isEmpty())
+        return; // 无命中项即无连带：不停播、不弹窗（列表自身的摘除/换身是用户自知动作）
+
+    // 处置 2：停播判据 = 正播是 U（触发点的既有停止语义已停，stopAlreadyDone）或
+    // 正播在默认 tab（此处补停——mpv 队列的内容就是 tab 0 的实体序，清掉任何一批行
+    // 都令队列与界面失配，下一次回显必判差异再把刚清掉的项捞回来）。正播在第三个
+    // 列表时不停播——待清的行全在 tab 0，与那个队列没有一条对位关系
+    const bool playingDefault = playingTabIndex() == 0;
+    if (playingDefault && !stopAlreadyDone) {
+        emit stopRequested();   // stop 即 mpv 列表清空（AGENTS 陷阱条目）
+        clearPlayingMarks(def); // 本地标记同步失效（与 runFourStep 同型）
+        // 不写 m_playingUuid：playingTabIndex() == 0 的定义就是"该身份解析到 tab 0"，
+        // 而 tab 0 恒为默认列表（N57 §2.8 的身份↔坐标不变式），此处本就恒为保留
+        // 身份——N55 §2.6 处置 2 明写"不需再归位"
+    }
+    // 处置 3 + 4：行删除走既有本地路径，只删界面；不得跟着 emit removeRequested——
+    // 判据命中时 mpv 侧已被 stop 清空，再喂逐行 playlist-remove 打的是空队列
+    removeRowsLocal(def, rows);
+    // 处置 1：延后弹窗告知，不可取消。文案只点名列表、不给计数（项数与逐项清单对
+    // 用户没有可操作价值）；判据命中而停播则加一句"播放已停止"。去处写明"默认列表"
+    // （变更记录 1，维护者裁决）：收编项的常住地是默认 tab，正播在第三个列表时，
+    // 只说"来自列表 X 的条目已失效并被移除"读不出从哪里移除，报错会显得莫名其妙
+    QString text = tr("Entries from list %1 are no longer valid and have been removed from "
+                      "the default list.")
+                       .arg(retiredName);
+    if (stopAlreadyDone || playingDefault)
+        text += QLatin1Char('\n') + tr("Playback has been stopped.");
+    queueDeferredNotice(text);
+}
+
 void PlaylistWidget::runFourStep(PlaylistListView *list, int tab,
                                  const std::function<void()> &mutate) {
     const bool keepPaused =
@@ -1993,6 +2150,17 @@ void PlaylistWidget::onLoadFinished(const JobContext &ctx,
     // N45 §2.10：归位已并入忙时延后家族（revealPlayingItem），在途期浏览路径不被
     // 搬移——批次恒以目标层即显示层完成，此处必然换入
     Q_ASSERT(targetsDisplayed);
+
+    // N55 §2.2：实体入列即盖章（归属 = view 所在列表的身份与当前提供者）。成功批次
+    // 的两支换入（跨层写 lvl.entities / 同层走 applyEntitiesToRows）共用同一次盖章
+    // ——每个实体恰落其中一支；显式赋盖（异步任务只产未盖章实体表，归属由 GUI
+    // 线程在入列时盖）
+    // 逐元素不判空：三提供者的 enumerate 与两个工厂恒不产 null 实体（工厂"恒返回
+    // 实体"是契约，落不了已知类型也有 UnknownEntity 占位）。setPlaylist 第 4 / 5 步
+    // 那两处判空不是同一回事——它们是判据侧的保守写法（判不出即不一致 → 收编、
+    // 不索引），不是"表里会有 null"的存在断言，两者不构成本循环该判空的理由
+    for (auto &e : enumeration.entities)
+        stampOwnership(*e, list->list());
 
     // 换入前一刻才采集（§4.3）：在途期间 mpv 事件仍经 recordPlayback 推进本表记忆，
     // 发起时快照会丢掉这段进度。oldKeys 仅刷新批次需要（供比对；其余意图无旧内容可比）
@@ -2717,9 +2885,11 @@ void PlaylistWidget::removeRowsLocal(PlaylistListView *list, const QList<int> &r
             delete list->takeItem(row);
     }
     restoreMemoryPath(list, captured, hadMemory);
-    // N60 §2.4：不再登记在途回显——本函数的唯一调用点（右键"删除选中"在
-    // isPlayingTab && queueLayer 分支内）随后 emit removeRequested，会话由喂入侧
-    // MainWindow::onRemoveRequested 的守卫开闭
+    // N60 §2.4：不再登记在途回显。本函数有两个调用点，对 mpv 侧的处置正好相反：
+    // 四步式那支（右键"删除选中"在 isPlayingTab && queueLayer 分支内）随后 emit
+    // removeRequested，会话由喂入侧 MainWindow::onRemoveRequested 的守卫开闭；
+    // 来源失效清扫（applySourceRetired）故意不 emit——那支的 mpv 侧已被 stop 清空，
+    // 再喂逐行 playlist-remove 打的是空队列（N55 §2.6 处置 4）
     emit contentsChanged(); // A17：本地删行条目数已变，刷新导航启停
 }
 
@@ -3901,7 +4071,14 @@ void PlaylistWidget::removeTabAt(int tabIndex) {
     QUuid gone; // 待摘除列表的身份；无页面即无列表可摘
     if (closing)
         gone = closing->list()->uuid();
-    if (idx == playingTabIndex()) {
+    // N55 §2.6：列表名与停播事实先采——摘除（m_lists->remove）后 nameOf 即空返回，
+    // 下方停止块又会归位 m_playingUuid 改写判据状态，两样都必须在动作前现取。
+    // 停播事实按身份判（m_playingUuid == gone）并就地驱动那个停止块：原写法
+    // idx == playingTabIndex() 与它是同一判据的两种拼写，等价性靠 N57 §2.8 的身份↔
+    // 坐标不变式——同一件事处处各写一遍，将来 tabIndexOfList 一旦添个回退分支即静默分叉
+    const QString goneName = gone.isNull() ? QString() : m_lists->nameOf(gone);
+    const bool playingRetired = (m_playingUuid == gone);
+    if (playingRetired) {
         emit stopRequested();
         emit clearRequested();
         m_playingUuid = kDefaultListUuid; // 同步目标归位默认列表（身份判据，不是位置）
@@ -3913,6 +4090,12 @@ void PlaylistWidget::removeTabAt(int tabIndex) {
         if (m_pendingLoad.list == closing)
             m_pendingLoad = PendingLoad{};
     }
+    // N55 §2.6：清扫与触发点同点同步（正播是 U 时停播已由上方既有块完成，正播在
+    // 默认 tab 时由清扫补停），须在 removeTab 之前做——tab 序号此后漂移，而清扫的
+    // 停播判据与 removeRowsLocal 都依赖现行索引；动作先行的每一瞬间世界都处于一致态，
+    // 弹窗不守护任何中间状态、只转述已发生的事实
+    if (!gone.isNull())
+        applySourceRetired(gone, goneName, playingRetired);
     // N57 §2.8：旧代码此处有一段"播放目标索引 > 被删索引则 --"的漂移修正——目标改持
     // 身份后 tab 序号与本对象无关，整段消失（现状下 m_busy 本就拦住在途删除，修正从不
     // 可达，属架构纯化而非修缺陷）
@@ -4003,6 +4186,13 @@ void PlaylistWidget::openListSettings(int tabIndex) {
     pl->setProvider(std::move(*result));
     // 排序规则重置为新提供者类型默认（N57 §2.9：自述默认）
     pl->provider()->setSortRule(pl->provider()->defaultSortRule());
+
+    // N55 §2.6 实施约束 1：换身恰好等于"来源参数变了"（hasChanges 把转接偏好与凭据
+    // 都算进变更——改密码、改根 URL、翻转转接偏好都必经换身；仅改名不动实例不触发）。
+    // 清扫必须与 setProvider 同点同步做完、先于新列表首载（新提供者首次枚举 / 播放即
+    // publish 抢走 U 的表项），只有告知弹窗延后——经合用出口，天然落在设置对话框
+    // exec() 退出之后，不在 accept() 栈内嵌套 exec()。列表名在 setName 之后现取
+    applySourceRetired(pl->uuid(), pl->name(), wasPlaying);
 
     // N45 §2.5 + N57 §2.8：换源即整个 tab 的视图态作废——层缓存、浏览路径、队列根、
     // 显示层记录、续播记忆全清 + 行与实体一并回收，随后以新提供者异步重建。

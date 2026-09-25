@@ -134,6 +134,17 @@ class PlaylistEntity {
     // （大小写 / 分隔符）仍认得出同一条内容（N30）。回刷判等不走它——那是
     // 形态级逐字节比对（R，N56 §2.5），两套语义不得合一
     bool matches(const QString &path) const;
+    // ——N55 形态解析唯一出口——
+    // 锁归属提供者 → provider->playUrl(归属 uuid, path())；"无来源 → 所在列表代答"
+    // 的分岔整体删除（N55 §2.3）。委托不是缓存：实体不存形态串、不算形态，每次现问
+    // 提供者 ⇒ 无陈旧问题、无"枚举即全表铸 URI"的前置成本。锁失败即编程错误
+    // （契约见 m_ownerProvider 注），Debug Q_ASSERT 显影；release 不可达分支返回
+    // 空串——空串令 mpv 显式加载失败，绝不静默退回 path()（对全转接型提供者，
+    // path() 只是条目标识，推它等于静默喂垃圾）。线程契约：仅 GUI 线程调用（理由见
+    // m_ownerProvider 注第 3 条）。头文件方向：本头只前置声明提供者，定义放
+    // PlaylistEntity.cpp——实体侧唯一 include 提供者头之处（PlaylistProvider.h 已
+    // include 本头，无环）。
+    QString playUrl() const;
     const QString &title() const { return m_title; } // 列表显示名，恒为有效值（本地回退文件名）
     const QString &fileName() const {
         return m_fileName;
@@ -191,6 +202,16 @@ class PlaylistEntity {
     void setFileMeta(const FileMeta &meta);
     void setMediaMeta(const MediaMeta &meta);
 
+    // ——N55 归属注入口（显式赋盖，不判空兜底）——
+    // 仅 PlaylistProvider / PlaylistWidget 经友元可及（与 setFileMeta / setMediaMeta
+    // 同一条授权通道）；构造签名一字不动，归属不走构造参数（N55 §2.2）。每个入列
+    // 落点各自决定盖与不盖：收编 clone() 携带来的原归属靠"不再盖"保住，故是显式
+    // 赋盖而非"空则补盖"。
+    void setOwnership(QUuid listUuid, std::weak_ptr<const PlaylistProvider> provider) {
+        m_ownerUuid = std::move(listUuid);
+        m_ownerProvider = std::move(provider);
+    }
+
     // N35 修订 2：同步求值（可能阻塞至完成 / 超时，无取消通道，取消为
     // 结果静默丢弃——见变更记录）；仅预读任务与对话框任务线程调用。
     // N39：实体是否具备求值能力由能力位表达，无能力者恒走静态空回落
@@ -204,9 +225,27 @@ class PlaylistEntity {
 
     QString m_path;
     std::shared_ptr<ServiceRegistry> m_registry; // N35：服务注册表（基类统一持有）
-    QString m_title;                             // 构造期派生
-    QString m_fileName;                          // setFilename 可改，改则同步 suffix
-    QString m_suffix;                            // 同上
+    // ——N55 归属两件套（出生属性）——
+    // 在列表中显示的每个实体都携带归属：列表身份 + 该列表当前提供者的弱引用。
+    // 载体是 weak_ptr 而非裸指针 / shared_ptr（N55 §2.1）：保留非所有权语义，
+    // 提供者寿命不因实体外溢，锁失败可检测可断言。
+    // 1. 归属是出生属性：实体入列（进入层缓存或行）时由视图侧一次显式赋盖，此后
+    //    不随层重建 / 排序 / 逐出改变；拷贝构造默认携带 ⇒ clone() 自动带走。
+    //    归属不进 key()、不参与任何判等、不进 removeInvalid 判据、列表侧不落 INI。
+    // 2. 枚举产物入列前无归属：异步任务只产未盖章实体表，归属由 GUI 线程在入列时盖；
+    //    未盖章（两成员皆空）时消费形态属调用方违约，走 playUrl() 的断言路径显影。
+    // 3. playUrl() 只许 GUI 线程调用：提供者侧端点缓存与 publish 无锁，依赖
+    //    "只在 GUI 线程发生"的既有线程口径（PlaylistProvider::playUrl 的断言同款）。
+    // 4. playUrl() 消费者封闭于视图侧四处：Playlist::playUrls 整表映射、
+    //    PlaylistWidget::setPlaylist 第 4 步比对与第 5 步 reuse 索引键、
+    //    MainWindow::onAddBookmark——异步对话框持有的实体副本只读元数据缓存，
+    //    不消费形态。"提供者在位"由消费点封闭与来源失效清扫共同保证（N55 §2.4），
+    //    lock() 失败即契约破坏。
+    QUuid m_ownerUuid;                                     // 归属列表身份；未盖章为 null
+    std::weak_ptr<const PlaylistProvider> m_ownerProvider; // 归属提供者弱引用
+    QString m_title;                                       // 构造期派生
+    QString m_fileName;                                    // setFilename 可改，改则同步 suffix
+    QString m_suffix;                                      // 同上
     bool m_titleSet = false; // setTitle 显式设置后置位，此后 setFilename 不再联动 title
     QString m_key;           // 构造期缓存：Util::Url::key(path())——key()
                              // 在委托绘制热路径上，避免逐行逐帧重算

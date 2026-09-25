@@ -59,7 +59,12 @@ class PlaylistRegistry {
     // 占用判定是本类的实现，不设公开出口
     Playlist *append(QString name, std::shared_ptr<PlaylistProvider> provider,
                      const QUuid &storedUuid);
-    // 只作用于持久列表（默认列表断言拒绝摘除）；摘除即列表对象的唯一析构点
+    // 只作用于持久列表（默认列表断言拒绝摘除）；摘除即列表对象的唯一析构点。
+    // N55 §2.6 实施约束 1：摘除后归属该列表的显示中实体（默认 tab 收编层）的弱引用
+    // 仍可能临时 lock 成功（在途任务 lambda 持有的 shared_ptr 副本令销毁延后）——
+    // 来源失效清扫（PlaylistWidget::applySourceRetired，由本函数全仓唯一调用点
+    // PlaylistWidget::removeTabAt 同栈触发）把这批实体先于任何再解析移除；漏调即
+    // "每次推送重复收编"回来，本注释指回 N55 §2.6 兜（文档，不是机制）
     bool remove(const QUuid &uuid);
 
   private:

@@ -4,6 +4,9 @@
 
 #include "HttpEntity.h"
 #include "LocalFileEntity.h"
+// N55：playUrl() 出口经归属提供者现算——实体侧唯一 include 提供者头之处
+// （实体头只前置声明，无环）
+#include "PlaylistProvider.h"
 #include "Util.h"
 
 // N57 §2.9：排序键取值冻结（对 N58 的契约③）——既有 0..8 不得重编，新键只准追加末尾
@@ -90,6 +93,18 @@ QString PlaylistEntity::key() const {
 // N56 §2.5：键级判等的唯一实现点——将来 key() 若换形（如远端改服务端 id），
 // 等价规则只改这一处，外部不假设键长什么样
 bool PlaylistEntity::matches(const QString &path) const { return m_key == Util::Url::key(path); }
+
+// N55 §2.3：形态解析唯一出口的唯一定义点。锁失败即编程错误——"提供者在位"由
+// 消费点封闭与来源失效清扫共同保证（N55 §2.4），Debug 断言显影；release 走不可达
+// 分支返回空串（空串令 mpv 显式加载失败，绝不静默退回 path()——对全转接型提供者，
+// path() 只是条目标识）。委托不是缓存：每次现问归属提供者，无陈旧问题
+QString PlaylistEntity::playUrl() const {
+    const auto provider = m_ownerProvider.lock();
+    Q_ASSERT(provider && !m_ownerUuid.isNull());
+    if (!provider || m_ownerUuid.isNull())
+        return QString();
+    return provider->playUrl(m_ownerUuid, m_path);
+}
 
 // 构造期派生 title / fileName / suffix / key / displayUrl（纯字符串运算 + 一次规范化，
 // 与身份串同生命周期；key() 被委托绘制热路径逐行调用，必须缓存）

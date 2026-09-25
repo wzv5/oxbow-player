@@ -12,8 +12,11 @@
 #include "HttpEntity.h"
 #include "LocalFileEntity.h"
 #include "PlaylistEntity.h"
+#include "PlaylistProvider.h" // N55：归属注入口的形参类型与转接能力枚举
 #include "ServiceRegistry.h"
-#include "StreamTransit.h" // N61 变更记录第 1 条：回显入口的 mint / unwrap 对照
+#include "StaticProvider.h" // N55 §九：恒等提供者验归属现算
+#include "StreamRelay.h"    // N55 §九：StreamRelayIf 取用接缝（纯头，测试桩实现）
+#include "StreamTransit.h"  // N61 变更记录第 1 条：回显入口的 mint / unwrap 对照
 #include "Util.h"
 
 // 测试桩实体：compute* 带调用计数，能力位可调，保护修正入口透出。
@@ -38,6 +41,10 @@ class TestEntity : public PlaylistEntity {
     // 保护修正入口透出（命名派生联动测试）
     void applyFilename(const QString &name) { setFilename(name); }
     void applyTitle(const QString &title) { setTitle(title); }
+    // N55：归属注入口透出——protected + 友元，经子类公开转发盖章，不放宽可见性
+    void applyOwnership(QUuid uuid, std::weak_ptr<const PlaylistProvider> provider) {
+        setOwnership(std::move(uuid), std::move(provider));
+    }
 
     mutable int fileComputeCount = 0;
     mutable int mediaComputeCount = 0;
@@ -72,6 +79,48 @@ class TestEntity : public PlaylistEntity {
 inline std::shared_ptr<ServiceRegistry> testRegistry() {
     return std::make_shared<ServiceRegistry>();
 }
+
+// ——N55 测试桩——
+// 测试端点：openStream 恒失败。用例只走铸造与发布路径，不起流
+class TestEndpoint : public StreamEndpoint {
+  public:
+    std::expected<std::shared_ptr<ByteStream>, QString>
+    openStream(const QString &identity) const override {
+        Q_UNUSED(identity);
+        return std::unexpected(QStringLiteral("test endpoint never opens"));
+    }
+};
+
+// 取用侧桩：只记录 publish。StreamRelayIf 为纯头抽象基（L4 实现体不入测试链接，
+// 见该头注释），面向接缝编程正是 N52 留下的可测试缝
+class TestRelay : public StreamRelayIf {
+  public:
+    void publish(const QUuid &listUuid, const std::shared_ptr<StreamEndpoint> &endpoint) override {
+        publishedUuid = listUuid;
+        lastEndpoint = endpoint;
+    }
+    QUuid publishedUuid;
+    std::shared_ptr<StreamEndpoint> lastEndpoint;
+};
+
+// 转接测试提供者：Required（形态恒 mpvqt:// 铸造，偏好关不掉），端点返回测试桩
+class TransitTestProvider : public PlaylistProvider {
+  public:
+    explicit TransitTestProvider(const std::shared_ptr<ServiceRegistry> &registry)
+        : PlaylistProvider(registry) {}
+
+    QString typeKey() const override { return QStringLiteral("test-transit"); }
+    std::expected<Enumeration, QString> enumerate(const QStringList &parent = {}) const override {
+        Q_UNUSED(parent);
+        return Enumeration{};
+    }
+    bool supportsModify() const override { return false; }
+    void saveSettings(QSettings &settings) const override { Q_UNUSED(settings); } // 用例不落盘
+    TransitCapability transitCapability() const override { return TransitCapability::Required; }
+    std::shared_ptr<StreamEndpoint> createStreamEndpoint() const override {
+        return std::make_shared<TestEndpoint>();
+    }
+};
 } // namespace
 
 class TestPlaylistEntity : public QObject {
@@ -126,6 +175,17 @@ class TestPlaylistEntity : public QObject {
     // N61 变更记录第 1 条：回显专用入口 fromMpvEcho——已定形者与 fromPath 同类型同身份、
     // 转接串折回身份，补不出形态者（空 filename / 裸 file:）不撞断言而是落 UnknownEntity
     void echoEntryFallsBackToPlaceholder();
+    // N55 §2.2/§2.3：归属注入口与出生属性——playUrl() 走归属现算（StaticProvider 恒等
+    // 与转接提供者各验一次，断言形态出自归属提供者而非所在列表）
+    void ownershipStampDrivesPlayUrl();
+    // N55 §2.1：clone() 携带归属——克隆副本不经再盖章即由原归属（同一提供者 + 同一
+    // 身份）加工（克隆后重新盖章的那一支随 N55 C2 的收编路径另测）
+    void cloneCarriesOwnership();
+    // N55 §2.3 锁失败面：归属提供者先销毁再 playUrl() → Release 契约返空串
+    // （Debug 撞断言，不作断言用例：Debug 构建下本用例跳过）
+    void ownershipLockFailureReturnsEmptyInRelease();
+    // N55 §二：归属不参与判等——同一身份串盖不同归属，key() / matches() 结果不变
+    void ownershipNotInEqualityCriteria();
 };
 
 void TestPlaylistEntity::factoryDispatchesLocalAndNetwork() {
@@ -531,6 +591,98 @@ void TestPlaylistEntity::echoEntryFallsBackToPlaceholder() {
     auto rel = PlaylistEntity::fromMpvEcho(shapedRel, registry);
     QVERIFY(dynamic_cast<LocalFileEntity *>(rel.get()) != nullptr);
     QCOMPARE(rel->path(), shapedRel);
+}
+
+// N55 §2.2/§2.3：归属注入口与出生属性。形态只问归属提供者——实体不认识"所在列表"，
+// 同一实体无论放进哪个列表，playUrl() 产出都由盖章那对（uuid + 提供者）现算
+void TestPlaylistEntity::ownershipStampDrivesPlayUrl() {
+    auto registry = testRegistry();
+    auto relay = std::make_shared<TestRelay>();
+    registry->provide<StreamRelayIf>(relay);
+
+    // ① StaticProvider（Unsupported）：恒等下发，形态 == 身份
+    auto staticProvider = std::make_shared<StaticProvider>(registry);
+    TestEntity e(QStringLiteral("dir/owned.mp4"), registry);
+    e.applyOwnership(QUuid::createUuid(), staticProvider);
+    QCOMPARE(e.playUrl(), e.path());
+
+    // ② 转接提供者（Required）：形态 = mpvqt://<归属 uuid>/<剥凭据身份>。
+    //    身份段取归属 uuid 而非任何"所在列表"——断言形态出自归属
+    auto transitProvider = std::make_shared<TransitTestProvider>(registry);
+    const QUuid uuidB = QUuid::createUuid();
+    TestEntity t(QStringLiteral("https://example.com/dir/stream.mp4"), registry);
+    t.applyOwnership(uuidB, transitProvider);
+    const QString form = t.playUrl();
+    QVERIFY(form.startsWith(QLatin1String(StreamTransit::kScheme)));
+    QCOMPARE(StreamTransit::listUuidOfUri(form), uuidB);
+    QCOMPARE(StreamTransit::unwrap(form), Util::Url::stripCredentials(t.path()));
+    // publish 随铸造发生（N52 §2.6 发布即下发）：表键即归属 uuid
+    QCOMPARE(relay->publishedUuid, uuidB);
+    QVERIFY(relay->lastEndpoint != nullptr);
+
+    // ③ 再盖章即显式赋盖（不做"空则补盖"）：换归属后形态随新归属现算
+    t.applyOwnership(QUuid::createUuid(), staticProvider);
+    QCOMPARE(t.playUrl(), t.path());
+}
+
+// N55 §2.1：clone() 携带归属——拷贝构造默认复制两件套。克隆未经再盖章即由原归属
+// 加工；若归属未携带，克隆侧 playUrl() 走锁失败断言路径（Debug 即显影），产不出形态
+void TestPlaylistEntity::cloneCarriesOwnership() {
+    auto registry = testRegistry();
+    auto relay = std::make_shared<TestRelay>();
+    registry->provide<StreamRelayIf>(relay);
+    auto transitProvider = std::make_shared<TransitTestProvider>(registry);
+    const QUuid uuid = QUuid::createUuid();
+    TestEntity e(QStringLiteral("dir/carried.mp4"), registry);
+    e.applyOwnership(uuid, transitProvider);
+    const QString before = e.playUrl();
+
+    auto c = e.clone();
+    auto *tc = static_cast<TestEntity *>(c.get());
+    QCOMPARE(tc->playUrl(), before); // 同一提供者 + 同一 uuid：形态逐字节一致
+    QCOMPARE(StreamTransit::listUuidOfUri(tc->playUrl()), uuid);
+}
+
+// N55 §2.3 锁失败面：归属提供者销毁后 playUrl() 的 Release 契约是返空串——空串令
+// mpv 显式加载失败，绝不静默退回 path()。Debug 下该路径撞 Q_ASSERT（编程错误显影，
+// 契约本身），故本用例只在 Release 构建下断言，Debug 构建跳过
+void TestPlaylistEntity::ownershipLockFailureReturnsEmptyInRelease() {
+#if defined(QT_NO_DEBUG)
+    TestEntity e(QStringLiteral("dir/gone.mp4"), testRegistry());
+    {
+        auto provider = std::make_shared<TransitTestProvider>(testRegistry());
+        e.applyOwnership(QUuid::createUuid(), provider);
+    } // 提供者出作用域销毁：弱引用过期
+    QCOMPARE(e.playUrl(), QString());
+#else
+    QSKIP("Debug 构建下锁失败撞 Q_ASSERT（编程错误显影）；Release 契约返空串，见 N55 §2.3");
+#endif
+}
+
+// N55 §二：归属不参与判等——同一身份串盖不同归属（含不同提供者与不同 uuid），
+// key() / matches() 结果不变；归属缺席（未盖章）同样不改变判等
+void TestPlaylistEntity::ownershipNotInEqualityCriteria() {
+    auto registry = testRegistry();
+    auto relay = std::make_shared<TestRelay>();
+    registry->provide<StreamRelayIf>(relay);
+    const QString path = QStringLiteral("https://example.com/dir/same.mp4");
+    auto staticProvider = std::make_shared<StaticProvider>(registry);
+    auto transitProvider = std::make_shared<TransitTestProvider>(registry);
+
+    TestEntity a(path, registry);
+    a.applyOwnership(QUuid::createUuid(), staticProvider);
+    TestEntity b(path, registry);
+    b.applyOwnership(QUuid::createUuid(), transitProvider);
+    QCOMPARE(a.key(), b.key());
+    QCOMPARE(a.key(), Util::Url::key(path));
+    QVERIFY(a.matches(path));
+    QVERIFY(b.matches(path));
+    QVERIFY(a.matches(b.path()));
+
+    // 未盖章实体：判等不因归属缺席而变（playUrl() 才守契约，key / matches 无关归属）
+    TestEntity plain(path, registry);
+    QCOMPARE(plain.key(), a.key());
+    QVERIFY(plain.matches(path));
 }
 
 // 一类一可执行（R5）：自带 main（QTEST_GUILESS_MAIN），无 GUI 依赖
