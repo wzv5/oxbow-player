@@ -472,6 +472,16 @@ QString toIdentity(const QString &path) {
     return QDir::toNativeSeparators(QFileInfo(local).absoluteFilePath());
 }
 
+// N61 §2.1：判据与 PlaylistEntity::fromPath 那句断言互为镜像——断言放行的一侧
+// （已定形）本函数一律逐字节原样，断言拦下的一侧（未定形）才施加 toIdentity。
+// 分支条件不得扩：多认识任何一种"看起来已经是形态"的串都会让判据 R 失去逐字节
+// 语义（N56 §2.5），少认一种即把未定形串喂进工厂（回显链上由 fromMpvEcho 落占位
+// 兜住，插件自身的四个出口则撞断言显影）。参数与产出的分工见声明处注释
+// 补不出形态者原样返回，由工厂的 fromMpvEcho 入口落 UnknownEntity（N61 变更记录第 1 条）
+QString identityFromMpvEcho(const QString &echo) {
+    return isDefiniteForm(echo) ? echo : toIdentity(echo);
+}
+
 // 是否网络/流路径（含 :// 且非 file: 前缀）：本地目录提供者据此拒绝、mpv 源据此保持原样。
 // 用串前缀判定，避免 QUrl::scheme() 把 Windows 盘符 "C:\dir" 误判为 scheme、
 // 也避免 QUrl::fromUserInput 把相对名（如 "a"）误判为非本地。
@@ -496,6 +506,13 @@ bool isMissingLocal(const QString &path) {
     if (!isLocal(local))
         return false;
     return !QFileInfo::exists(local);
+}
+
+// N61 变更记录第 1 条：判据单点（见声明处注释）。判"形态"不判"磁盘"——纯字符串
+// 谓词，不访问文件系统，故回刷热路径（心跳约 99 Hz 的正播路径出口）可放心直调
+bool isDefiniteForm(const QString &path) {
+    return !path.isEmpty() &&
+           (QFileInfo(path).isAbsolute() || path.contains(QStringLiteral("://")));
 }
 
 // N37：播放项显示文件名（自 HttpEntity 构造内的同名逻辑收编，供标题 / OSD

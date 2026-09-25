@@ -649,9 +649,11 @@ int PlaylistWidget::playingRowOf(const PlaylistListView *list) const {
 // N60 §2.2：第 1 步从"内容域比对在途中间态"换成**因果域吞域**——本地批次执行期内
 // 的回显无条件忽略，终点由屏障 reply 自带终值对账（onPushBarrier），无声吞掉成为
 // 结构不可达。其余各步的判据不动
-// N56 §2.5 判据 R：回显**原样**进判据（视图零加工），实体侧按所在 tab 的提供者
+// N56 §2.5 判据 R + N61 §2.1：回显**先过一道整形**再进判据（未定形者补形态，已定形者
+// 逐字节原样——"视图零加工"这句随整形进表即失效），实体侧按所在 tab 的提供者
 // **现算**它会下发的形态（playUrls 的同源产物），逐字节比对——语义是"mpv 手里
-// 那条串，正是我此刻会推的那条"。reuse 索引键与判据**同源同形**（同为这份形态），
+// 那条串，正是我此刻会推的那条"，仅对未定形项退为"两者所指同一文件"（N61 §2.2 的
+// 让步）。reuse 索引键与判据**同源同形**（同为整形后的这份形态），
 // 否则"命中即克隆、克隆形态 ≠ 回显形态"会让下一次回显又判不一致而重复收编永续
 void PlaylistWidget::setPlaylist(const QVariantList &items) {
     // N49：回刷入口是正播态的最新真相（覆盖停止 / 起播 / 外部变更收编），在此刷新按钮态
@@ -670,10 +672,14 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
     current.reserve(items.size());
     for (const QVariant &v : items) {
         const QVariantMap map = v.toMap();
-        // R：回显原样——mpv 对下发的串不做任何修改（只做相对→绝对转换，而插件
-        // 从不推相对路径，N25 实测 + 维护者复核），回显逐字节等于下发串，
-        // 判据侧不做任何定形（toIdentity / 剥凭据均已随 N56 删除）
-        pushed.append(map.value(QStringLiteral("filename")).toString());
+        // R（依据按 N61 §一 2 实测更正）：mpv 从不改写下发的串——相对进、相对出，
+        // 绝对化只发生在 path 属性（它按环境变量 PWD 拼，可指向并不存在的路径，不作
+        // 身份来源）。故每一项先过一道回显整形：未定形者补形态，已定形者逐字节原样。
+        // 此后第 2–5 步只看得见整形后的串，不再有任何一处各自定形——判据侧仍属零加工，
+        // 全表唯一的定形加工点就是本行（N56 删掉的那两处定形不复活）。第 5 步那一句
+        // StreamTransit::unwrap 是剥包装、不是定形，两句分工不同（见该处注释）
+        pushed.append(
+            Util::Url::identityFromMpvEcho(map.value(QStringLiteral("filename")).toString()));
         current.append(map.value(QStringLiteral("current")).toBool());
     }
 
@@ -784,14 +790,18 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
         // 不变式）；未命中经工厂新建（网络路径落 UnknownEntity）。
         // R：未命中项的回显是"播放形态"，先经 StreamTransit::unwrap 折回身份再进
         // 工厂（N56 §2.6：工厂只收已定形身份）。unwrap 是纯解码（非 mpvqt:// 原样
-        // 返回）——转接项还原为条目身份，其余形态原样；两条路不得互换：索引键若改
-        // 用折叠键（小写归一）就与判据不同形，命中的克隆会被下次回显判成"外部改动"
-        // 而重复收编永续；建实体若改用折叠键，则展示形态被小写化（破 B15）
+        // 返回），这一句不得省——漏折即让转接项以 mpvqt:// 落进实体身份，破 N52 / N56
+        // 的折叠纪律（整形只补形态、不拆包装：mpvqt:// 含 "://" 属已定形，逐字节放行）。
+        // N61 变更记录第 1 条：工厂走回显专用入口 fromMpvEcho——补不出形态的串（空
+        // filename、裸 file:）不撞 fromPath 那句断言，原样落 UnknownEntity 保行。
+        // 两条路不得互换：索引键若改用折叠键（小写归一）就与判据不同形，命中的克隆会被
+        // 下次回显判成"外部改动"而重复收编永续；建实体若改用折叠键，则展示形态被
+        // 小写化（破 B15）
         const auto rit = reuse.constFind(pushed.at(i));
         PlaylistEntity::Ptr entity =
             rit != reuse.constEnd()
                 ? rit.value()->clone()
-                : PlaylistEntity::fromPath(StreamTransit::unwrap(pushed.at(i)), m_registry);
+                : PlaylistEntity::fromMpvEcho(StreamTransit::unwrap(pushed.at(i)), m_registry);
         QListWidgetItem *item = makeItem(def, std::move(entity));
         if (current.at(i)) {
             item->setData(PlayingRole, true);
@@ -1007,7 +1017,8 @@ void PlaylistWidget::restoreMemoryPath(PlaylistListView *list, const QString &ca
 
 // N30：回刷收编后的记忆重建（替代原先的整体作废）。内容虽被整体替换，mpv 仍在播
 // 新表里的某一项——按正播行重建记忆，使随后的四步式（排序 / 移除）恒有续播目标。
-// 优先用推送自带的 current 行；推送无 current 时退回 mpv 的 path 定位
+// 优先用推送自带的 current 行；推送无 current 时退回正播路径出口（N61 §2.3 的
+// MpvController::currentPlayingPath，不再裸读 mpv 的 path 属性）定位
 // （与 restorePlayingState 同口径，经 matches 键级判等）。两者都定位不到即 mpv
 // 未播，此时才作废记忆——与"不在播就不续播"同义，不是记忆缺失
 void PlaylistWidget::rebuildMemoryAfterAdopt(PlaylistListView *list, int playingRow) {
@@ -1017,7 +1028,7 @@ void PlaylistWidget::rebuildMemoryAfterAdopt(PlaylistListView *list, int playing
     // N45：入参 playingRow 是行序，记忆 lastPos 是队列根层实体序，先换算
     int idx = rowToEntityIndex(list, playingRow);
     if (idx < 0 && m_mpv) {
-        const QString cur = m_mpv->propertyString(QStringLiteral("path"));
+        const QString cur = m_mpv->currentPlayingPath();
         if (!cur.isEmpty() && lvl) {
             for (int i = 0; i < int(lvl->entities.size()); ++i) {
                 if (const PlaylistEntity *e = lvl->entities.at(i).get(); e && e->matches(cur)) {
@@ -1178,8 +1189,10 @@ void PlaylistWidget::writeTabGroup(QSettings &settings, Playlist *list, int inde
 // N25：写入前校验 (tab, pos) 与 mpv 实际正播文件一致。外部结构变更在途时
 // playlist-pos 先于 playlist 推送更新（如终端移动正播条目），旧 playing tab 配
 // mpv 新索引会把别行写成"正在播放"（实测：移动后原 tab 续播记忆串位）。
-// time-pos 心跳仅在文件真正播放后才带 v>0，此时 path 必为正播文件，校验恒过；
-// 切条目瞬间 pos 推送若 path 尚未更新则跳过一次，随即由 time-pos 心跳自愈
+// time-pos 心跳仅在文件真正播放后才带 v>0；N61 §2.3 换源后本校验读的是队列第 pos 条
+// 的 filename（经正播路径出口整形），与镜像第 pos 项比对——守住的是"mpv 队列 ↔ 本地
+// 镜像"的在途结构变更，不再顺带拦"pos 推送与正播文件的错位"：该错位改由 MainWindow
+// 的 switchedItem ? 0.0 : m_timePos 那道既有守卫承载（N61 §2.3 记在案）
 void PlaylistWidget::recordPlayback(int tabIndex, int pos, double seconds) {
     if (tabIndex < 0 || pos < 0) // 负索引无效；默认 tab 允许进程内记忆（不持久化）
         return;
@@ -1193,9 +1206,9 @@ void PlaylistWidget::recordPlayback(int tabIndex, int pos, double seconds) {
     const Level *lvl = list->findLevel(list->queueRootIds());
     if (!lvl || pos >= int(lvl->entities.size()))
         return;
-    const QString mpvPath = m_mpv ? m_mpv->propertyString(QStringLiteral("path")) : QString();
+    const QString mpvPath = m_mpv ? m_mpv->currentPlayingPath() : QString();
     const PlaylistEntity *entity = lvl->entities.at(pos).get();
-    // N56 §2.5：键级判等经 matches（回显原样进判据，归一在实体内部完成）
+    // N56 §2.5：键级判等经 matches（整形后的回显进判据，归一在实体内部完成）
     if (mpvPath.isEmpty() || !entity || !entity->matches(mpvPath))
         return; // 索引与正播文件对不上：结构变更在途，不写本表记忆
     Memory &mem = list->memory();
@@ -1656,7 +1669,8 @@ void PlaylistWidget::restoreViewState(PlaylistListView *list, int tab, const Vie
 // N30：播放态归位——标记与播放表选中的唯一出口。行级换入不再 clear()，标记没有天然
 // 清除路径，故对每个未走四步式的分支在收尾末尾调用一次：在播且能定位即重建在正播行，
 // 否则清除本表全部标记。走了四步式的分支在此早退——stop 只是入队，此刻读到的
-// path / idle-active 仍是发起前的值，按旧值判断会把"未重推"误判为在播
+// 正播路径与 idle-active 仍是发起前的值，按旧值判断会把"未重推"误判为在播
+// （正播路径自 N61 §2.3 起一律经 MpvController::currentPlayingPath，不再裸读 path）
 void PlaylistWidget::restorePlayingState(PlaylistListView *list, int tab) {
     if (!list || tab < 0 || tab != playingTabIndex())
         return;
@@ -1665,11 +1679,11 @@ void PlaylistWidget::restorePlayingState(PlaylistListView *list, int tab) {
     if (list->browsePathIds() != list->queueRootIds())
         return;
     const bool idle = m_mpv ? m_mpv->propertyFlag(QStringLiteral("idle-active"), false) : true;
-    const QString cur = m_mpv ? m_mpv->propertyString(QStringLiteral("path")) : QString();
+    const QString cur = m_mpv ? m_mpv->currentPlayingPath() : QString();
     int target = -1;
-    if (!idle && !cur.isEmpty()) { // path 为空即无正播 → 清除
+    if (!idle && !cur.isEmpty()) { // 正播路径为空即无正播 → 清除
         for (int i = 0; i < list->count(); ++i) {
-            // N56 §2.5：键级判等经 matches（回显原样进判据，归一在实体内部完成）
+            // N56 §2.5：键级判等经 matches（整形后的回显进判据，归一在实体内部完成）
             if (const PlaylistEntity *e = entityFromItem(list->item(i)); e && e->matches(cur)) {
                 target = i;
                 break;
@@ -1874,9 +1888,9 @@ bool PlaylistWidget::syncAfterRefresh(PlaylistListView *list, int tab, const QSt
     }
     // 正播时长回填（三分支通用）：静默与追加不重建播放列表，正播行时长不会再有 mpv 推送补回。
     // 不前置判断——duration <= 0 由 applyDuration 记 nullopt，时长列回落到实体缓存元数据。
-    // N56 §2.5：定位正播行经 matches（回显原样进判据）；落仓键取实体 key
+    // N56 §2.5：定位正播行经 matches（整形后的回显进判据）；落仓键取实体 key
     if (m_mpv && tab >= 0 && tab == playingTabIndex()) {
-        const QString cur = m_mpv->propertyString(QStringLiteral("path"));
+        const QString cur = m_mpv->currentPlayingPath();
         if (!cur.isEmpty()) {
             for (int i = 0; i < list->count(); ++i) {
                 if (const PlaylistEntity *e = entityFromItem(list->item(i)); e && e->matches(cur)) {
@@ -3009,9 +3023,10 @@ bool PlaylistWidget::event(QEvent *event) {
 }
 
 // 正播中判据（§2.4）：按钮启用态与定位入口的守卫共用，判据只此一份
+// N61 §2.3：正播与否按正播路径出口判，不再裸读 path（无正播时该出口返空串，形状一致）
 bool PlaylistWidget::hasPlayingItem() const {
     return m_mpv && !m_mpv->propertyFlag(QStringLiteral("idle-active"), true) &&
-           !m_mpv->propertyString(QStringLiteral("path")).isEmpty();
+           !m_mpv->currentPlayingPath().isEmpty();
 }
 
 // 按钮启用态刷新（§2.4）：漏刷只影响灰态——定位入口幂等无副作用（切 tab 与归位皆幂等）

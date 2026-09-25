@@ -75,6 +75,12 @@ class TestUtil : public QObject {
     // ——N54：nextSequenceNumber（播放列表与书签共用的自动命名算法）——
     // 最大序号 +1 而非第一个空号；前缀不匹配与序号段解析失败一律不计入
     void nextSequenceNumberTakesMaxPlusOne();
+    // ——N61 §2.1：Util::Url::identityFromMpvEcho（mpv 回显整形）——
+    // 已定形者逐字节原样（判据 R 的守门用例：转接串不折叠、正斜杠绝对串不反斜杠化）
+    void mpvEchoKeepsDefiniteFormsByteIdentical();
+    // 未定形者补形态：产出自满足工厂断言谓词；补不出形态者按实测产物钉住（由工厂的
+    // 回显入口落占位实体，见 tst_PlaylistEntity）
+    void mpvEchoShapesUndefinedItems();
 };
 
 void TestUtil::emptyInputYieldsNoSegments() {
@@ -477,6 +483,81 @@ void TestUtil::nextSequenceNumberTakesMaxPlusOne() {
     QCOMPARE(Util::nextSequenceNumber(QStringLiteral("Playlist "),
                                       {QStringLiteral("Playlist 5"), QStringLiteral("Bookmark 9")}),
              6);
+}
+
+// N61 §2.1：整形的另一侧——**已定形者逐字节不动**。这组用例是判据 R（N56 §2.5）的
+// 守门人：任何"顺手归一一下"的改动都会让回刷判据把真失配看成一致——正斜杠绝对串被
+// 转成反斜杠，或 mpvqt:// 被折成条目身份（后者等于把转接形态与条目身份在判据上合并，
+// 转接开关切换后界面永不收编）。实测 mpv 对绝对正斜杠下发原样回显，故该形态必须活着
+void TestUtil::mpvEchoKeepsDefiniteFormsByteIdentical() {
+    const QStringList definite{
+        QStringLiteral("D:/dir/test2.mp4"),         // 绝对 + 正斜杠（下发形态，非 Qt 规范化产物）
+        QStringLiteral("D:\\dir\\test2.mp4"),       // 绝对 + 反斜杠
+        QStringLiteral("\\\\server\\share\\a.mkv"), // UNC：Qt 判绝对
+        QStringLiteral("D:test2.mp4"), // 盘符相对串：Qt 的 isAbsolute 判绝对 → 原样（§2.1 残留②）
+        QStringLiteral("http://host/dav/a.mkv"),      // 网络
+        QStringLiteral("https://user:pw@host/a.mkv"), // 带凭据的网络串（整形不问凭据）
+        QStringLiteral("file:///D:/dir/a.mkv"),       // file URL 绝对形态：含 "://" → 原样
+        QStringLiteral("mpvqt://11111111-2222-3333-4444-555555555555/http%3A%2F%2Fhost%2Fdav"),
+        QString(), // 空串（回显条目无 filename 的异常形）
+    };
+    for (const QString &s : definite)
+        QCOMPARE(Util::Url::identityFromMpvEcho(s), s);
+    // 幂等：判据侧下一轮回显仍走同一道整形，必须得同一形态（§2.2 同形链）
+    for (const QString &s : definite) {
+        const QString once = Util::Url::identityFromMpvEcho(s);
+        QCOMPARE(Util::Url::identityFromMpvEcho(once), once);
+    }
+}
+
+// N61 §2.1：未定形支补形态。整形产物必须能过 PlaylistEntity::fromPath 那句断言
+// （即"崩溃不再"这条正面断言），且产物自身仍是已定形（故两侧共用一条判据不自反）
+void TestUtil::mpvEchoShapesUndefinedItems() {
+    const QString cwd = QDir::currentPath();
+    // 期望值一律按进程 CWD 做纯字符串拼接（toIdentity 的既有语义，不访问文件系统）
+    const auto nativeRel = [&cwd](const QString &rel) {
+        return QDir::toNativeSeparators(QDir::cleanPath(cwd + QLatin1Char('/') + rel));
+    };
+    const QString absHere = nativeRel(QStringLiteral("test2.mp4"));
+    const QString absSub = nativeRel(QStringLiteral("sub/test2.mp4"));
+    const QString absSibling = nativeRel(QStringLiteral("../sibling/test2.mp4"));
+    const QString absDrive = QDir::toNativeSeparators(QStringLiteral("D:/dir/test2.mp4"));
+
+    // 纯相对、./ 与 ../
+    QCOMPARE(Util::Url::identityFromMpvEcho(QStringLiteral("test2.mp4")), absHere);
+    QCOMPARE(Util::Url::identityFromMpvEcho(QStringLiteral("./sub/test2.mp4")), absSub);
+    QCOMPARE(Util::Url::identityFromMpvEcho(QStringLiteral("../sibling/test2.mp4")), absSibling);
+    // file: 前缀的相对形态——实测 Qt 6.11 的 QUrl::toLocalFile() 对 file scheme 的
+    // 相对路径原样返回相对段（不要求绝对、不返空），故各支都折到与无前言版同一份身份；
+    // 带盘符的两支不经 CWD，直接折成该盘上的绝对路径
+    QCOMPARE(Util::Url::identityFromMpvEcho(QStringLiteral("file:test2.mp4")), absHere);
+    QCOMPARE(Util::Url::identityFromMpvEcho(QStringLiteral("file:./sub/test2.mp4")), absSub);
+    QCOMPARE(Util::Url::identityFromMpvEcho(QStringLiteral("file:../sibling/test2.mp4")),
+             absSibling);
+    QCOMPARE(Util::Url::identityFromMpvEcho(QStringLiteral("file:D:/dir/test2.mp4")), absDrive);
+    QCOMPARE(Util::Url::identityFromMpvEcho(QStringLiteral("file:/D:/dir/test2.mp4")), absDrive);
+
+    // 整形产物恒已定形（= 再进工厂不会撞断言）且再经同一道整形逐字节不动（§2.2 同形链）
+    const QStringList shapedList{absHere, absSub, absSibling, absDrive};
+    for (const QString &s : shapedList) {
+        QVERIFY(QFileInfo(s).isAbsolute());
+        QCOMPARE(Util::Url::identityFromMpvEcho(s), s);
+    }
+
+    // UNC 经 file: 前缀仍保住双反斜杠头部（实测 toIdentity 的既有产物，不被绝对化抹平）
+    QCOMPARE(Util::Url::identityFromMpvEcho(QStringLiteral("file:\\\\server\\share\\a.mkv")),
+             QStringLiteral("\\\\server\\share\\a.mkv"));
+    // file: 形态带百分号转义时顺带解码一次（QUrl 固有行为，§2.2 已声明的让步范围内）
+    QCOMPARE(Util::Url::identityFromMpvEcho(QStringLiteral("file:a%20b.mkv")),
+             nativeRel(QStringLiteral("a b.mkv")));
+
+    // 补不出形态的那一支：裸 file: 的空路径整形产出**空串**——不是进程 CWD 目录
+    // （实测 QFileInfo("").absoluteFilePath() 返空串），与"回显条目 filename 为空"
+    // 同形。整形只补形态、不兜形，这类串由工厂的回显入口 PlaylistEntity::fromMpvEcho
+    // 落 UnknownEntity（N61 变更记录第 1 条），用例在 tst_PlaylistEntity
+    QCOMPARE(Util::Url::identityFromMpvEcho(QStringLiteral("file:")), QString());
+    QVERIFY(QFileInfo(QString()).absoluteFilePath().isEmpty());
+    QVERIFY(!Util::Url::isDefiniteForm(Util::Url::identityFromMpvEcho(QStringLiteral("file:"))));
 }
 
 // 一类一可执行（R5）：自带 main（QTEST_GUILESS_MAIN）

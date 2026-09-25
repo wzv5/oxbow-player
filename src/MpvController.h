@@ -46,12 +46,30 @@ class MpvController : public QObject {
     bool setProperty(const QString &name, int value);
     bool setProperty(const QString &name, double value);
     bool setProperty(const QString &name, bool value);
-    QString propertyString(const QString &name);
+    // 实时读属性一族：纯读、不改本对象状态，故 const（mpv_get_property 线程安全，
+    // 除 wait_event 外任意线程可调，与下方 filterEntries 同一口径）
+    QString propertyString(const QString &name) const;
     // 实时读属性（N3）：失败返 fallback；pause 等标志属性必须走 FLAG 格式
-    double propertyDouble(const QString &name, double fallback);
-    bool propertyFlag(const QString &name, bool fallback);
+    double propertyDouble(const QString &name, double fallback) const;
+    bool propertyFlag(const QString &name, bool fallback) const;
     // 实时读整型属性（R4 类型化回填）：失败返 fallback
-    qint64 propertyInt64(const QString &name, qint64 fallback);
+    qint64 propertyInt64(const QString &name, qint64 fallback) const;
+    // N61 §2.3：**「在播哪一条」的唯一出口**——值按 playlist-pos → playlist/<pos>/filename
+    // 两步现读，再经回显整形（Util::Url::identityFromMpvEcho）；无正播返回空串（取值形状
+    // 与今日 propertyString("path") 一致，迁移点不必改判空逻辑）。命名与 path 对齐是
+    // 刻意的：它就是 mpv 的 path 属性在本仓的替代品。
+    // 硬约束一：**插件内凡想知道在播哪条，一律走本出口，不得再裸读 path 属性**——实测
+    // （mpv 0.41）path 的绝对化基准是 mpv 的 working-directory，而该值取环境变量 PWD、
+    // **不等于进程真实 CWD**：从 git-bash 启动时它能拼出一个并不存在的路径，而文件其实
+    // 是从真实 CWD 打开的。filename 才是"队列里那条"，与实体身份、与 playUrls 的下发
+    // 形态同源（path 是 open 阶段 mangle 的展示值，还会改写分隔符）
+    // 硬约束二：**本出口内不得整表现读 playlist，也不得以 playlist/<N>/current 为判据**
+    // ——本出口的一个读者挂在 time-pos 心跳上且无节流（实测约 99 Hz）：2000 项表整表
+    // NODE 读约 2.6ms/次（≈ 26% 单核常驻），两步 O(1) 读约 3µs/次；而 current 对非
+    // 当前项报的是 property unavailable 而非 false，拿来判"是不是当前条"必假。当前条
+    // 恒由 playlist-pos 指认（实测二者恒等）
+    // 不缓存、不加锁：现读已够便宜，缓存反而要处理事件线程与 GUI 线程的裸 QString 竞态
+    QString currentPlayingPath() const;
     // N42：滤镜链结构化读（af / vf object settings list）。MPV_FORMAT_NODE 读出
     // 链表逐项映射为条目（enabled 直取，text 由 label + name + params 序列化，
     // 规则见 FilterListWidget::quoteParamValue）；不可读 / 失败返回空列表。GUI 线程直读

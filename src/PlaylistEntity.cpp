@@ -53,8 +53,9 @@ PlaylistEntity::Ptr PlaylistEntity::fromPath(const QString &path,
     // 标识这条内容的那个串"，工厂对着读不懂的串加工等于猜。
     // Debug 断言：既非绝对路径、也非含 "://" 的形态即调用方违约——撤掉兜底后，
     // 未定形的串会静默落成 LocalFileEntity（exists() 按磁盘判、键按本地收敛），
-    // 必须显影（release 不拦，行为与违约后契约一致）
-    Q_ASSERT(QFileInfo(path).isAbsolute() || path.contains(QStringLiteral("://")));
+    // 必须显影（release 不拦，行为与违约后契约一致）。判据走 Util::Url::isDefiniteForm
+    // （与整形出口、fromMpvEcho 的兜底分派同一条，不各写一遍）
+    Q_ASSERT(Util::Url::isDefiniteForm(path));
     if (Util::Url::isNetworkStream(path)) {
         // N35 前缀分派：http(s) → HttpEntity（需非空 registry）；其余网络 / 流
         // 路径仍落 UnknownEntity 兜底。N48：判据改用 Util::Url::isHttp（唯一持有者，
@@ -71,6 +72,15 @@ PlaylistEntity::Ptr PlaylistEntity::fromPath(const QString &path,
         return std::make_shared<HttpEntity>(path, registry);
     }
     return std::make_shared<LocalFileEntity>(path, registry);
+}
+
+// N61 变更记录第 1 条：回显专用入口，语义与"为什么放宽发生在这里"见声明处注释。
+// 与 fromPath 同一条分派、同一条判据，只把"违约显影"换成"降级保行"——不含任何加工
+PlaylistEntity::Ptr PlaylistEntity::fromMpvEcho(const QString &identity,
+                                                const std::shared_ptr<ServiceRegistry> &registry) {
+    if (!Util::Url::isDefiniteForm(identity))
+        return std::make_shared<UnknownEntity>(identity, registry); // 降级：保行、不炸
+    return fromPath(identity, registry);
 }
 
 QString PlaylistEntity::key() const {

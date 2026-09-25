@@ -79,8 +79,8 @@ class PlaylistEntity {
     explicit PlaylistEntity(QString path, const std::shared_ptr<ServiceRegistry> &registry);
     virtual ~PlaylistEntity() = default;
 
-    // ——工厂：身份串 → 实体（唯一入口；后续协议在此分派）——
-    // 契约（N56 §2.6）：入参必须是**已定形的身份串**（绝对路径或含 "://" 的 URL）。
+    // ——工厂：身份串 → 实体（类型分派的唯一落点；后续协议在此追加）——
+    // 入参契约（N56 §2.6）：入参必须是**已定形的身份串**（绝对路径或含 "://" 的 URL）。
     // 定形（mpvqt:// 折叠、相对转绝对、file:// 转本地）是造实体一方的责任，工厂
     // 不再代做——只有提供者知道该怎么拆自己拿来的串，工厂对着读不懂的串加工等于猜。
     // Debug 断言：既非绝对路径、也非含 "://" 的形态即调用方违约，显影（与"http(s)
@@ -95,6 +95,25 @@ class PlaylistEntity {
     // 工厂内忽略）；同一身份串在遵守前提下，无论经提供者、工厂还是收编路径，
     // 都得到同类型实体。
     static Ptr fromPath(const QString &path, const std::shared_ptr<ServiceRegistry> &registry);
+
+    // ——工厂的回显专用入口（N61 变更记录第 1 条）——
+    // 与 fromPath 的**唯一**区别：不做严格检查——补不出形态的串（空 filename、裸
+    // "file:"）不炸，原样落 UnknownEntity。除此之外分派与判据同一条，且**不代做加工**：
+    // 定形与折叠仍是造实体一方的责任（N56 §2.6），入参 = 已过
+    // Util::Url::identityFromMpvEcho 整形、且已 StreamTransit::unwrap 折回身份的串。
+    // 为什么放宽发生在工厂而不是调用方：调用方是**系统边界**（外部 IPC / 命令行喂进
+    // mpv 的串再回显出来），边界上正确行为是降级不是终止进程；而"按串形态选实体类型"
+    // 本是工厂的职责，视图层做它才是越权。
+    // 为什么仍保留 fromPath 的断言：它守的是**插件自身四个出口**的契约，与外部来路无关
+    // ——放宽只走具名的这一条路，不给 bool 参数（调用点上 true / false 不表达任何东西，
+    // 将来一处顺手传错即静默失去显影）。
+    // 折叠漏喂按既有纪律显影：mpvqt:// 含 "://" 属已定形，本入口不拆包装 → 转接串当
+    // 身份落 UnknownEntity，故调用点那一句 unwrap 不得省
+    // 不变式：入参已定形时 fromMpvEcho(s, r)->path() == s，与 fromPath 同类型同身份；
+    // 不可定形时落 UnknownEntity，其 isLocalFile 为假 ⇒ StaticProvider 恒等下发 ⇒
+    // 下一轮回显逐字节相等 ⇒ 静默，不落入"重复收编永续"
+    static Ptr fromMpvEcho(const QString &identity,
+                           const std::shared_ptr<ServiceRegistry> &registry);
 
     // ——按值复制（深拷贝，含已解析缓存）——
     // 与 Ptr 共享计数相对：副本与原实体此后互不影响（一方 refresh 不清另一方）。

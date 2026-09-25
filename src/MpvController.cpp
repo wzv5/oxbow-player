@@ -3,6 +3,7 @@
 #include "MpvController.h"
 
 #include "StreamTransit.h" // N52：逐文件 cache 申报按 scheme 判定
+#include "Util.h"          // N61 §2.3：回显整形（playlist 条目 filename 进判据前唯一一道加工）
 
 #include "FilterListWidget.h"
 
@@ -315,7 +316,10 @@ void MpvController::startEventThread() { m_eventThread->start(); }
 
 // B18：START_FILE 时刷新当前文件缓存，作为后续 FILE_LOADED 主动读与
 // duration observe 推送的归属键（仅事件线程读写）
-void MpvController::handleStartFile() { m_currentFile = propertyString(QStringLiteral("path")); }
+// N61 §2.3：归属键的来源由 path 属性换成本出口（时序实测见该节——START_FILE 当场
+// playlist-pos 与 playlist/<pos>/filename 已指向本条，与随后 FILE_LOADED 同值）；
+// 信号签名不动，串参无人消费
+void MpvController::handleStartFile() { m_currentFile = currentPlayingPath(); }
 
 // B18：FILE_LOADED 时以缓存为归属键，当场主动读 5 项文件级属性并发射。
 // 与 observe 相比：首值即时（不等 flush）、规避"等值不重推"（连续两文件
@@ -512,7 +516,7 @@ bool MpvController::setProperty(const QString &name, bool value) {
     return mpv_set_property(m_mpv, name.toUtf8().constData(), MPV_FORMAT_FLAG, &v) == 0;
 }
 
-QString MpvController::propertyString(const QString &name) {
+QString MpvController::propertyString(const QString &name) const {
     char *s = mpv_get_property_string(m_mpv, name.toUtf8().constData());
     QString result = s ? QString::fromUtf8(s) : QString();
     mpv_free(s);
@@ -529,25 +533,36 @@ QList<FilterEntry> MpvController::filterEntries(const QString &name) {
     return result;
 }
 
-double MpvController::propertyDouble(const QString &name, double fallback) {
+double MpvController::propertyDouble(const QString &name, double fallback) const {
     double v = fallback;
     if (mpv_get_property(m_mpv, name.toUtf8().constData(), MPV_FORMAT_DOUBLE, &v) < 0)
         return fallback; // 失败时不写入 v
     return v;
 }
 
-bool MpvController::propertyFlag(const QString &name, bool fallback) {
+bool MpvController::propertyFlag(const QString &name, bool fallback) const {
     int v = fallback ? 1 : 0;
     if (mpv_get_property(m_mpv, name.toUtf8().constData(), MPV_FORMAT_FLAG, &v) < 0)
         return fallback;
     return v != 0;
 }
 
-qint64 MpvController::propertyInt64(const QString &name, qint64 fallback) {
+qint64 MpvController::propertyInt64(const QString &name, qint64 fallback) const {
     qint64 v = fallback;
     if (mpv_get_property(m_mpv, name.toUtf8().constData(), MPV_FORMAT_INT64, &v) < 0)
         return fallback;
     return v;
+}
+
+// N61 §2.3：「在播哪一条」的唯一出口，取法与两条硬约束见头文件声明处注释。
+// 三步都是 O(1)：读 pos（不可读 / 停止态即无正播）→ 现读该条的 filename（下标越界
+// 报 property not found，propertyString 返回空串，与"无正播"同形）→ 过一次回显整形
+QString MpvController::currentPlayingPath() const {
+    const qint64 pos = propertyInt64(QStringLiteral("playlist-pos"), -1);
+    if (pos < 0)
+        return QString();
+    return Util::Url::identityFromMpvEcho(
+        propertyString(QStringLiteral("playlist/%1/filename").arg(pos)));
 }
 
 // N60 §2.2：屏障读的 reply——在事件线程解析并释放 node 后把终值投 GUI。

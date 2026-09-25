@@ -13,6 +13,7 @@
 #include "LocalFileEntity.h"
 #include "PlaylistEntity.h"
 #include "ServiceRegistry.h"
+#include "StreamTransit.h" // N61 变更记录第 1 条：回显入口的 mint / unwrap 对照
 #include "Util.h"
 
 // 测试桩实体：compute* 带调用计数，能力位可调，保护修正入口透出。
@@ -122,6 +123,9 @@ class TestPlaylistEntity : public QObject {
     void matchesKeyLevelEquality();
     // N56 §2.4：显示出口——displayUrl 剥除 userinfo，path 原样保留
     void displayUrlStripsCredentials();
+    // N61 变更记录第 1 条：回显专用入口 fromMpvEcho——已定形者与 fromPath 同类型同身份、
+    // 转接串折回身份，补不出形态者（空 filename / 裸 file:）不撞断言而是落 UnknownEntity
+    void echoEntryFallsBackToPlaceholder();
 };
 
 void TestPlaylistEntity::factoryDispatchesLocalAndNetwork() {
@@ -424,8 +428,8 @@ void TestPlaylistEntity::keyIsNormalizedPlayUrl() {
     QCOMPARE(u->key(), Util::Url::key(u->path()));
 }
 
-// N56 §2.5：键级判等经 matches——回显原样进判据，归一在实体内部完成；键级刻意宽松
-// （大小写 / 分隔符形态漂移仍认得出同一条内容，N30），回刷的形态级比对不走它
+// N56 §2.5：键级判等经 matches——整形后的回显进判据（N61 §2.1），归一在实体内部完成；
+// 键级刻意宽松（大小写 / 分隔符形态漂移仍认得出同一条内容，N30），回刷的形态级比对不走它
 void TestPlaylistEntity::matchesKeyLevelEquality() {
     auto registry = std::make_shared<ServiceRegistry>();
     // 本地：大小写 / 分隔符漂移仍命中
@@ -435,7 +439,7 @@ void TestPlaylistEntity::matchesKeyLevelEquality() {
     QVERIFY(l->matches(local.toLower()));
     QVERIFY(!l->matches(QDir::tempPath() + QStringLiteral("/mpvqt_entity_other.mp4")));
     // http：无凭据身份 matches 带凭据回显（N56 §2.3——凭据准入后回显含注入凭据，
-    // 判据侧零加工、剥凭据在键内完成）；scheme / host 大小写漂移亦命中
+    // 判据侧不剥凭据、剥凭据在键内完成）；scheme / host 大小写漂移亦命中
     auto h = PlaylistEntity::fromPath(QStringLiteral("https://example.com/dir/a.mp4"), registry);
     QVERIFY(h->matches(QStringLiteral("https://example.com/dir/a.mp4")));
     QVERIFY(h->matches(QStringLiteral("https://user:pw@example.com/dir/a.mp4")));
@@ -460,6 +464,73 @@ void TestPlaylistEntity::displayUrlStripsCredentials() {
     auto plain =
         PlaylistEntity::fromPath(QStringLiteral("https://example.com/dir/a.mp4"), registry);
     QCOMPARE(plain->displayUrl(), plain->path());
+}
+
+// N61 变更记录第 1 条：工厂的回显专用入口。它只放宽一件事——不炸。三条纪律各钉一组
+// 用例：① 已定形者与 fromPath 同类型同身份（正常路径零变化）；② 入口不做加工，折叠
+// 仍归调用点（漏折即让 mpvqt:// 落进实体身份，这条用例把纪律钉在断言上）；
+// ③ 补不出形态者不撞 fromPath 那句断言、以原串落 UnknownEntity（系统边界上降级而非
+// 终止进程，且行不丢 ⇒ 实体序与 mpv 队列序对位不破）
+void TestPlaylistEntity::echoEntryFallsBackToPlaceholder() {
+    auto registry = testRegistry();
+    const QString local = QDir::tempPath() + QStringLiteral("/mpvqt_entity_echo_local.mp4");
+
+    // ① 已定形本地串：类型与身份与 fromPath 逐字一致
+    auto l = PlaylistEntity::fromMpvEcho(local, registry);
+    QVERIFY(dynamic_cast<LocalFileEntity *>(l.get()) != nullptr);
+    QCOMPARE(l->path(), local);
+    // http 项同口径（含凭据原样保留，与 fromPath 一样不剥）
+    const QString url = QStringLiteral("https://user:pw@example.com/dir/a.mp4?token=x");
+    auto h = PlaylistEntity::fromMpvEcho(url, registry);
+    QVERIFY(dynamic_cast<HttpEntity *>(h.get()) != nullptr);
+    QCOMPARE(h->path(), url);
+
+    // ② 折叠归调用点：折回的 identity 进来才得到本地实体
+    const QString transit = StreamTransit::mint(QUuid::createUuid(), local);
+    QVERIFY(transit.startsWith(QLatin1String(StreamTransit::kScheme)));
+    auto t = PlaylistEntity::fromMpvEcho(StreamTransit::unwrap(transit), registry);
+    QVERIFY(dynamic_cast<LocalFileEntity *>(t.get()) != nullptr);
+    QCOMPARE(t->path(), local);
+    // 漏折的对照：mpvqt:// 含 "://" 属已定形，入口原样放行、不代拆——转接串就当身份
+    // 落进了实体（N52 / N56 折叠纪律破）。setPlaylist 第 5 步那一句 unwrap 因此不得省
+    auto unfolded = PlaylistEntity::fromMpvEcho(transit, registry);
+    QVERIFY(dynamic_cast<UnknownEntity *>(unfolded.get()) != nullptr);
+    QCOMPARE(unfolded->path(), transit);
+
+    // ③ 空 filename（回显条目无 filename 键 / 非 map 条目）：落占位，且形态与原串一致
+    auto empty = PlaylistEntity::fromMpvEcho(QString(), registry);
+    QVERIFY(dynamic_cast<UnknownEntity *>(empty.get()) != nullptr);
+    QVERIFY(dynamic_cast<LocalFileEntity *>(empty.get()) == nullptr);
+    QVERIFY(empty->path().isEmpty());
+    // 占位实体的能力位：不可播、不参与失效清理（exists 恒真 = 不可判定 ≠ 缺失）
+    QVERIFY(!empty->isLocalFile());
+    QVERIFY(empty->exists());
+    QVERIFY(!empty->supportsFileMeta());
+    QVERIFY(!empty->supportsMediaMeta());
+    // clone 身份与类型不变（回刷命中即克隆那条路对占位项同样自洽）
+    auto ec = empty->clone();
+    QVERIFY(dynamic_cast<UnknownEntity *>(ec.get()) != nullptr);
+    QVERIFY(ec->path().isEmpty());
+
+    // 裸 "file:"：未经整形直喂时入口原样直陈（整形出口产出空串，用例见 tst_Util）
+    auto bare = PlaylistEntity::fromMpvEcho(QStringLiteral("file:"), registry);
+    QVERIFY(dynamic_cast<UnknownEntity *>(bare.get()) != nullptr);
+    QCOMPARE(bare->path(), QStringLiteral("file:"));
+
+    // 全链闭合：整形 → 折叠 → 回显入口，产物必为占位（这条串补不出形态）
+    const QString shaped =
+        StreamTransit::unwrap(Util::Url::identityFromMpvEcho(QStringLiteral("file:")));
+    QVERIFY(!Util::Url::isDefiniteForm(shaped));
+    auto chain = PlaylistEntity::fromMpvEcho(shaped, registry);
+    QVERIFY(dynamic_cast<UnknownEntity *>(chain.get()) != nullptr);
+    QVERIFY(chain->path().isEmpty());
+
+    // 相对串经整形已定形 → 入口走正常分派（崩溃不再的正面断言，N61 §2.1）
+    const QString shapedRel = Util::Url::identityFromMpvEcho(QStringLiteral("test2.mp4"));
+    QVERIFY(Util::Url::isDefiniteForm(shapedRel));
+    auto rel = PlaylistEntity::fromMpvEcho(shapedRel, registry);
+    QVERIFY(dynamic_cast<LocalFileEntity *>(rel.get()) != nullptr);
+    QCOMPARE(rel->path(), shapedRel);
 }
 
 // 一类一可执行（R5）：自带 main（QTEST_GUILESS_MAIN），无 GUI 依赖
