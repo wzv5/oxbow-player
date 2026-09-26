@@ -30,10 +30,25 @@ class PlaylistProvider {
         // 本地为绝对路径，WebDAV 为无凭据完整 URL；不参与排序、寻址与持久化
         QString path;
     };
-    struct Enumeration {
+    // ——N64：一层内容的纯内容底座——根层与子孙层共用同一内容表达，containers
+    // 恒在实体组之前这条模型不变式在此只写一次。不含 warnings、不含错误字段：
+    // 子层不表达错误与警告（缺席即失败，解释性文案归根层 warnings）
+    struct LevelData {
         QList<Container> containers;
         EntityList entities;
+    };
+    // ——N37：枚举结果——条目 + 非致命警告。warnings 为"部分来源失败 / 被跳过"的
+    // 可读文案（条目已产出，不判整次失败），只住根层；unexpected 语义不变：
+    // 来源整体不可用，视图进占位行。
+    // N45：增容器数组（继承自 LevelData）。两数组顺序完备：显示序 = containers 序
+    // 接 entities 序。
+    // N64 两态化：逐层形态（默认）descendants 恒空、语义一字不变；整树形态
+    // （enumeratesWholeTree()==true）每次枚举交付其所知整棵树——descendants 键 =
+    // 相对表根的全路径段序列（与视图层缓存的层键同形同键），值 = 该层纯内容。
+    // 扁平一张表无递归，QMap 的字典序不承载显示语义；不存在部分交付
+    struct Enumeration : LevelData {
         QStringList warnings;
+        QMap<QStringList, LevelData> descendants;
     };
 
     // ——N35 服务注册表（基类统一持有，供子类 enumerate 造实体时注入）——
@@ -73,6 +88,33 @@ class PlaylistProvider {
     // （目录表可排序而不可增删，须显式覆写 true；可修改而不可排序的 m3u 类
     // 预留实现须显式覆写 false）
     virtual bool supportsSort() const { return supportsModify(); }
+
+    // ——N64 枚举形态两态化——查询位：true = 本提供者一次枚举交付整棵树
+    // （descendants 全量、键相对表根），视图对其只发起空 parent 调用（初载与
+    // 刷新都落根层），并把交付结果当权威内容整树重建（缺席即删）。默认
+    // false = 逐层（现状语义逐字保持，实现零改动义务）。
+    // 显式声明而非由结果推断：空树与逐层空结果形态完全相同，推断不出来。
+    // 两态是类型级事实，视图不存模式位——决策点现查，换源随提供者自动切换。
+    // 规模判据归声明方自担：整树意味着全部子孙层实体在首载 materialize——
+    // 目录与 WebDAV 逐层取本来就便宜，声明逐层；几百到几千条的一次性清单
+    // 可整树（首载一次取回，之后钻层零取源）；大库按同判据自决。
+    //
+    // 整树形态契约义务（违约处置：Debug Q_ASSERT 显影，Release 降级不崩溃）：
+    // 1. 逐层提供者带 descendants = 违约：Release 丢弃 descendants，按逐层语义处理；
+    // 2. 整树提供者不响应非空 parent——常规通路只被空 parent 调用，保证这一点是
+    //    视图层的义务；提供者收到非空 parent = 调用方违约，Release 降级返回空结果
+    //    （照平铺提供者收到非空 parent 的既有先例），不得尝试应答；
+    // 3. 键前缀一致性：每个 descendants 键的祖先链必须由本次交付内容构成——首段
+    //    ∈ 根层 containers，逐段往下落在交付层的 containers；调用层自身与根层不出现在
+    //    descendants 中。Release 非法键逐项忽略（链断即整枝不写）。同层容器 id 不得
+    //    重复（重复即键寻址歧义，QMap 会静默后者覆盖前者、丢一整层内容）：Debug
+    //    断言显影；Release 保留交付原样——同层两行同 id 容器、寻址命中同一子层，
+    //    不崩不丢层，前缀校验的 id 集按先到者算；
+    // 4. 错误与警告只住根层：LevelData 无此字段，解析失败的组以缺席表达，
+    //    解释性文案进根层 warnings。
+    // 深度不设限：descendants 是扁平表 + 义务 3 的前缀校验，任意深度的树与
+    // 一层树走同一条写入通路
+    virtual bool enumeratesWholeTree() const { return false; }
 
     // ——N52 §2.8：下发形态三态能力 + 列表级偏好——
     // 转接不是"能力位 + 开关"两个布尔：Required × 未勾选是语义上不存在却可被

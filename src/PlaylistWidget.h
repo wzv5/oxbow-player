@@ -308,7 +308,11 @@ class PlaylistWidget : public QTabWidget {
         // N57 §2.8：原 `int tab` 字段删除——QPointer<PlaylistListView> 本身就是抗索引
         // 漂移的视图句柄，坐标一律 indexOf(view) 现场换算（旧代码四处赋值也已在这么
         // 干且无人读取，留字段只是把同一件事固化成会漂移的副本）
-        QStringList parent;  // 任务目标层（浏览路径的 id 序列形态）
+        QStringList parent; // 任务目标层（浏览路径的 id 序列形态）
+        // N64：整树形态随批次声明（发起处 startEnumAsync 现查提供者置位，不存模式位）。
+        // 收尾据此放宽目标层判定（目标层 = 收尾将落地的层，成功与失败同口径）并做
+        // 整树权威重建；逐层批次恒为 false，行为一字不变
+        bool wholeTree = false;
         SortRule rule;       // N57 §2.9：仅 Sort 用——判类别与写规则都读它，不读提供者
         QStringList oldKeys; // 换入类由枚举续作在换入前采集
         ViewSnapshot snap;   // 同上；Reactivate 由预读续作在排序前采集
@@ -406,6 +410,19 @@ class PlaylistWidget : public QTabWidget {
     static void sortLevelData(Level &lvl, SortRule rule);
     // 枚举发起内核（意图与目标层显式给定）；startLoadAsync 为其薄壳
     void startEnumAsync(PlaylistListView *list, Intent intent, const QStringList &parent);
+    // ——N64 整树形态——
+    // 缺层守候（showLayer 与层级定位共用）：目标层不在缓存且提供者为整树形态时，
+    // Debug 断言显影、Release 按空层处置（ensureLevel 插入空层，返回 true——调用方
+    // 按已加载空层继续，不得再对该层发起枚举）；非整树形态返回 false，走既有枚举
+    // 通路。根层缺失不在此列（整树未初载，根层调用合法），由调用方以 ids 非空 gate
+    bool wholeTreeMissingLevel(PlaylistListView *list, const QStringList &ids);
+    // 整树权威重建（onLoadFinished 换入后调用，§2.3）：校验交付（键前缀一致性 +
+    // 同层容器 id 唯一；Debug 断言显影，Release 逐项忽略）→ 先删缺席层 → 后写子孙层
+    // （入列盖章 + 簿记重置 + 当场 sortLevelData）。rootLvl 是根层换入落点——
+    // enumeration 的根层 containers/entities 已被 move 走，键校验的根层 id 集取它。
+    // 全在 GUI 续作内
+    void rebuildWholeTree(PlaylistListView *list, Level &rootLvl,
+                          PlaylistProvider::Enumeration &enumeration);
 
     // ——N45 §2.4 双坐标系（实体序 / 行序）换算与三类行谓词——
     // 行序 = [上一级行][容器行…][实体行…]；凡 mpv 侧语义一律在实体序上工作，
@@ -524,8 +541,10 @@ class PlaylistWidget : public QTabWidget {
     // N45：按 (list, parent) 定位层——任务续作写的是任务目标层，不是显示层
     bool metaLoadedOf(const PlaylistListView *list, const QStringList &ids, MetaCategory cat) const;
     void setMetaLoadedOf(PlaylistListView *list, const QStringList &ids, MetaCategory cat, bool on);
-    // N20：按表精确驱逐——遍历该表非占位行，按实体 key 逐个删 m_duration；flag 重置所有表
-    void evictListKeys(PlaylistListView *list);
+    // N20：按表精确驱逐——遍历指定层的实体，按实体 key 逐个删 m_duration；flag 重置
+    // 所有表（N45：全部层的两类标志一并复位）。N64：层显式给定（整树批次目标层为
+    // 根层，不再按显示行取；行与层内容同构，逐层即逐行的等价改写）
+    void evictListKeys(PlaylistListView *list, const QStringList &ids);
     // 已加载 tab 切入重读判定：内容已载、无占位、标志失效、排序依赖元数据。
     // N45：判定对象是本 tab 的当前显示层
     bool needsMetaRescan(int tabIndex) const;

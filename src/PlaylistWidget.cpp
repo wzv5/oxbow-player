@@ -429,6 +429,8 @@ void PlaylistWidget::showLayer(PlaylistListView *list) {
         rebuildRowsForLevel(list, *lvl, ids);
         showPlaceholder(list, lvl->loadError);
         restoreLayerSelection(list, *lvl);
+    } else if (!ids.isEmpty() && wholeTreeMissingLevel(list, ids)) {
+        // N64：整树形态进入子层永不枚举（§2.3）——缺层违约已按空层处置（行已重建）
     } else {
         startEnumAsync(list, Intent::InitialLoad, ids); // 未加载：遮罩 + 完成后换入
     }
@@ -484,6 +486,116 @@ void PlaylistWidget::reactivateIfStale(PlaylistListView *list) {
     // needsMetaRescan 内部含忙时与已加载守卫，判定对象是当前显示层（浏览路径层）
     if (needsMetaRescan(tab))
         reactivateRescan(list, tab);
+}
+
+// ——N64 整树形态——
+
+// 缺层守候（showLayer 与层级定位共用）：整树交付完备，进入子层永不枚举（缓存命中
+// 即换入）——缺层只可能是提供者或视图的 bug：Debug 断言显影；Release 按空层处置
+// （ensureLevel 插入空层即宣告已加载，与"调用方违约降级返回空结果"先例同味），
+// 调用方按已加载空层继续、不得再对该层发起枚举。根层缺失不在此列（整树未初载，
+// 根层调用合法），由调用方以 ids 非空 gate。
+// 有意不镜像 showLayer 命中分支的播放态还原（restorePlayingState）：守候只在层缺于
+// 缓存时进入，而"播放 tab 的队列根层缺于缓存"不可达——播放基准层随播放恒在缓存，
+// 其逐出必与停播 / 锚点作废 / 换源同点同步（N53 §2.2）；故此处只恢复层选中
+bool PlaylistWidget::wholeTreeMissingLevel(PlaylistListView *list, const QStringList &ids) {
+    const auto *p = providerOfView(list);
+    if (!p || !p->enumeratesWholeTree())
+        return false;
+    Q_ASSERT(false); // 缺层违约：整树交付是完备的
+    Level &lvl = list->ensureLevel(ids);
+    rebuildRowsForLevel(list, lvl, ids);
+    restoreLayerSelection(list, lvl);
+    return true;
+}
+
+// 整树权威重建（onLoadFinished 换入后调用，§2.3 唯一的新动作）。显示序住 LevelData
+// 的两条列表、descendants 的键只是寻址（QMap 字典序不承载显示语义）；结构合法性由
+// 前缀校验闭合。三步：校验 → 先删 → 后写。线程口径不变：全在 GUI 续作里，工作线程
+// 只产数据、不碰任何视图结构
+void PlaylistWidget::rebuildWholeTree(PlaylistListView *list, Level &rootLvl,
+                                      PlaylistProvider::Enumeration &enumeration) {
+    const auto *p = providerOfView(list);
+    const SortRule rule = p ? p->sortRule() : SortRule{};
+
+    auto containerIdsOf = [](const QList<PlaylistProvider::Container> &containers) {
+        QSet<QString> ids;
+        for (const auto &c : containers)
+            ids.insert(c.id);
+        return ids;
+    };
+#ifndef QT_NO_DEBUG
+    // 义务 3 的唯一性半边：同层容器 id 不得重复（QMap 会静默后者覆盖前者、丢一整层）
+    auto checkUniqueIds = [](const QList<PlaylistProvider::Container> &containers) {
+        QSet<QString> seen;
+        for (const auto &c : containers) {
+            Q_ASSERT(!seen.contains(c.id));
+            seen.insert(c.id);
+        }
+    };
+    // 根层容器取 rootLvl——enumeration.containers 已在换入时被 move 走（Qt 的 QList
+    // 移动赋值是 move-and-swap，源必被清空），从这里取恒得空集
+    checkUniqueIds(rootLvl.containers);
+    for (auto it = enumeration.descendants.constBegin(); it != enumeration.descendants.constEnd();
+         ++it)
+        checkUniqueIds(it.value().containers);
+#endif
+
+    // ——校验（义务 3 前缀一致性）：键非空（调用层自身与根层不交付）、首段 ∈ 根层
+    // containers、逐段往下落在交付层的 containers。QMap 字典序保证短前缀键先于长键
+    // 到达，逐键校验时祖先层必已入验收集；链断即整枝拒绝（其子孙因祖先缺席同样被拒）。
+    // Debug 断言显影；Release 逐项忽略——权威语义下错键会删层，校验是权威写的
+    // 正确性要件。根层容器 id 集取 rootLvl（换入落点），不是 enumeration（已搬空）
+    const QSet<QString> rootIds = containerIdsOf(rootLvl.containers);
+    // 验收集：键 → 交付层节点指针（QMap 节点稳定，校验期无增删，指针不悬空）
+    QMap<QStringList, PlaylistProvider::LevelData *> accepted;
+    for (auto it = enumeration.descendants.begin(); it != enumeration.descendants.end(); ++it) {
+        const QStringList &key = it.key();
+        bool valid = !key.isEmpty();
+        if (valid) {
+            const QStringList parentKey = key.mid(0, key.size() - 1);
+            if (parentKey.isEmpty())
+                valid = rootIds.contains(key.last());
+            else {
+                const auto ancestor = enumeration.descendants.constFind(parentKey);
+                valid = accepted.contains(parentKey) &&
+                        ancestor != enumeration.descendants.constEnd() &&
+                        containerIdsOf(ancestor.value().containers).contains(key.last());
+            }
+        }
+        Q_ASSERT(valid); // 键前缀一致性违约
+        if (valid)
+            accepted.insert(key, &it.value());
+    }
+
+    // ——先删（权威语义：缺席即删除，消失的组不可再进、不留幽灵入口）。根层（空键）
+    // 与验收层之外的缓存层一律移出；此时换入已完成、显示层即根层，删除不触及任何行。
+    // 被删层携带的 lastSelectedKey / 元数据标志随层一并消失（整树是重建不是合并）
+    auto &levels = list->levels();
+    for (auto it = levels.begin(); it != levels.end();) {
+        if (!it.key().isEmpty() && !accepted.contains(it.key()))
+            it = levels.erase(it);
+        else
+            ++it;
+    }
+
+    // ——后写：逐层 ensureLevel 写入 + 入列盖章（N55 §2.2：入列即盖章，与根层换入
+    // 共用同一次盖章家族、不开第二处注入口）+ 簿记重置（lastSelectedKey / loadError /
+    // 元数据标志：被覆盖层从头来过；视图级续播记忆不属层簿记，不在此触碰）+ 当场按
+    // 提供者当前规则 sortLevelData——showLayer 命中已加载层只重建行不排序，不当场排
+    // 对无元数据能力的来源有一段"显示出来是未排序的"窗口；零 I/O，与"换入时排"同形
+    for (auto it = accepted.begin(); it != accepted.end(); ++it) {
+        Level &lvl = list->ensureLevel(it.key());
+        lvl.containers = std::move(it.value()->containers);
+        for (auto &e : it.value()->entities)
+            stampOwnership(*e, list->list());
+        lvl.entities = std::move(it.value()->entities);
+        lvl.lastSelectedKey.clear();
+        lvl.loadError.clear();
+        lvl.fileMetaLoaded = false;
+        lvl.mediaMetaLoaded = false;
+        sortLevelData(lvl, rule);
+    }
 }
 
 // N45 §2.9 归位：浏览路径置为队列根层并滚动到正播项（restorePlayingState 的层级版）。
@@ -1644,8 +1756,20 @@ void PlaylistWidget::advanceLevelJump() {
         return;
     }
     m_pendingJump.enumerated = true;
-    setBrowsePath(list, req.levelIds); // 先落路径：未加载分支按当前浏览路径发起首载
+    setBrowsePath(list, req.levelIds); // 先落路径：离开层选中保存与守候的行重建都按当前浏览路径
+    // N64 整树形态：缺层守候——空层处置不需要任何取源（空层必无命中，落
+    // ItemNotFound）；须在落路径之后（rebuildRowsForLevel 的特殊行构建断言
+    // ids == browsePathIds），根层缺失不在此列（整树未初载，走下方枚举）
+    const bool wholeTreeMissing =
+        !req.levelIds.isEmpty() && wholeTreeMissingLevel(list, req.levelIds);
     requestTab(indexOf(list));
+    if (wholeTreeMissing) {
+        if (!m_busy) { // 忙时不抢：pendingJump 在册，busy 出口重推进（层已入缓存必命中）
+            m_pendingJump = PendingJump{};
+            emit levelItemFailed(req, JumpFailure::ItemNotFound, QString());
+        }
+        return;
+    }
     // 不经 showLayer 起枚举：第二次跳转到同一失败层时，行内容已与该层"对齐"（残留的
     // 骨架 + 占位行），showLayer 首行即按 displayedIds == ids 早退，于是整次跳转静默
     // 无事发生——既不重举也不回报。失败层条目刚被 eraseFailedLevel 删掉，此处必然
@@ -2025,7 +2149,12 @@ void PlaylistWidget::startLoadAsync(PlaylistListView *list) {
     const Intent intent = pend.refresh
                               ? Intent::Refresh
                               : (pend.selectFirst ? Intent::SwitchSource : Intent::InitialLoad);
-    startEnumAsync(list, intent, list->browsePathIds());
+    // N64：整树形态恒对根层发起（契约义务②：初载与刷新都落根层，保证是视图层的
+    // 义务）——浏览路径可能停在持久化的深层队列根（会话恢复）或旧深层，在此钉根
+    // 即覆盖首载 / 换源 / 刷新全部常规通路；收尾按形态整树重建并归位根层
+    const auto *p = providerOfView(list);
+    startEnumAsync(list, intent,
+                   p && p->enumeratesWholeTree() ? QStringList{} : list->browsePathIds());
 }
 
 void PlaylistWidget::startEnumAsync(PlaylistListView *list, Intent intent,
@@ -2044,6 +2173,9 @@ void PlaylistWidget::startEnumAsync(PlaylistListView *list, Intent intent,
     ctx.intent = intent;
     ctx.list = list;
     ctx.parent = parent;
+    // N64：整树形态随批次声明（现查提供者，不存模式位）——收尾据此放宽目标层判定
+    // 并做整树权威重建；逐层批次恒为 false，行为一字不变
+    ctx.wholeTree = provider && provider->enumeratesWholeTree();
 
     auto result = std::make_shared<std::expected<PlaylistProvider::Enumeration, QString>>();
     runJob(
@@ -2126,19 +2258,27 @@ void PlaylistWidget::onLoadFinished(const JobContext &ctx,
     // （播放基准）各有专属语义
     const bool targetsDisplayed = (ctx.parent == list->browsePathIds());
     const bool targetsQueueRoot = (ctx.parent == list->queueRootIds());
+    // N64 整树批次：目标层恒为根层，浏览路径可能停在深层（整树刷新发起、会话恢复的
+    // 持久化队列根）——按"目标层 = 收尾将落地的层"放宽 targetsDisplayed：收尾先
+    // 归位根层，随后的换入 / 重建行 / 失败占位落点即根层（成功与失败同口径，已裁决）
+    const bool wholeTreeLanding = ctx.wholeTree && !targetsDisplayed;
+    if (wholeTreeLanding)
+        setBrowsePath(list, {});
     if (targetsDisplayed)
         clearPlaceholder(list);
     if (!r.has_value()) {
         // 失败层内容可信度归零：先毁行、再清内容、后重建骨架（N53 §2.1）。清空不分
         // 显示层与否——枚举没成功，保留只会在下次渲染时复现陈旧行。毁行前置于清仓：
-        // 行上 EntityRole 是实体裸指针，先清仓会让现有行悬空
+        // 行上 EntityRole 是实体裸指针，先清仓会让现有行悬空。
+        // N64：整树批次按放宽后的落点（根层）收口
+        const bool landsDisplayed = targetsDisplayed || wholeTreeLanding;
         Level &lvl = list->ensureLevel(ctx.parent);
         lvl.loadError = r.error();
-        if (targetsDisplayed)
+        if (landsDisplayed)
             list->clear();
         lvl.containers.clear();
         lvl.entities.clear();
-        if (targetsDisplayed) {
+        if (landsDisplayed) {
             // "上一级"行是渲染骨架的一部分，不依赖内容是否加载成功：首钻失败
             // （显示行仍是旧层内容、浏览路径已指向失败层）也按失败层重建行骨架，
             // 否则持续失败即回不到上一级，且旧层残留行的双击会在失败层路径上
@@ -2168,14 +2308,31 @@ void PlaylistWidget::onLoadFinished(const JobContext &ctx,
     Level &lvl = list->ensureLevel(ctx.parent);
     lvl.loadError.clear();
 
+    // N64：整树落地批次（浏览路径深于根层）的播放同步基线按根层旧内容取（V6）——
+    // oldKeys 常规按行采集，但落地根层的批次此刻行还是深层旧行，拿去比根层新行会
+    // 误判（无谓四步式重推 / 前缀巧合误入 append 分支重推已有项）；根层旧实体仓
+    // 此刻尚未被下方覆盖，按层采集即与逐层根层刷新同基线。②'' 已停播的批次不受
+    // 此影响（canSync 恒假），仅 Refresh 需要基线（其余意图无旧内容可比）
+    QStringList rootOldKeys;
+    if (wholeTreeLanding && ctx.intent == Intent::Refresh) {
+        rootOldKeys.reserve(lvl.entities.size());
+        for (const auto &e : lvl.entities)
+            if (e)
+                rootOldKeys.push_back(e->key());
+    }
+
     PlaylistProvider::Enumeration enumeration = std::move(r.value());
+    // N64 义务 1 的 Debug 守候：逐层批次不得带 descendants。Release 侧由"仅整树
+    // 路径读 descendants"自然丢弃（随局部变量析构），此处只补显影，行为零变化
+    Q_ASSERT(ctx.wholeTree || enumeration.descendants.isEmpty());
     if (!enumeration.warnings.isEmpty())
         m_enumWarnings.append(enumeration.warnings); // N37：部分失败警告随成功批次入库
     lvl.containers = std::move(enumeration.containers);
 
     // N45 §2.10：归位已并入忙时延后家族（revealPlayingItem），在途期浏览路径不被
-    // 搬移——批次恒以目标层即显示层完成，此处必然换入
-    Q_ASSERT(targetsDisplayed);
+    // 搬移——批次恒以目标层即显示层完成，此处必然换入。
+    // N64：整树批次放宽为"目标层 = 收尾将落地的层"（浏览路径已在上方归根）
+    Q_ASSERT(targetsDisplayed || wholeTreeLanding);
 
     // N55 §2.2：实体入列即盖章（归属 = view 所在列表的身份与当前提供者）。成功批次
     // 的两支换入（跨层写 lvl.entities / 同层走 applyEntitiesToRows）共用同一次盖章
@@ -2192,7 +2349,7 @@ void PlaylistWidget::onLoadFinished(const JobContext &ctx,
     // 发起时快照会丢掉这段进度。oldKeys 仅刷新批次需要（供比对；其余意图无旧内容可比）
     JobContext out = ctx;
     if (ctx.intent == Intent::Refresh)
-        out.oldKeys = keysOf(list);
+        out.oldKeys = wholeTreeLanding ? std::move(rootOldKeys) : keysOf(list);
     out.snap = captureViewSnapshot(list);
     out.snap.selectFirst = (ctx.intent == Intent::SwitchSource);
     // N30 行级换入（applyEntitiesToRows）只适用于同层换入：它保住的是本层行的选中
@@ -2211,6 +2368,10 @@ void PlaylistWidget::onLoadFinished(const JobContext &ctx,
     } else {
         applyEntitiesToRows(list, std::move(enumeration.entities));
     }
+    // N64：整树形态——换入后整树权威重建（缺席即删、交付即真，簿记随新层重置；
+    // 只发生在"刚刚完成一次整树枚举"的收尾里，不新增触发点）
+    if (ctx.wholeTree)
+        rebuildWholeTree(list, lvl, enumeration);
     advanceTab(out, false);
 }
 
@@ -2965,6 +3126,11 @@ void PlaylistWidget::refreshCurrentTab() {
     if (!list || m_busy)
         return; // N19：忙时菜单已禁用，此为兜底
     const int tab = currentIndex();
+    // N64：形态现查（不存模式位）——失效面与 ②'' 口径随形态分派，换源后随提供者
+    // 自动切换。整树提供者以不可修改示人，① 的 supportsModify 守卫自然跳过回推
+    // （本篇不定义整树提供者的回推语义）
+    const auto *provider = providerOfView(viewAt(tab));
+    const bool wholeTree = provider && provider->enumeratesWholeTree();
     // ① 回推：已加载且可修改的表把当前内容写回提供者。默认 tab 同样回推——其提供者
     // 从不落盘，不回推则枚举返回空表，刷新即清空内容。回推只改内存，不落盘。
     // N45：已加载 = 层在缓存且无失败文案（§2.5）
@@ -2974,39 +3140,61 @@ void PlaylistWidget::refreshCurrentTab() {
     // ② 置位：旧代码在此清 entriesLoaded + loadError。N45 层模型下"未加载"由
     // 收尾覆盖表达：当前层的层仓保留（在途期显示行与实体须保活——recordPlayback
     // 与回刷仍读旧内容），仅清失败文案（旧②同样清它，使回刷在途比对不被失败态拦下）；
-    // 成功收尾在 onLoadFinished 就地覆盖层内容
-    list->ensureLevel(list->browsePathIds()).loadError.clear();
+    // 成功收尾在 onLoadFinished 就地覆盖层内容。
+    // N64：整树批次的目标层恒为根层，清根层（按显示层清会摸到深层，与 V5
+    // "旧缓存层不被触及"打架；ensureLevel 对已存在层只清文案）
+    list->ensureLevel(wholeTree ? QStringList{} : list->browsePathIds()).loadError.clear();
     // ②' N45 §2.5：失效当前层及其全部子孙层（按键的前缀匹配）。保留例外只剩浏览层
     // 一项——在途期显示行上的实体必须存活（Refresh 续作的 oldKeys 采集、回刷比对、
     // recordPlayback 均是硬依赖），由本批收尾覆盖；其余被失效层（含队列根层，
     // N53 §2.2）移出缓存，下次被显示时按需重枚举
     const QStringList browseIds = list->browsePathIds();
     const QStringList queueIds = list->queueRootIds();
-    // ②' N45 §2.5：失效当前层及其全部子孙层（按键的前缀匹配）。浏览层自身保留
-    // ——在途期显示行上的实体必须存活（Refresh 续作的 oldKeys 采集、回刷比对、
-    // recordPlayback 均是硬依赖），由本批收尾覆盖
-    list->invalidateDescendantsOf(browseIds);
-    // ②'' N53 §2.2：浏览层是队列根层的严格祖先且该 tab 是播放 tab ⇒ 整棵子树不可信
-    // ——发起即一个同帧完成的原子动作组，成败都不回头：停播；同步目标无条件归位
-    // （空闲时也归位，不留指向空队列基准的播放 tab）；清旧播放 tab 行上的播放标记
-    // （归位不经 markPlayingTab，行上 PlayingRole 没有清除点，成功收尾的行级换入
-    // 又刻意复用行——不在此清即永久残留）；队列根锚点作废（savePlaylists 见空序列
-    // 不写 queueRootIds / queueRootTitles，重启后该 tab 落根层）。
-    // 续播记忆不在此作废（N53 变更记录 V2）：刷新失败可能只是网络波动，恢复后
-    // 重钻重举即按 lastPath 重新命中；指向已逐出层的记忆按"序号校验优先、路径
-    // 首命中"安全退化，无命中即 -1，无错误续播面。
-    // 归位先行使失败收尾的停播合取恒假 ⇒ 不会二次 stop
-    const bool ancestorOfQueueRoot =
-        queueIds.size() > browseIds.size() &&
-        std::equal(browseIds.begin(), browseIds.end(), queueIds.begin());
-    if (ancestorOfQueueRoot && tab == playingTabIndex()) {
-        emit stopRequested();
-        m_playingUuid = kDefaultListUuid; // 同步目标归位默认列表（N57 §2.8：换身份）
-        clearPlayingMarks(list);
-        list->setQueueRoot({}); // 队列根锚点作废（空序列 ⇒ savePlaylists 不写该两键）
+    // ②' N45 §2.5（逐层）：失效当前层及其全部子孙层（按键的前缀匹配）。浏览层自身
+    // 保留——在途期显示行上的实体必须存活（Refresh 续作的 oldKeys 采集、回刷比对、
+    // recordPlayback 均是硬依赖），由本批收尾覆盖；其余被失效层（含队列根层，
+    // N53 §2.2）移出缓存，下次被显示时按需重枚举。
+    // N64 整树：发起不失效（变更记录 V5）——收尾"先删"本就是全树对账出口，发起再删
+    // 一遍对成功冗余、对失败却把整棵旧树删掉（整树钻层不再枚举，恢复只剩再次刷新
+    // 一条路）。在途期 m_busy 拦截一切导航，旧缓存层不被触及：成功收尾覆盖全树，
+    // 失败旧树原地保活（根层照既有失败路径进占位，深层仍可经跳转取回）
+    if (!wholeTree)
+        list->invalidateDescendantsOf(browseIds);
+    if (wholeTree) {
+        // ②'' N64：整树重建必含队列根层，按"队列根层被重建"口径触发，不随发起时的
+        // 浏览深度变化。判据取根层视角：队列根锚点非空（队列根即根层时与"从根层
+        // 发起刷新"等效——播放连续性由收尾的比对三分支承载，不在此停播）。
+        // 续播记忆不在此作废（与逐层同一口径，N53 变更记录 V2）
+        if (tab == playingTabIndex() && !queueIds.isEmpty()) {
+            emit stopRequested();
+            m_playingUuid = kDefaultListUuid; // 同步目标归位默认列表（N57 §2.8：换身份）
+            clearPlayingMarks(list);
+            list->setQueueRoot({}); // 队列根锚点作废（空序列 ⇒ savePlaylists 不写该两键）
+        }
+    } else {
+        // ②'' N53 §2.2：浏览层是队列根层的严格祖先且该 tab 是播放 tab ⇒ 整棵子树不可信
+        // ——发起即一个同帧完成的原子动作组，成败都不回头：停播；同步目标无条件归位
+        // （空闲时也归位，不留指向空队列基准的播放 tab）；清旧播放 tab 行上的播放标记
+        // （归位不经 markPlayingTab，行上 PlayingRole 没有清除点，成功收尾的行级换入
+        // 又刻意复用行——不在此清即永久残留）；队列根锚点作废（savePlaylists 见空序列
+        // 不写 queueRootIds / queueRootTitles，重启后该 tab 落根层）。
+        // 续播记忆不在此作废（N53 变更记录 V2）：刷新失败可能只是网络波动，恢复后
+        // 重钻重举即按 lastPath 重新命中；指向已逐出层的记忆按"序号校验优先、路径
+        // 首命中"安全退化，无命中即 -1，无错误续播面。
+        // 归位先行使失败收尾的停播合取恒假 ⇒ 不会二次 stop
+        const bool ancestorOfQueueRoot =
+            queueIds.size() > browseIds.size() &&
+            std::equal(browseIds.begin(), browseIds.end(), queueIds.begin());
+        if (ancestorOfQueueRoot && tab == playingTabIndex()) {
+            emit stopRequested();
+            m_playingUuid = kDefaultListUuid; // 同步目标归位默认列表（N57 §2.8：换身份）
+            clearPlayingMarks(list);
+            list->setQueueRoot({}); // 队列根锚点作废（空序列 ⇒ savePlaylists 不写该两键）
+        }
     }
-    // ③ 驱逐：N20 条目只驱逐本表；flag 重置所有表（N45：全部层的两类标志一并复位）
-    evictListKeys(list);
+    // ③ 驱逐：N20 条目只驱逐本表；flag 重置所有表（N45：全部层的两类标志一并复位）。
+    // N64：驱逐层显式给定——整树批次的目标层是根层，按显示行取会摸到深层旧行
+    evictListKeys(list, wholeTree ? QStringList{} : list->browsePathIds());
     // ④ 登记意图 + ⑤ 发起（收尾见 onLoadFinished：换入 → 推进函数）
     m_pendingLoad = PendingLoad{};
     m_pendingLoad.list = list;
@@ -3014,19 +3202,18 @@ void PlaylistWidget::refreshCurrentTab() {
     startLoadAsync(list);
 }
 
-// N20/N26：按表精确驱逐。遍历该表全部非占位行，按实体 key 逐个删 m_duration；
+// N20/N26：按表精确驱逐。遍历指定层的实体，按实体 key 逐个删 m_duration；
 // flag 重置所有表（N20 语义保留：本表驱逐可能清掉他表共享 key 的 mpv 推送时长，
-// 他表切入经预读重读恢复）。N45：标志复位覆盖全部 tab 的全部层
-void PlaylistWidget::evictListKeys(PlaylistListView *list) {
+// 他表切入经预读重读恢复）。N45：标志复位覆盖全部 tab 的全部层。
+// N64：驱逐层显式给定——刷新发起时显示行与目标层在整树形态下不同层（行是深层、
+// 目标是根层），按层取即与逐层"行 == 浏览层内容"等价（层所有权仓序恒等行序）
+void PlaylistWidget::evictListKeys(PlaylistListView *list, const QStringList &ids) {
     if (!list)
         return;
-    for (int i = 0; i < list->count(); ++i) {
-        const QListWidgetItem *item = list->item(i);
-        if (isPlaceholderRow(item))
-            continue;
-        if (const PlaylistEntity *entity = entityFromItem(item))
-            m_duration->remove(entity->key());
-    }
+    if (const Level *lvl = list->findLevel(ids))
+        for (const auto &entity : lvl->entities)
+            if (entity)
+                m_duration->remove(entity->key());
     // 标志复位覆盖全部 tab 的全部层（N45）：跨表遍历留在本类，逐表交给自己清
     for (int i = 0; i < count(); ++i) {
         if (PlaylistListView *every = viewAt(i))

@@ -78,7 +78,9 @@ StaticProvider::enumerate(const QStringList &parent) const {
     entities.reserve(m_urls.size());
     for (const QString &url : m_urls)
         entities.push_back(PlaylistEntity::fromPath(url, registry()));
-    return Enumeration{{}, std::move(entities), {}}; // 静态列表无警告
+    Enumeration out;
+    out.entities = std::move(entities);
+    return out; // 静态列表无警告（N64 起 Enumeration 继承 LevelData，不再位置聚合初始化）
 }
 
 bool StaticProvider::supportsModify() const { return true; }

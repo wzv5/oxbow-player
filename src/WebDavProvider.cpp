@@ -561,7 +561,10 @@ WebDavProvider::enumerate(const QStringList &parent) const {
             appendFileEntities(listing->files, entities);
         }
         sortEntitiesByNumericName(entities);
-        return Enumeration{{}, std::move(entities), std::move(warnings)};
+        Enumeration out; // N64 起 Enumeration 继承 LevelData，不再位置聚合初始化
+        out.entities = std::move(entities);
+        out.warnings = std::move(warnings);
+        return out;
     }
 
     // ——分层浏览 / 仅文件：单次 PROPFIND，逐层懒加载（N46 §2.2）。
