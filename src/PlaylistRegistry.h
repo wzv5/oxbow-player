@@ -67,6 +67,13 @@ class PlaylistRegistry {
     // "每次推送重复收编"回来，本注释指回 N55 §2.6 兜（文档，不是机制）
     bool remove(const QUuid &uuid);
 
+    // N62 §2.2：改序唯一出口——把 uuid 对应的持久列表移到持久域**终位下标** to
+    // （摘出后插回该位，前移后移两方向同义；0 <= to < persistentCount()）。
+    // 契约即"不可行即 false"：越界与不在册一律 false，不设断言——nil、未登记身份、
+    // 默认列表的保留身份（结构上不在 vector 内）同档不命中。成功即权威序已变，
+    // tab 条镜像与落盘由调用方随后完成
+    bool moveList(const QUuid &uuid, int to);
+
   private:
     // 新铸一个不与任何在册列表相撞的身份
     QUuid mintUuid() const;

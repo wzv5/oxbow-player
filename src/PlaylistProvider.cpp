@@ -17,6 +17,15 @@ PlaylistProvider::PlaylistProvider(const std::shared_ptr<ServiceRegistry> &regis
 
 PlaylistProvider::~PlaylistProvider() = default;
 
+// N62 §2.3：复制 = 经唯一序列化器的一次往返。调用方已把 staging 定位在暂存组内，
+// 本函数只管写与读同点、排序规则原样交入，不认识介质与分组形态
+std::shared_ptr<PlaylistProvider> PlaylistProvider::duplicated(QSettings &staging) const {
+    saveSettings(staging);
+    auto copy = load(staging, m_registry);
+    copy->setSortRule(sortRule());
+    return copy;
+}
+
 // N52 §2.8：三态表即本函数的定义——全仓只有它读那个持久化偏好
 bool PlaylistProvider::usesTransit() const {
     switch (transitCapability()) {

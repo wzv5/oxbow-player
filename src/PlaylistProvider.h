@@ -117,6 +117,14 @@ class PlaylistProvider {
     // ——INI 序列化：完全委托实现——写 provider 类型键、自身参数与排序键
     virtual void saveSettings(QSettings &settings) const = 0;
 
+    // N62 §2.3：复制出口（非虚，基类一处实现）——经唯一序列化器往返：saveSettings
+    // 写入调用方提供的 staging QSettings、load 从同一处读回，随后把源当下的排序规则
+    // 原样交入（静态表不持久化排序键，纯往返会落成类型默认；目录与 WebDAV 的排序
+    // 两键随往返本就忠实）。saveSettings 是"这份配置由哪些项构成"的唯一真相（N44 起
+    // 类型键经 writeProviderKey 单点写），复制不另设通路，子类零改动。
+    // staging 的介质与分组由调用方管理（暂存组从不落盘，见 PlaylistWidget::duplicateList）
+    std::shared_ptr<PlaylistProvider> duplicated(QSettings &staging) const;
+
     // 工厂：按 group 内 provider 键经登记表（ProviderCatalog）分派到对应实现的
     // load；键缺失 / 未知 → 回落登记表第 0 项（默认提供者，现状即静态）。
     // registry 转交对应实现（缺省空）

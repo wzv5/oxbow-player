@@ -79,3 +79,21 @@ bool PlaylistRegistry::remove(const QUuid &uuid) {
     }
     return false;
 }
+
+bool PlaylistRegistry::moveList(const QUuid &uuid, int to) {
+    if (to < 0 || to >= persistentCount())
+        return false; // 越界与不在册同档 false（头注释）
+    auto it = m_persistent.begin();
+    for (; it != m_persistent.end(); ++it)
+        if ((*it)->uuid() == uuid)
+            break;
+    if (it == m_persistent.end())
+        return false; // nil / 未登记 / 默认保留身份均到此
+    const int from = int(it - m_persistent.begin());
+    if (from == to)
+        return true; // 原位：幂等成功
+    auto moved = std::move(*it);
+    it = m_persistent.erase(it);
+    m_persistent.insert(m_persistent.begin() + to, std::move(moved));
+    return true;
+}

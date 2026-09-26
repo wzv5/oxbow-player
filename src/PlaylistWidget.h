@@ -224,7 +224,9 @@ class PlaylistWidget : public QTabWidget {
     // （N4 四步式的进度恢复与此同一通道；发出前已将 tab 标记为正在播放列表）。
     // N56 §2.7：播放链路改传实体表——MainWindow 据此经 playUrls(tab, entities)
     // 在喂 mpv 前最后一刻映射播放形态（凭据注入在提供者侧）。
-    // N30：keepPaused 为真时载入后保持暂停（四步式在 stop 前读到的 pause 状态）
+    // N30：keepPaused 为真时载入后保持暂停（四步式在 stop 前读到的 pause 状态）。
+    // N62 §2.7 C 档：入参 tab 是**发射时刻由身份现场换算的视图坐标**（与 levelItemReady
+    // 同一句钉法），接收方不得跨事件持有
     void playRequested(const PlaylistEntity::List &entities, int tab, int index, double seekTo,
                        bool keepPaused = false);
     // 当前 tab 收到新文件（菜单添加或拖放），携建好的实体表
@@ -361,6 +363,10 @@ class PlaylistWidget : public QTabWidget {
     // stale 节清理三处，全在视图
     void writeTabGroup(QSettings &settings, Playlist *list, int index);
     void readTabGroup(QSettings &settings, int index);
+    // N62 §2.3：显示中条目回传提供者（写侧唯一入口）。守卫表达式原为 writeTabGroup
+    // 内联，收成单点供落盘与复制共用，判据一字不变：可修改提供者 + 当前显示层已加载；
+    // 未加载（含首载在途）不回传（N28）
+    void backfillItems(Playlist *list);
 
     // N57 §2.8：原五张"以控件指针为键的平行表"（层缓存 / 浏览路径 / 队列根 /
     // 显示层 / 记忆）及其定位访问器全部退场——状态是 PlaylistListView 的成员，
@@ -608,6 +614,14 @@ class PlaylistWidget : public QTabWidget {
 
     // 右键菜单动作实现（第七节）
     void refreshCurrentTab();
+    // N62 §2.2：改序——先动权威（m_lists->moveList，toTab - 1 换算持久域）再动镜像
+    // （tabBar()->moveTab，页面栈由 QTabWidget 的 tabMoved 同步槽自动跟随），末尾落盘。
+    // 前移后移共用；越界与相等属调用方违约，Debug 断言显影，Release 直接早退
+    void reorderList(int fromTab, int toTab);
+    // N62 §2.3：复制——点一下立即产出同配置同条目的新表，不弹对话框；落末尾并激活。
+    // 过去三样：提供者类型与自身参数（经唯一序列化器往返）、条目内容（回传先行）、
+    // 当前排序规则；身份现铸、名字走默认命名算法、视图态不带
+    void duplicateList(int tabIndex);
     // N35：改收共享计数副本——异步属性对话框跨嵌套事件循环持有实体，
     // 求值转发取回的值经注入口写回该实体（关闭即取消）
     void showPropertiesDialog(const PlaylistEntity::Ptr &entity);
@@ -645,6 +659,9 @@ class PlaylistWidget : public QTabWidget {
     // N59 §3.2：主动设定的播放目标历史记录，**只在 markPlayingTab 内写**（全仓唯一能把
     // 播放目标定到非默认列表的入口）；四个被动归位点直写 m_playingUuid 绕开它，天然不擦
     QUuid m_lastPlayingTargetUuid = kDefaultListUuid;
+    // N62 §2.2：当前停留的表的身份——onTabChanged 的重激活判据。nil 初值保证首次切换
+    // 走完整激活；"索引变了、页面没变"的事件（如改序移动当前表）在此判等收编为无操作
+    QUuid m_currentListUuid;
     QString m_configFile;
     MpvController *m_mpv = nullptr; // 借用的裸指针（不随控制器销毁归零），attachController 注入
     // N35：服务注册表（初始化列表创建，此后恒非空；设置变更时只覆盖其内部实例，
@@ -661,12 +678,16 @@ class PlaylistWidget : public QTabWidget {
     bool m_noticeDialogUp = false;
 
     // N32 忙时与单飞行（N32：枚举与预读共用一个任务槽）——
-    JobSlot m_job;                // 当前在途任务（枚举 / 预读同一槽位，全插件同一时刻至多一个）
-    quint64 m_token = 0;          // 代际计数器；唯一递增点：runJob 起任务、abandonJob 作废
-    bool m_busy = false;          // 加载在途或预读中：tab 栏 + 列表 + 右键菜单冻结
-    int m_pendingTab = -1;        // 忙时排队的程序化切 tab（last-wins）
+    JobSlot m_job;       // 当前在途任务（枚举 / 预读同一槽位，全插件同一时刻至多一个）
+    quint64 m_token = 0; // 代际计数器；唯一递增点：runJob 起任务、abandonJob 作废
+    bool m_busy = false; // 加载在途或预读中：tab 栏 + 列表 + 右键菜单冻结
+    // N62 §2.7 A 档：忙时排队的程序化切 tab（last-wins）改持**列表身份**——待办跨整段
+    // 在途任务存活，tab 序在这期间会漂移。requestTab 入口把入参索引当场换算成身份存下，
+    // flushPendingTab 经 tabIndexOfList 现换算坐标，换算不到即放弃（与旧越界早退等价）。
+    // nil 即无待办
+    QUuid m_pendingTabUuid;
     bool m_pendingReveal = false; // N45：忙时延后的切曲归位（last-wins，busy 结束补执行）
-    // N54：延后的层级定位（last-wins，与 m_pendingTab / m_pendingReveal / m_pendingLocate
+    // N54：延后的层级定位（last-wins，与 m_pendingTabUuid / m_pendingReveal / m_pendingLocate
     // 同族）。enumerated = 本次跳转已为目标层起过一轮枚举的闸门：既实现"一次跳转至多
     // 一次枚举"（§2.4 的失败层显式重试也只此一次），又让"任务被作废/取消后目标层仍不在
     // 缓存"这一情形落到静默作废而不是无限重起
@@ -686,7 +707,8 @@ class PlaylistWidget : public QTabWidget {
     // 静默跳过，不引入崩溃面
     QStackedWidget *m_stack = nullptr;
     SearchState m_search;
-    bool m_pendingLocate = false; // 忙时延后的手动定位（与 m_pendingTab / m_pendingReveal 同族）
+    bool m_pendingLocate =
+        false; // 忙时延后的手动定位（与 m_pendingTabUuid / m_pendingReveal 同族）
     QStringList m_enumWarnings;
     LoadingOverlay *m_overlay = nullptr;
     LoadingOverlay::Mode m_overlayMode = LoadingOverlay::Mode::Loading;

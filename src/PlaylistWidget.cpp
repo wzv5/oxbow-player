@@ -113,11 +113,11 @@ PlaylistWidget::PlaylistWidget(const QString &configFile, std::shared_ptr<Servic
 // 线程卡死兜底）随之消灭。此处只做一次非阻塞收尾：作废并 cancel 在途任务，尽快释放
 // IO / MediaInfo 句柄、停止无谓计算，不为安全（cancel 尽力而为——卡在单条调用内时
 // 最坏延后一条）。
-// m_pendingTab 必须先清零：abandonJob 内的 setBusy(false) 会 flushPendingTab，
+// m_pendingTabUuid 必须先清零：abandonJob 内的 setBusy(false) 会 flushPendingTab，
 // 那会在析构中途经 onTabChanged 再起一个新任务。m_pendingReveal 同理——
 // setBusy(false) 的延后归位消费会触碰列表；N49 的 m_pendingLocate 同族
 PlaylistWidget::~PlaylistWidget() {
-    m_pendingTab = -1;
+    m_pendingTabUuid = QUuid();
     m_pendingReveal = false;
     m_pendingLocate = false;
     abandonJob();
@@ -1225,9 +1225,9 @@ void PlaylistWidget::savePlaylists() {
 // 插入幽灵"已加载"层。在途加载的目标层在成功前不在缓存（或带 loadError），故
 // setItems 与工作线程的 enumerate() 不可能并发——日后改动加载置位时序须复核本条
 void PlaylistWidget::writeTabGroup(QSettings &settings, Playlist *list, int index) {
+    // N62 §2.3：回传守卫收成 backfillItems 单点，判据一字不变（非行为变化）
+    backfillItems(list);
     PlaylistListView *view = viewAt(tabIndexOfList(list->uuid()));
-    if (view && list->provider()->supportsModify() && view->layerLoaded(view->browsePathIds()))
-        list->provider()->setItems(view->entities());
 
     settings.beginGroup(QStringLiteral("Playlist_%1").arg(index));
     list->save(settings);                     // name + uuid
@@ -1348,6 +1348,13 @@ void PlaylistWidget::onTabChanged(int index) {
     PlaylistListView *list = viewAt(index);
     if (!list)
         return;
+    // N62 §2.2：停留身份守卫——判据从"tab 序号变了就重激活"校正为"停留的表变了才重
+    // 激活"。同表重入（索引变了、页面没变，如改序移动当前表触发的 currentChanged）只
+    // 保留上方按钮态刷新即早退：不重选记忆行、不滚动、不起第二次枚举
+    const QUuid uuid = list->list()->uuid();
+    if (uuid == m_currentListUuid)
+        return;
+    m_currentListUuid = uuid;
     // N19：未加载的 tab 走首次激活链（选中/滚动在枚举续作收尾）。
     // N28：所有 tab 创建 / 换源 / 会话恢复时层不在缓存，内容统一在此经异步枚举填充；
     // N30：默认 tab 内容由两条直写路径维护，层恒在缓存，故不在此发起枚举
@@ -1406,11 +1413,21 @@ void PlaylistWidget::reactivateRescan(PlaylistListView *list, int tabIndex) {
 }
 
 // N19：原 onTabChanged 体。切入正在播放的列表：居中滚动到正播项。
-// 选中态由 mpv 同步高亮驱动，此处只滚不改选
+// 选中态由 mpv 同步高亮驱动，此处只滚不改选。
+// N62 §2.7 A 档：两处延后滚动改捕**列表身份**——投到下一拍前 tab 结构可能已变
+// （同拍 createNewList / removeTabAt 即能命中），回调开头经 tabIndexOfList 现换算，
+// 换算不到即放弃，不再按旧索引打在别表上
 void PlaylistWidget::activateTab(int index) {
+    PlaylistListView *list = viewAt(index);
+    if (!list)
+        return;
+    const QUuid uuid = list->list()->uuid();
     if (index == playingTabIndex()) {
-        QTimer::singleShot(0, this, [this, index]() {
-            if (PlaylistListView *l = viewAt(index)) {
+        QTimer::singleShot(0, this, [this, uuid]() {
+            const int tab = tabIndexOfList(uuid);
+            if (tab < 0)
+                return;
+            if (PlaylistListView *l = viewAt(tab)) {
                 const int pr = playingRowOf(l);
                 if (pr >= 0)
                     l->scrollToItem(l->item(pr), QListWidget::PositionAtCenter);
@@ -1421,16 +1438,18 @@ void PlaylistWidget::activateTab(int index) {
     // 切换到非播放 tab 时自动选中该 tab 记忆的最后播放项（N9：路径+序号解析）。
     // N45 §2.8：记忆行只在"显示层 == 队列根层"时参与选中与滚动，其余情形由该层
     // 自己的 lastSelectedKey 负责恢复（showLayer 换入时已完成）
-    PlaylistListView *list = viewAt(index);
-    const bool displayedIsQueueRoot = list && list->browsePathIds() == list->queueRootIds();
+    const bool displayedIsQueueRoot = list->browsePathIds() == list->queueRootIds();
     const int row = displayedIsQueueRoot ? resolveResumeRow(index) : -1;
-    if (list && row >= 0 && row < list->count()) {
+    if (row >= 0 && row < list->count()) {
         list->setCurrentRow(row);
         // 跟随滚动（N4）：currentChanged 到达时新 tab 尚未完成首次布局，
         // 立即滚动会打在零尺寸视口上无效，推迟到事件循环下一拍
-        QTimer::singleShot(0, this, [this, index]() {
-            if (PlaylistListView *l = viewAt(index)) {
-                const int r = resolveResumeRow(index);
+        QTimer::singleShot(0, this, [this, uuid]() {
+            const int tab = tabIndexOfList(uuid);
+            if (tab < 0)
+                return;
+            if (PlaylistListView *l = viewAt(tab)) {
+                const int r = resolveResumeRow(tab);
                 if (r >= 0 && r < l->count() && l->currentRow() == r)
                     l->scrollToItem(l->currentItem(), QListWidget::PositionAtCenter);
             }
@@ -1505,7 +1524,8 @@ void PlaylistWidget::onItemDoubleClicked(QListWidgetItem *item) {
                        -1.0); // 回显由 MainWindow 统一入口登记（N25）
 }
 
-// N19：程序化切 tab 统一入口。忙时目标非当前则排队，空闲后补执行
+// N19：程序化切 tab 统一入口。忙时目标非当前则排队（last-wins），空闲后补执行。
+// N62 §2.7 A 档：待办改持列表身份，入参索引在入口当场换算（同族其余待办均不携坐标）
 void PlaylistWidget::requestTab(int index) {
     if (index < 0 || index >= count())
         return;
@@ -1513,16 +1533,18 @@ void PlaylistWidget::requestTab(int index) {
         setCurrentIndex(index);
         return;
     }
-    m_pendingTab = index; // last-wins
+    const Playlist *list = listOf(index);
+    m_pendingTabUuid = list ? list->uuid() : QUuid(); // last-wins；换算不出即无待办
 }
 
 void PlaylistWidget::flushPendingTab() {
-    if (m_pendingTab < 0 || m_pendingTab >= count()) {
-        m_pendingTab = -1;
+    if (m_pendingTabUuid.isNull())
         return;
-    }
-    const int idx = m_pendingTab;
-    m_pendingTab = -1;
+    const QUuid uuid = m_pendingTabUuid;
+    m_pendingTabUuid = QUuid();
+    const int idx = tabIndexOfList(uuid);
+    if (idx < 0)
+        return; // 目标已不在视图（被删 / 身份失效）：与旧版越界早退等价
     setCurrentIndex(idx);
 }
 
@@ -3785,19 +3807,54 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
         // nativeParentWidget 的窗口句柄当 transient parent，挂 splitter 之下的
         // 控件时该句柄非顶层而触发 "must be a top level window" 警告
         QMenu menu(window());
+        // N62 §2.4：按名快速跳转组——一项一列表，序 = tab 序（改序与复制后菜单自动
+        // 同步）；文本取列表对象的名（权威在列表对象，tab 文本只是镜像，N57 §2.6），
+        // 默认列表的名构造期即 defaultListDisplayName。勾选 = 当前停留的 tab，恒可用
+        // （跳转不需要作用对象，与 New Playlist 同档）；执行一律走 requestTab（N19
+        // 统一入口），点当前项同索引早退无副作用。序即键：分发处按组内动作序号取
+        // 目标下标，不另存映射表
+        QActionGroup *jumpGroup = new QActionGroup(&menu);
+        for (int i = 0; i < count(); ++i) {
+            const Playlist *l = listOf(i);
+            QAction *act = menu.addAction(l ? l->name() : tabText(i));
+            act->setCheckable(true);
+            act->setChecked(i == currentIndex());
+            jumpGroup->addAction(act);
+        }
+        menu.addSeparator();
         QAction *newTabAction = menu.addAction(tr("New Playlist"));
-        QAction *closeTabAction = menu.addAction(tr("Delete Current List"));
+        // N62 §2.3：点一下立即复制同配置同条目的新表（落末尾并激活），无对话框
+        QAction *duplicateAction = menu.addAction(tr("Duplicate List"));
+        QAction *closeTabAction = menu.addAction(tr("Delete List"));
+        duplicateAction->setEnabled(hitTab > 0);
+        closeTabAction->setEnabled(hitTab > 0); // 默认 tab 与空白区均无复制/删除
+        // N62 §2.2 / §2.5：改序组——前移 = 朝表头起点（索引减小），后移 = 朝表尾；
+        // 轴向词不进文案，表头布局改纵向时语义照旧成立。前移在 hitTab = 1 置灰即
+        // "不许越过默认 tab"这条不变量在菜单上的表达
+        menu.addSeparator();
+        QAction *moveForwardAction = menu.addAction(tr("Move Forward"));
+        QAction *moveBackwardAction = menu.addAction(tr("Move Backward"));
+        moveForwardAction->setEnabled(hitTab > 1);
+        moveBackwardAction->setEnabled(hitTab > 0 && hitTab < count() - 1);
+        menu.addSeparator();
         QAction *settingsAction = menu.addAction(tr("List Settings…"));
-        closeTabAction->setEnabled(hitTab > 0);
-        settingsAction->setEnabled(hitTab > 0); // 默认 tab 与空白区均无删除/设置
+        settingsAction->setEnabled(hitTab > 0); // 默认 tab 与空白区无设置
 
         QAction *chosen = menu.exec(event->globalPos());
         if (!chosen)
             return;
-        if (chosen == newTabAction)
+        if (const int jumpIndex = jumpGroup->actions().indexOf(chosen); jumpIndex >= 0)
+            requestTab(jumpIndex); // 忙时排队（N19）；本菜单空闲态弹出，即 setCurrentIndex
+        else if (chosen == newTabAction)
             createNewList();
+        else if (chosen == duplicateAction)
+            duplicateList(hitTab);
         else if (chosen == closeTabAction)
             removeTabAt(hitTab);
+        else if (chosen == moveForwardAction)
+            reorderList(hitTab, hitTab - 1);
+        else if (chosen == moveBackwardAction)
+            reorderList(hitTab, hitTab + 1);
         else if (chosen == settingsAction)
             openListSettings(hitTab);
         return;
@@ -4071,6 +4128,23 @@ void PlaylistWidget::removeTabAt(int tabIndex) {
     const int idx = tabIndex;
     if (idx <= 0 || idx >= count() || m_busy)
         return; // N19：忙时表头菜单已禁用，此为兜底
+    // N62 §2.6：删除的最后一道反悔，落点在守卫之后、三样现取之前——任何新入口
+    // （工具条、快捷键、外部命令）接删除都必经这道确认；确认与动作之间的嵌套事件
+    // 循环期间发生的任何变化都会被下方既有纪律现取到，所以本块的视图指针不带出块外
+    // （exec 本身就是嵌套循环，被删页面的 deleteLater 会在其中执行掉）。parent 挂
+    // window()（AGENTS §八），沿用 BookmarkEditorDialog::onClearAll 的标准 Yes / No
+    // 形态，默认键 No（手滑回车不丢表）；文本格式钉死 PlainText，列表名不经富文本解析
+    if (const PlaylistListView *confirmView = viewAt(idx); confirmView && confirmView->list()) {
+        QMessageBox box(window());
+        box.setIcon(QMessageBox::Question);
+        box.setWindowTitle(tr("Confirm"));
+        box.setText(tr("Delete list \"%1\"?").arg(confirmView->list()->name()));
+        box.setTextFormat(Qt::PlainText);
+        box.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
+        box.setDefaultButton(QMessageBox::No);
+        if (box.exec() != QMessageBox::Yes)
+            return;
+    }
     PlaylistListView *closing = viewAt(idx);
     QUuid gone; // 待摘除列表的身份；无页面即无列表可摘
     if (closing)
@@ -4147,6 +4221,69 @@ void PlaylistWidget::createNewList() {
     addTab(list, name);
     // N28：静态表不再同步填充，切入（setCurrentIndex）触发首次异步加载
     setCurrentIndex(count() - 1);
+    savePlaylists();
+}
+
+// N62 §2.2：改序内核——前移（toTab = fromTab - 1）与后移（+1）共用。断言的是调用方
+// 菜单判据（hitTab > 0、方向步进一档）已排除的违约情形
+void PlaylistWidget::reorderList(int fromTab, int toTab) {
+    Q_ASSERT(fromTab > 0 && toTab > 0 && fromTab != toTab && fromTab < count() && toTab < count());
+    if (fromTab <= 0 || toTab <= 0 || fromTab == toTab || fromTab >= count() || toTab >= count())
+        return;
+    PlaylistListView *view = viewAt(fromTab);
+    if (!view || !view->list())
+        return;
+    // 权威先行：注册表序即落盘节序，先回写再动镜像，两序才不会分叉
+    if (!m_lists->moveList(view->list()->uuid(), toTab - 1))
+        return;
+    // 镜像跟随：页面栈由 QTabWidget 内部的 tabMoved 同步槽自动搬移（Qt 契约），
+    // viewAt / listOf 等按索引取页面的出口自动成立；移动的是当前表时 currentChanged
+    // 照发，由 onTabChanged 的停留身份守卫收编为无操作
+    tabBar()->moveTab(fromTab, toTab);
+    savePlaylists();
+}
+
+// N62 §2.3：显示中条目回传提供者（写侧唯一入口）——落盘与复制共用同一判据。
+// 未加载（含首载在途）的表不回传（N28）：此时副本条目 = 提供者自持串 = 源重启后的
+// 条目，与"复制配置"自洽
+void PlaylistWidget::backfillItems(Playlist *list) {
+    PlaylistListView *view = viewAt(tabIndexOfList(list->uuid()));
+    if (view && list->provider()->supportsModify() && view->layerLoaded(view->browsePathIds()))
+        list->provider()->setItems(view->entities());
+}
+
+// N62 §2.3：复制——点一下立即产出一张同配置同条目的新表；不弹任何对话框，
+// 名字自动生成、落末尾并激活。复制是只读动作：不停播、不动播放目标与会话键
+// （不经 markPlayingTab，播放语义什么都没发生）
+void PlaylistWidget::duplicateList(int tabIndex) {
+    if (tabIndex <= 0 || m_busy || m_configFile.isEmpty())
+        return; // 与 openListSettings 同档兜底（N19：忙时表头菜单已禁用）
+    PlaylistListView *srcView = viewAt(tabIndex);
+    if (!srcView || !srcView->list())
+        return;
+    Playlist *src = srcView->list();
+    // 条目回传先行：播放中 tab 经四步式与 mpv 对齐不落盘，提供者串可能滞后于显示，
+    // 复制要的是屏幕上的那份（对源提供者是一次幂等写入）
+    backfillItems(src);
+
+    // 配置往返走现有配置文件上的暂存组（变更记录 1）：写、读、删在同一会话内一气
+    // 呵成，暂存组从不 sync 落盘；组名带 Playlist_ 前缀，即便极端残留也会被
+    // savePlaylists 的旧节清理收走
+    QSettings settings(m_configFile, QSettings::IniFormat);
+    const QString staging = QStringLiteral("Playlist_duplicate_staging");
+    settings.beginGroup(staging);
+    auto dup = src->provider()->duplicated(settings);
+    settings.endGroup();
+    settings.remove(staging);
+    Q_ASSERT(dup != nullptr); // 与 createNewList 同口径：无提供者会使不变式在 Debug 撞断
+
+    // 登记与落位与 createNewList 同形：登记（现铸身份，源身份已在册不另设防）→
+    // 建视图 → 挂 tab → 激活 → 保存
+    const int nextN = Util::nextSequenceNumber(tr("Playlist "), m_lists->names());
+    auto *pl = m_lists->append(tr("Playlist %1").arg(nextN), std::move(dup), QUuid());
+    auto *newView = createView(pl);
+    addTab(newView, pl->name());
+    requestTab(count() - 1); // 非忙时即 setCurrentIndex，激活经 onTabChanged 触发首载（N28）
     savePlaylists();
 }
 
