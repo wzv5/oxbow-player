@@ -1463,15 +1463,19 @@ void PlaylistWidget::markPlayingTab(int tabIndex) {
     PlaylistListView *list = viewAt(tabIndex);
     if (list)
         list->setQueueRoot(list->browsePath()); // 队列根 = 该 tab 当前浏览层（N45 §2.1）
+    // N57 §2.8：转移播放目标 = 换身份。表必在（不变式：tab ⇔ 视图 ⇔ 列表），越界兜回
+    // 默认列表身份——恒可解析由 §2.5 的保留身份承载，不再有"索引悬空"这一说
+    const QUuid targetUuid = list && list->list() ? list->list()->uuid() : kDefaultListUuid;
+    // N59 §3.2：主动设定在此单点记账，且必须在同 tab 早退之前——正播 X 时表内双击、以及
+    // 播放目标本已是 0 时的收编都走早退支，放之后就漏记。默认身份即复位
+    m_lastPlayingTargetUuid = targetUuid;
     if (tabIndex == playingTabIndex())
         return;
     if (PlaylistListView *old = viewAt(playingTabIndex())) {
         for (int i = 0; i < old->count(); ++i)
             old->item(i)->setData(PlayingRole, false);
     }
-    // N57 §2.8：转移播放目标 = 换身份。表必在（不变式：tab ⇔ 视图 ⇔ 列表），越界兜回
-    // 默认列表身份——恒可解析由 §2.5 的保留身份承载，不再有"索引悬空"这一说
-    m_playingUuid = list && list->list() ? list->list()->uuid() : kDefaultListUuid;
+    m_playingUuid = targetUuid;
 }
 
 void PlaylistWidget::onItemDoubleClicked(QListWidgetItem *item) {

@@ -151,6 +151,11 @@ class PlaylistWidget : public QTabWidget {
     // 转移“正在播放”同步目标到指定 tab（双击条目或会话恢复载入时调用）。
     // B10：异 tab 转移时清空原 tab 的播放标记，防残留；同 tab 早退防闪烁
     void markPlayingTab(int tabIndex);
+    // N59 §3.1：最后一次**主动设定**的播放目标身份——会话键的唯一落点。与 m_playingUuid
+    // 的分工：一个是"此刻的同步目标"，一个是"最后一次主动设定的目标"。只在 markPlayingTab
+    // 写，被动归位（删除当前列表 / 换源 / N53 的失败处理）不擦除它，故刷新失败后重启仍回到
+    // 那张表；返回默认列表的保留身份即"本进程没在非默认列表播过（或之后又回默认播过）"
+    QUuid lastPlayingTargetUuid() const { return m_lastPlayingTargetUuid; }
 
     // 记录某 tab 的最后播放项与进度（仅非默认 tab 生效；纯内存，落盘发生在保存时）。
     // N9：记忆条目的路径随写入点自动采集（路径+序号双存，恢复时序号校验优先）
@@ -637,6 +642,9 @@ class PlaylistWidget : public QTabWidget {
     // 身份，于是"同步目标失效归位默认"是一次身份赋值而非索引修补，tab 随增删漂移
     // 与本字段无关（旧 --m_playingTab 那类修正整段消失）
     QUuid m_playingUuid = kDefaultListUuid;
+    // N59 §3.2：主动设定的播放目标历史记录，**只在 markPlayingTab 内写**（全仓唯一能把
+    // 播放目标定到非默认列表的入口）；四个被动归位点直写 m_playingUuid 绕开它，天然不擦
+    QUuid m_lastPlayingTargetUuid = kDefaultListUuid;
     QString m_configFile;
     MpvController *m_mpv = nullptr; // 借用的裸指针（不随控制器销毁归零），attachController 注入
     // N35：服务注册表（初始化列表创建，此后恒非空；设置变更时只覆盖其内部实例，

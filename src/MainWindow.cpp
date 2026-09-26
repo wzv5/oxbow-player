@@ -1915,23 +1915,18 @@ void MainWindow::saveSettings() {
 
     // N10：窗口几何/最大化不再落盘（启动恒为固定默认尺寸 960×600）
 
-    // 会话恢复入口（Q1 方案 A）：记录正播的非默认列表。N57 §2.7 把键从名字换成身份
-    // （`lastListUuid`），三条分支与旧 `lastTabName` 逐一对应，判据由"索引 0"这一
-    // 位置判据改为 `isDefault()` 身份判据。
+    // 会话恢复入口（Q1 方案 A）：记录最后播放的非默认列表。N57 §2.7 把键从名字换成身份
+    // （`lastListUuid`）；N59 §3.1 把落点从"此刻同步目标 + 停留列表兜底"三级判定收成一级
+    // ——只认**最后一次主动设定的播放目标**，停留位置完全不参与。于是形状 A（从未在非默认
+    // 列表播过、关闭时焦点停在别处）与收编（播放目标真的搬回默认列表）两处错记消失，而 N53
+    // 修订 3 要救的"刷新失败 / 祖先层整枝归位后仍回到那张表"由这份历史记录承载（§3.5）
     // 仅当本次进程发生过播放才更新/清除（A13）：未播放就关闭属于会话延续，
     // 上次保存的键与各列表记忆仍然有效，不得清空。
-    // N53 变更记录 V3 的口径原样保留：同步目标归位默认列表（刷新失败停播 / 祖先层
-    // 整枝）不连坐清键——仍停留在非默认列表时按停留列表落盘，两者都在默认列表才删。
-    // （"停留档是否该存在"另案登记于 N59，本篇不动）
     if (m_playedThisSession) {
-        const Playlist *playing = m_playlist->listOf(m_playlist->playingTabIndex());
-        const Playlist *current = m_playlist->listOf(m_playlist->currentIndex());
-        const Playlist *target = playing && !playing->isDefault()
-                                     ? playing
-                                     : (current && !current->isDefault() ? current : nullptr);
-        if (target)
+        const QUuid target = m_playlist->lastPlayingTargetUuid();
+        if (target != kDefaultListUuid)
             settings.setValue(QStringLiteral("lastListUuid"),
-                              target->uuid().toString(QUuid::StringFormat::WithoutBraces));
+                              target.toString(QUuid::StringFormat::WithoutBraces));
         else
             settings.remove(QStringLiteral("lastListUuid"));
     }
@@ -1977,6 +1972,8 @@ void MainWindow::restoreSettings() {
     // 视图坐标并切换（currentChanged 联动自动选中该表记忆的最后播放项）；查不到或
     // 停在默认列表则不动。旧键 lastTabName 不读也不删（与 windowMaximized 等遗留键
     // 同一口径：读侧删除即自然忽略）
+    // N59 §3.4：键指向已删列表（删除当前列表时不设清理点）就在这道直查上自然落空——
+    // 不切 tab 即落默认列表，无须警告也不须清 INI
     if (const Playlist *last = m_listRegistry->find(
             QUuid::fromString(settings.value(QStringLiteral("lastListUuid")).toString()))) {
         const int idx = m_playlist->tabIndexOfList(last->uuid());
