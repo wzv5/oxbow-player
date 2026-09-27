@@ -217,6 +217,102 @@
     <target>选择目录</target>
 </phrase>
 <phrase>
+    <source>Request canceled: %1</source>
+    <target>请求已取消：%1</target>
+</phrase>
+<phrase>
+    <source>The playlist could not be fetched: %1</source>
+    <target>无法获取播放列表：%1</target>
+</phrase>
+<phrase>
+    <source>Authentication failed (401): %1</source>
+    <target></target>
+</phrase>
+<phrase>
+    <source>Access denied (403): %1</source>
+    <target></target>
+</phrase>
+<phrase>
+    <source>Not found (404): %1</source>
+    <target></target>
+</phrase>
+<phrase>
+    <source>Server error (HTTP %1): %2</source>
+    <target></target>
+</phrase>
+<phrase>
+    <source>Unexpected response (HTTP %1): %2</source>
+    <target></target>
+</phrase>
+<phrase>
+    <source>Request failed (network error): %1</source>
+    <target></target>
+</phrase>
+<phrase>
+    <source>Please enter a playlist path or URL.</source>
+    <target>请输入播放列表路径或 URL。</target>
+</phrase>
+<phrase>
+    <source>The path must be a local file path or an http(s) URL.</source>
+    <target>路径必须是本地文件路径或 http(s) URL。</target>
+</phrase>
+<phrase>
+    <source>The path must point to a playlist file, not a directory.</source>
+    <target>路径必须指向播放列表文件，而不是目录。</target>
+</phrase>
+<phrase>
+    <source>The playlist file does not exist: %1</source>
+    <target>播放列表文件不存在：%1</target>
+</phrase>
+<phrase>
+    <source>No playable entries were found in this playlist.</source>
+    <target>此播放列表中未找到可播放的条目。</target>
+</phrase>
+<phrase>
+    <source>Malformed lines were skipped in this list.</source>
+    <target>此列表中已跳过格式错误的行。</target>
+</phrase>
+<phrase>
+    <source>Some entries request per-entry HTTP headers that this plugin ignores; whether they play depends on the origin.</source>
+    <target>某些条目请求了逐条目的 HTTP 头，但此插件会忽略；它们能否播放取决于源站。</target>
+</phrase>
+<phrase>
+    <source>No path configured.</source>
+    <target>未配置路径。</target>
+</phrase>
+<phrase>
+    <source>HTTP client is not available.</source>
+    <target>HTTP client 不可用。</target>
+</phrase>
+<phrase>
+    <source>Could not read the playlist file: %1</source>
+    <target>无法读取播放列表文件：%1</target>
+</phrase>
+<phrase>
+    <source>External</source>
+    <target>外部</target>
+</phrase>
+<phrase>
+    <source>Browse…</source>
+    <target>浏览…</target>
+</phrase>
+<phrase>
+    <source>Supports m3u and txt playlist formats, or an http(s) URL</source>
+    <target>支持 m3u 和 txt 播放列表格式，或 http(s) URL</target>
+</phrase>
+<phrase>
+    <source>Path</source>
+    <target>路径</target>
+</phrase>
+<phrase>
+    <source>Select Playlist</source>
+    <target>选择播放列表</target>
+</phrase>
+<phrase>
+    <source>Playlist files (*.m3u *.m3u8 *.txt);;All files (*)</source>
+    <target>播放列表文件 (*.m3u *.m3u8 *.txt);;All files (*)</target>
+</phrase>
+<phrase>
     <source>Add Filter</source>
     <target>添加滤镜</target>
 </phrase>
@@ -753,6 +849,10 @@ Video rendering is performed by mpv; this plugin only provides the graphical int
 <phrase>
     <source>Move Backward</source>
     <target>向后移动</target>
+</phrase>
+<phrase>
+    <source>Original Order</source>
+    <target>原始顺序</target>
 </phrase>
 <phrase>
     <source>Reveal in File Explorer</source>
