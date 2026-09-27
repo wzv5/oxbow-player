@@ -35,12 +35,24 @@ class PlaylistListView : public QListWidget {
     // （归一化旧的 entriesLoaded 标志与 m_entities 容器两条并行来源）；
     // loadError 非空 = 本层枚举失败（内容一律清空，行上只剩骨架与占位行）
     struct Level {
-        QList<PlaylistProvider::Container> containers; // 容器组（恒在实体组之前，§2.2）
-        PlaylistEntity::List entities;                 // 实体所有权仓（序 == 实体行序）
-        bool fileMetaLoaded = false;                   // 本层 fileMeta 已全表读取完成
-        bool mediaMetaLoaded = false;                  // 本层 mediaMeta 已全表读取完成
-        QString lastSelectedKey; // 本层上次选中项（实体 key 或容器 id），切层换入时恢复
-        QString loadError;       // 非空 = 本层枚举失败（占位行显示中）
+        // ——N58 §2.2 层元素包装体：序号是"这一层这一次枚举的产物"，与层同寿——
+        // 包装体即层内元素本身：序号随层缓存逐出消失，不进实体接口、不进提供者接口
+        // （Container 是值类型，加字段等于把内部簿记抬进提供者接口）。收编 clone()
+        // 的实体来自别的列表，包装体随新层构造、序号当场重赋
+        struct EntityEntry {
+            PlaylistEntity::Ptr entity;
+            int enumerationIndex = 0;
+        };
+        struct ContainerEntry {
+            PlaylistProvider::Container container;
+            int enumerationIndex = 0;
+        };
+        QList<ContainerEntry> containers; // 容器组（恒在实体组之前，§2.2）
+        QList<EntityEntry> entities;      // 实体所有权仓（序 == 实体行序）
+        bool fileMetaLoaded = false;      // 本层 fileMeta 已全表读取完成
+        bool mediaMetaLoaded = false;     // 本层 mediaMeta 已全表读取完成
+        QString lastSelectedKey;          // 本层上次选中项（实体 key 或容器 id），切层换入时恢复
+        QString loadError;                // 非空 = 本层枚举失败（占位行显示中）
     };
     // 单个 tab 的播放记忆（默认 tab 仅进程内有效，持久化时跳过它）。
     // N9/N26：lastPath 为记忆条目 key（Util::Url::key 归一形态，引用条目身份
@@ -84,7 +96,10 @@ class PlaylistListView : public QListWidget {
     // N45 §2.6）留在 PlaylistWidget，状态在本类——只给引用，不给第二份容器
     QMap<QStringList, Level> &levels();
     // 当前浏览层的实体仓（引用；所有权在 Level）
-    PlaylistEntity::List &entities();
+    QList<Level::EntityEntry> &entries();
+    // 按当前数组下标重编号（N58 §2.3 唯一纪律）：凡层内容集合发生变化的路径，
+    // 全部写入动作完成之后调用一次。调用点全在 PlaylistWidget（写入侧），故不收私有
+    static void renumberEnumerationOrder(Level &lvl);
 
     // ——路径与显示层——
     QStringList browsePathIds() const; // enumerate 的 parent 形态（根层即空序列）

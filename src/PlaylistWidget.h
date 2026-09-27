@@ -559,9 +559,6 @@ class PlaylistWidget : public QTabWidget {
     void sortListItems(PlaylistListView *list, SortRule rule);
 
     // ——N26 实体所有权——
-    // 实体集合访问：返回引用（QHash 值整表拷贝 O(n)，禁按值取）；
-    // 返回引用的生命周期不得跨越可能插入新表项的操作（QHash 重哈希搬移元素）
-    PlaylistEntity::List &entitiesOf(PlaylistListView *list);
     // 行实体读取：占位行 / 无实体行返回 nullptr
     static const PlaylistEntity *entityFromItem(const QListWidgetItem *item);
     // 行实体的共享计数副本：跨嵌套事件循环（右键菜单 exec）持有，

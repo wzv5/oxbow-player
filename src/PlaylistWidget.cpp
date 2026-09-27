@@ -188,8 +188,9 @@ bool PlaylistWidget::eventFilter(QObject *watched, QEvent *event) {
 
 // N57 §2.8：层缓存与路径 / 显示层 / 记忆的定位访问器（browsePathIdsOf /
 // queueRootIdsOf(list) / displayedIdsOf / findLevel / ensureLevel / levelOf /
-// layerLoaded / levelErrorOf / entitiesOf）已随状态搬进 PlaylistListView——
-// 取用形态 `list->findLevel(ids)` 等，外层键不复存在
+// layerLoaded / levelErrorOf）已随状态搬进 PlaylistListView——
+// 取用形态 `list->findLevel(ids)` 等，外层键不复存在（N58：entities() 改名 entries()，
+// 返回层元素包装体表）
 
 // filesOf 双出口的实体版（共用体）：层的实体序列（实体序）。旧 filesOf 读显示行
 // （跳占位行），实体序与显示行在无特殊行时一致；失败层既无实体也无内容行
@@ -197,7 +198,13 @@ bool PlaylistWidget::eventFilter(QObject *watched, QEvent *event) {
 PlaylistEntity::List PlaylistWidget::layerEntitiesOf(int tabIndex, const QStringList &ids) const {
     const PlaylistListView *view = viewAt(tabIndex);
     const Level *lvl = view ? view->findLevel(ids) : nullptr;
-    return lvl ? lvl->entities : PlaylistEntity::List{};
+    if (!lvl)
+        return {};
+    PlaylistEntity::List out;
+    out.reserve(lvl->entities.size());
+    for (const auto &entry : lvl->entities)
+        out.push_back(entry.entity); // 空位原样保留
+    return out;
 }
 
 PlaylistEntity::List PlaylistWidget::queueEntitiesOf(int tabIndex) const {
@@ -219,7 +226,7 @@ PlaylistEntity::Ptr PlaylistWidget::playingEntityOf(int tabIndex, int entityInde
     const Level *lvl = view ? view->findLevel(view->queueRootIds()) : nullptr;
     if (!lvl || entityIndex >= int(lvl->entities.size()))
         return nullptr;
-    return lvl->entities.at(entityIndex);
+    return lvl->entities.at(entityIndex).entity;
 }
 
 // N48/R：实体表 → 喂 mpv 的播放形态。N52：走基类非虚 playUrl 模板
@@ -370,9 +377,13 @@ void PlaylistWidget::rebuildRowsForLevel(PlaylistListView *list, const Level &lv
                                          const QStringList &ids) {
     clearPlaceholder(list);
     list->clear();
-    buildSpecialRows(list, ids, lvl.containers);
-    for (const auto &entity : lvl.entities)
-        makeEntityRow(list, entity);
+    QList<PlaylistProvider::Container> containers; // N58 §2.2：调用点拆包一次
+    containers.reserve(lvl.containers.size());
+    for (const auto &entry : lvl.containers)
+        containers.push_back(entry.container);
+    buildSpecialRows(list, ids, containers);
+    for (const auto &entry : lvl.entities)
+        makeEntityRow(list, entry.entity);
     list->setDisplayedIds(ids);
 }
 
@@ -524,6 +535,14 @@ void PlaylistWidget::rebuildWholeTree(PlaylistListView *list, Level &rootLvl,
             ids.insert(c.id);
         return ids;
     };
+    // 根层容器取 rootLvl——enumeration.containers 已在换入时被 move 走（Qt 的 QList
+    // 移动赋值是 move-and-swap，源必被清空），从这里取恒得空集。
+    // N58：rootLvl 持包装体，校验面与下方的 rootIds 采集都消费裸 Container，
+    // 此处拆包一次（必须无条件编译：rootIds 采集在 Debug 预处理块之外消费它）
+    QList<PlaylistProvider::Container> rootContainers;
+    rootContainers.reserve(rootLvl.containers.size());
+    for (const auto &entry : rootLvl.containers)
+        rootContainers.push_back(entry.container);
 #ifndef QT_NO_DEBUG
     // 义务 3 的唯一性半边：同层容器 id 不得重复（QMap 会静默后者覆盖前者、丢一整层）
     auto checkUniqueIds = [](const QList<PlaylistProvider::Container> &containers) {
@@ -533,9 +552,7 @@ void PlaylistWidget::rebuildWholeTree(PlaylistListView *list, Level &rootLvl,
             seen.insert(c.id);
         }
     };
-    // 根层容器取 rootLvl——enumeration.containers 已在换入时被 move 走（Qt 的 QList
-    // 移动赋值是 move-and-swap，源必被清空），从这里取恒得空集
-    checkUniqueIds(rootLvl.containers);
+    checkUniqueIds(rootContainers);
     for (auto it = enumeration.descendants.constBegin(); it != enumeration.descendants.constEnd();
          ++it)
         checkUniqueIds(it.value().containers);
@@ -546,7 +563,7 @@ void PlaylistWidget::rebuildWholeTree(PlaylistListView *list, Level &rootLvl,
     // 到达，逐键校验时祖先层必已入验收集；链断即整枝拒绝（其子孙因祖先缺席同样被拒）。
     // Debug 断言显影；Release 逐项忽略——权威语义下错键会删层，校验是权威写的
     // 正确性要件。根层容器 id 集取 rootLvl（换入落点），不是 enumeration（已搬空）
-    const QSet<QString> rootIds = containerIdsOf(rootLvl.containers);
+    const QSet<QString> rootIds = containerIdsOf(rootContainers);
     // 验收集：键 → 交付层节点指针（QMap 节点稳定，校验期无增删，指针不悬空）
     QMap<QStringList, PlaylistProvider::LevelData *> accepted;
     for (auto it = enumeration.descendants.begin(); it != enumeration.descendants.end(); ++it) {
@@ -586,14 +603,23 @@ void PlaylistWidget::rebuildWholeTree(PlaylistListView *list, Level &rootLvl,
     // 对无元数据能力的来源有一段"显示出来是未排序的"窗口；零 I/O，与"换入时排"同形
     for (auto it = accepted.begin(); it != accepted.end(); ++it) {
         Level &lvl = list->ensureLevel(it.key());
-        lvl.containers = std::move(it.value()->containers);
+        // N58 §2.2：LevelData 的裸容器 / 裸实体表换入即包成层元素（序号待收尾重编号）
+        lvl.containers.clear();
+        lvl.containers.reserve(it.value()->containers.size());
+        for (auto &c : it.value()->containers)
+            lvl.containers.push_back({std::move(c), 0});
         for (auto &e : it.value()->entities)
             stampOwnership(*e, list->list());
-        lvl.entities = std::move(it.value()->entities);
+        lvl.entities.clear();
+        lvl.entities.reserve(it.value()->entities.size());
+        for (auto &e : it.value()->entities)
+            lvl.entities.push_back({std::move(e), 0});
         lvl.lastSelectedKey.clear();
         lvl.loadError.clear();
         lvl.fileMetaLoaded = false;
         lvl.mediaMetaLoaded = false;
+        // N58 §2.3 表第 2 行：每层写完即重编号，必须早于同函数内当场的 sortLevelData
+        PlaylistListView::renumberEnumerationOrder(lvl);
         sortLevelData(lvl, rule);
     }
 }
@@ -668,9 +694,9 @@ PlaylistEntity::Ptr PlaylistWidget::entityPtrAt(PlaylistListView *list, int row)
     if (idx >= int(entities.size()))
         return nullptr;
     const auto &candidate = entities.at(idx);
-    if (candidate.get() != entityFromItem(list->item(row)))
+    if (candidate.entity.get() != entityFromItem(list->item(row)))
         return nullptr; // 实体/行序不变式被破坏：宁可拒绝也不返回错乱实体
-    return candidate;
+    return candidate.entity;
 }
 
 // N47：行容器的按值副本——容器行按"容器序 == 容器行序"定位容器下标（占位 /
@@ -691,7 +717,7 @@ std::optional<PlaylistProvider::Container> PlaylistWidget::containerAt(PlaylistL
     const auto &containers = lvl->containers;
     if (idx >= int(containers.size()))
         return std::nullopt;
-    const auto &candidate = containers.at(idx);
+    const auto &candidate = containers.at(idx).container;
     if (candidate.id != list->item(row)->data(ContainerRole).toString())
         return std::nullopt; // 容器/行序不变式被破坏：宁可拒绝也不返回错乱容器
     return candidate;
@@ -725,6 +751,9 @@ void PlaylistWidget::eraseEntitiesAt(PlaylistListView *list, const QList<int> &r
     }
     for (int k = idxs.size() - 1; k >= 0; --k)
         entities.erase(entities.begin() + idxs.at(k));
+    // N58 §2.3 表第 6 行：删除族的重编号单点收在本函数（只抹平跳号、不改相对序，
+    // 但统一走一条纪律）
+    PlaylistListView::renumberEnumerationOrder(*lvl);
 }
 
 // 行与实体的角色绑定（建行与换绑共用）：显示名 / 图标 / tooltip / EntityRole
@@ -753,7 +782,8 @@ void PlaylistWidget::stampOwnership(PlaylistEntity &entity, const Playlist *owne
 // EntityRole 存实体裸指针（quintptr），实体所有权随行同步 push 进容器
 QListWidgetItem *PlaylistWidget::makeItem(PlaylistListView *list, PlaylistEntity::Ptr entity) {
     QListWidgetItem *item = makeEntityRow(list, entity);
-    list->entities().push_back(std::move(entity)); // 所有权随行同步入仓（统一经 entitiesOf）
+    // 所有权随行同步入仓；序号随所在路径的收尾重编号归正（N58 §2.3）
+    list->entries().push_back({std::move(entity), 0});
     return item;
 }
 
@@ -832,9 +862,9 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
     const bool sameAsQueueRoot =
         ql && int(ql->entities.size()) == pushed.size() && [ql, &pushed]() {
             for (int i = 0; i < int(ql->entities.size()); ++i) {
-                if (!ql->entities.at(i))
+                if (!ql->entities.at(i).entity)
                     return false;
-                if (ql->entities.at(i)->playUrl() != pushed.at(i))
+                if (ql->entities.at(i).entity->playUrl() != pushed.at(i))
                     return false;
             }
             return true;
@@ -890,11 +920,11 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
     QHash<QString, PlaylistEntity::Ptr> reuse;
     if (const Level *srcLvl = list->findLevel(list->queueRootIds())) {
         for (const auto &src : srcLvl->entities) {
-            if (!src)
+            if (!src.entity)
                 continue;
-            const QString key = src->playUrl();
+            const QString key = src.entity->playUrl();
             if (!reuse.contains(key))
-                reuse.insert(key, src);
+                reuse.insert(key, src.entity);
         }
     }
 
@@ -973,6 +1003,8 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
         if (!Util::Url::isLocal(pushed.at(i)))
             hasRemote = true;
     }
+    // N58 §2.3 表第 5 行：收编重建完成后重编号
+    PlaylistListView::renumberEnumerationOrder(defLvl);
     // N45：收编重建即根层显示——显式落显示层记录，不依赖"默认 tab 恒平铺"不变式
     def->setDisplayedIds(def->queueRootIds());
     // N31：收编内容序 == mpv 会话序，随收编复位默认 tab 排序规则为无序（保留方向，
@@ -1042,6 +1074,8 @@ void PlaylistWidget::addFiles(const QStringList &files) {
         created.push_back(entity);
         makeItem(list, std::move(entity));
     }
+    // N58 §2.3 表第 4 行：追加完成后重编号
+    PlaylistListView::renumberEnumerationOrder(list->levelOf());
     // 非默认本地 tab 添加后持久化（默认 tab 永不落盘，N9/N4 既定）
     if (currentIndex() != 0)
         savePlaylists();
@@ -1137,6 +1171,8 @@ PlaylistEntity::List PlaylistWidget::setDefaultTabFiles(const QStringList &files
         created.push_back(entity);
         makeItem(list, std::move(entity));
     }
+    // N58 §2.3 表第 3 行：清仓重建后重编号
+    PlaylistListView::renumberEnumerationOrder(lvl);
     // N45：直写重建即根层显示（与收编同款，显式落显示层记录）
     list->setDisplayedIds(list->queueRootIds());
     // N31：内容序 == 打开顺序，随直写复位排序规则为无序（保留方向）——否则存量
@@ -1175,7 +1211,7 @@ QString PlaylistWidget::captureMemoryPath(PlaylistListView *list) const {
     const Level *lvl = list->findLevel(list->queueRootIds());
     if (!lvl || mem.lastPos < 0 || mem.lastPos >= int(lvl->entities.size()))
         return {};
-    if (const PlaylistEntity *entity = lvl->entities.at(mem.lastPos).get())
+    if (const PlaylistEntity *entity = lvl->entities.at(mem.lastPos).entity.get())
         return entity->key();
     return {};
 }
@@ -1189,7 +1225,7 @@ void PlaylistWidget::restoreMemoryPath(PlaylistListView *list, const QString &ca
     const int n = lvl ? int(lvl->entities.size()) : 0;
     if (!captured.isEmpty()) {
         for (int i = 0; i < n; ++i) {
-            if (const PlaylistEntity *entity = lvl->entities.at(i).get();
+            if (const PlaylistEntity *entity = lvl->entities.at(i).entity.get();
                 entity && entity->key() == captured) {
                 mem.lastPos = i;
                 list->setMemory(mem);
@@ -1217,7 +1253,8 @@ void PlaylistWidget::rebuildMemoryAfterAdopt(PlaylistListView *list, int playing
         const QString cur = m_mpv->currentPlayingPath();
         if (!cur.isEmpty() && lvl) {
             for (int i = 0; i < int(lvl->entities.size()); ++i) {
-                if (const PlaylistEntity *e = lvl->entities.at(i).get(); e && e->matches(cur)) {
+                if (const PlaylistEntity *e = lvl->entities.at(i).entity.get();
+                    e && e->matches(cur)) {
                     idx = i;
                     break;
                 }
@@ -1225,7 +1262,7 @@ void PlaylistWidget::rebuildMemoryAfterAdopt(PlaylistListView *list, int playing
         }
     }
     const PlaylistEntity *entity = (lvl && idx >= 0 && idx < int(lvl->entities.size()))
-                                       ? lvl->entities.at(idx).get()
+                                       ? lvl->entities.at(idx).entity.get()
                                        : nullptr;
     if (!entity) {
         list->clearMemory();
@@ -1393,7 +1430,7 @@ void PlaylistWidget::recordPlayback(int tabIndex, int pos, double seconds) {
     if (!lvl || pos >= int(lvl->entities.size()))
         return;
     const QString mpvPath = m_mpv ? m_mpv->currentPlayingPath() : QString();
-    const PlaylistEntity *entity = lvl->entities.at(pos).get();
+    const PlaylistEntity *entity = lvl->entities.at(pos).entity.get();
     // N56 §2.5：键级判等经 matches（整形后的回显进判据，归一在实体内部完成）
     if (mpvPath.isEmpty() || !entity || !entity->matches(mpvPath))
         return; // 索引与正播文件对不上：结构变更在途，不写本表记忆
@@ -1431,14 +1468,14 @@ int PlaylistWidget::resumeEntityIndexOf(int tabIndex) const {
     const int n = int(lvl->entities.size());
     // ① 序号处路径校验：一致则信任序号（含重复项场景的精确恢复）
     if (mem.lastPos >= 0 && mem.lastPos < n) {
-        if (const PlaylistEntity *entity = lvl->entities.at(mem.lastPos).get();
+        if (const PlaylistEntity *entity = lvl->entities.at(mem.lastPos).entity.get();
             entity && entity->key() == mem.lastPath)
             return mem.lastPos;
     }
     // ② 序号失效：按路径取第一个命中
     if (!mem.lastPath.isEmpty()) {
         for (int i = 0; i < n; ++i) {
-            if (const PlaylistEntity *entity = lvl->entities.at(i).get();
+            if (const PlaylistEntity *entity = lvl->entities.at(i).entity.get();
                 entity && entity->key() == mem.lastPath)
                 return i;
         }
@@ -1689,7 +1726,7 @@ int PlaylistWidget::entityIndexInLevel(const PlaylistListView *list, const QStri
     if (!lvl)
         return -1;
     for (int i = 0; i < int(lvl->entities.size()); ++i)
-        if (lvl->entities[i] && lvl->entities[i]->matches(itemKey))
+        if (lvl->entities[i].entity && lvl->entities[i].entity->matches(itemKey))
             return i;
     return -1;
 }
@@ -1829,22 +1866,26 @@ void PlaylistWidget::applyEntitiesToRows(PlaylistListView *list, PlaylistEntity:
     // ② 实体行换绑（此时行全为实体行，容器下标 == 行号）
     const int oldRows = list->count();
     const int n = int(entities.size());
-    auto &owned = list->entities();
+    auto &owned = list->entries();
     const int m = qMin(oldRows, n);
     if (int(owned.size()) < m)
         owned.resize(m); // 不变式兜底：容器不得短于待换绑行数，防下标越界
     for (int i = 0; i < m; ++i) {
         PlaylistEntity::Ptr fresh = std::move(entities[i]);
         setItemEntity(list->item(i), fresh);
-        owned[i] = std::move(fresh); // 旧实体在此销毁：行已指向新实体
+        owned[i].entity = std::move(fresh); // 旧实体在此销毁：行已指向新实体（序号沿用原位旧值）
     }
     for (int i = m; i < n; ++i)
         makeItem(list, std::move(entities[i]));
     for (int i = oldRows - 1; i >= n; --i)
         delete list->takeItem(i); // 先删行（此时实体仍在），再缩容器
-    owned.resize(n);              // 容器序恒等于实体行序
+    owned.resize(n);              // 容器序恒等于实体行序（新增元素序号 0，收尾重编号归正）
     // ③ 前导特殊行重建（上一级行 + 容器行插回顶部）
-    buildSpecialRows(list, list->browsePathIds(), list->levelOf().containers);
+    QList<PlaylistProvider::Container> containers; // N58 §2.2：调用点拆包一次
+    containers.reserve(list->levelOf().containers.size());
+    for (const auto &entry : list->levelOf().containers)
+        containers.push_back(entry.container);
+    buildSpecialRows(list, list->browsePathIds(), containers);
     list->setDisplayedIds(list->browsePathIds());
 }
 
@@ -2317,8 +2358,8 @@ void PlaylistWidget::onLoadFinished(const JobContext &ctx,
     if (wholeTreeLanding && ctx.intent == Intent::Refresh) {
         rootOldKeys.reserve(lvl.entities.size());
         for (const auto &e : lvl.entities)
-            if (e)
-                rootOldKeys.push_back(e->key());
+            if (e.entity)
+                rootOldKeys.push_back(e.entity->key());
     }
 
     PlaylistProvider::Enumeration enumeration = std::move(r.value());
@@ -2327,7 +2368,11 @@ void PlaylistWidget::onLoadFinished(const JobContext &ctx,
     Q_ASSERT(ctx.wholeTree || enumeration.descendants.isEmpty());
     if (!enumeration.warnings.isEmpty())
         m_enumWarnings.append(enumeration.warnings); // N37：部分失败警告随成功批次入库
-    lvl.containers = std::move(enumeration.containers);
+    // N58 §2.2：枚举产出的裸容器表换入即包成层元素（序号待收尾重编号）
+    lvl.containers.clear();
+    lvl.containers.reserve(enumeration.containers.size());
+    for (auto &c : enumeration.containers)
+        lvl.containers.push_back({std::move(c), 0});
 
     // N45 §2.10：归位已并入忙时延后家族（revealPlayingItem），在途期浏览路径不被
     // 搬移——批次恒以目标层即显示层完成，此处必然换入。
@@ -2362,12 +2407,20 @@ void PlaylistWidget::onLoadFinished(const JobContext &ctx,
     const bool rowsWereElsewhere = (list->displayedIds() != ctx.parent);
     if (rowsWereElsewhere) {
         list->clear(); // 毁行在前：行上 EntityRole 是实体裸指针，先动实体仓即悬空
-        lvl.entities = std::move(enumeration.entities);
+        // N58 §2.2：枚举产出的裸实体表换入即包成层元素（序号待收尾重编号）
+        lvl.entities.clear();
+        lvl.entities.reserve(enumeration.entities.size());
+        for (auto &e : enumeration.entities)
+            lvl.entities.push_back({std::move(e), 0});
         rebuildRowsForLevel(list, lvl, ctx.parent); // 内部 clear 幂等，并落显示层记录
         restoreLayerSelection(list, lvl);
     } else {
         applyEntitiesToRows(list, std::move(enumeration.entities));
     }
+    // N58 §2.3 表第 1 行：两支换入（跨层 / 同层）共用的收尾重编号——必须早于
+    // rebuildWholeTree 内的当场排序与 advanceTab 对显示层的排序，否则刚换入的
+    // 枚举序被改写成排序序
+    PlaylistListView::renumberEnumerationOrder(lvl);
     // N64：整树形态——换入后整树权威重建（缺席即删、交付即真，簿记随新层重置；
     // 只发生在"刚刚完成一次整树枚举"的收尾里，不新增触发点）
     if (ctx.wholeTree)
@@ -2450,7 +2503,8 @@ void PlaylistWidget::startMetaScan(JobContext ctx, MetaCategory cat) {
     int baseline = 0; // 已求值 / 不支持者：无需计算，但计入进度分母（现状口径）
     // N45 §2.10：预读快照限于任务目标层（ctx.parent）的实体，不再整表采集
     if (const Level *lvl = list->findLevel(ctx.parent)) {
-        for (const auto &entity : lvl->entities) {
+        for (const auto &entry : lvl->entities) {
+            const PlaylistEntity::Ptr &entity = entry.entity;
             // 能力位为假的类别不进求值；已求值者（含"值未知"入缓存）也不重算——
             // 缓存判定必须在 GUI 线程做：任务只算不写，读缓存会与 GUI 侧写入构成数据竞争
             const bool supported = cat == MetaCategory::File ? entity->supportsFileMeta()
@@ -2601,6 +2655,142 @@ void PlaylistWidget::abandonJob() {
         setBusy(false);
 }
 
+// ——N58 §2.4 两个共用比较器（原四处内联比较器副本的收敛）——
+// 形参收层元素包装体：序号与 null 实体都是"层内元素"这一级的事实，收进包装体才能
+// 让新增键只加一处、判空只有一份。三条由既有代码带来的语义逐字保留：
+// 1. "未知值恒归末尾"不参与方向翻转——故 ascending 必须进函数内部，不由调用方外层
+//    flip 包装（外层包装会把"未知归末尾"一起翻掉）；
+// 2. FileNameNumeric 的分段序列只在需要时由调用方提供（sortListItems 预切分一次，
+//    sortLevelData 现算；其余键传空占位）；
+// 3. null 实体按等键保序（applyEntitiesToRows 的 resize 兜底会造出 null 槽位）。
+// 新键 EnumerationOrder 比包装体序号：两侧恒有值、不碰元数据、不属"未知归末尾"档，
+// ascending 照常生效（降序即枚举序反转，与其余键同形）
+
+// 元数据取用档：Evaluated 走惰性 getter（sortListItems——显示层已预读，求值即命中
+// 缓存）；Cached 只读缓存（sortLevelData——作用于任意缓存层，绝不触发同步求值）
+enum class MetaAccess { Evaluated, Cached };
+
+static const Util::SegmentedName s_emptySeg; // 其余键的分段序列空占位
+
+static bool containerLess(SortKey key, const PlaylistListView::Level::ContainerEntry &a,
+                          const PlaylistListView::Level::ContainerEntry &b, bool ascending,
+                          const Util::SegmentedName &segA, const Util::SegmentedName &segB) {
+    const auto flip = [ascending](int c) { return ascending ? c < 0 : c > 0; };
+    const PlaylistProvider::Container &ca = a.container;
+    const PlaylistProvider::Container &cb = b.container;
+    switch (key) {
+    case SortKey::EnumerationOrder:
+        return flip(a.enumerationIndex < b.enumerationIndex
+                        ? -1
+                        : (b.enumerationIndex < a.enumerationIndex ? 1 : 0));
+    case SortKey::FileName:
+        return flip(QString::compare(ca.title, cb.title, Qt::CaseInsensitive));
+    case SortKey::FileNameNumeric:
+        return flip(Util::naturalCompare(segA, segB));
+    case SortKey::Extension: {
+        const int da = ca.title.lastIndexOf(QLatin1Char('.'));
+        const int db = cb.title.lastIndexOf(QLatin1Char('.'));
+        const QString ea = da < 0 ? QString() : ca.title.mid(da + 1);
+        const QString eb = db < 0 ? QString() : cb.title.mid(db + 1);
+        return flip(QString::compare(ea, eb, Qt::CaseInsensitive));
+    }
+    case SortKey::Created:
+    case SortKey::Modified: {
+        const auto &va = ca.meta ? (key == SortKey::Created ? ca.meta->created : ca.meta->modified)
+                                 : std::optional<QDateTime>{};
+        const auto &vb = cb.meta ? (key == SortKey::Created ? cb.meta->created : cb.meta->modified)
+                                 : std::optional<QDateTime>{};
+        if (!va || !vb)
+            return va.has_value() && !vb.has_value(); // 未知恒归末尾，不随方向翻转
+        return flip(*va < *vb ? -1 : (*vb < *va ? 1 : 0));
+    }
+    case SortKey::FileSize: {
+        const auto sa = ca.meta ? ca.meta->size : std::optional<qint64>{};
+        const auto sb = cb.meta ? cb.meta->size : std::optional<qint64>{};
+        if (!sa || !sb)
+            return sa.has_value() && !sb.has_value();
+        return flip(*sa < *sb ? -1 : (*sb < *sa ? 1 : 0));
+    }
+    case SortKey::None:
+    case SortKey::Duration:
+    case SortKey::ReleaseDate:
+        return false; // 对容器恒未知 / 无规则：等键保序
+    }
+    return false;
+}
+
+static bool entityLess(SortKey key, const PlaylistListView::Level::EntityEntry &a,
+                       const PlaylistListView::Level::EntityEntry &b, MetaAccess access,
+                       bool ascending, const Util::SegmentedName &segA,
+                       const Util::SegmentedName &segB) {
+    const PlaylistEntity *pa = a.entity.get();
+    const PlaylistEntity *pb = b.entity.get();
+    if (!pa || !pb)
+        return false; // 防御等键保序（既有判空原样进函数，不得省）
+    const auto flip = [ascending](int c) { return ascending ? c < 0 : c > 0; };
+    auto fileMetaOf = [access](const PlaylistEntity *e) -> const FileMeta * {
+        return access == MetaAccess::Evaluated ? &e->fileMeta() : e->cachedFileMeta();
+    };
+    auto mediaMetaOf = [access](const PlaylistEntity *e) -> const PlaylistEntity::MediaMeta * {
+        return access == MetaAccess::Evaluated ? &e->mediaMeta() : e->cachedMediaMeta();
+    };
+    switch (key) {
+    case SortKey::None:
+        return false;
+    case SortKey::EnumerationOrder:
+        return flip(a.enumerationIndex < b.enumerationIndex
+                        ? -1
+                        : (b.enumerationIndex < a.enumerationIndex ? 1 : 0));
+    case SortKey::FileName:
+        return flip(QString::compare(pa->fileName(), pb->fileName(), Qt::CaseInsensitive));
+    case SortKey::FileNameNumeric:
+        return flip(Util::naturalCompare(segA, segB));
+    case SortKey::Extension:
+        return flip(QString::compare(pa->suffix(), pb->suffix(), Qt::CaseInsensitive));
+    case SortKey::Created:
+    case SortKey::Modified: {
+        const FileMeta *fa = fileMetaOf(pa);
+        const FileMeta *fb = fileMetaOf(pb);
+        const std::optional<QDateTime> va =
+            fa ? (key == SortKey::Created ? fa->created : fa->modified)
+               : std::optional<QDateTime>{};
+        const std::optional<QDateTime> vb =
+            fb ? (key == SortKey::Created ? fb->created : fb->modified)
+               : std::optional<QDateTime>{};
+        if (!va || !vb)
+            return va.has_value() && !vb.has_value();
+        return flip(*va < *vb ? -1 : (*vb < *va ? 1 : 0));
+    }
+    case SortKey::FileSize: {
+        const FileMeta *fa = fileMetaOf(pa);
+        const FileMeta *fb = fileMetaOf(pb);
+        const std::optional<qint64> sa = fa ? fa->size : std::optional<qint64>{};
+        const std::optional<qint64> sb = fb ? fb->size : std::optional<qint64>{};
+        if (!sa || !sb)
+            return sa.has_value() && !sb.has_value();
+        return flip(*sa < *sb ? -1 : (*sb < *sa ? 1 : 0));
+    }
+    case SortKey::Duration:
+    case SortKey::ReleaseDate: {
+        const PlaylistEntity::MediaMeta *ma = mediaMetaOf(pa);
+        const PlaylistEntity::MediaMeta *mb = mediaMetaOf(pb);
+        const bool ha = ma && (key == SortKey::Duration ? ma->duration.has_value()
+                                                        : ma->recordedDate.isValid());
+        const bool hb = mb && (key == SortKey::Duration ? mb->duration.has_value()
+                                                        : mb->recordedDate.isValid());
+        if (!ha || !hb)
+            return ha && !hb;
+        if (key == SortKey::Duration)
+            return flip(*ma->duration < *mb->duration ? -1
+                                                      : (*mb->duration < *ma->duration ? 1 : 0));
+        return flip(ma->recordedDate < mb->recordedDate
+                        ? -1
+                        : (mb->recordedDate < ma->recordedDate ? 1 : 0));
+    }
+    }
+    return false;
+}
+
 // 条目重排核心：行指针摘除 → 稳定排序 → 回填；实体容器按同一 order 重排。
 // 无停止/恢复副作用，四步式流程（sortCurrent）与加载填充共用。
 // N45 §2.6：行序 = [上一级行][容器行…][实体行…]——上一级行恒第 0 行不动；
@@ -2632,130 +2822,52 @@ void PlaylistWidget::sortListItems(PlaylistListView *list, SortRule rule) {
     Q_ASSERT(containerRows.size() == int(lvl->containers.size()));
     Q_ASSERT(entityRows.size() == int(lvl->entities.size()));
 
-    auto flip = [ascending](int c) { return ascending ? c < 0 : c > 0; };
-
-    // ——容器组比较器：title 顶 fileName / suffix，元数据取 FileMeta（无媒体元数据，
-    //    Duration / ReleaseDate 恒未知 → 组内末尾，稳定排序保初始序）——
+    // ——容器组：比较逻辑在共用比较器内（含翻转与未知归末尾），此处只备分段序列——
     QVector<Util::SegmentedName> containerSegs;
     if (key == SortKey::FileNameNumeric) {
         containerSegs.reserve(containerRows.size());
-        for (const PlaylistProvider::Container &c : lvl->containers)
-            containerSegs.push_back(Util::segmentName(c.title));
+        for (const auto &entry : lvl->containers)
+            containerSegs.push_back(Util::segmentName(entry.container.title));
     }
+    auto containerSegAt = [&containerSegs](int i) -> const Util::SegmentedName & {
+        return containerSegs.isEmpty() ? s_emptySeg : containerSegs.at(i);
+    };
     std::vector<int> cOrd(containerRows.size());
     for (int i = 0; i < int(cOrd.size()); ++i)
         cOrd[i] = i;
-    std::stable_sort(cOrd.begin(), cOrd.end(), [key, &lvl, &containerSegs, &flip](int a, int b) {
-        const PlaylistProvider::Container &ca = lvl->containers[a];
-        const PlaylistProvider::Container &cb = lvl->containers[b];
-        switch (key) {
-        case SortKey::FileName:
-            return flip(QString::compare(ca.title, cb.title, Qt::CaseInsensitive));
-        case SortKey::FileNameNumeric:
-            return flip(Util::naturalCompare(containerSegs[a], containerSegs[b]));
-        case SortKey::Extension: {
-            const int da = ca.title.lastIndexOf(QLatin1Char('.'));
-            const int db = cb.title.lastIndexOf(QLatin1Char('.'));
-            const QString ea = da < 0 ? QString() : ca.title.mid(da + 1);
-            const QString eb = db < 0 ? QString() : cb.title.mid(db + 1);
-            return flip(QString::compare(ea, eb, Qt::CaseInsensitive));
-        }
-        case SortKey::Created:
-        case SortKey::Modified: {
-            const auto &va = ca.meta
-                                 ? (key == SortKey::Created ? ca.meta->created : ca.meta->modified)
-                                 : std::optional<QDateTime>{};
-            const auto &vb = cb.meta
-                                 ? (key == SortKey::Created ? cb.meta->created : cb.meta->modified)
-                                 : std::optional<QDateTime>{};
-            if (!va || !vb)
-                return va.has_value() && !vb.has_value();
-            return flip(*va < *vb ? -1 : (*vb < *va ? 1 : 0));
-        }
-        case SortKey::FileSize: {
-            const auto sa = ca.meta ? ca.meta->size : std::optional<qint64>{};
-            const auto sb = cb.meta ? cb.meta->size : std::optional<qint64>{};
-            if (!sa || !sb)
-                return sa.has_value() && !sb.has_value();
-            return flip(*sa < *sb ? -1 : (*sb < *sa ? 1 : 0));
-        }
-        default:
-            return false; // Duration / ReleaseDate 对容器恒未知：等键保序
-        }
+    std::stable_sort(cOrd.begin(), cOrd.end(), [&](int a, int b) {
+        return containerLess(key, lvl->containers[a], lvl->containers[b], ascending,
+                             containerSegAt(a), containerSegAt(b));
     });
 
-    // ——实体组比较器（原有口径逐项保留）——
+    // ——实体组：元数据取用档 = Evaluated（显示层已预读，求值即命中缓存）——
     const int ne = int(lvl->entities.size());
     QVector<Util::SegmentedName> numericSegs;
     if (key == SortKey::FileNameNumeric) {
         numericSegs.resize(ne);
         for (int i = 0; i < ne; ++i)
-            numericSegs[i] =
-                Util::segmentName(lvl->entities[i] ? lvl->entities[i]->fileName() : QString());
+            numericSegs[i] = Util::segmentName(
+                lvl->entities[i].entity ? lvl->entities[i].entity->fileName() : QString());
     }
+    auto entitySegAt = [&numericSegs](int i) -> const Util::SegmentedName & {
+        return numericSegs.isEmpty() ? s_emptySeg : numericSegs.at(i);
+    };
     std::vector<int> eOrd(ne);
     for (int i = 0; i < ne; ++i)
         eOrd[i] = i;
-    std::stable_sort(eOrd.begin(), eOrd.end(), [key, &lvl, &numericSegs, &flip](int ia, int ib) {
-        const PlaylistEntity *a = lvl->entities[ia].get();
-        const PlaylistEntity *b = lvl->entities[ib].get();
-        if (!a || !b)
-            return false; // 防御等键保序
-        switch (key) {
-        case SortKey::None:
-            return false;
-        case SortKey::FileName:
-            return flip(QString::compare(a->fileName(), b->fileName(), Qt::CaseInsensitive));
-        case SortKey::FileNameNumeric:
-            return flip(Util::naturalCompare(numericSegs[ia], numericSegs[ib]));
-        case SortKey::Extension:
-            return flip(QString::compare(a->suffix(), b->suffix(), Qt::CaseInsensitive));
-        case SortKey::Created:
-        case SortKey::Modified: {
-            const FileMeta &fa = a->fileMeta();
-            const FileMeta &fb = b->fileMeta();
-            const auto &va = key == SortKey::Created ? fa.created : fa.modified;
-            const auto &vb = key == SortKey::Created ? fb.created : fb.modified;
-            if (!va.has_value() || !vb.has_value())
-                return va.has_value() && !vb.has_value();
-            return flip(*va < *vb ? -1 : (*vb < *va ? 1 : 0));
-        }
-        case SortKey::FileSize: {
-            const FileMeta &fa = a->fileMeta();
-            const FileMeta &fb = b->fileMeta();
-            if (!fa.size.has_value() || !fb.size.has_value())
-                return fa.size.has_value() && !fb.size.has_value();
-            return flip(*fa.size < *fb.size ? -1 : (*fb.size < *fa.size ? 1 : 0));
-        }
-        case SortKey::Duration:
-        case SortKey::ReleaseDate: {
-            const auto &ma = a->mediaMeta();
-            const auto &mb = b->mediaMeta();
-            const bool ha =
-                key == SortKey::Duration ? ma.duration.has_value() : ma.recordedDate.isValid();
-            const bool hb =
-                key == SortKey::Duration ? mb.duration.has_value() : mb.recordedDate.isValid();
-            if (!ha || !hb)
-                return ha && !hb;
-            if (key == SortKey::Duration)
-                return flip(*ma.duration < *mb.duration ? -1
-                                                        : (*mb.duration < *ma.duration ? 1 : 0));
-            return flip(ma.recordedDate < mb.recordedDate
-                            ? -1
-                            : (mb.recordedDate < ma.recordedDate ? 1 : 0));
-        }
-        }
-        return false;
+    std::stable_sort(eOrd.begin(), eOrd.end(), [&](int ia, int ib) {
+        return entityLess(key, lvl->entities[ia], lvl->entities[ib], MetaAccess::Evaluated,
+                          ascending, entitySegAt(ia), entitySegAt(ib));
     });
 
     // ——Level 数组按新序重排（移动语义）——
     {
-        QList<PlaylistProvider::Container> sortedContainers;
+        QList<Level::ContainerEntry> sortedContainers;
         sortedContainers.reserve(cOrd.size());
         for (int idx : cOrd)
             sortedContainers.push_back(std::move(lvl->containers[idx]));
         lvl->containers = std::move(sortedContainers);
-        PlaylistEntity::List sortedEntities;
+        QList<Level::EntityEntry> sortedEntities;
         sortedEntities.reserve(ne);
         for (int idx : eOrd)
             sortedEntities.push_back(std::move(lvl->entities[idx]));
@@ -2790,108 +2902,29 @@ void PlaylistWidget::sortLevelData(Level &lvl, SortRule rule) {
     const bool ascending = rule.ascending;
     if (key == SortKey::None)
         return;
-    auto flip = [ascending](int c) { return ascending ? c < 0 : c > 0; };
 
-    // ——容器组：与 sortListItems 的容器比较器逐项同口径——
+    // ——容器组：分段序列现算（仅 FileNameNumeric 需要，不在比较器里逐次切分）——
     std::stable_sort(
         lvl.containers.begin(), lvl.containers.end(),
-        [key, &flip](const PlaylistProvider::Container &a, const PlaylistProvider::Container &b) {
-            switch (key) {
-            case SortKey::FileName:
-                return flip(QString::compare(a.title, b.title, Qt::CaseInsensitive));
-            case SortKey::FileNameNumeric:
-                return flip(
-                    Util::naturalCompare(Util::segmentName(a.title), Util::segmentName(b.title)));
-            case SortKey::Extension: {
-                const int da = a.title.lastIndexOf(QLatin1Char('.'));
-                const int db = b.title.lastIndexOf(QLatin1Char('.'));
-                const QString ea = da < 0 ? QString() : a.title.mid(da + 1);
-                const QString eb = db < 0 ? QString() : b.title.mid(db + 1);
-                return flip(QString::compare(ea, eb, Qt::CaseInsensitive));
-            }
-            case SortKey::Created:
-            case SortKey::Modified: {
-                const auto &va =
-                    a.meta ? (key == SortKey::Created ? a.meta->created : a.meta->modified)
-                           : std::optional<QDateTime>{};
-                const auto &vb =
-                    b.meta ? (key == SortKey::Created ? b.meta->created : b.meta->modified)
-                           : std::optional<QDateTime>{};
-                if (!va || !vb)
-                    return va.has_value() && !vb.has_value();
-                return flip(*va < *vb ? -1 : (*vb < *va ? 1 : 0));
-            }
-            case SortKey::FileSize: {
-                const auto sa = a.meta ? a.meta->size : std::optional<qint64>{};
-                const auto sb = b.meta ? b.meta->size : std::optional<qint64>{};
-                if (!sa || !sb)
-                    return sa.has_value() && !sb.has_value();
-                return flip(*sa < *sb ? -1 : (*sb < *sa ? 1 : 0));
-            }
-            default:
-                return false; // Duration / ReleaseDate 对容器恒未知：等键保序
-            }
+        [key, ascending](const Level::ContainerEntry &a, const Level::ContainerEntry &b) {
+            if (key == SortKey::FileNameNumeric)
+                return containerLess(key, a, b, ascending, Util::segmentName(a.container.title),
+                                     Util::segmentName(b.container.title));
+            return containerLess(key, a, b, ascending, s_emptySeg, s_emptySeg);
         });
-    // ——实体组：与 sortListItems 的实体比较器逐项同口径（数据重排不在交互热路径上，
-    //    FileNameNumeric 直接现切分数字段）——
+    // ——实体组：元数据只读缓存（Cached 档），未解析一律按未知——本函数作用于任意
+    //    缓存层（可能从未预读），绝不触发同步求值（GUI 线程冻结隐患，N26 的懒求值
+    //    getter 在此禁用）；未排全的层被显示时经 needsMetaRescan 预读后由 advanceTab
+    //    重排补全
     std::stable_sort(
         lvl.entities.begin(), lvl.entities.end(),
-        [key, &flip](const PlaylistEntity::Ptr &a, const PlaylistEntity::Ptr &b) {
-            if (!a || !b)
-                return false;
-            switch (key) {
-            case SortKey::FileName:
-                return flip(QString::compare(a->fileName(), b->fileName(), Qt::CaseInsensitive));
-            case SortKey::FileNameNumeric:
-                return flip(Util::naturalCompare(Util::segmentName(a->fileName()),
-                                                 Util::segmentName(b->fileName())));
-            case SortKey::Extension:
-                return flip(QString::compare(a->suffix(), b->suffix(), Qt::CaseInsensitive));
-            case SortKey::Created:
-            case SortKey::Modified: {
-                const FileMeta *fa = a->cachedFileMeta();
-                const FileMeta *fb = b->cachedFileMeta();
-                const std::optional<QDateTime> va =
-                    fa ? (key == SortKey::Created ? fa->created : fa->modified)
-                       : std::optional<QDateTime>{};
-                const std::optional<QDateTime> vb =
-                    fb ? (key == SortKey::Created ? fb->created : fb->modified)
-                       : std::optional<QDateTime>{};
-                if (!va || !vb)
-                    return va.has_value() && !vb.has_value();
-                return flip(*va < *vb ? -1 : (*vb < *va ? 1 : 0));
+        [key, ascending](const Level::EntityEntry &a, const Level::EntityEntry &b) {
+            if (key == SortKey::FileNameNumeric) {
+                return entityLess(key, a, b, MetaAccess::Cached, ascending,
+                                  Util::segmentName(a.entity ? a.entity->fileName() : QString()),
+                                  Util::segmentName(b.entity ? b.entity->fileName() : QString()));
             }
-            case SortKey::FileSize: {
-                const FileMeta *fa = a->cachedFileMeta();
-                const FileMeta *fb = b->cachedFileMeta();
-                const std::optional<qint64> sa = fa ? fa->size : std::optional<qint64>{};
-                const std::optional<qint64> sb = fb ? fb->size : std::optional<qint64>{};
-                if (!sa || !sb)
-                    return sa.has_value() && !sb.has_value();
-                return flip(*sa < *sb ? -1 : (*sb < *sa ? 1 : 0));
-            }
-            case SortKey::Duration:
-            case SortKey::ReleaseDate: {
-                const PlaylistEntity::MediaMeta *ma = a->cachedMediaMeta();
-                const PlaylistEntity::MediaMeta *mb = b->cachedMediaMeta();
-                const bool ha = ma && (key == SortKey::Duration ? ma->duration.has_value()
-                                                                : ma->recordedDate.isValid());
-                const bool hb = mb && (key == SortKey::Duration ? mb->duration.has_value()
-                                                                : mb->recordedDate.isValid());
-                if (!ha || !hb)
-                    return ha && !hb;
-                if (key == SortKey::Duration)
-                    return flip(*ma->duration < *mb->duration
-                                    ? -1
-                                    : (*mb->duration < *ma->duration ? 1 : 0));
-                return flip(ma->recordedDate < mb->recordedDate
-                                ? -1
-                                : (mb->recordedDate < ma->recordedDate ? 1 : 0));
-            }
-            case SortKey::None:
-                return false;
-            }
-            return false;
+            return entityLess(key, a, b, MetaAccess::Cached, ascending, s_emptySeg, s_emptySeg);
         });
 }
 
@@ -3135,8 +3168,14 @@ void PlaylistWidget::refreshCurrentTab() {
     // 从不落盘，不回推则枚举返回空表，刷新即清空内容。回推只改内存，不落盘。
     // N45：已加载 = 层在缓存且无失败文案（§2.5）
     if (auto *p = providerOfView(viewAt(tab));
-        list->layerLoaded(list->browsePathIds()) && p && p->supportsModify())
-        p->setItems(list->entities());
+        list->layerLoaded(list->browsePathIds()) && p && p->supportsModify()) {
+        // N58 §2.2：回传面消费裸实体表，此处拆包一次
+        PlaylistEntity::List items;
+        items.reserve(list->entries().size());
+        for (const auto &entry : list->entries())
+            items.push_back(entry.entity);
+        p->setItems(std::move(items));
+    }
     // ② 置位：旧代码在此清 entriesLoaded + loadError。N45 层模型下"未加载"由
     // 收尾覆盖表达：当前层的层仓保留（在途期显示行与实体须保活——recordPlayback
     // 与回刷仍读旧内容），仅清失败文案（旧②同样清它，使回刷在途比对不被失败态拦下）；
@@ -3211,9 +3250,9 @@ void PlaylistWidget::evictListKeys(PlaylistListView *list, const QStringList &id
     if (!list)
         return;
     if (const Level *lvl = list->findLevel(ids))
-        for (const auto &entity : lvl->entities)
-            if (entity)
-                m_duration->remove(entity->key());
+        for (const auto &entry : lvl->entities)
+            if (entry.entity)
+                m_duration->remove(entry.entity->key());
     // 标志复位覆盖全部 tab 的全部层（N45）：跨表遍历留在本类，逐表交给自己清
     for (int i = 0; i < count(); ++i) {
         if (PlaylistListView *every = viewAt(i))
@@ -3231,8 +3270,8 @@ bool PlaylistWidget::anyEntitySupportsMediaMeta(const PlaylistListView *list,
     const Level *lvl = list->findLevel(ids);
     if (!lvl)
         return false;
-    for (const auto &entity : lvl->entities) {
-        if (entity->supportsMediaMeta())
+    for (const auto &entry : lvl->entities) {
+        if (entry.entity->supportsMediaMeta())
             return true;
     }
     return false;
@@ -3245,8 +3284,8 @@ bool PlaylistWidget::anyEntitySupportsFileMeta(const PlaylistListView *list,
     const Level *lvl = list->findLevel(ids);
     if (!lvl)
         return false;
-    for (const auto &entity : lvl->entities) {
-        if (entity->supportsFileMeta())
+    for (const auto &entry : lvl->entities) {
+        if (entry.entity->supportsFileMeta())
             return true;
     }
     return false;
@@ -4104,24 +4143,28 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
     menu.addSeparator();
 
     QMenu *sortMenu = menu.addMenu(tr("Sort"));
-    QAction *sortActions[8];
-    sortActions[0] = sortMenu->addAction(tr("File Name"));
-    sortActions[1] = sortMenu->addAction(tr("File Name (Numeric)"));
-    sortActions[2] = sortMenu->addAction(tr("Extension"));
-    sortActions[3] = sortMenu->addAction(tr("Created"));
-    sortActions[4] = sortMenu->addAction(tr("Modified"));
-    sortActions[5] = sortMenu->addAction(tr("File Size"));
-    sortActions[6] = sortMenu->addAction(tr("Duration"));
-    sortActions[7] = sortMenu->addAction(tr("Released"));
+    QAction *sortActions[9];
+    // N58：Original Order 置首位——回到枚举返回序（文案迁就读者、标识符
+    // SortKey::EnumerationOrder 迁就实现，与 Released ↔ ReleaseDate 同形）
+    sortActions[0] = sortMenu->addAction(tr("Original Order"));
+    sortActions[1] = sortMenu->addAction(tr("File Name"));
+    sortActions[2] = sortMenu->addAction(tr("File Name (Numeric)"));
+    sortActions[3] = sortMenu->addAction(tr("Extension"));
+    sortActions[4] = sortMenu->addAction(tr("Created"));
+    sortActions[5] = sortMenu->addAction(tr("Modified"));
+    sortActions[6] = sortMenu->addAction(tr("File Size"));
+    sortActions[7] = sortMenu->addAction(tr("Duration"));
+    sortActions[8] = sortMenu->addAction(tr("Released"));
     // N18：菜单 action 显式携带 SortKey，解除"菜单数组下标 +1 == 枚举值"的脆弱不变式
-    sortActions[0]->setData(int(SortKey::FileName));
-    sortActions[1]->setData(int(SortKey::FileNameNumeric));
-    sortActions[2]->setData(int(SortKey::Extension));
-    sortActions[3]->setData(int(SortKey::Created));
-    sortActions[4]->setData(int(SortKey::Modified));
-    sortActions[5]->setData(int(SortKey::FileSize));
-    sortActions[6]->setData(int(SortKey::Duration));
-    sortActions[7]->setData(int(SortKey::ReleaseDate));
+    sortActions[0]->setData(int(SortKey::EnumerationOrder));
+    sortActions[1]->setData(int(SortKey::FileName));
+    sortActions[2]->setData(int(SortKey::FileNameNumeric));
+    sortActions[3]->setData(int(SortKey::Extension));
+    sortActions[4]->setData(int(SortKey::Created));
+    sortActions[5]->setData(int(SortKey::Modified));
+    sortActions[6]->setData(int(SortKey::FileSize));
+    sortActions[7]->setData(int(SortKey::Duration));
+    sortActions[8]->setData(int(SortKey::ReleaseDate));
     sortMenu->addSeparator();
     // N9：规则为单选勾选组（与持久化配套），方向互斥勾选且切向即时重排
     for (QAction *a : sortActions)
@@ -4435,8 +4478,14 @@ void PlaylistWidget::reorderList(int fromTab, int toTab) {
 // 条目，与"复制配置"自洽
 void PlaylistWidget::backfillItems(Playlist *list) {
     PlaylistListView *view = viewAt(tabIndexOfList(list->uuid()));
-    if (view && list->provider()->supportsModify() && view->layerLoaded(view->browsePathIds()))
-        list->provider()->setItems(view->entities());
+    if (view && list->provider()->supportsModify() && view->layerLoaded(view->browsePathIds())) {
+        // N58 §2.2：回传面消费裸实体表，此处拆包一次
+        PlaylistEntity::List items;
+        items.reserve(view->entries().size());
+        for (const auto &entry : view->entries())
+            items.push_back(entry.entity);
+        list->provider()->setItems(std::move(items));
+    }
 }
 
 // N62 §2.3：复制——点一下立即产出一张同配置同条目的新表；不弹任何对话框，

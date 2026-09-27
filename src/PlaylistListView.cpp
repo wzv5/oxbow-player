@@ -93,7 +93,18 @@ void PlaylistListView::resetMetaFlags() {
 
 QMap<QStringList, PlaylistListView::Level> &PlaylistListView::levels() { return m_levels; }
 
-PlaylistEntity::List &PlaylistListView::entities() { return levelOf().entities; }
+QList<PlaylistListView::Level::EntityEntry> &PlaylistListView::entries() {
+    return levelOf().entities;
+}
+
+// N58 §2.3：重编号是 O(n)，只发生在内容集合变化的手工 / 换入路径上——天然无空洞
+// 无冲突，删除留下的跳号也被顺手抹平（比较只看相对大小，重编号非必须但统一走一条纪律）
+void PlaylistListView::renumberEnumerationOrder(Level &lvl) {
+    for (int i = 0; i < lvl.containers.size(); ++i)
+        lvl.containers[i].enumerationIndex = i;
+    for (int i = 0; i < lvl.entities.size(); ++i)
+        lvl.entities[i].enumerationIndex = i;
+}
 
 // ——路径与显示层——
 

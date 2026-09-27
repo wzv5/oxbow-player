@@ -15,7 +15,8 @@ struct FileMeta {
 // （它们描述"按实体的哪个字段排"，文件派生名、文件元数据、媒体元数据本就是实体
 // 属性层面的概念）；规则**值**与默认规则归提供者，执行面归视图。
 
-// 排序规则枚举（N4/N9/N18）：None = 添加顺序。取值随提供者持久化（int 落盘）。
+// 排序规则枚举（N4/N9/N18）：None = 不排序、保持层内当前序；EnumerationOrder =
+// 枚举返回序（N58）。取值随提供者持久化（int 落盘）。
 // N18：枚举序与菜单显示顺序解耦——菜单 action 通过 setData(int(SortKey)) 显式携带
 // 键值，派发时按 data 取键，不依赖数组下标 +1 的隐式映射。
 // N57：既有取值冻结在 0..8，新键只准追加末尾（实现侧 static_assert 守候）
@@ -29,6 +30,7 @@ enum class SortKey {
     FileSize,
     Duration,
     ReleaseDate,
+    EnumerationOrder,
 };
 
 // 排序规则值对象（N57 §2.9）：取代提供者侧的两个散字段与视图里的散参数
