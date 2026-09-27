@@ -81,6 +81,8 @@ add_library(mpvqtcore MODULE
     src/DirProvider.h
     src/WebDavProvider.cpp
     src/WebDavProvider.h
+    src/ExternalProvider.cpp
+    src/ExternalProvider.h
     src/LoadingOverlay.cpp
     src/LoadingOverlay.h
     src/PlaylistWidget.cpp
@@ -198,6 +200,8 @@ if(MPVQT_BUILD_TESTS)
         src/DirProvider.h
         src/WebDavProvider.cpp
         src/WebDavProvider.h
+        src/ExternalProvider.cpp
+        src/ExternalProvider.h
         src/PlaylistProvider.cpp
         src/PlaylistProvider.h
         src/ProviderCatalog.cpp
@@ -269,6 +273,7 @@ if(MPVQT_BUILD_TESTS)
     mpvqt_add_test(HttpClient)
     mpvqt_add_test(DirProvider)
     mpvqt_add_test(WebDavProvider)
+    mpvqt_add_test(ExternalProvider)
     mpvqt_add_test(Util)
     mpvqt_add_test(BookmarkManager)
     mpvqt_add_test(StreamTransit)

@@ -6,6 +6,7 @@
 // 键常量、displayName 与工厂，故只有此处包含提供者头文件，其余源文件一律
 // 经 ProviderCatalog.h 取用
 #include "DirProvider.h"
+#include "ExternalProvider.h"
 #include "ProviderSettingsPage.h"
 #include "StaticProvider.h"
 #include "WebDavProvider.h"
@@ -22,6 +23,8 @@ QList<ProviderEntry> buildCatalog() {
          nullptr},
         {kWebDavProviderKey, &WebDavProvider::displayName, &createWebDavSettingsPage,
          &WebDavProvider::load, nullptr},
+        {kExternalProviderKey, &ExternalProvider::displayName, &createExternalSettingsPage,
+         &ExternalProvider::load, nullptr},
     };
     QSet<QString> seen;
     for (int i = 0; i < table.size(); ++i) {

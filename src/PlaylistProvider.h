@@ -223,4 +223,10 @@ class PlaylistProvider {
     static void injectMediaMeta(PlaylistEntity &e, const PlaylistEntity::MediaMeta &m) {
         e.setMediaMeta(m);
     }
+    // N63：显示名注入（外部清单的频道名 / 分组文本的行首名）——实体身份串是远端 URL
+    // 时 deriveNames 派生出的只有末段噪声，标题须由提供者在枚举期主动写入。
+    // 与上面两个注入口同一条授权通道、同一个类内写法（setFilename 为 protected 且
+    // 友元不继承，转发必须有）；setFilename 顺带重算 suffix，并在 title 未被显式
+    // 设置过时同步 title——一次注入同时给到显示名与名称排序键
+    static void injectDisplayName(PlaylistEntity &e, const QString &name) { e.setFilename(name); }
 };
