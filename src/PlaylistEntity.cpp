@@ -108,6 +108,16 @@ QString PlaylistEntity::playUrl() const {
     return provider->playUrl(m_ownerUuid, m_path);
 }
 
+// N65：串 + 逐文件选项的整体出口——与 playUrl() 同一条归属通路、同一个锁失败
+// 处置，消费者封闭于 Playlist::playTargets 一处（合并点经它取提供者级选项）
+PlayTarget PlaylistEntity::playTarget() const {
+    const auto provider = m_ownerProvider.lock();
+    Q_ASSERT(provider && !m_ownerUuid.isNull());
+    if (!provider || m_ownerUuid.isNull())
+        return {};
+    return provider->playTarget(m_ownerUuid, m_path);
+}
+
 // 构造期派生 title / fileName / suffix / key / displayUrl（纯字符串运算 + 一次规范化，
 // 与身份串同生命周期；key() 被委托绘制热路径逐行调用，必须缓存）
 void PlaylistEntity::deriveNames() {

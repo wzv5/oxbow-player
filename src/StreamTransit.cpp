@@ -74,10 +74,4 @@ QString unwrap(const QString &path) {
     return identity;
 }
 
-QVariantMap perFileOptions(const QString &path) {
-    if (!isTransitUri(path))
-        return {};
-    return QVariantMap{{QStringLiteral("cache"), QStringLiteral("yes")}};
-}
-
 } // namespace StreamTransit

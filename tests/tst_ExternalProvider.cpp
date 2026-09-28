@@ -1,4 +1,4 @@
-// ExternalProvider 单元测试（N63）：解析纯函数夹具——直调 parseSource /
+// ExternalProvider 单元测试（N63 / N65）：解析纯函数夹具——直调 parseSource /
 // normalizeSource / validateInput / splitGroupTitles（纯逻辑、不碰网络），枚举形状
 // 用例经本地清单文件走 enumerate（不发起任何网络请求）。覆盖：定形幂等五支 /
 // 参数校验四档 / 三态定性的判据顺序 / 流清单白名单逐个标签与位次限定（VOD 档、
@@ -6,7 +6,9 @@
 // 与条目行 / 异常三档 / 裸 URI 行两支照收 / 同名多源不判重 / 同层同 URL 重复行
 // 不合并 / EXTINF 属性区引号外逗号分界 / 行尾与 BOM / 非法 UTF-8 降级 / 显示名
 // 三档回退链 / group-title 多值拆分 / 一条目入多组的归属份数 / 整树交付形状 /
-// 非空 parent 违约守候 / 三条无计数警告 / INI 往返。
+// 非空 parent 违约守候 / 警告换代与无计数纪律 / N65 条目级单文件选项（两键解析、
+// 键名映射、值原样、后写覆盖、空值跳过、白名单外键、悬空指令、裸目标行、注入与
+// 多组份数）/ INI 往返。
 // 一类一可执行（R5）：ctest --test-dir build -C Debug -R External 跑本套件。
 
 #include "pch.h"
@@ -87,10 +89,23 @@ class TestExternalProvider : public QObject {
     void lineEndingsAndBom();
     // 无 #EXTINF 的裸目标行照收（base M3U 标准形态），标题走回退链末档
     void bareTargetLinesAccepted();
-    // #EXTVLCOPT 取值不落地但出一条警告；#EXTGRP 等未知指令静默忽略
+    // #EXTVLCOPT 白名单键落地进条目选项；#EXTGRP 等未知指令静默忽略
     void extvlcoptAndUnknownDirectives();
     // #EXTINF 悬空到文件尾：不收入、malformed 警告合并为一条
     void danglingExtinf();
+
+    // ——N65：条目级单文件选项（§2.2 / §2.3）——
+
+    // 两键解析矩阵：EXTVLCOPT 行与 EXTINF 引号属性两路来源、键名大小写不敏感、
+    // 后写覆盖（两路同现与同键多行）、空值不注入、键名映射成型、值逐字节原样、
+    // 两键同发互不覆盖、悬空指令行不招 malformed、裸目标行吃得到 pending 选项
+    void perEntryOptions();
+    // 白名单外键：不注入且置"有被忽略的键"旗标（新警告恰一条、串里无键名无计数）；
+    // 无冒号整行按未知指令忽略；分组文本支与裸清单支的 # 行仍不产选项；
+    // 键域恒为 {user-agent, referrer}
+    void perEntryOptionsWhitelistBoundary();
+    // 枚举注入：选项随实体携带（makeEntity 注入），一条目入多组各带一份
+    void perEntryOptionsInjection();
 
     // ——分组文本支（§2.3 / §2.2 第②支）——
 
@@ -394,16 +409,19 @@ void TestExternalProvider::bareTargetLinesAccepted() {
 }
 
 void TestExternalProvider::extvlcoptAndUnknownDirectives() {
+    // N65：白名单键落地进 pending 选项槽、目标行消费（键名映射 user-agent）——
+    // EXTVLCOPT 紧随 #EXTINF 之后（现实两路齐发的顺序，§2.2"属性区先入、其后
+    // EXTVLCOPT 行覆盖同键"）；其余未知指令（含 #EXTGRP）静默忽略；只含白名单
+    // 键的清单不再出现任何警告
     const auto out = parse(QStringLiteral("#EXTM3U x-tvg-url=\"http://epg/x.xml\"\n"
+                                          "#EXTINF:-1,T\n"
                                           "#EXTVLCOPT:http-user-agent=Mozilla\n"
-                                          "#EXTINF:-1,T\nhttp://a/1\n"
+                                          "http://a/1\n"
                                           "#EXTGRP:分组\n#EXT-X-VERSION:3\n# random comment\n"));
-    // 条目照常产出；EXTVLCOPT 一条无计数警告；其余未知指令（含 #EXTGRP）静默忽略
     QCOMPARE(out.entries.size(), 1);
-    QCOMPARE(out.warnings.size(), 1);
-    QCOMPARE(out.warnings.at(0),
-             QStringLiteral("Some entries request per-entry HTTP headers that this plugin "
-                            "ignores; whether they play depends on the origin."));
+    QCOMPARE(out.entries.at(0).options,
+             (QVariantMap{{QStringLiteral("user-agent"), QStringLiteral("Mozilla")}}));
+    QVERIFY(out.warnings.isEmpty());
 }
 
 void TestExternalProvider::danglingExtinf() {
@@ -423,6 +441,246 @@ void TestExternalProvider::danglingExtinf() {
     const auto out2 = parse(QStringLiteral("#EXTINF:-1,dead\n#EXTINF:-1,alive\nhttp://a/1\n"));
     QCOMPARE(out2.entries.size(), 1);
     QCOMPARE(out2.entries.at(0).title, QStringLiteral("alive"));
+}
+
+void TestExternalProvider::perEntryOptions() {
+    // 两键从 #EXTVLCOPT 行解出：键名映射成型、两键同发互不覆盖（EXTVLCOPT
+    // 紧随 #EXTINF 的规范顺序）
+    {
+        const auto out = parse(QStringLiteral("#EXTM3U\n"
+                                              "#EXTINF:-1,T\n"
+                                              "#EXTVLCOPT:http-user-agent=UA1\n"
+                                              "#EXTVLCOPT:http-referrer=http://r/\n"
+                                              "http://a/1\n"));
+        QCOMPARE(out.entries.size(), 1);
+        QCOMPARE(out.entries.at(0).options,
+                 (QVariantMap{{QStringLiteral("user-agent"), QStringLiteral("UA1")},
+                              {QStringLiteral("referrer"), QStringLiteral("http://r/")}}));
+        QVERIFY(out.warnings.isEmpty());
+    }
+    // 两键从 #EXTINF 引号属性解出；裸值形态（到空白止）对这两键不取
+    {
+        const auto out =
+            parse(QStringLiteral("#EXTINF:-1 http-user-agent=\"UA/2.0\" "
+                                 "http-referrer=\"http://r2/\" tvg-name=X,T\nhttp://a/1\n"));
+        QCOMPARE(out.entries.size(), 1);
+        QCOMPARE(out.entries.at(0).options,
+                 (QVariantMap{{QStringLiteral("user-agent"), QStringLiteral("UA/2.0")},
+                              {QStringLiteral("referrer"), QStringLiteral("http://r2/")}}));
+        QCOMPARE(out.entries.at(0).tvgName, QStringLiteral("X"));
+    }
+    {
+        // 裸值 http-user-agent=UA/2.0 more（无引号）会被空白截断——不取，选项为空
+        const auto out =
+            parse(QStringLiteral("#EXTINF:-1 http-user-agent=UA/2.0 more,T\nhttp://a/1\n"));
+        QVERIFY(out.entries.at(0).options.isEmpty());
+    }
+    // 键名大小写不敏感（与既有前缀判定同一口径）
+    {
+        const auto out =
+            parse(QStringLiteral("#EXTINF:-1,T\n#EXTVLCOPT:HTTP-User-Agent=UpperUA\nhttp://a/1\n"));
+        QCOMPARE(out.entries.at(0).options,
+                 (QVariantMap{{QStringLiteral("user-agent"), QStringLiteral("UpperUA")}}));
+    }
+    // 后写覆盖之一：属性区先入，其后 #EXTVLCOPT 行覆盖同键
+    {
+        const auto out = parse(QStringLiteral(
+            "#EXTINF:-1 "
+            "http-user-agent=\"attr-UA\",T\n#EXTVLCOPT:http-user-agent=opt-UA\nhttp://a/1\n"));
+        QCOMPARE(out.entries.at(0).options,
+                 (QVariantMap{{QStringLiteral("user-agent"), QStringLiteral("opt-UA")}}));
+    }
+    // 后写覆盖之二：同键多行，后者覆盖前者
+    {
+        const auto out = parse(QStringLiteral("#EXTM3U\n"
+                                              "#EXTINF:-1,T\n"
+                                              "#EXTVLCOPT:http-referrer=http://first/\n"
+                                              "#EXTVLCOPT:http-referrer=http://second/\n"
+                                              "http://a/1\n"));
+        QCOMPARE(out.entries.at(0).options,
+                 (QVariantMap{{QStringLiteral("referrer"), QStringLiteral("http://second/")}}));
+    }
+    // 空值不注入：等号后为空或全空白 → 键跳过，不发空头、不置旗标（无警告）
+    {
+        const auto out = parse(QStringLiteral("#EXTM3U\n#EXTINF:-1,T\n#EXTVLCOPT:http-user-agent="
+                                              "\n#EXTVLCOPT:http-referrer=   \nhttp://a/1\n"));
+        QCOMPARE(out.entries.size(), 1);
+        QVERIFY(out.entries.at(0).options.isEmpty());
+        QVERIFY(out.warnings.isEmpty());
+    }
+    // 属性区空引号形态同理不注入
+    {
+        const auto out = parse(QStringLiteral("#EXTINF:-1 http-user-agent=\"\",T\nhttp://a/1\n"));
+        QVERIFY(out.entries.at(0).options.isEmpty());
+        QVERIFY(out.warnings.isEmpty());
+    }
+    // 值逐字节原样：含逗号 / 空白 / 反斜杠的取值不被 trim 内部、加前缀或转义——
+    // 成型只做键名映射（plain String 选项不过列表解析器），两条目各验一组
+    {
+        const auto out =
+            parse(QStringLiteral("#EXTM3U\n"
+                                 "#EXTINF:-1,T1\n"
+                                 "#EXTVLCOPT:http-user-agent=Mozilla/5.0 (KHTML, like Gecko) X\n"
+                                 "#EXTVLCOPT:http-referrer=http://h/,q=1&r=2\n"
+                                 "http://a/1\n"
+                                 "#EXTINF:-1,T2\n"
+                                 "#EXTVLCOPT:http-user-agent=back\\slash,comma\n"
+                                 "#EXTVLCOPT:http-referrer=http://h/a\\b\n"
+                                 "http://a/2\n"));
+        QCOMPARE(out.entries.size(), 2);
+        QCOMPARE(out.entries.at(0).options,
+                 (QVariantMap{{QStringLiteral("user-agent"),
+                               QStringLiteral("Mozilla/5.0 (KHTML, like Gecko) X")},
+                              {QStringLiteral("referrer"), QStringLiteral("http://h/,q=1&r=2")}}));
+        QCOMPARE(out.entries.at(1).options,
+                 (QVariantMap{{QStringLiteral("user-agent"), QStringLiteral("back\\slash,comma")},
+                              {QStringLiteral("referrer"), QStringLiteral("http://h/a\\b")}}));
+    }
+    // 值内含 '='：分界取第一个等号，其余归值
+    {
+        const auto out =
+            parse(QStringLiteral("#EXTINF:-1,T\n#EXTVLCOPT:http-user-agent=a=b=c\nhttp://a/1\n"));
+        QCOMPARE(out.entries.at(0).options,
+                 (QVariantMap{{QStringLiteral("user-agent"), QStringLiteral("a=b=c")}}));
+    }
+    // 悬空指令行：#EXTVLCOPT 到文件尾无目标行消费 → 丢弃、不报 malformed
+    {
+        const auto out = parse(QStringLiteral(
+            "#EXTM3U\n#EXTINF:-1,T\nhttp://a/1\n#EXTVLCOPT:http-user-agent=dangling\n"));
+        QCOMPARE(out.entries.size(), 1);
+        QVERIFY(out.entries.at(0).options.isEmpty());
+        QVERIFY(out.warnings.isEmpty());
+    }
+    // 被 #EXTINF 顶替的未消费选项：丢弃，且不串到下一条目（§2.2 悬空条款——
+    // "或被下一条 #EXTINF 顶替"仍没有目标行消费即丢弃；防的是悬空条目的门票
+    // 粘到下一条目上）。先于 #EXTINF 出现的 EXTVLCOPT 同受此规则约束
+    {
+        const auto out = parse(
+            QStringLiteral("#EXTM3U\n#EXTVLCOPT:http-user-agent=lost\n#EXTINF:-1,T\nhttp://a/1\n"));
+        QCOMPARE(out.entries.size(), 1);
+        QVERIFY(out.entries.at(0).options.isEmpty());
+        QVERIFY(out.warnings.isEmpty());
+    }
+    // 无 #EXTINF 的裸目标行也吃得到 pending 选项
+    {
+        const auto out =
+            parse(QStringLiteral("#EXTM3U\n#EXTVLCOPT:http-user-agent=UA\nhttp://a/1\n"));
+        QCOMPARE(out.entries.size(), 1);
+        QCOMPARE(out.entries.at(0).options,
+                 (QVariantMap{{QStringLiteral("user-agent"), QStringLiteral("UA")}}));
+    }
+    // 键域恒为 {user-agent, referrer}：任何输入都不得产第三个键（上文各例的
+    // options 键集已逐一比对，此处再钉一次双键同发时的键集）
+    {
+        const auto out = parse(QStringLiteral(
+            "#EXTM3U\n#EXTVLCOPT:http-user-agent=A\n#EXTVLCOPT:http-referrer=B\nhttp://a/1\n"));
+        QCOMPARE(out.entries.at(0).options.keys().size(), 2);
+        QVERIFY(out.entries.at(0).options.contains(QStringLiteral("user-agent")));
+        QVERIFY(out.entries.at(0).options.contains(QStringLiteral("referrer")));
+    }
+}
+
+void TestExternalProvider::perEntryOptionsWhitelistBoundary() {
+    const QString kNewWarning =
+        QStringLiteral("Some per-entry options in this playlist are not supported and were "
+                       "ignored.");
+    // 白名单外键（VLC 其余旋钮 / 未知键）：不注入、置旗标恰一条、串里不见键名与计数
+    {
+        const auto out = parse(QStringLiteral("#EXTM3U\n"
+                                              "#EXTINF:-1,T\n"
+                                              "#EXTVLCOPT:network-caching=1000\n"
+                                              "#EXTVLCOPT:http-cookie=a=b\n"
+                                              "#EXTVLCOPT:bogus-key=1\n"
+                                              "http://a/1\n"));
+        QCOMPARE(out.entries.size(), 1);
+        QVERIFY(out.entries.at(0).options.isEmpty());
+        QCOMPARE(out.warnings.size(), 1);
+        QCOMPARE(out.warnings.at(0), kNewWarning);
+        QVERIFY(!out.warnings.at(0).contains(QLatin1Char('3'))); // 无计数
+        QVERIFY(!out.warnings.at(0).contains(QStringLiteral("network-caching")));
+        QVERIFY(!out.warnings.at(0).contains(QStringLiteral("cookie")));
+    }
+    // 白名单键与白名单外键混排：白名单键照常落地，警告只在白名单外键时出现
+    {
+        const auto out = parse(QStringLiteral(
+            "#EXTM3U\n#EXTVLCOPT:http-user-agent=UA\n#EXTVLCOPT:input-repeat=1\nhttp://a/1\n"));
+        QCOMPARE(out.entries.at(0).options,
+                 (QVariantMap{{QStringLiteral("user-agent"), QStringLiteral("UA")}}));
+        QCOMPARE(out.warnings.size(), 1);
+        QCOMPARE(out.warnings.at(0), kNewWarning);
+    }
+    // #EXTVLCOPT 后无冒号：整行按未知指令静默忽略——算内容（零条目警告判据）、
+    // 不置旗标、不产选项
+    {
+        const auto out = parse(QStringLiteral(
+            "#EXTM3U\n#EXTVLCOPT http-user-agent=no-colon\n#EXTINF:-1,T\nhttp://a/1\n"));
+        QCOMPARE(out.entries.size(), 1);
+        QVERIFY(out.entries.at(0).options.isEmpty());
+        QVERIFY(out.warnings.isEmpty());
+    }
+    // 无 '=' 的指令行：无值可取，静默忽略、不置旗标
+    {
+        const auto out = parse(
+            QStringLiteral("#EXTM3U\n#EXTVLCOPT:http-user-agent\n#EXTINF:-1,T\nhttp://a/1\n"));
+        QVERIFY(out.entries.at(0).options.isEmpty());
+        QVERIFY(out.warnings.isEmpty());
+    }
+    // 冒号后键为空（"#EXTVLCOPT:=x"）：无键可映射，静默忽略、不置旗标——
+    // "有被忽略的键"只认真键名
+    {
+        const auto out =
+            parse(QStringLiteral("#EXTM3U\n#EXTINF:-1,T\n#EXTVLCOPT:=x\nhttp://a/1\n"));
+        QVERIFY(out.entries.at(0).options.isEmpty());
+        QVERIFY(out.warnings.isEmpty());
+    }
+    // 分组文本支与裸清单支一字不动：# 行静默忽略但算内容，不产选项、不置旗标
+    {
+        // 裸清单支（首个数据行非组行、无 m3u 指令）
+        const auto bare =
+            parse(QStringLiteral("#EXTVLCOPT:http-user-agent=x\nhttp://a/1\nhttp://a/2\n"));
+        QCOMPARE(bare.entries.size(), 2);
+        QVERIFY(bare.entries.at(0).options.isEmpty());
+        QVERIFY(bare.warnings.isEmpty());
+        // 分组文本支
+        const auto grouped =
+            parse(QStringLiteral("G,#genre#\n#EXTVLCOPT:http-user-agent=x\nn,http://a/1\n"));
+        QCOMPARE(grouped.entries.size(), 1);
+        QVERIFY(grouped.entries.at(0).options.isEmpty());
+        QVERIFY(grouped.warnings.isEmpty());
+    }
+    // 旧警告（N63 的 headers ignored 串）在任何输入下都不再出现
+    {
+        const auto out = parse(QStringLiteral(
+            "#EXTM3U\n#EXTVLCOPT:http-user-agent=UA\n#EXTVLCOPT:http-referrer=R\nhttp://a/1\n"));
+        for (const QString &w : out.warnings)
+            QVERIFY2(!w.contains(QStringLiteral("HTTP headers")), qPrintable(w));
+    }
+}
+
+void TestExternalProvider::perEntryOptionsInjection() {
+    // makeEntity 注入：选项随实体携带（playOptions 只读出口）；一条目入多组时
+    // 各现造实体各带一份（互不共享实例）；无选项条目 playOptions 为空
+    LocalList list(QByteArrayLiteral("#EXTM3U\n"
+                                     "#EXTINF:-1 group-title=\"A;B\" "
+                                     "http-user-agent=\"UA/3\",n1\nhttp://a/1\n"
+                                     "#EXTINF:-1 group-title=\"A\",n2\nhttp://a/2\n"));
+    const auto result = list.provider->enumerate({});
+    QVERIFY(result.has_value());
+    QVERIFY(result->entities.empty()); // 两条目均入具名组
+    const auto &levelA = result->descendants[QStringList{QStringLiteral("A")}];
+    const auto &levelB = result->descendants[QStringList{QStringLiteral("B")}];
+    QCOMPARE(levelA.entities.size(), 2);
+    QCOMPARE(levelB.entities.size(), 1);
+    // n1 带选项；n2 无选项（空 map）
+    QCOMPARE(levelA.entities.at(0)->title(), QStringLiteral("n1"));
+    QCOMPARE(levelA.entities.at(0)->playOptions(),
+             (QVariantMap{{QStringLiteral("user-agent"), QStringLiteral("UA/3")}}));
+    QCOMPARE(levelA.entities.at(1)->title(), QStringLiteral("n2"));
+    QVERIFY(levelA.entities.at(1)->playOptions().isEmpty());
+    // B 组里的 n1 副本同样带选项（各现造一份，不共享实例）
+    QVERIFY(levelA.entities.at(0) != levelB.entities.at(0));
+    QCOMPARE(levelB.entities.at(0)->playOptions(),
+             (QVariantMap{{QStringLiteral("user-agent"), QStringLiteral("UA/3")}}));
 }
 
 void TestExternalProvider::groupedTextBasics() {
@@ -543,7 +801,7 @@ void TestExternalProvider::nonEmptyParentIsViolation() {
     const auto result = list.provider->enumerate({QStringLiteral("A")});
     QVERIFY(result.has_value());
     QVERIFY(result->containers.isEmpty());
-    QVERIFY(result->entities.isEmpty());
+    QVERIFY(result->entities.empty()); // 实体表是 std::vector，判空用 empty()
     QVERIFY(result->descendants.isEmpty());
 #else
     QSKIP("Debug 构建下非空 parent 撞 Q_ASSERT（调用方违约显影）；Release 契约返空结果");
@@ -632,19 +890,19 @@ void TestExternalProvider::warningDiscipline() {
     // 空文件：零条目零警告
     QVERIFY(parse(QStringLiteral("")).warnings.isEmpty());
     // 三条警告可同现且文案一律无计数（§2.8）：异常行用控制字符制造——rtsp://
-    // 在条目侧是合法目标（§2.1：清单侧才不允许），不能拿来当异常
+    // 在条目侧是合法目标（§2.1：清单侧才不允许），不能拿来当异常。
+    // N65：白名单外键触发换代后的新警告（取代 N63 的 headers ignored 旧串）
     {
         const auto out = parse(QStringLiteral(
-            "#EXTM3U\n#EXTVLCOPT:http-user-agent=x\n#EXTINF:-1,T\n\x01\n#EXTINF:-1,T2\n"));
+            "#EXTM3U\n#EXTVLCOPT:network-caching=1000\n#EXTINF:-1,T\n\x01\n#EXTINF:-1,T2\n"));
         QVERIFY(out.entries.isEmpty());
         QCOMPARE(out.warnings.size(), 3);
         QVERIFY(out.warnings.contains(
             QStringLiteral("No playable entries were found in this playlist.")));
         QVERIFY(
             out.warnings.contains(QStringLiteral("Malformed lines were skipped in this list.")));
-        QVERIFY(out.warnings.contains(
-            QStringLiteral("Some entries request per-entry HTTP headers that this plugin ignores; "
-                           "whether they play depends on the origin.")));
+        QVERIFY(out.warnings.contains(QStringLiteral(
+            "Some per-entry options in this playlist are not supported and were ignored.")));
     }
 }
 

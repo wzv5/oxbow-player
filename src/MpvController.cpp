@@ -2,8 +2,7 @@
 
 #include "MpvController.h"
 
-#include "StreamTransit.h" // N52：逐文件 cache 申报按 scheme 判定
-#include "Util.h"          // N61 §2.3：回显整形（playlist 条目 filename 进判据前唯一一道加工）
+#include "Util.h" // N61 §2.3：回显整形（playlist 条目 filename 进判据前唯一一道加工）
 
 #include "FilterListWidget.h"
 
@@ -420,13 +419,11 @@ void MpvController::command(const QStringList &args) {
     mpv_command(m_mpv, argv.data());
 }
 
-void MpvController::loadFile(const QString &url, const QString &appendMode) {
-    // 申报口径按 scheme 而非按来源（N52 §2.10）：cache=yes 治的是"mpv 认不出
-    // stream_cb 协议是网络流"，凡走 mpvqt:// 的流一律成立，与传输种类无关——
-    // 故留在 L1 的前缀判定里，不升成 ByteStream 的虚函数。
-    const QVariantMap opts = StreamTransit::perFileOptions(url);
-    if (opts.isEmpty()) {
-        // 既有三参数字符串通道：本地项命令与原行为逐字相同
+void MpvController::loadFile(const QString &url, const QString &appendMode,
+                             const QVariantMap &options) {
+    // N65：纯管道——选项调用方给什么发什么，不判 scheme、不补选项、不校验键名、
+    // 不改值。空 map 走既有三参数字符串通道：本地项命令与原行为逐字相同
+    if (options.isEmpty()) {
         command({QStringLiteral("loadfile"), url, appendMode});
         return;
     }
@@ -438,23 +435,42 @@ void MpvController::loadFile(const QString &url, const QString &appendMode) {
     const QByteArray cmd = QByteArrayLiteral("loadfile");
     const QByteArray urlUtf8 = url.toUtf8();
     const QByteArray modeUtf8 = appendMode.toUtf8();
-    const QByteArray optKey = QByteArrayLiteral("cache");
-    const QByteArray optValue =
-        opts.value(QStringLiteral("cache")).toString().toUtf8(); // 选项值必须字符串形态
 
-    // 选项 map 键值成对：keys[0] = "cache" → values[0] = "yes"。此前曾有实现把
-    // 键与值放进同一个双槽 node 数组再整体交给 values——num=1 时 values[0] 取到
-    // 的是键 "cache"，mpv 实收 cache=cache，choice 校验即报
+    // N65 泛化为 N 键：键数组与值数组同序。每个值一律 .toString() 转成字符串再发
+    // ——实测（mpv 0.41 节点通道）string list 选项喂数组节点会让整条 loadfile 被
+    // 拒（argument options has incompatible type），故不得按 QVariant 类型分派节点
+    // 格式。QByteArray 与 node 向量的生命期覆盖整次调用（mpv_command_node 返回前
+    // 不析构），constData 指针安全
+    const QList<QString> keys = options.keys();
+    std::vector<QByteArray> keyUtf8;
+    std::vector<QByteArray> valueUtf8;
+    keyUtf8.reserve(size_t(keys.size()));
+    valueUtf8.reserve(size_t(keys.size()));
+    for (const QString &key : keys) {
+        keyUtf8.push_back(key.toUtf8());
+        valueUtf8.push_back(options.value(key).toString().toUtf8());
+    }
+    std::vector<char *> keyPtrs;
+    std::vector<mpv_node> valueNodes;
+    keyPtrs.reserve(keyUtf8.size() + 1);
+    valueNodes.reserve(valueUtf8.size());
+    for (size_t i = 0; i < keyUtf8.size(); ++i) {
+        keyPtrs.push_back(const_cast<char *>(keyUtf8[i].constData()));
+        mpv_node optionValue;
+        optionValue.format = MPV_FORMAT_STRING;
+        optionValue.u.string = const_cast<char *>(valueUtf8[i].constData());
+        valueNodes.push_back(optionValue);
+    }
+    keyPtrs.push_back(nullptr);
+
+    // 选项 map 键值成对：keys[i] → values[i]。此前曾有实现把键与值放进同一个
+    // 双槽 node 数组再整体交给 values——num=1 时 values[0] 取到的是键 "cache"，
+    // mpv 实收 cache=cache，choice 校验即报
     // "Error parsing option cache (option parameter could not be parsed)"
-    mpv_node optionValue;
-    optionValue.format = MPV_FORMAT_STRING;
-    optionValue.u.string = const_cast<char *>(optValue.constData());
-
-    char *optionKeys[2] = {const_cast<char *>(optKey.constData()), nullptr};
     mpv_node_list optionMapList;
-    optionMapList.num = 1;
-    optionMapList.keys = optionKeys;
-    optionMapList.values = &optionValue;
+    optionMapList.num = int(valueNodes.size());
+    optionMapList.keys = keyPtrs.data();
+    optionMapList.values = valueNodes.data();
 
     mpv_node argNodes[5];
     argNodes[0].format = MPV_FORMAT_STRING;
@@ -470,6 +486,7 @@ void MpvController::loadFile(const QString &url, const QString &appendMode) {
 
     mpv_node_list argList;
     argList.num = 5;
+    argList.keys = nullptr; // 顶层是数组无键；map 与 array 同用 mpv_node_list，留空防未初始化
     argList.values = argNodes;
 
     mpv_node argRoot;

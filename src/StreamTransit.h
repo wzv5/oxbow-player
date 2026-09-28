@@ -11,8 +11,8 @@
 // fromPercentEncoding 严格互逆。
 //
 // 分层定位：本层是叶子。只依赖 QtCore 字符串运算，不认识 Util、不认识提供者、
-// 不认识 mpv、不认识传输。允许依赖方：Util（折叠点）、MpvController（逐文件
-// 选项）、StreamRelay（open 期 unwrap）。
+// 不认识 mpv、不认识传输。允许依赖方：Util（折叠点）、Playlist（仅 Debug 断言
+// "转接项必带 cache"，N65）、StreamRelay（open 期 unwrap）。
 //
 // 前缀长度纪律（N51 坑 1）：一律由字符串运算得出，禁止手算字面量；派生量只在
 // 本层 .cpp 内部运算，任何其他文件不得复制该数值。
@@ -47,12 +47,5 @@ QUuid listUuidOfUri(const QString &uri);
 // 幂等：可安全重复施加——这是还原折叠点（Util::Url::toIdentity）能常驻
 // 首行的前提。
 QString unwrap(const QString &path);
-
-// 逐文件 loadfile 选项（N52 §2.10）：凡走本协议的流，mpv 的 cache auto 判定
-// 恒判本地（stream_cb 协议不在宿主内置网络协议名单），须逐文件申报 cache=yes。
-// 非本协议返回空 map（调用方走既有无选项通道）。
-// 申报口径按 scheme 而非按来源：cache=yes 治的是"mpv 认不出本协议是网络流"，
-// 与传输种类无关，故留在 L1 前缀判定，不升成 ByteStream 的虚函数。
-QVariantMap perFileOptions(const QString &path);
 
 } // namespace StreamTransit

@@ -102,6 +102,41 @@ QString extinfAttrValue(const QString &attrs, const QString &name) {
     return bare.isNull() ? m.captured(1) : bare;
 }
 
+// N65：#EXTINF 属性区的"仅引号值"取用出口（与 extinfAttrValue 并排同写法）——
+// UA 与 Referer 的取值几乎必然含空白，裸值支会在第一个空白处截断，截半的 UA
+// 比不带 UA 更坏（它让源站拒绝得更彻底，且用户无从看出门票被切过），故这两个
+// 键只认 attr="value" 形态；取到的值走同一个成型出口（mpvOptionNameOf），
+// 两支不各写一份映射。模式同为函数内 static——只编译一次（属性区取值在
+// 大量级清单上是热路径）；match 是 const 操作，枚举任务线程并发调用安全
+QString extinfAttrQuotedValue(const QString &attrs, const QString &name) {
+    static const QRegularExpression userAgentRe(
+        QStringLiteral("(?:^|[\\s])http-user-agent\\s*=\\s*\"([^\"]*)\""),
+        QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression referrerRe(
+        QStringLiteral("(?:^|[\\s])http-referrer\\s*=\\s*\"([^\"]*)\""),
+        QRegularExpression::CaseInsensitiveOption);
+    const bool isUserAgent =
+        name.compare(QLatin1String("http-user-agent"), Qt::CaseInsensitive) == 0;
+    Q_ASSERT(isUserAgent || name.compare(QLatin1String("http-referrer"), Qt::CaseInsensitive) ==
+                                0); // 仅此两个调用点
+    const QRegularExpressionMatch m = (isUserAgent ? userAgentRe : referrerRe).match(attrs);
+    return m.hasMatch() ? m.captured(1) : QString();
+}
+
+// N65：清单白名单键 → 内部存储并直接下发的 mpv 选项名——**成型 = 纯键名映射，
+// 取值一律逐字节原样**：两个键都是 plain String 选项，节点通道实测含逗号、空白、
+// 反斜杠的取值原样到位（不分列、不截断、不 unescape），链路上不存在需要转义的
+// 环节。不在白名单者返回 nullopt，由调用方置"有被忽略的键"旗标。与
+// normalizeTarget / isAnomalousLine 同族定位：文件内静态纯函数，"这份清单的写法
+// → 这个 mpv 选项"是本提供者的私事，别处无用例，不进 Util
+std::optional<QString> mpvOptionNameOf(const QString &vlcKey) {
+    if (vlcKey.compare(QLatin1String("http-user-agent"), Qt::CaseInsensitive) == 0)
+        return QStringLiteral("user-agent");
+    if (vlcKey.compare(QLatin1String("http-referrer"), Qt::CaseInsensitive) == 0)
+        return QStringLiteral("referrer");
+    return std::nullopt;
+}
+
 // 解析基址（§2.3）：http 清单 = 清单 URL（相对目标经 resolved 展开）；本地清单 =
 // 清单文件所在目录（相对目标在此拼接）
 QString baseSourceOf(const QString &source) {
@@ -320,6 +355,8 @@ ExternalProvider::Parsed ExternalProvider::parseSource(const QString &text,
 
     // 解析侧旗标：warnings 只留给结构性异常，一类至多一条、串里不带条数（§2.8）
     bool malformed = false;
+    // N65：hasVlcOpt 语义改窄——只记"出现白名单外的 #EXTVLCOPT 键"（§2.3 警告
+    // 换代），不再记"有 #EXTVLCOPT 行"：白名单两键已落地，带头的清单不再有理由警告
     bool hasVlcOpt = false;
     // 零条目警告的内容判据："空清单（只有 #EXTM3U）"是作者写就的空表、不带警告；
     // 除此之外的任何非空行（注释、异常行、组行）在零条目时都说明"这份东西大概
@@ -332,6 +369,11 @@ ExternalProvider::Parsed ExternalProvider::parseSource(const QString &text,
         QString pendingTitle;
         QString pendingTvgName;
         QStringList pendingGroups;
+        // N65：pending 选项槽——EXTINF 属性区两键先入，其后 #EXTVLCOPT 行覆盖
+        // 同键（后写覆盖按文件序，现实中双载两路取值一致是常态，规则只为异常
+        // 清单求确定性）；目标行消费并清空。独立于 pending 旗标：无 #EXTINF 的
+        // 裸目标行同样吃得到
+        QVariantMap pendingOptions;
         for (const QString &raw : lines) {
             const QString t = raw.trimmed();
             if (t.isEmpty())
@@ -348,6 +390,7 @@ ExternalProvider::Parsed ExternalProvider::parseSource(const QString &text,
                     pendingTitle.clear();
                     pendingTvgName.clear();
                     pendingGroups.clear();
+                    pendingOptions.clear(); // N65：被新 EXTINF 顶替的未消费选项丢弃
                     qsizetype split = -1;
                     bool inQuote = false;
                     for (qsizetype i = 0; i < rest.size(); ++i) {
@@ -370,13 +413,43 @@ ExternalProvider::Parsed ExternalProvider::parseSource(const QString &text,
                     pendingGroups =
                         splitGroupTitles(extinfAttrValue(attrs, QStringLiteral("group-title")));
                     pendingTvgName = extinfAttrValue(attrs, QStringLiteral("tvg-name"));
+                    // N65：属性区两键只认引号值形态（extinfAttrQuotedValue），
+                    // 经成型出口映射为 mpv 选项名先入 pending——属性区先于其后的
+                    // #EXTVLCOPT 行，后写覆盖由文件序天然成立；空值不注入
+                    for (const QString &attr :
+                         {QStringLiteral("http-user-agent"), QStringLiteral("http-referrer")}) {
+                        const QString value = extinfAttrQuotedValue(attrs, attr);
+                        if (!value.isEmpty())
+                            if (const std::optional<QString> name = mpvOptionNameOf(attr))
+                                pendingOptions.insert(*name, value);
+                    }
                     pending = true;
                     sawContent = true;
                 } else if (t.startsWith(QLatin1String("#EXTVLCOPT"), Qt::CaseInsensitive)) {
-                    // 取值不落地（§2.3 末条）；警告让缺口可见，沉默会把结构性缺口
-                    // 误当成一堆坏链接
-                    hasVlcOpt = true;
+                    // N65：取值落地进 pending 槽。行语法：前缀后必须紧跟 ':'（无
+                    // 冒号的写法按未知指令静默忽略——算内容、不置旗标，与全体未知
+                    // # 行同处置）；分界取第一个 '='；键 trim 后大小写不敏感比对；
+                    // 值 = 等号后到行尾、两端 trim（内部空格与逗号一律保留）
                     sawContent = true;
+                    const QString rest = t.mid(10); // "#EXTVLCOPT" 之长
+                    if (!rest.startsWith(QLatin1Char(':')))
+                        continue;
+                    const QString body = rest.mid(1);
+                    const qsizetype eq = body.indexOf(QLatin1Char('='));
+                    if (eq < 0)
+                        continue; // 无 '='：无值可取，静默忽略
+                    const QString key = body.left(eq).trimmed();
+                    const QString value = body.mid(eq + 1).trimmed();
+                    if (key.isEmpty())
+                        continue; // 冒号后键为空（"#EXTVLCOPT:=x"）：无键可映射，
+                                  // 静默忽略——"有被忽略的键"只认真键名（Review 收口）
+                    if (const std::optional<QString> name = mpvOptionNameOf(key)) {
+                        if (!value.isEmpty())                    // 空值不注入：不发一个空头（空串的
+                            pendingOptions.insert(*name, value); // Referer 比不发更糟）
+                    } else {
+                        // 白名单外的键：不下发，置"有被忽略的键"旗标（§2.3 警告换代）
+                        hasVlcOpt = true;
+                    }
                 } else if (!t.startsWith(QLatin1String("#EXTM3U"), Qt::CaseInsensitive)) {
                     // 其余 # 行（#EXTGRP、白名单外 #EXT-X-、注释）：静默忽略，
                     // 不记 warning——一份清单里未知指令成千上万行，逐行 warn 会把
@@ -409,6 +482,11 @@ ExternalProvider::Parsed ExternalProvider::parseSource(const QString &text,
                 entry.groups = pendingGroups;
                 pending = false;
             }
+            // N65：pending 选项随目标行消费并清空——无 #EXTINF 的裸目标行同样
+            // 吃得到（槽独立于 pending 旗标）；到文件尾仍无目标行消费的悬空选项
+            // 静默丢弃，不触发 malformed（#EXTINF 承诺过一条可播条目，指令行没有）
+            entry.options = pendingOptions;
+            pendingOptions.clear();
             // 具名组登记（groupOrder = 首次出现序）：文件序即条目序，条目内按
             // group-title 的拆分序；组只随真实成形的条目登记——被异常档丢掉的
             // 行不带组，不产空组容器
@@ -523,11 +601,13 @@ ExternalProvider::Parsed ExternalProvider::parseSource(const QString &text,
     if (malformed)
         out.warnings.append(trText(
             QT_TRANSLATE_NOOP("ExternalProvider", "Malformed lines were skipped in this list.")));
+    // N65 警告换代：取代 N63 的"headers … ignored"旧串（头已落地，语义作废），
+    // 改判"白名单外的键"。串里不出现计数与键名（键名成千上万，进串等于把警告
+    // 变成日志）；只含白名单两键的清单不再出现任何此类警告
     if (hasVlcOpt)
         out.warnings.append(trText(QT_TRANSLATE_NOOP(
             "ExternalProvider",
-            "Some entries request per-entry HTTP headers that this plugin ignores; whether "
-            "they play depends on the origin.")));
+            "Some per-entry options in this playlist are not supported and were ignored.")));
     return out;
 }
 
@@ -630,6 +710,12 @@ ExternalProvider::enumerate(const QStringList &parent) const {
             name = Util::Url::fileName(entry.target);
         if (!name.isEmpty())
             injectDisplayName(*entity, name);
+        // N65：条目级单文件选项随实体携带——解析内已成型（键 = mpv 选项名，值
+        // 原样），本处只搬运；空 map 不注入（省一次堆分配，"无头"与"有头但被
+        // 剪空"两种形态在 playOptions() 上不可区分）。一条目入多组时各现造实体
+        // 各带一份（与组-条目归属放大同形，不共享实例）
+        if (!entry.options.isEmpty())
+            injectPlayOptions(*entity, entry.options);
         return entity;
     };
     // 每个具名组的层内容各作一项 descendants，键 = {组名}（长度 1、首段 ∈ 根层

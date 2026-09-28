@@ -24,15 +24,17 @@ class MpvController : public QObject {
     void command(const QString &cmd);
     void command(const QStringList &args);
 
-    // N52 §2.10：loadfile 唯一出口。逐文件 cache 申报收口于此——mpv 的 cache
-    // auto 判定按宿主内置网络协议名单，stream_cb 自定义协议恒判本地（缓冲约
-    // 1 秒）；凡走 mpvqt:// 的流按 scheme 判定申报 cache=yes（逐文件选项，随
-    // 条目起播生效、播完自动还原）。空选项走既有三参数字符串通道，本地项命令
-    // 与原行为逐字相同；非空走节点通道。appendMode 由调用方原样传入
-    // append / append-play。
+    // N52 §2.10：loadfile 唯一出口。N65：逐文件选项由调用方**显式**传入（不给
+    // 缺省值——缺省会藏起"这条链路某天忘了带选项"），本函数退成纯管道：不判
+    // scheme、不补选项、不校验键名、不改值（判据只在提供者的解析里，下游一律
+    // 无脑接受、原样推给 mpv）。合并后的 map 为空走既有三参数字符串通道，本地项
+    // 命令与原行为逐字相同；非空走节点通道。转接项的 cache=yes 申报已随串在
+    // 铸造点（PlaylistProvider::playTarget）交出，"转接项必带 cache"的显影由
+    // Playlist::playTargets 的 Debug 断言守候，本函数不再认识 StreamTransit。
+    // appendMode 由调用方原样传入 append / append-play。
     // N60 §2.1 硬约束：同步语义（经 command / mpv_command_node），不得改异步——
     // 它是最主要的列表喂入点
-    void loadFile(const QString &url, const QString &appendMode);
+    void loadFile(const QString &url, const QString &appendMode, const QVariantMap &options);
 
     // N60 §2.2：推送会话的屏障读——异步读 playlist，reply 自带发出时刻的队列
     // 终值，gen 作 reply_userdata 与终点对账配对。返回 false 表示发射失败
@@ -61,7 +63,7 @@ class MpvController : public QObject {
     // 硬约束一：**插件内凡想知道在播哪条，一律走本出口，不得再裸读 path 属性**——实测
     // （mpv 0.41）path 的绝对化基准是 mpv 的 working-directory，而该值取环境变量 PWD、
     // **不等于进程真实 CWD**：从 git-bash 启动时它能拼出一个并不存在的路径，而文件其实
-    // 是从真实 CWD 打开的。filename 才是"队列里那条"，与实体身份、与 playUrls 的下发
+    // 是从真实 CWD 打开的。filename 才是"队列里那条"，与实体身份、与 playTargets 的下发
     // 形态同源（path 是 open 阶段 mangle 的展示值，还会改写分隔符）
     // 硬约束二：**本出口内不得整表现读 playlist，也不得以 playlist/<N>/current 为判据**
     // ——本出口的一个读者挂在 time-pos 心跳上且无节流（实测约 99 Hz）：2000 项表整表

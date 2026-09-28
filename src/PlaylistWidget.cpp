@@ -229,16 +229,18 @@ PlaylistEntity::Ptr PlaylistWidget::playingEntityOf(int tabIndex, int entityInde
     return lvl->entities.at(entityIndex).entity;
 }
 
-// N48/R：实体表 → 喂 mpv 的播放形态。N52：走基类非虚 playUrl 模板
-// 方法——usesTransit() 为假走 directPlayUrl（直发形态），为真铸 mpvqt:// 转接 URI；
+// N48/R：实体表 → 喂 mpv 的播放形态。N52：走基类非虚 playTarget 模板
+// 方法——usesTransit() 为假走 directPlayUrl（直发形态），为真铸 mpvqt:// 转接
+// URI 并随串交出 cache=yes（N65：申报落点在铸造点）；
 // 本出口由此成为全仓唯一能取得"直接形态"的生产调用点（directPlayUrl 已 protected）。
 // 凭据只在此处与 PROPFIND 请求两个使用点注入；本出口只服务下发 mpv 的 loadfile
 // 循环，收编索引与回刷判据和它同源同形（N56 §2.5）。
 // N57 §2.2：整表映射归列表对象（逐实体传它自身身份），本出口只是薄适配——
-// 提供者恒非空后不再有"无提供者按恒等兜底"那一支，越界（无表可寻）按下发空串集
-QStringList PlaylistWidget::playUrls(int tabIndex, const PlaylistEntity::List &entities) const {
+// 提供者恒非空后不再有"无提供者按恒等兜底"那一支，越界（无表可寻）按下发空集
+QVector<PlayTarget> PlaylistWidget::playTargets(int tabIndex,
+                                                const PlaylistEntity::List &entities) const {
     const Playlist *list = listOfView(viewAt(tabIndex));
-    return list ? list->playUrls(entities) : QStringList{};
+    return list ? list->playTargets(entities) : QVector<PlayTarget>{};
 }
 
 // ——N54 列表身份只读出口（书签按身份回跳的查询面）——
@@ -806,7 +808,7 @@ int PlaylistWidget::playingRowOf(const PlaylistListView *list) const {
 // 结构不可达。其余各步的判据不动
 // N56 §2.5 判据 R + N61 §2.1：回显**先过一道整形**再进判据（未定形者补形态，已定形者
 // 逐字节原样——"视图零加工"这句随整形进表即失效），实体侧按所在 tab 的提供者
-// **现算**它会下发的形态（playUrls 的同源产物），逐字节比对——语义是"mpv 手里
+// **现算**它会下发的形态（playTargets 的同源产物），逐字节比对——语义是"mpv 手里
 // 那条串，正是我此刻会推的那条"，仅对未定形项退为"两者所指同一文件"（N61 §2.2 的
 // 让步）。reuse 索引键与判据**同源同形**（同为整形后的这份形态），
 // 否则"命中即克隆、克隆形态 ≠ 回显形态"会让下一次回显又判不一致而重复收编永续
@@ -855,7 +857,7 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
     // 4. 逐行一致即静默：只翻转播放标记，正播行变化才迁移选中+滚动（无重建、无闪烁）。
     // 比对与标记都作用于队列根层；显示层非队列根层时不触碰任何行（标记随层状态，
     // 下次渲染队列根层时由归位权威出口按 mpv 现状重建）。
-    // R：实体侧现算形态 = 归属提供者现算——N55 §2.3 归属化后与 playUrls 的下发路径
+    // R：实体侧现算形态 = 归属提供者现算——N55 §2.3 归属化后与 playTargets 的下发路径
     // 是同一个出口 entity->playUrl()，判据与 reuse 键同形自动成立；"无表按恒等兜底"
     // 的分岔随归属化删除（归属不变式保证显示中实体恒有归属，无表异常态不再可达）
     const Level *ql = list->findLevel(list->queueRootIds());

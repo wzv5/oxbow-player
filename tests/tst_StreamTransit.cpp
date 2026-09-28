@@ -4,8 +4,8 @@
 
 #include "StreamTransit.h"
 
-// N52 L1：mpvqt:// 语法纯函数的契约测试——往返、幂等、形态不合恒等、逐文件
-// 选项与前缀判定。全部为纯字符串断言，无 GUI，无网络。
+// N52 L1：mpvqt:// 语法纯函数的契约测试——往返、幂等、形态不合恒等与前缀判定。
+// 全部为纯字符串断言，无 GUI，无网络。
 // 注意：mint 的凭据拒绝分支由 Q_ASSERT 守候，Debug 构建下构造 userinfo 输入
 // 会触发断言中止，故本套件不覆盖该分支（Release 行为由代码走查确认）。
 
@@ -18,7 +18,6 @@ class TestStreamTransit : public QObject {
     void unwrapIdempotent();
     void unwrapMalformedReturnsAsIs();
     void isTransitUriPrefixOnly();
-    void perFileOptionsByScheme();
     void nilIdentityNeverMatches();
     void prefixNotHandTruncated();
 };
@@ -80,17 +79,6 @@ void TestStreamTransit::isTransitUriPrefixOnly() {
     QVERIFY(!StreamTransit::isTransitUri(QStringLiteral("xmpvqt://abc/def")));
     QVERIFY(!StreamTransit::isTransitUri(QStringLiteral("mpvqt:/abc")));
     QVERIFY(!StreamTransit::isTransitUri(QStringLiteral("https://example.com/mpvqt://x")));
-}
-
-void TestStreamTransit::perFileOptionsByScheme() {
-    const QString uri =
-        StreamTransit::mint(kUuid, QStringLiteral("https://dav.example.com/dav/a.mp4"));
-    const QVariantMap opts = StreamTransit::perFileOptions(uri);
-    QCOMPARE(opts.size(), 1);
-    QCOMPARE(opts.value(QStringLiteral("cache")).toString(), QStringLiteral("yes"));
-
-    QVERIFY(StreamTransit::perFileOptions(QStringLiteral("https://example.com/a.mp4")).isEmpty());
-    QVERIFY(StreamTransit::perFileOptions(QStringLiteral("C:/dir/a.mp4")).isEmpty());
 }
 
 void TestStreamTransit::nilIdentityNeverMatches() {

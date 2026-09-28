@@ -39,6 +39,17 @@ struct SortRule {
     bool ascending = true;
 };
 
+// ——N65：喂 mpv 的单条下发目标（跨层值对象，与 SortRule / FileMeta 同一处：
+// 不住视图也不住控制器）——
+// url = 下发给 loadfile 的串（原 playUrl 链的产物）；options = 随串同发的逐文件
+// 选项（键 = mpv 选项名，值按字符串语义下发——经 loadFile 一律 .toString() 进
+// 节点通道）。两字段在铸造点（提供者 playTarget）同一句 return 里出生，此后
+// 原样搬运，链路上不做任何加工
+struct PlayTarget {
+    QString url;
+    QVariantMap options;
+};
+
 // N29：预读元数据类别（排序键经 metaCategoryOf 映射；None = 该键不依赖元数据）
 enum class MetaCategory {
     None,
@@ -147,6 +158,18 @@ class PlaylistEntity {
     // PlaylistEntity.cpp——实体侧唯一 include 提供者头之处（PlaylistProvider.h 已
     // include 本头，无环）。
     QString playUrl() const;
+    // ——N65：下发目标出口（串 + 逐文件选项的整体）——
+    // 与 playUrl() 同一条归属通路（锁归属提供者现问，委托不是缓存），区别只在
+    // 交出 PlayTarget 整体：转接项的 cache=yes 申报由提供者在铸造点随串一并交出
+    // （N52 §2.10 语义不变、落点搬家——谁知道事实谁就交选项）。消费者封闭于视图
+    // 侧一处（Playlist::playTargets 的合并点取提供者级选项的唯一来源）；线程契约
+    // 与锁失败处置与 playUrl() 相同
+    PlayTarget playTarget() const;
+    // ——N65：条目级单文件选项（只读）——
+    // 存的就是 mpv 选项名 → 最终取值：本字段不做二次加工，写进来什么就发什么
+    // （成型只发生在提供者的解析里）。空 map = 无选项；不参与任何判据、
+    // 不进 key()、不进回显比对
+    const QVariantMap &playOptions() const { return m_playOptions; }
     const QString &title() const { return m_title; } // 列表显示名，恒为有效值（本地回退文件名）
     const QString &fileName() const {
         return m_fileName;
@@ -190,6 +213,11 @@ class PlaylistEntity {
         m_title = std::move(title);
         m_titleSet = true;
     }
+    // ——N65 选项注入口（条目级单文件选项的唯一写点）——
+    // 仅 PlaylistProvider 经友元可及（与 setFileMeta / setMediaMeta 同一条授权
+    // 通道，友元不继承，具体提供者经其静态转发写入）；枚举期一次定死，入列后
+    // 不再改写。值原样存储，本写点不做任何加工
+    void setPlayOptions(QVariantMap options) { m_playOptions = std::move(options); }
 
     // ——N35 服务注册表（基类统一持有，供子类按需取用）——
     // 构造注入：http(s) 实体必传非空（构造内断言）；本地 / 兜底实体沿用缺省空。
@@ -238,21 +266,23 @@ class PlaylistEntity {
     //    未盖章（两成员皆空）时消费形态属调用方违约，走 playUrl() 的断言路径显影。
     // 3. playUrl() 只许 GUI 线程调用：提供者侧端点缓存与 publish 无锁，依赖
     //    "只在 GUI 线程发生"的既有线程口径（PlaylistProvider::playUrl 的断言同款）。
-    // 4. playUrl() 消费者封闭于视图侧四处：Playlist::playUrls 整表映射、
-    //    PlaylistWidget::setPlaylist 第 4 步比对与第 5 步 reuse 索引键、
-    //    MainWindow::onAddBookmark——异步对话框持有的实体副本只读元数据缓存，
-    //    不消费形态。"提供者在位"由消费点封闭与来源失效清扫共同保证（N55 §2.4），
-    //    lock() 失败即契约破坏。
+    // 4. playUrl() 消费者封闭于视图侧四处：Playlist::playTargets 整表映射（经
+    //    playTarget() 取整体）、PlaylistWidget::setPlaylist 第 4 步比对与第 5 步
+    //    reuse 索引键、MainWindow::onAddBookmark——异步对话框持有的实体副本只读
+    //    元数据缓存，不消费形态。"提供者在位"由消费点封闭与来源失效清扫共同保证
+    //    （N55 §2.4），lock() 失败即契约破坏。
     QUuid m_ownerUuid;                                     // 归属列表身份；未盖章为 null
     std::weak_ptr<const PlaylistProvider> m_ownerProvider; // 归属提供者弱引用
     QString m_title;                                       // 构造期派生
     QString m_fileName;                                    // setFilename 可改，改则同步 suffix
     QString m_suffix;                                      // 同上
-    bool m_titleSet = false; // setTitle 显式设置后置位，此后 setFilename 不再联动 title
-    QString m_key;           // 构造期缓存：Util::Url::key(path())——key()
-                             // 在委托绘制热路径上，避免逐行逐帧重算
-    QString m_displayUrl;    // N56：构造期缓存 stripCredentials(path())——显示出口，
-                             // 与 m_key 同款（构造期定死、不可被子类改动）
+    bool m_titleSet = false;   // setTitle 显式设置后置位，此后 setFilename 不再联动 title
+    QString m_key;             // 构造期缓存：Util::Url::key(path())——key()
+                               // 在委托绘制热路径上，避免逐行逐帧重算
+    QString m_displayUrl;      // N56：构造期缓存 stripCredentials(path())——显示出口，
+                               // 与 m_key 同款（构造期定死、不可被子类改动）
+    QVariantMap m_playOptions; // N65：条目级单文件选项（键 = mpv 选项名，值原样；
+                               // 空 map = 无选项，随拷贝构造与 clone() 自动携带）
     mutable std::optional<FileMeta> m_fileMeta;
     mutable std::optional<MediaMeta> m_mediaMeta;
     mutable std::optional<QIcon> m_icon;

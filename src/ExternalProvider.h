@@ -81,6 +81,10 @@ class ExternalProvider : public PlaylistProvider {
         QString title;
         QString tvgName;
         QStringList groups;
+        // N65：条目级单文件选项——键 = mpv 选项名（成型出口做纯键名映射，此后
+        // 链路上不再有第二个名字表），值 = 取值原样（不 trim 内部、不转义、不拼
+        // 前缀）。解析内成型，产出即可直接交给 mpv；空 map = 无选项
+        QVariantMap options;
     };
     // 一次解析的产出：entries 按文件序；groupOrder 为去重后的具名组序（首次出现
     // 序，trim 后按大小写敏感相等并组）；isStreamSource 为流清单标签白名单命中

@@ -1768,16 +1768,17 @@ void MainWindow::onPlayRequested(const PlaylistEntity::List &entities, int tab, 
     // 覆盖整个函数体——析构关批并发屏障读，终点由 onPushBarrier 按屏障自带终值对账。
     // 守卫作用域含末尾的 pause 与图标更新：本批的迟投回显全在吞域之内
     const PlaylistWidget::PushSession session(m_playlist);
-    // R（N56 §2.5）：下发取 playUrls(tab, entities)——喂 mpv 前最后一刻映射的播放
-    // 形态，与回显侧的原样回显、reuse 索引键同源同形
-    const QStringList playFiles = m_playlist->playUrls(tab, entities);
+    // R（N56 §2.5）：下发取 playTargets(tab, entities)——喂 mpv 前最后一刻映射的播放
+    // 形态，与回显侧的原样回显、reuse 索引键同源同形。N65：交 PlayTarget 整体，
+    // 逐文件选项随串下发（合并已收口在 Playlist::playTargets）
+    const QVector<PlayTarget> targets = m_playlist->playTargets(tab, entities);
     // mpv 的 playlist-clear 会保留当前播放的条目，先 stop 才能真正清空
     m_controller->command({QStringLiteral("stop")});
     m_controller->command({QStringLiteral("playlist-clear")});
     // 全部按原顺序 append（不自动播），最后以 playlist-pos 启动目标条目：
     // 既避免 idle 下 append-play 瞬态播放 file[0]，也保持 mpv 列表顺序与界面一致
-    for (int i = 0; i < playFiles.size(); ++i)
-        m_controller->loadFile(playFiles[i], QStringLiteral("append"));
+    for (int i = 0; i < targets.size(); ++i)
+        m_controller->loadFile(targets[i].url, QStringLiteral("append"), targets[i].options);
     if (seekTo > 0.0) {
         // 进度恢复走挂起 seek（与会话恢复同款）：playlist-pos 触发的加载是
         // 异步的，立即 seek 会因文件未就绪而失败；先挂起再启动杜绝竞态，
@@ -1821,13 +1822,15 @@ void MainWindow::onFilesAdded(const PlaylistEntity::List &entities) {
     // 其他 tab 为本地列表，双击播放时整体载入。
     if (!m_playlist->currentIsPlayingTab())
         return;
-    // R（N56 §2.5）：下发取喂 mpv 前最后一刻映射的播放形态（与回显同形）
-    const QStringList playFiles = m_playlist->playUrls(m_playlist->playingTabIndex(), entities);
-    if (playFiles.isEmpty()) // N60 §2.4：空清单早退先于开批（不投屏障、不留空会话）
+    // R（N56 §2.5）：下发取喂 mpv 前最后一刻映射的播放形态（与回显同形）；
+    // N65：PlayTarget 整体——选项随串进 loadfile
+    const QVector<PlayTarget> targets =
+        m_playlist->playTargets(m_playlist->playingTabIndex(), entities);
+    if (targets.isEmpty()) // N60 §2.4：空清单早退先于开批（不投屏障、不留空会话）
         return;
     const PlaylistWidget::PushSession session(m_playlist); // N60 §2.4：逐条 append-play 后关批
-    for (const QString &file : playFiles)
-        m_controller->loadFile(file, QStringLiteral("append-play"));
+    for (const PlayTarget &target : targets)
+        m_controller->loadFile(target.url, QStringLiteral("append-play"), target.options);
 }
 
 void MainWindow::applyLoopMode(const QString &mode) {

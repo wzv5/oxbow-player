@@ -144,11 +144,18 @@ class PlaylistProvider {
     // usesTransit() 为假 → 走 directPlayUrl()（直发形态）；为真 → 铸 mpvqt:// 转接
     // URI 并把端点发布进注册表（发布即下发，N52 §2.6）。这样"把直接形态误当播放
     // 串下发"在编译期就不可能——directPlayUrl 降为 protected，外部拿不到那个钩子。
-    // 实现必须轻（playUrls 是整表逐条调用）：一次哈希查找 + 一次前缀判定 +
-    // 一次百分号编码，零网络。仅在 GUI 线程经 Playlist::playUrls 调用。
+    // 实现必须轻（playTargets 是整表逐条调用）：一次哈希查找 + 一次前缀判定 +
+    // 一次百分号编码，零网络。仅在 GUI 线程经 Playlist::playTargets 调用。
     // N57 §2.4：列表身份由调用方按值传入——提供者不认识列表、也不持有它的身份，
-    // 转接铸造与端点发布所需的身份只是入参（nil 属编程错误，Debug 断言显影）
-    QString playUrl(const QUuid &listUuid, const QString &path) const;
+    // 转接铸造与端点发布所需的身份只是入参（nil 属编程错误，Debug 断言显影）。
+    // N65：出口升为 playTarget——串与它的逐文件选项在同一句 return 里出生
+    // （直发支无选项；转接支随串交出 cache=yes，N52 §2.10 语义一字不改、落点从
+    // 控制器内的 scheme 反推搬回铸造点——谁知道事实谁就交选项）；
+    // playUrl() 保留为薄包装（playTarget(...).url），四个"只要串"的消费者语义不变
+    PlayTarget playTarget(const QUuid &listUuid, const QString &path) const;
+    QString playUrl(const QUuid &listUuid, const QString &path) const {
+        return playTarget(listUuid, path).url;
+    }
 
     // 转接偏好（持久化值）：Optional 返偏好值；Required / Unsupported 返 nullopt
     // （形态不由偏好决定）。参数页回显与 hasChanges 共用此出口
@@ -229,4 +236,9 @@ class PlaylistProvider {
     // 友元不继承，转发必须有）；setFilename 顺带重算 suffix，并在 title 未被显式
     // 设置过时同步 title——一次注入同时给到显示名与名称排序键
     static void injectDisplayName(PlaylistEntity &e, const QString &name) { e.setFilename(name); }
+    // N65：条目级单文件选项注入——与上面三个注入口同一条授权通道、同一个类内写法。
+    // 选项是解析期一次成型的"mpv 选项名 → 取值"map，本出口只搬运不加工
+    static void injectPlayOptions(PlaylistEntity &e, QVariantMap options) {
+        e.setPlayOptions(std::move(options));
+    }
 };

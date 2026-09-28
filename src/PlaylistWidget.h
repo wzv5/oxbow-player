@@ -82,16 +82,17 @@ class PlaylistWidget : public QTabWidget {
     // ——N45 §2.8：filesOf 拆双出口的实体版。凡 mpv 侧语义（上一/下一、循环判定、
     // 回刷比对、收编索引、正播名等）一律读队列根层出口；唯一当前层语义是双击入队。
     // N56 §2.7：字符串表出口退到"喂 mpv 前最后一刻"——凡 mpv 侧语义一律传实体表，
-    // 下发形态（playUrls）在 MainWindow 的统一入口现场映射
+    // 下发形态（playTargets）在 MainWindow 的统一入口现场映射
     PlaylistEntity::List queueEntitiesOf(int tabIndex) const; // 队列根层（mpv 队列的内容基准）
     PlaylistEntity::List currentLayerEntitiesOf(int tabIndex) const; // 当前显示层（入队单位）
-    // N48/R：喂 mpv 的播放形态——逐实体经该 tab 列表的提供者 playUrl 映射（视图中不含
-    // 具体提供者头文件，凭据访问只走基类接口）。N57 §2.2：整表映射归 `Playlist::playUrls`
-    // （逐实体传它自身身份），本出口是薄适配；提供者恒非空后不再有"无提供者按恒等兜底"
-    // 那一支，越界（无表可寻）返回空集。
+    // N48/R：喂 mpv 的播放形态——逐实体经该 tab 列表的提供者 playTarget 映射
+    // （视图中不含具体提供者头文件，凭据访问只走基类接口）。N57 §2.2：整表映射归
+    // `Playlist::playTargets`（逐实体传它自身身份），本出口是薄适配；提供者恒非空
+    // 后不再有"无提供者按恒等兜底"那一支，越界（无表可寻）返回空集。
     // 只用于下发 mpv 的 loadfile 循环；收编索引与回刷判据和它同源同形（N56 §2.5，
-    // N60：在途快照已随推送会话删除，不再有第三处同形者）
-    QStringList playUrls(int tabIndex, const PlaylistEntity::List &entities) const;
+    // N60：在途快照已随推送会话删除，不再有第三处同形者）。N65：交 PlayTarget
+    // 整体（串 + 逐文件选项），Playlist::playTargets 是唯一合并点
+    QVector<PlayTarget> playTargets(int tabIndex, const PlaylistEntity::List &entities) const;
     // N56 §2.7：正播实体——某 tab 队列根层第 entityIndex 项（mpv playlist-pos 语义）。
     // MainWindow 的"以当前内容为对象"取串点（书签 / 聚合器 / duration / OSD 取名）
     // 一律经此取实体，不再读 mpv 属性；越界 / 层不在缓存 / 空位返回空
@@ -222,7 +223,7 @@ class PlaylistWidget : public QTabWidget {
   signals:
     // 请求整表载入并播放 entities 中第 index 个；seekTo > 0 时就绪后恢复到该进度
     // （N4 四步式的进度恢复与此同一通道；发出前已将 tab 标记为正在播放列表）。
-    // N56 §2.7：播放链路改传实体表——MainWindow 据此经 playUrls(tab, entities)
+    // N56 §2.7：播放链路改传实体表——MainWindow 据此经 playTargets(tab, entities)
     // 在喂 mpv 前最后一刻映射播放形态（凭据注入在提供者侧）。
     // N30：keepPaused 为真时载入后保持暂停（四步式在 stop 前读到的 pause 状态）。
     // N62 §2.7 C 档：入参 tab 是**发射时刻由身份现场换算的视图坐标**（与 levelItemReady
