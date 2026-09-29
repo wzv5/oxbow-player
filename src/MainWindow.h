@@ -2,8 +2,6 @@
 
 #include "pch.h"
 
-#include <QPointer>
-
 #include "MpvController.h"
 
 // N54：两处接线要用到嵌套类型（PlaylistWidget::LevelJump / JumpFailure、
@@ -19,7 +17,6 @@ class MarkAggregator;   // N15：章节+书签标记聚合器（定义于 MainWi
 class PlaylistRegistry; // N57：列表注册表（装配顶点创建并持有，注入 PlaylistWidget）
 class PopupCloseWatch;  // N66：弹层关闭观察器（定义于 MainWindow.cpp）
 class StreamRelay;      // N52：mpv 自定义协议适配层（定义于 StreamRelay.h）
-class QWindow;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT

@@ -22,8 +22,6 @@
 #include "TraversalPolicy.h"
 #include "Util.h"
 
-#include <QWindow> // N66：m_videoWidget->windowHandle() 的完整类型（QWindow 层过滤器）
-
 // N15：章节+书签数据与合并规则的唯一持有者（MainWindow.cpp 文件内实现，
 // 头文件仅前向声明）。职责：接收原始章节 → 内部严格 == 去重 + time 升序；
 // 对外提供三视图——去重章节（菜单段/标记基数）、原始章节（全量）、

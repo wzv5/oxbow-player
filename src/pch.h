@@ -17,6 +17,7 @@
 #include <QComboBox>
 #include <QContextMenuEvent>
 #include <QCoreApplication>
+#include <QCursor>
 #include <QDateTime>
 #include <QDeadlineTimer>
 #include <QDebug>
@@ -111,6 +112,7 @@
 #include <QVariantList>
 #include <QVariantMap>
 #include <QWaitCondition>
+#include <QWindow>
 #include <QXmlStreamReader>
 #include <QtConcurrent/QtConcurrentRun>
 #include <QtGlobal>
