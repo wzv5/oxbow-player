@@ -22,6 +22,8 @@
 #include "TraversalPolicy.h"
 #include "Util.h"
 
+#include <QWindow> // N66：m_videoWidget->windowHandle() 的完整类型（QWindow 层过滤器）
+
 // N15：章节+书签数据与合并规则的唯一持有者（MainWindow.cpp 文件内实现，
 // 头文件仅前向声明）。职责：接收原始章节 → 内部严格 == 去重 + time 升序；
 // 对外提供三视图——去重章节（菜单段/标记基数）、原始章节（全量）、
@@ -132,6 +134,35 @@ class MarkAggregator {
     mutable bool m_dirty = true;
 };
 
+// N66 §三-4：弹层 / 模态对话框关闭观察器——app 级过滤的独立承载对象（文件内类，
+// MarkAggregator 同款口径）。不用 MainWindow 自身挂 qApp 过滤：app 路径会把本类
+// 对象的全部事件再送一遍 MainWindow::eventFilter，视频区 dblclick / 滚轮 / 按下等
+// 分支被二次执行（实测：双击全屏连切两次、闪一下即回）。本类只做一件事：顶级弹层
+// 或模态对话框关闭后补一次浮窗显隐重评；以主窗为 parent 随亡，父链保证析构期无
+// 迟到回调
+class PopupCloseWatch : public QObject {
+  public:
+    PopupCloseWatch(std::function<void()> onPopupClosed, QObject *parent)
+        : QObject(parent), m_onPopupClosed(std::move(onPopupClosed)) {}
+
+  protected:
+    bool eventFilter(QObject *watched, QEvent *event) override {
+        // Qt 无 ClosePopup 事件类型，以 Close / Hide 命中为准。观察面：顶级弹层
+        // （Qt::Popup）+ 顶级对话框（QDialog——播放列表自带的列表设置 / 新建 /
+        // 删除确认 / Notice / 加文件均为模态 exec，parent 在浮窗内，§二-9 的
+        // "本轮全为非模态"前提对它们不成立，模态结束必须补重评）
+        if (event->type() == QEvent::Hide || event->type() == QEvent::Close) {
+            if (auto *w = qobject_cast<QWidget *>(watched);
+                w && w->isWindow() && (w->windowType() == Qt::Popup || qobject_cast<QDialog *>(w)))
+                QTimer::singleShot(0, this, m_onPopupClosed); // 完全关闭后再重评
+        }
+        return false;
+    }
+
+  private:
+    std::function<void()> m_onPopupClosed;
+};
+
 MainWindow::MainWindow(MpvController *controller, const QString &configFile,
                        std::shared_ptr<StreamRelay> relay, QWidget *parent)
     : QMainWindow(parent), m_controller(controller), m_configFile(configFile),
@@ -167,6 +198,17 @@ MainWindow::MainWindow(MpvController *controller, const QString &configFile,
     videoPal.setColor(QPalette::Window, Qt::black);
     m_videoWidget->setPalette(videoPal);
     m_videoWidget->installEventFilter(this); // 单击/双击分流
+    // N66 §三-4：唤起固定走 QWindow 层——WA_NativeWindow 置位即有 QWindow，平台
+    // 投递给原生 HWND 的每条 move 由 Qt 无条件转发到该 QWindow，早于 widget 层的
+    // 鼠标追踪门闸，无须开追踪、无回退分支。指针落成员：安装与 eventFilter 比对
+    // 同一个对象，A18 重建主窗平台窗口时该 QWindow 随子 HWND 平移存活
+    m_videoWindow = m_videoWidget->windowHandle();
+    Q_ASSERT(m_videoWindow);
+    if (m_videoWindow)
+        m_videoWindow->installEventFilter(this);
+    // N66 §三-4：弹层关闭补重评经 qApp 级过滤器观察——观察器为独立对象（原因见
+    // PopupCloseWatch 类注释），主窗 eventFilter 只服务对象级过滤
+    qApp->installEventFilter(new PopupCloseWatch([this] { reevaluateOverlays(); }, this));
 
     // 单击/双击区分定时器（N3）：间隔取系统双击间隔
     m_clickTimer = new QTimer(this);
@@ -215,6 +257,7 @@ MainWindow::MainWindow(MpvController *controller, const QString &configFile,
 
 QWidget *MainWindow::createLeftArea() {
     auto *left = new QWidget;
+    m_leftPane = left; // N66：重挂收口的挂回锚点
     auto *layout = new QVBoxLayout(left);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(4);
@@ -267,7 +310,14 @@ QWidget *MainWindow::createLeftArea() {
     bindButton(m_muteButton, m_muteAction);
     seekLayout->addWidget(m_muteButton);
     seekLayout->addWidget(m_volumeSlider);
-    layout->addWidget(seekRow);
+    // N66：进度行与控制行不再直接进左 pane 布局，收进底部条带容器
+    // m_bottomBar（spacing 取左 pane 布局原值 4，视觉零变化），
+    // 占位符的 stretch 不变——容器是全屏期一次 setParent 的重挂单元
+    m_bottomBar = new QWidget;
+    auto *bottomLayout = new QVBoxLayout(m_bottomBar);
+    bottomLayout->setContentsMargins(0, 0, 0, 0);
+    bottomLayout->setSpacing(4);
+    bottomLayout->addWidget(seekRow);
 
     // 第三行：控制按钮行（自适应高度，按钮 36×36 由布局撑开，边框与按钮间距相等）
     auto *controlRow = new QWidget;
@@ -336,7 +386,8 @@ QWidget *MainWindow::createLeftArea() {
     controlLayout->addWidget(m_streamButton);
     controlLayout->addWidget(settingsButton);
     controlLayout->addWidget(m_playlistToggle);
-    layout->addWidget(controlRow);
+    bottomLayout->addWidget(controlRow);
+    layout->addWidget(m_bottomBar); // 左 pane 布局末项（N66 容器）
 
     // A15：全局按钮统一经 bindButton 引用主实例（事件来源 trigger + 启停跟随）
     bindButton(m_playButton, m_actions->action(ActionManager::Id::PlayPause));
@@ -354,6 +405,9 @@ QWidget *MainWindow::createLeftArea() {
 
     connect(m_progressSlider, &QSlider::sliderPressed, this, [this] { m_seeking = true; });
     connect(m_progressSlider, &QSlider::sliderReleased, this, &MainWindow::seekReleased);
+    // N66 §三-4：滑条松手后按光标位置重评浮窗显隐（挂起条件解除；窗口态直通空操作）
+    connect(m_progressSlider, &QSlider::sliderReleased, this, &MainWindow::reevaluateOverlays);
+    connect(m_volumeSlider, &QSlider::sliderReleased, this, &MainWindow::reevaluateOverlays);
     connect(m_volumeSlider, &QSlider::valueChanged, this, [this](int value) {
         applyVolume(
             value); // B14：用户手势统一入口（拖动/点击；回流回写被 QSignalBlocker 拦截不入此）
@@ -956,6 +1010,13 @@ void MainWindow::seekReleased() {
 }
 
 void MainWindow::setPlaylistVisible(bool visible) {
+    if (m_fullscreen) {
+        // N66 §二-7：全屏期 ☰ / Ctrl+L 改义——不触碰 splitter、不改窗口态面板
+        // 可见性、不写 playlistExpanded，只翻右缘自动显示允许位。按钮→动作→本函数
+        // 三条入口在此单点汇聚分流
+        setFullscreenPlaylistEdgeEnabled(visible);
+        return;
+    }
     if (visible) {
         // 锚点必须在改变可见性前取：setVisible 只让布局失效、重排可能异步，
         // 晚读会拿到已被挤窄的宽度（A20 坑 2）
@@ -972,6 +1033,7 @@ void MainWindow::setPlaylistVisible(bool visible) {
     }
     // 三个控件的状态统一由本函数收口（A12）：启动恢复路径不经过
     // 按钮→动作链，若不同步 QAction，两者分叉会导致首次点击空转
+    m_playlistVisibleTruth = visible; // N66：窗口态可见性真相成员（唯一写点，saveSettings 读此）
     {
         QSignalBlocker blocker(m_playlistToggle);
         m_playlistToggle->setChecked(visible);
@@ -1285,12 +1347,14 @@ void MainWindow::moveEvent(QMoveEvent *event) {
     QMainWindow::moveEvent(event);
     repositionNavigator();
     repositionVideoOverlay();
+    repositionFullscreenOverlays(); // N66：全屏期两条带贴边跟随
 }
 
 void MainWindow::resizeEvent(QResizeEvent *event) {
     QMainWindow::resizeEvent(event);
     repositionNavigator();
     repositionVideoOverlay();
+    repositionFullscreenOverlays(); // N66：全屏期两条带贴边跟随
     // N3：showFullScreen/showNormal 改变的是主窗尺寸，主窗 resize 是
     // 全屏/还原后视频区几何同步的可靠最终触发点（幂等）
     syncVideoGeometry();
@@ -1343,6 +1407,162 @@ void MainWindow::syncVideoGeometry() {
         m_videoWidget->setGeometry(QRect(origin, m_videoPlaceholder->size()));
     }
     repositionVideoOverlay();
+    repositionFullscreenOverlays(); // N66：两条带几何与视频区对位同源（§三-3 挂载点并列）
+}
+
+// ---- N66：全屏浮窗控制栏与播放列表 ----
+
+// §三-3：全屏态 ☰ 语义的唯一收口——翻转右缘自动显示允许位 + 重评显隐 + 按 A12
+// 口径同步 ☰ 与动作勾选态。允许位与窗口态可见性互不污染：本函数不碰 splitter
+// 与 setPlaylistVisible
+void MainWindow::setFullscreenPlaylistEdgeEnabled(bool enabled) {
+    if (m_fsPlaylistEdgeEnabled == enabled)
+        return;
+    m_fsPlaylistEdgeEnabled = enabled;
+    // §二-7：关闭且正在显示 → 立即收起；开启 → 不自动显示，等边缘触发
+    if (!enabled)
+        setOverlayShown(Overlay::Playlist, false);
+    {
+        QSignalBlocker toggleBlocker(m_playlistToggle);
+        m_playlistToggle->setChecked(enabled);
+    }
+    {
+        QSignalBlocker actionBlocker(m_playlistAction);
+        m_playlistAction->setChecked(enabled);
+    }
+    reevaluateOverlays(); // 关闭且未显示 / 开启两档：按光标位置与新允许位定态
+}
+
+// §三-2：两个宿主浮窗按需创建（同 ensureNavigator / ensureVideoOverlay 的生命周期：
+// 首次进全屏才构造，成员指针为 null 即未创建）。焦点标志两窗分叉（§二-1）：控制栏带
+// WindowDoesNotAcceptFocus（控件全 NoFocus 无须键盘）；播放列表不带——搜索框与列表
+// 键盘导航需要激活窗口，点它成为活动窗口后快捷键经 Qt::Tool + parent 回落仍作用主窗
+void MainWindow::ensureFullscreenOverlays() {
+    if (m_controlOverlay)
+        return;
+    const auto makeOverlay = [this](bool acceptFocus) {
+        auto *w =
+            new QWidget(this, Qt::Tool | Qt::FramelessWindowHint |
+                                  (acceptFocus ? Qt::WindowFlags() : Qt::WindowDoesNotAcceptFocus));
+        w->setAttribute(Qt::WA_ShowWithoutActivating);
+        auto *lay = new QVBoxLayout(w);
+        lay->setContentsMargins(0, 0, 0, 0);
+        lay->setSpacing(0);
+        lay->setSizeConstraint(QLayout::SetNoConstraint); // B12：几何不被内容 sizeHint 反推
+        w->installEventFilter(this);                      // §三-4：Leave 收起
+        return w;
+    };
+    m_controlOverlay = makeOverlay(false);
+    m_playlistOverlay = makeOverlay(true);
+    // §二-8：左缘拖宽热区——宿主被面板子控件全覆盖、自身收不到鼠标事件，以宿主内
+    // 手动几何的透明子条承载 6px 热区（按下即隐式鼠标 grab，拖出浮窗事件仍可达）
+    m_fsResizeStrip = new QWidget(m_playlistOverlay);
+    m_fsResizeStrip->setCursor(Qt::SizeHorCursor);
+    m_fsResizeStrip->installEventFilter(this);
+}
+
+// §三-3：重挂收口。QLayout::addWidget 代办 setParent，但 Qt 契约的重挂隐式隐藏
+// 必须由调用方显式恢复——重挂后控件自身保持 visible，显隐由宿主浮窗唯一控制
+// （§二-2 "两浮窗均 Hidden" 的 Hidden 落在宿主上：宿主不 show，控件就不上屏）
+void MainWindow::reparentIntoOverlay(QWidget *what, QWidget *host) {
+    host->layout()->addWidget(what);
+    what->setVisible(true);
+}
+
+// §三-3：挂回原位——播放列表回 splitter（末位追加即索引 1，左 pane 恒在 0，
+// 只恢复对象树形状，可见性由 §二-2 ④ 按窗口态真相恢复）；控制栏回左 pane 布局
+// 末项（控制行窗口态常显，随挂回直接恢复）
+void MainWindow::restoreOriginalParent(QWidget *what) {
+    if (what == m_playlist) {
+        m_splitter->addWidget(m_playlist);
+        m_playlist->setVisible(false);
+    } else {
+        m_leftPane->layout()->addWidget(what);
+        what->setVisible(true);
+    }
+}
+
+// §三-3：浮窗显隐唯一出口（§三-5 末条：显隐只经此，不在别处直接 setVisible/show）。
+// 播放列表浮窗隐藏前按焦点归还纪律把键盘焦点送回主窗（§二-1），杜绝焦点滞留已隐藏窗口
+void MainWindow::setOverlayShown(Overlay which, bool shown) {
+    QWidget *overlay = which == Overlay::ControlBar ? m_controlOverlay : m_playlistOverlay;
+    if (!overlay || overlay->isVisible() == shown)
+        return;
+    if (!shown && which == Overlay::Playlist) {
+        if (auto *fw = QApplication::focusWidget(); fw && overlay->isAncestorOf(fw)) {
+            setFocus();
+            activateWindow();
+        }
+    }
+    overlay->setVisible(shown);
+    if (shown)
+        overlay->raise(); // §二-6：各浮窗 show 时自行 raise，互不干预对方 Z 序
+}
+
+// §三-4：按当前光标位置重评一次（滑条松手 / 拖宽松手 / 弹层关闭 / 对话框关闭共用）
+void MainWindow::reevaluateOverlays() {
+    if (m_fullscreen)
+        evaluateOverlayVisibility(mapFromGlobal(QCursor::pos()));
+}
+
+// §二-4：边缘触发区分区判据的唯一实现，一次判定同时定两态，不可能双命中
+// （底区与右区不共享角落）。判定顺序先挂起后互斥切换（§二-5：被挂起的浮窗
+// 不被另一条触发区的唤起动作顶掉）
+void MainWindow::evaluateOverlayVisibility(const QPoint &clientPos) {
+    if (!m_fullscreen || !m_controlOverlay)
+        return;
+    const int W = width();
+    const int H = height();
+    const int t = App::fullscreenEdgeTriggerWidth();
+    const bool inBottom = clientPos.y() >= H - m_bottomBarHeight && clientPos.x() < W - t;
+    const bool inRight = clientPos.x() >= W - t && clientPos.y() < H - m_bottomBarHeight;
+    // §二-5 挂起条件：滑条按下挂起控制栏（收起会让用户看不见正在拖的目标）；拖宽
+    // 进行中整个状态机挂起——光标随缘扫过底区不应意外唤出控制栏，播放列表同理不收；
+    // 活动弹层两浮窗一并挂起（菜单项落在浮窗之外，光标移向菜单会先触发 Leave）
+    const bool popup = QApplication::activePopupWidget() != nullptr;
+    const bool holdControl =
+        m_progressSlider->isSliderDown() || m_volumeSlider->isSliderDown() || popup || m_fsResizing;
+    const bool holdPlaylist = m_fsResizing || popup;
+    // §二-3 "光标停在浮窗内无限期保持显示"：已显示的浮窗以自身矩形保活（Leave 收起
+    // 的等价判据），触发带只负责唤出——否则拖宽松手 / 弹层关闭等重评点会因光标不在
+    // 16px 触发带内而把浮窗误收起。保活兼作让位规则：光标已被某浮窗占住时，另一条
+    // 带在该位置不再唤出——两浮窗矩形在底部重叠带确实相交，"不同时可见"靠这条让位
+    // 维持。浮窗 geometry() 为全局坐标，光标须先转全局再比对（本地坐标混比在副屏即错）
+    const QPoint globalPos = mapToGlobal(clientPos);
+    const bool cursorOnControl =
+        m_controlOverlay->isVisible() && m_controlOverlay->geometry().contains(globalPos);
+    const bool cursorOnPlaylist =
+        m_playlistOverlay->isVisible() && m_playlistOverlay->geometry().contains(globalPos);
+    const bool controlTarget = (inBottom && !cursorOnPlaylist) || cursorOnControl;
+    const bool playlistTarget =
+        !controlTarget && ((inRight && m_fsPlaylistEdgeEnabled) || cursorOnPlaylist);
+    if (!holdControl)
+        setOverlayShown(Overlay::ControlBar, controlTarget);
+    if (!holdPlaylist)
+        setOverlayShown(Overlay::Playlist, playlistTarget);
+}
+
+// §三-3：两条带几何——控制栏贴底满宽高 h；播放列表贴右满高宽 m_fsPlaylistWidth
+// （钳制在面板下限与客户区宽 50%，§二-8）。挂载点与 repositionVideoOverlay 完全并列。
+// 顶级浮窗 setGeometry 取全局屏幕坐标（repositionVideoOverlay 先 mapToGlobal 同口径），
+// 故按主窗客户区的全局矩形定位——本地 rect 只在全屏所在屏原点恰为 (0,0) 时数值巧合
+// 相等，副屏下两条带会整体漂到主屏原点
+void MainWindow::repositionFullscreenOverlays() {
+    if (!m_fullscreen || !m_controlOverlay)
+        return;
+    const QRect client(mapToGlobal(QPoint(0, 0)), rect().size());
+    const int h = m_bottomBarHeight;
+    m_controlOverlay->setGeometry(QRect(client.left(), client.bottom() - h + 1, client.width(), h));
+    if (m_playlistOverlay) {
+        const int w = qBound(m_playlist->minimumWidth(), m_fsPlaylistWidth, client.width() / 2);
+        m_playlistOverlay->setGeometry(
+            QRect(client.right() - w + 1, client.top(), w, client.height()));
+        if (m_fsResizeStrip) { // 热区条随宿主高度走（手动几何，不进布局）
+            m_fsResizeStrip->setGeometry(0, 0, App::fullscreenResizeHotspotWidth(),
+                                         m_playlistOverlay->height());
+            m_fsResizeStrip->raise(); // 面板重挂后可能盖住热区条，恒置顶兜底
+        }
+    }
 }
 
 // N10：普通态窗口自适应当前视频——视频域尽可能物理像素 1:1（逻辑尺寸 =
@@ -1395,6 +1615,11 @@ void MainWindow::toggleFullscreen() {
         // A18：快照扩为整矩形（含位置），无框方案的普通态退出恢复需要
         m_preFsMaximized = isMaximized();
         m_preFsRect = m_preFsMaximized ? normalGeometry() : geometry();
+        // N66 §二-2：窗口态真相快照——顶端快照点（与 m_preFsRect 同点，主窗仍是
+        // 普通几何）。show() 之后主窗已重排成全屏尺度，左 pane 宽度那时读到的是
+        // "屏宽 − 列表宽"，拿它作退出锚点会把窗口重新撑大。面板可见性读真相成员
+        // （与 isVisible() 等值，见成员注释）
+        m_preFsLeftWidth = m_splitter->widget(0)->width();
         // 导航器 zoom/pan 先存后写零：复位=保持比例填充全屏（第三节）
         m_savedZoom = m_controller->propertyDouble(QStringLiteral("video-zoom"), 0.0);
         m_savedPanX = m_controller->propertyDouble(QStringLiteral("video-pan-x"), 0.0);
@@ -1408,8 +1633,8 @@ void MainWindow::toggleFullscreen() {
         if (m_navigator)
             m_navigator->hide();
         m_navigatorAction->setEnabled(false);
-        // A20：全屏禁用播放列表切换（禁动作即禁快捷键；禁用不影响 setChecked 同步）
-        m_playlistAction->setEnabled(false);
+        // N66 §二-7：全屏期播放列表动作保持可用（原 A20 禁用口径作废，改义见
+        // setPlaylistVisible 的全屏分流）
         m_fullscreen = true;
         m_refitAfterFullscreen = false; // 进全屏清空：仅记录"本次全屏期内是否换片"
         // A18 无框手动几何全屏：绕开 WindowFullScreen 状态机（其进出必经
@@ -1430,8 +1655,34 @@ void MainWindow::toggleFullscreen() {
         setGeometry(screen()->geometry()); // 窗口所在屏，覆盖任务栏区
         show();
         syncVideoGeometry(); // 铺满后视频区对位；随后的 resizeEvent 幂等兜底
+        // N66 §二-2：主窗落定后装配浮窗（A18 flags 重建已收敛，owned 浮窗可安全
+        // 装配）——重挂控制栏、记高度与全屏宽度初值、定几何；两浮窗恒 Hidden 进全屏
+        ensureFullscreenOverlays();
+        reparentIntoOverlay(m_bottomBar, m_controlOverlay);
+        reparentIntoOverlay(m_playlist, m_playlistOverlay);            // §二-2：面板同批重挂
+        m_bottomBarHeight = qMax(1, m_bottomBar->sizeHint().height()); // 记录时钳位，判据与几何同源
+        if (m_fsPlaylistWidth <= 0) // 进程内记忆首取窗口态宽度（为零用默认值，§二-8）
+            m_fsPlaylistWidth = m_playlistWidth > 0 ? m_playlistWidth : App::playlistDefaultWidth();
+        repositionFullscreenOverlays();
+        // N66 §二-7：☰ / 动作勾选态切到允许位（QSignalBlocker 挡在回调外，A12 口径；
+        // 退出时置回窗口态真相，两向同步都在回调外完成）
+        {
+            QSignalBlocker toggleBlocker(m_playlistToggle);
+            m_playlistToggle->setChecked(m_fsPlaylistEdgeEnabled);
+        }
+        {
+            QSignalBlocker actionBlocker(m_playlistAction);
+            m_playlistAction->setChecked(m_fsPlaylistEdgeEnabled);
+        }
     } else {
         m_fullscreen = false;
+        // N66 §二-2 ①：改 flags 前只收浮窗、把两控件挂回原位（②只恢复对象树形状，
+        // 播放列表可见性与宽度联动留到 ④ 主窗几何落定之后；控制行窗口态常显，
+        // 可见性随挂回直接恢复）
+        setOverlayShown(Overlay::ControlBar, false);
+        setOverlayShown(Overlay::Playlist, false);
+        restoreOriginalParent(m_bottomBar);
+        restoreOriginalParent(m_playlist);
         // A18：恢复有框样式触发重建（自动隐藏），新窗口几何继承自全屏矩形。
         // 趁隐藏期植入快照几何——它随即成为最大化"还原位置"，取消最大化
         // 时精确回到进全屏前的尺寸；再按快照分流显示
@@ -1443,6 +1694,24 @@ void MainWindow::toggleFullscreen() {
             show();
         menuBar()->show(); // 恢复菜单栏（布局重排会经占位符事件链触发几何同步）
         syncVideoGeometry();
+        // N66 §二-2 ④：主窗几何落定后按窗口态恢复面板可见性与宽度。锚点用进全屏前
+        // 记下的左 pane 宽度直调（挂回后现读必被新默认分配污染，A20 坑 2）；调用时机
+        // 必须在 flags / setGeometry / show() 之后（该函数读当前外框与所在屏，全屏
+        // 矩形上算出的目标宽度是错的）。最大化分支经既有 isMaximized 守卫早退，
+        // 与 A20 窗口态语义一致
+        m_playlist->setVisible(m_playlistVisibleTruth);
+        if (m_playlistVisibleTruth)
+            applyPlaylistGeometry(true, m_preFsLeftWidth);
+        // N66 §二-7：☰ 与 m_playlistAction 勾选态置回窗口态真相（A12 口径，
+        // QSignalBlocker 挡在回调外，否则勾选态被钉在错误来源上）
+        {
+            QSignalBlocker toggleBlocker(m_playlistToggle);
+            m_playlistToggle->setChecked(m_playlistVisibleTruth);
+        }
+        {
+            QSignalBlocker actionBlocker(m_playlistAction);
+            m_playlistAction->setChecked(m_playlistVisibleTruth);
+        }
         // B16：全屏期内若切换过视频，当前尺寸与"进全屏前的小窗"已不一致；
         // 恢复普通态后按当前视频尺寸重新适配（最大化分支不走此路，保持全屏宽度）
         if (m_refitAfterFullscreen) {
@@ -1460,7 +1729,7 @@ void MainWindow::toggleFullscreen() {
             repositionNavigator();
         }
         m_navigatorAction->setEnabled(true);
-        m_playlistAction->setEnabled(true); // A20：退出全屏恢复播放列表切换
+        // N66 §二-7：全屏期动作未禁用，退出无需恢复可用态（原 A20 恢复行随之作废）
     }
     {
         QSignalBlocker blocker(m_fullscreenAction); // 防循环触发 toggleFullscreen
@@ -1489,9 +1758,61 @@ void MainWindow::onVideoClickTimeout() {
 }
 
 // 占位符几何跟随 + 视频区单击/双击分流（N3）。
-// 右键与 Release 不处理：右键无任何行为变化
+// 右键与 Release 不处理：右键无任何行为变化。
+// N66：本过滤器只服务本类对象级安装（视频区 / 占位符 / 滑条 / 浮窗 / 热区条）；
+// app 级的弹层关闭观察由独立的 PopupCloseWatch 承载，不经此函数（§三-4）
 bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
-    if (watched == m_videoPlaceholder) {
+    if (watched == m_fsResizeStrip) {
+        // N66 §二-8：列表浮窗左缘拖宽——按下后改宿主矩形（面板自身不动、不改视频区
+        // 几何），钳制在面板 minimumWidth 与客户区宽 50% 之间；拖动期间 m_fsResizing
+        // 即挂起条件（§二-5），松手按当前光标位置重评定态
+        switch (event->type()) {
+        case QEvent::MouseButtonPress: {
+            auto *me = static_cast<QMouseEvent *>(event);
+            if (me->button() != Qt::LeftButton)
+                break;
+            m_fsResizing = true;
+            m_fsResizeStartX = me->globalPosition().toPoint().x();
+            m_fsResizeStartWidth = m_playlistOverlay->width();
+            return true;
+        }
+        case QEvent::MouseMove:
+            if (m_fsResizing) {
+                // 浮窗右缘锚定，宽度 = 起点宽 − dx：光标左移（dx<0）左缘随之左移即
+                // 增宽，右移即缩窄
+                const int dx = static_cast<QMouseEvent *>(event)->globalPosition().toPoint().x() -
+                               m_fsResizeStartX;
+                m_fsPlaylistWidth =
+                    qBound(m_playlist->minimumWidth(), m_fsResizeStartWidth - dx, width() / 2);
+                repositionFullscreenOverlays();
+                return true;
+            }
+            break;
+        case QEvent::MouseButtonRelease:
+            if (m_fsResizing) {
+                m_fsResizing = false;
+                reevaluateOverlays();
+                return true;
+            }
+            break;
+        default:
+            break;
+        }
+    }
+    if (watched == m_videoWindow) {
+        // N66 §三-4：唤起——QWindow 层原始 move（早于 widget 层追踪门闸，无须
+        // 开追踪）。非全屏早退；全屏时转主窗客户区坐标交分区判据
+        if (event->type() == QEvent::MouseMove && m_fullscreen) {
+            const auto *me = static_cast<QMouseEvent *>(event);
+            evaluateOverlayVisibility(m_videoWidget->mapTo(this, me->position().toPoint()));
+        }
+    } else if (watched == m_controlOverlay || watched == m_playlistOverlay) {
+        // N66 §三-4：浮窗 Leave → 按当前光标重评一次。挂起与保活判据的唯一实现在
+        // evaluateOverlayVisibility（§三-3），此处不重复——光标已离开浮窗，保活
+        // 分支自然为假即收起；"离开控制栏甩进右缘带"的切换也由同一处收口
+        if (event->type() == QEvent::Leave && m_fullscreen)
+            reevaluateOverlays();
+    } else if (watched == m_videoPlaceholder) {
         if (event->type() == QEvent::Resize || event->type() == QEvent::Move)
             syncVideoGeometry();
     } else if (watched == m_videoWidget) {
@@ -1867,6 +2188,8 @@ void MainWindow::ensureSettingsDialog() {
     m_settingsDialog = new SettingsDialog(this, m_controller, m_configFile);
     m_settingsDialog->setAttribute(Qt::WA_DeleteOnClose, true);
     connect(m_settingsDialog, &QObject::destroyed, this, [this] { m_settingsDialog = nullptr; });
+    // N66 §二-9：对话框关闭重评由 PopupCloseWatch 统一兜住（QDialog 在其观察面内），
+    // 不再单独连线——重评点单一化
     // N35：ini 键变更转接播放列表——命中远端请求设置（remoteTimeoutSec /
     // ignoreHttpsErrors）时重读 ini 重建 client 并覆盖注册表，下一次求值即生效
     connect(m_settingsDialog, &SettingsDialog::pluginIniKeysChanged, this,
@@ -1913,8 +2236,12 @@ void MainWindow::saveSettings() {
     // N38：静音同音量——读 UI 缓存（勾选态）而非实时查 mpv；无条件写键
     settings.setValue(QStringLiteral("mute"), m_muteAction->isChecked());
 
-    // 播放列表面板可见性
-    settings.setValue(QStringLiteral("playlistExpanded"), m_playlist->isVisible());
+    // 播放列表面板可见性：读真相成员而非活体 isVisible()——全屏期面板被重挂且
+    // 隐藏、A11 二次保存在窗口隐藏后触发，活体读数都会把该键错写成 false（N66）
+    settings.setValue(QStringLiteral("playlistExpanded"), m_playlistVisibleTruth);
+
+    // N66 §二-7：右缘自动显示允许位（全屏态真相源，与 playlistExpanded 互不读写）
+    settings.setValue(QStringLiteral("fullscreenPlaylistEdge"), m_fsPlaylistEdgeEnabled);
 
     // N10：窗口几何/最大化不再落盘（启动恒为固定默认尺寸 960×600）
 
@@ -1970,6 +2297,10 @@ void MainWindow::restoreSettings() {
     // 播放列表面板可见性
     if (settings.value(QStringLiteral("playlistExpanded"), false).toBool())
         setPlaylistVisible(true);
+
+    // N66 §二-7：右缘自动显示允许位（缺键按关闭——右缘唤出是需主动开启的能力）
+    m_fsPlaylistEdgeEnabled =
+        settings.value(QStringLiteral("fullscreenPlaylistEdge"), false).toBool();
 
     // N57 §2.7：会话键改用身份——上次播放的非默认列表按身份直查注册表，命中才换算
     // 视图坐标并切换（currentChanged 联动自动选中该表记忆的最后播放项）；查不到或
@@ -2627,6 +2958,7 @@ void MainWindow::ensureBookmarkEditor() {
         [this](const QUuid &listUuid) { return m_listRegistry->nameOf(listUuid); }, curKey, this);
     m_bookmarkEditor->setAttribute(Qt::WA_DeleteOnClose, true);
     connect(m_bookmarkEditor, &QObject::destroyed, this, [this] { m_bookmarkEditor = nullptr; });
+    // N66 §二-9：同设置对话框——关闭重评由 PopupCloseWatch 统一兜住，不单独连线
     m_bookmarkEditor->show();
 }
 
@@ -2695,6 +3027,15 @@ void MainWindow::onAddBookmark() {
 }
 
 void MainWindow::closeEvent(QCloseEvent *event) {
+    // N66 §二-2：全屏态先无条件收回原位再放行关闭——把对象树恢复成既有形状
+    // （N57 纪律：重挂改变子对象删除次序，不留到 ~MainWindow）。播放列表可见性
+    // 属窗口态真相，saveSettings 读真相成员，不受重挂影响
+    if (m_fullscreen) {
+        setOverlayShown(Overlay::ControlBar, false);
+        setOverlayShown(Overlay::Playlist, false);
+        restoreOriginalParent(m_bottomBar);
+        restoreOriginalParent(m_playlist);
+    }
     saveSettings();
     // mpv 是宿主进程：关闭 GUI 时让 mpv 一并退出
     m_controller->command({QStringLiteral("quit")});

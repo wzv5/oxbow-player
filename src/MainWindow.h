@@ -2,6 +2,8 @@
 
 #include "pch.h"
 
+#include <QPointer>
+
 #include "MpvController.h"
 
 // N54：两处接线要用到嵌套类型（PlaylistWidget::LevelJump / JumpFailure、
@@ -15,7 +17,9 @@ class BookmarkEditorDialog;
 class ChapterSlider;
 class MarkAggregator;   // N15：章节+书签标记聚合器（定义于 MainWindow.cpp）
 class PlaylistRegistry; // N57：列表注册表（装配顶点创建并持有，注入 PlaylistWidget）
+class PopupCloseWatch;  // N66：弹层关闭观察器（定义于 MainWindow.cpp）
 class StreamRelay;      // N52：mpv 自定义协议适配层（定义于 StreamRelay.h）
+class QWindow;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -118,6 +122,16 @@ class MainWindow : public QMainWindow {
     // N3：覆盖式全屏、视频区几何同步与单击/双击分流
     void toggleFullscreen();
     void syncVideoGeometry();
+    // ---- N66：全屏浮窗装配与显隐收口（规格 §三-3）----
+    enum class Overlay { ControlBar, Playlist };
+    void ensureFullscreenOverlays();
+    void reparentIntoOverlay(QWidget *what, QWidget *host);
+    void restoreOriginalParent(QWidget *what);
+    void setOverlayShown(Overlay which, bool shown);
+    void evaluateOverlayVisibility(const QPoint &clientPos);
+    void reevaluateOverlays();
+    void repositionFullscreenOverlays();
+    void setFullscreenPlaylistEdgeEnabled(bool enabled);
     // N10：普通态窗口尺寸自适应视频（videoSizeChanged 直连触发，
     // 物理像素 1:1、工作区钳制、最小移动收回；尺寸事实源经 N40 改滤镜后输出尺寸）
     void adaptWindowSizeToVideo(int videoW, int videoH);
@@ -196,6 +210,32 @@ class MainWindow : public QMainWindow {
     // 不入服务注册表（可变模型对象与"resolve 任意线程"的线程契约不符）
     std::shared_ptr<PlaylistRegistry> m_listRegistry;
     QSplitter *m_splitter = nullptr;
+    // N66：左 pane 容器（createLeftArea 产物）。重挂收口 restoreOriginalParent
+    // 据此把 m_bottomBar 挂回布局末项——左 pane 的布局指针不另存，经此取回
+    QWidget *m_leftPane = nullptr;
+    // N66：进度行 + 控制行的底部条带容器（左 pane 布局末项）。全屏期整体重挂进
+    // 控制栏浮窗——"整条控制栏"成为一次 setParent 的单元；容器不携带任何逻辑
+    QWidget *m_bottomBar = nullptr;
+
+    // ---- N66：全屏浮窗控制栏与播放列表 ----
+    QWidget *m_controlOverlay = nullptr;  // 控制栏浮窗宿主（按需创建，首次进全屏才构造）
+    QWidget *m_playlistOverlay = nullptr; // 播放列表浮窗宿主（同上）
+    QWidget *m_fsResizeStrip = nullptr;   // 列表浮窗左缘拖宽热区（宿主内手动几何透明子条）
+    // 视频区 QWindow（WA_NativeWindow 置位即有）：安装与比对同一个指针。
+    // QPointer 兜底——若 A18 重建主窗平台窗口时该 QWindow 未随子 HWND 存活，
+    // 失效模式退化为唤起静默失灵而非比对悬空指针（构造期断言违约显影）
+    QPointer<QWindow> m_videoWindow = nullptr;
+    int m_bottomBarHeight = 0; // 重挂时记录的 sizeHint 高度（Hidden 态读不到实测高度）
+    bool m_fsPlaylistEdgeEnabled =
+        false;                 // 右缘自动显示允许位（全屏态真相源；ini 键 fullscreenPlaylistEdge）
+    int m_fsPlaylistWidth = 0; // 全屏期浮窗宽度（进程内记忆，与窗口态 m_playlistWidth 互不写入）
+    // 窗口态面板可见性真相：唯一写点 setPlaylistVisible；saveSettings 读此而非活体
+    // isVisible()——全屏期面板被重挂隐藏、A11 二次保存在窗口隐藏后触发，活体不可信
+    bool m_playlistVisibleTruth = false;
+    int m_preFsLeftWidth = 0;     // 进全屏前的左 pane 宽度（退出恢复锚点；须在普通几何下采集）
+    bool m_fsResizing = false;    // 列表浮窗左缘拖宽进行中（挂起条件之一）
+    int m_fsResizeStartX = 0;     // 拖宽起点光标全局 x
+    int m_fsResizeStartWidth = 0; // 拖宽起点浮窗宽度
     // 视频显示区域（mpv wid 嵌入目标）：主窗直接子控件（N3），
     // 脱离布局管理由 syncVideoGeometry 手动同步，父链构造期定死后全程不动
     QWidget *m_videoWidget = nullptr;
