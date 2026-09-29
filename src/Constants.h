@@ -71,4 +71,9 @@ inline int fullscreenEdgeTriggerWidth() { return 16; }
 // 播放列表浮窗左缘拖宽热区宽度（客户区像素）
 inline int fullscreenResizeHotspotWidth() { return 6; }
 
+// ——N67 视频区光标自动隐藏——
+// 播放中光标停在视频区且持续该时长无鼠标活动即隐藏（Qt::BlankCursor）；
+// 任何鼠标活动立即恢复并重新计时
+inline int cursorAutoHideMs() { return 3000; }
+
 } // namespace App

@@ -161,6 +161,108 @@ class PopupCloseWatch : public QObject {
     std::function<void()> m_onPopupClosed;
 };
 
+// ---- N67：播放时视频区光标自动隐藏 ----
+// 视频区光标行为机（文件内类，PopupCloseWatch 同款口径；唯一调用方是 MainWindow，
+// 不另立文件）。播放中光标停在视频区 3 秒无鼠标活动即藏（Qt::BlankCursor），
+// 任何活动立即恢复并重新计时；暂停 / 停止立即恢复。不区分全屏与否。
+// mpv 侧 cursor-autohide 不参与本行为——插件不向 mpv 透传鼠标事件，该选项实际
+// 不生效（N67 §二-1），光标行为单源于本类
+class CursorAutoHider : public QObject {
+  public:
+    explicit CursorAutoHider(QWidget *video, QObject *parent) : QObject(parent), m_video(video) {
+        m_timer.setSingleShot(true);
+        m_timer.setInterval(App::cursorAutoHideMs());
+        connect(&m_timer, &QTimer::timeout, this, &CursorAutoHider::onTimeout);
+        // WA_NativeWindow 置位即有 QWindow；A18 重建主窗平台窗口时该 QWindow 随
+        // 子 HWND 平移存活，过滤器无须重装（N66 同款事实）。QPointer 兜底：失效
+        // 模式退化为自动隐藏静默失灵，而非悬空比对
+        m_videoWindow = m_video->windowHandle();
+        Q_ASSERT(m_videoWindow);
+        if (m_videoWindow)
+            m_videoWindow->installEventFilter(this);
+    }
+
+    // 播放态喂入（MpvController::pauseChanged / idleActive 转发）。两属性观察均
+    // 在 observe 后立即推送一次当前值，接线完成即有正确初态；即便初值未达，
+    // 默认即"非播放"，漏布防只会晚藏、绝不误藏
+    void setPaused(bool paused) {
+        if (m_paused == paused)
+            return;
+        m_paused = paused;
+        updateState();
+    }
+    void setIdle(bool idle) {
+        if (m_idle == idle)
+            return;
+        m_idle = idle;
+        updateState();
+    }
+
+  protected:
+    bool eventFilter(QObject *watched, QEvent *event) override {
+        if (watched != m_videoWindow)
+            return false; // 只服务自己的安装点
+        switch (event->type()) {
+        case QEvent::MouseMove:
+        case QEvent::MouseButtonPress:
+        case QEvent::Wheel:
+            onActivity();
+            break;
+        case QEvent::Leave:
+            // 离开视频区：无条件恢复 + 停表。不走 updateState——Leave 瞬间光标
+            // 坐标可能仍落在边界内，误重布防会在 3 秒后藏走已离区的光标
+            showCursor();
+            m_timer.stop();
+            break;
+        default:
+            break;
+        }
+        return false; // 一律放行：MainWindow 为 N66 装的过滤器与 widget 层继续收
+    }
+
+  private:
+    bool playing() const { return !m_paused && !m_idle; }
+
+    bool cursorInVideo() const {
+        return m_video->rect().contains(m_video->mapFromGlobal(QCursor::pos()));
+    }
+
+    // 收口：活动驱动与状态驱动同一套判定。非播放 → 恢复显示 + 停表；播放且光标
+    // 在区内 → 布防（start 即从头计满时长）。隐藏只发生在到期复核通过的那一次
+    void updateState() {
+        showCursor();
+        if (playing() && m_video->isVisible() && cursorInVideo())
+            m_timer.start();
+        else
+            m_timer.stop();
+    }
+
+    void onActivity() { updateState(); }
+
+    // 到期四条件复核（N67 §二-5）：任一不过只停表不动作，不自动续期、不轮询
+    void onTimeout() {
+        if (!playing() || !m_video->isVisible() || QApplication::activePopupWidget() ||
+            !cursorInVideo())
+            return;
+        m_video->setCursor(Qt::BlankCursor);
+        m_hidden = true;
+    }
+
+    void showCursor() {
+        if (!m_hidden)
+            return;
+        m_hidden = false;
+        m_video->unsetCursor();
+    }
+
+    QTimer m_timer;
+    QWidget *m_video;
+    QPointer<QWindow> m_videoWindow;
+    bool m_paused = true; // 初值即"暂停"：接线后由属性观察初值推送校正
+    bool m_idle = true;
+    bool m_hidden = false;
+};
+
 MainWindow::MainWindow(MpvController *controller, const QString &configFile,
                        std::shared_ptr<StreamRelay> relay, QWidget *parent)
     : QMainWindow(parent), m_controller(controller), m_configFile(configFile),
@@ -204,6 +306,9 @@ MainWindow::MainWindow(MpvController *controller, const QString &configFile,
     Q_ASSERT(m_videoWindow);
     if (m_videoWindow)
         m_videoWindow->installEventFilter(this);
+    // N67：视频区光标自动隐藏——构造即接管事件过滤；播放态由 connectController
+    // 的两条转发 connect 喂入
+    m_cursorHider = new CursorAutoHider(m_videoWidget, this);
     // N66 §三-4：弹层关闭补重评经 qApp 级过滤器观察——观察器为独立对象（原因见
     // PopupCloseWatch 类注释），主窗 eventFilter 只服务对象级过滤
     qApp->installEventFilter(new PopupCloseWatch([this] { reevaluateOverlays(); }, this));
@@ -699,6 +804,10 @@ void MainWindow::connectController() {
             }
         }
     });
+
+    // N67：播放态喂给光标自动隐藏（另起 connect，不并入既有 lambda——两机制互不纠缠）
+    connect(m_controller, &MpvController::pauseChanged, m_cursorHider, &CursorAutoHider::setPaused);
+    connect(m_controller, &MpvController::idleActive, m_cursorHider, &CursorAutoHider::setIdle);
 
     connect(m_playlist, &PlaylistWidget::playRequested, this, &MainWindow::onPlayRequested);
     // N54：书签层级定位的两种结局——播放决策三档与失败策略都在本类（widget 只切层

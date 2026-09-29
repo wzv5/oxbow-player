@@ -16,6 +16,7 @@ class ChapterSlider;
 class MarkAggregator;   // N15：章节+书签标记聚合器（定义于 MainWindow.cpp）
 class PlaylistRegistry; // N57：列表注册表（装配顶点创建并持有，注入 PlaylistWidget）
 class PopupCloseWatch;  // N66：弹层关闭观察器（定义于 MainWindow.cpp）
+class CursorAutoHider;  // N67：播放时视频区光标自动隐藏（定义于 MainWindow.cpp）
 class StreamRelay;      // N52：mpv 自定义协议适配层（定义于 StreamRelay.h）
 
 class MainWindow : public QMainWindow {
@@ -238,6 +239,8 @@ class MainWindow : public QMainWindow {
     QWidget *m_videoWidget = nullptr;
     // N3：布局槽位占位符，普通态视频区几何的锚点；最小尺寸约束在此
     QWidget *m_videoPlaceholder = nullptr;
+    // N67：播放时视频区光标自动隐藏（构造期创建，事件过滤由类自身接管）
+    CursorAutoHider *m_cursorHider = nullptr;
     // N40：最近一次收到的视频尺寸发布值——去重收口后每次都是一致对、
     // 只在真实变化时到达，不再需要合并缓冲定时器；仅退出全屏的重适配路径取用
     int m_pendingVideoW = 0;
