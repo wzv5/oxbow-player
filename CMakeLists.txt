@@ -7,6 +7,8 @@ set(CMAKE_AUTOMOC ON)
 
 option(MPVQT_BUILD_TESTS "Build Qt Test unit tests for mpv-qt" OFF)
 option(MPVQT_STATICQT "Link Qt statically (skip windeployqt at deploy time)" OFF)
+# N68：强行令 Windows 也走小窗的纯 Qt 降级路径（无等比缩放/边缘吸附），便于本机验证降级形态
+option(MPVQT_PUREQT "Use the pure-Qt implementation path for the mini window" OFF)
 
 if(MPVQT_STATICQT)
     set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreaded)
@@ -117,6 +119,9 @@ if(MSVC)
 endif()
 if(MPVQT_STATICQT)
     target_compile_definitions(mpvqtcore PRIVATE MPVQT_STATICQT)
+endif()
+if(MPVQT_PUREQT)
+    target_compile_definitions(mpvqtcore PRIVATE MPVQT_PUREQT)
 endif()
 
 target_link_libraries(mpvqtcore PRIVATE Qt6::Widgets Qt6::Concurrent Qt6::Network)

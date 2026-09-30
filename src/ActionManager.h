@@ -27,6 +27,7 @@ class ActionManager : public QObject {
         Playlist,
         Navigator,
         Fullscreen,
+        MiniWindow,  // N68：小窗模式（勾选态由 toggleMini 收口回写）
         ToggleStats, // 视图菜单：状态信息叠加层（由 mpv 侧 stats 脚本渲染）
         About,
         Escape, // 隐绑定：无菜单实体，仅键盘触发

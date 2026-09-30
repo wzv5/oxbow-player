@@ -76,4 +76,17 @@ inline int fullscreenResizeHotspotWidth() { return 6; }
 // 任何鼠标活动立即恢复并重新计时
 inline int cursorAutoHideMs() { return 3000; }
 
+// ——N68 小窗模式——
+// 默认客户区宽（逻辑 px）：每次进入恢复默认，不记忆
+inline int miniDefaultWidth() { return 400; }
+// 等比缩放宽下限（逻辑 px）：WM_SIZING 修正时的客户区宽钳制
+inline int miniMinWidth() { return 200; }
+// 吸附触发距离（逻辑 px）：拖动中窗口边与工作区边距离不超过此值即贴齐
+// （与 N66 边缘触发带宽同风格）。仅 Windows 主路径生效——降级形态不做吸附
+inline int miniSnapDistancePx() { return 16; }
+// 降级路径收口去抖时长：move/resize 事件静默达此时长即视为松手，触发一次
+// refitMiniToAspect（非 Windows 无原生松手信号，以事件静默模拟，见
+// MainWindow::scheduleMiniRefit）；进窗后的贴角收口同用这一延时
+inline int miniRefitDebounceMs() { return 250; }
+
 } // namespace App

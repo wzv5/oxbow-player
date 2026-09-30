@@ -23,6 +23,8 @@ ActionManager::ActionManager(QWidget *host) : m_host(host) {
     declareAction(Id::Playlist, tr("P&laylist"), QStringLiteral("Ctrl+L"), true);
     declareAction(Id::Navigator, tr("&Navigator"), QStringLiteral("Ctrl+Shift+N"), true);
     declareAction(Id::Fullscreen, tr("&Fullscreen"), QStringLiteral("F11"), true);
+    // N68：小窗模式（PiP）；勾选态由 toggleMini 收口回写
+    declareAction(Id::MiniWindow, tr("Mini &Window"), QStringLiteral("I"), true);
     // 无状态开关：显隐真相由 mpv 的 stats 脚本持有，插件侧不跟踪勾选态
     declareAction(Id::ToggleStats, tr("Toggle &Status Info"), Qt::Key_T);
     declareAction(Id::About, tr("&About"));

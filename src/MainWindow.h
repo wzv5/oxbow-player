@@ -43,6 +43,11 @@ class MainWindow : public QMainWindow {
     bool eventFilter(QObject *watched, QEvent *event) override;
     // N5：空白区域点击清焦（未被交互控件消费的按下事件冒泡至此）
     void mousePressEvent(QMouseEvent *event) override;
+    // N68：小窗态等比缩放（WM_SIZING）与边缘吸附（WM_MOVING）——函数体整体经
+    // Windows 且未定义 MPVQT_PUREQT 门禁。降级形态两项都不做（循环外改窗位会被原生
+    // 模态循环覆写，实测乱跳；§一 原裁决），只留定态保比（scheduleMiniRefit →
+    // refitMiniToAspect）与进窗贴角
+    bool nativeEvent(const QByteArray &eventType, void *message, qintptr *result) override;
 
   private slots:
     void openFiles();
@@ -119,6 +124,8 @@ class MainWindow : public QMainWindow {
     void enterStoppedState();
     // N3：覆盖式全屏、视频区几何同步与单击/双击分流
     void toggleFullscreen();
+    // N68：小窗模式进出唯一收口（I/Esc/关闭钮三路共用）；全屏与小窗互斥
+    void toggleMini();
     void syncVideoGeometry();
     // ---- N66：全屏浮窗装配与显隐收口（规格 §三-3）----
     enum class Overlay { ControlBar, Playlist };
@@ -133,6 +140,21 @@ class MainWindow : public QMainWindow {
     // N10：普通态窗口尺寸自适应视频（videoSizeChanged 直连触发，
     // 物理像素 1:1、工作区钳制、最小移动收回；尺寸事实源经 N40 改滤镜后输出尺寸）
     void adaptWindowSizeToVideo(int videoW, int videoH);
+    // N68：小窗期换片自适应——保持当前客户区宽不变、高按新比例重算
+    // （尺寸与位置不回默认），保比在 refitMiniToAspect、越界收回在 clampMiniIntoWorkArea
+    void refitMiniToVideo();
+    // N68 小窗几何收口（保宽调高）——客户区宽不变、高按视频比例（无流按 16:9）重算；
+    // 幂等。两条路径共用：主路径只经换片自适应（定框由 WM_SIZING 在原生域保比与钳位），
+    // 降级路径另加松手去抖一次。越界钳回不在本函数，见 clampMiniIntoWorkArea
+    void refitMiniToAspect();
+    // N68 外框越出工作区即按最小移动原则收回（未越界空操作）。只由程序性场景调用：
+    // 换片自适应（§6 整窗不越界）与降级路径的进窗贴角；用户拖动/松手不钳（第 8 条裁决）
+    void clampMiniIntoWorkArea();
+#if !defined(Q_OS_WIN) || defined(MPVQT_PUREQT)
+    // N68 降级路径的纯 Qt 定态收口触发器——move/resize 事件去抖（无跨平台松手信号），
+    // 静默达 miniRefitDebounceMs 即保宽调高；进窗那一次另做贴角
+    void scheduleMiniRefit();
+#endif
     // A20：播放列表显隐几何联动——左 pane 宽度不变、主窗口向右扩展，
     // 空间不足先压视频区触底再压播放列表宽度（实测值写回记忆）
     void applyPlaylistGeometry(bool expanding, int leftAnchor);
@@ -272,6 +294,7 @@ class MainWindow : public QMainWindow {
     QAction *m_navigatorAction = nullptr;   // 视图菜单"导航器"勾选项（N1）
     NavigatorPanel *m_navigator = nullptr;  // 导航器浮窗（N3 按需创建）：null=未打开
     QAction *m_fullscreenAction = nullptr;  // 视图菜单"全屏"勾选项（N3）
+    QAction *m_miniAction = nullptr;        // 视图菜单"小窗"勾选项（N68）
 
     double m_duration = 0.0;
     double m_timePos = 0.0;
@@ -316,7 +339,33 @@ class MainWindow : public QMainWindow {
     // 暂停 OSD 由单击超时补显，双击场景全程静默
     bool m_suppressPlayPauseOsd = false;
     bool m_fullscreen = false; // 覆盖式全屏态标志（syncVideoGeometry 分支依据）
-    double m_savedZoom = 0.0;  // 进全屏前 zoom/pan 快照（先存后写零）
+    // N68：小窗态标志（与 m_fullscreen 互斥，syncVideoGeometry 同走"铺满客户区"分支）
+    bool m_mini = false;
+    // N68：进小窗前快照（仿 m_preFs* 一套，独立不混用）；面板可见性复用 m_playlistVisibleTruth
+    bool m_preMiniMaximized = false; // 进小窗前是否最大化（退出分流依据）
+    QRect m_preMiniRect;             // 进小窗前完整几何（最大化时取 normalGeometry）
+    Qt::WindowFlags m_preMiniFlags;  // 进小窗前窗口样式（退出恢复触发重建）
+#if defined(Q_OS_WIN) && !defined(MPVQT_PUREQT)
+    // N68：小窗拖动期的**未吸附基准**（物理像素，仅 GUI 线程在拖动模态循环内读写）。
+    // 吸附结果不得作为下一条 WM_MOVING 的判定基准——系统给的下条矩形建立在上一次
+    // 已吸附的位置上，据此判距离会把每轮位移又拉回贴齐位，慢速拖动永远脱不开（实测）。
+    // 故在 WM_ENTERSIZEMOVE 记下起点矩形与光标，整轮拖动只用"起点 + 鼠标总位移"作原始位
+    QRect m_miniDragOriginRect;
+    QPoint m_miniDragCursorOrigin;
+    // N68：可见框 inset 缓存（DWM 可见外框相对原生 RECT 的差值，物理像素）——
+    // 原生外框含不可见缩放边框（贴边留缝）、客户区不含发丝边框（贴边裁边），
+    // 都不是人眼可见框。模态循环公共起点测一次，EXITSIZEMOVE 作废
+    QMargins m_miniFrameInsets;
+    bool m_miniFrameInsetsValid = false;
+#endif
+#if !defined(Q_OS_WIN) || defined(MPVQT_PUREQT)
+    // N68 降级路径收口去抖定时器（惰性创建；主路径无此需要）
+    QTimer *m_miniRefitTimer = nullptr;
+    // 进窗贴角待办：置位期间那次收口改做贴角（装饰尺寸要 show 之后才落定，即时读
+    // frameGeometry 会偏）；首条去抖收口消费并清零
+    bool m_miniEntryGluePending = false;
+#endif
+    double m_savedZoom = 0.0; // 进全屏前 zoom/pan 快照（先存后写零）
     double m_savedPanX = 0.0;
     double m_savedPanY = 0.0;
     bool m_preFsMaximized = false; // 进全屏前是否最大化（退出分流依据）
