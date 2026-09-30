@@ -7,6 +7,7 @@
 // 经 ProviderCatalog.h 取用
 #include "DirProvider.h"
 #include "ExternalProvider.h"
+#include "JellyfinProvider.h"
 #include "ProviderSettingsPage.h"
 #include "StaticProvider.h"
 #include "WebDavProvider.h"
@@ -25,6 +26,8 @@ QList<ProviderEntry> buildCatalog() {
          &WebDavProvider::load, nullptr},
         {kExternalProviderKey, &ExternalProvider::displayName, &createExternalSettingsPage,
          &ExternalProvider::load, nullptr},
+        {kJellyfinProviderKey, &JellyfinProvider::displayName, &createJellyfinSettingsPage,
+         &JellyfinProvider::load, nullptr},
     };
     QSet<QString> seen;
     for (int i = 0; i < table.size(); ++i) {

@@ -3,6 +3,7 @@
 #include "PlaylistEntity.h"
 
 #include "HttpEntity.h"
+#include "JellyfinEntity.h"
 #include "LocalFileEntity.h"
 // N55：playUrl() 出口经归属提供者现算——实体侧唯一 include 提供者头之处
 // （实体头只前置声明，无环）
@@ -65,7 +66,11 @@ PlaylistEntity::Ptr PlaylistEntity::fromPath(const QString &path,
         // N35 前缀分派：http(s) → HttpEntity（需非空 registry）；其余网络 / 流
         // 路径仍落 UnknownEntity 兜底。N48：判据改用 Util::Url::isHttp（唯一持有者，
         // 串前缀 + scheme 归小写，天然免疫 QUrl::scheme() 误判 Windows 盘符）——
-        // 原内联前缀判定是同一判据的第三份拷贝
+        // 原内联前缀判定是同一判据的第三份拷贝。
+        // N69：jellyfin:// → JellyfinEntity（URN 身份，N35 预留的追加点；
+        // 串由提供者铸造、形态恒小写，前缀判定精确匹配 kJellyfinScheme）
+        if (path.startsWith(QLatin1String(kJellyfinScheme)))
+            return std::make_shared<JellyfinEntity>(path, registry);
         if (!Util::Url::isHttp(path))
             return std::make_shared<UnknownEntity>(path, registry);
         if (!registry) {

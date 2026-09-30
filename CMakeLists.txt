@@ -67,6 +67,8 @@ add_library(mpvqtcore MODULE
     src/HttpEntity.cpp
     src/HttpEntity.h
     src/WebDavEntity.h
+    src/JellyfinEntity.cpp
+    src/JellyfinEntity.h
     src/ServiceRegistry.h
     src/TraversalPolicy.h
     src/PlaylistProvider.cpp
@@ -83,6 +85,8 @@ add_library(mpvqtcore MODULE
     src/DirProvider.h
     src/WebDavProvider.cpp
     src/WebDavProvider.h
+    src/JellyfinProvider.cpp
+    src/JellyfinProvider.h
     src/ExternalProvider.cpp
     src/ExternalProvider.h
     src/LoadingOverlay.cpp
@@ -205,6 +209,8 @@ if(MPVQT_BUILD_TESTS)
         src/DirProvider.h
         src/WebDavProvider.cpp
         src/WebDavProvider.h
+        src/JellyfinProvider.cpp
+        src/JellyfinProvider.h
         src/ExternalProvider.cpp
         src/ExternalProvider.h
         src/PlaylistProvider.cpp
@@ -230,6 +236,8 @@ if(MPVQT_BUILD_TESTS)
         src/HttpEntity.cpp
         src/HttpEntity.h
         src/WebDavEntity.h
+        src/JellyfinEntity.cpp
+        src/JellyfinEntity.h
         src/ServiceRegistry.h
         src/TraversalPolicy.h
         src/MediaInfoHelper.cpp

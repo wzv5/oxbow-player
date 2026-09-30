@@ -8,9 +8,6 @@
 
 #include "pch.h"
 
-#include <QJsonArray>
-#include <QJsonDocument>
-#include <QJsonObject>
 #include <QProcess>
 #include <QSslCertificate>
 #include <QSslConfiguration>

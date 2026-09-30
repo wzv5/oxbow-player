@@ -2,7 +2,7 @@
 // 由 CMake target_precompile_headers 启用（见 CMakeLists.txt mpvqtcore 目标），
 // 各源文件只需包含本文件，不再散落系统头包含，显著加快编译。
 // 不入此文件：mpv 头（mpv/client.h、mpv/stream_cb.h）、第三方头（MediaInfoDLL.h）
-// 与单元测试独有头（QtTest/QtTest、QProcess、QTemporaryDir、QJson* 等）。
+// 与单元测试独有头（QtTest/QtTest、QProcess、QTemporaryDir 等）。
 // 平台专属头依 Q_OS_WIN 收在文件末尾。
 
 #include <QAction>
@@ -48,6 +48,10 @@
 #include <QIODevice>
 #include <QIcon>
 #include <QInputDialog>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonParseError>
 #include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
