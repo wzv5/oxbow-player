@@ -21,18 +21,24 @@ constexpr char kClientName[] = "mpv-qt";
 constexpr char kClientVersion[] = "1.0";
 
 // 枚举请求显式元数据字段（N69 背景：默认不返回，须逐请求声明）。Path 为原始
-// 文件路径——原始后缀的唯一可靠来源（变更记录 5：追加到服务端标题后 + 扩展名
-// 过滤）
+// 文件路径——原始文件名与原始后缀的唯一可靠来源（N69 变更记录 5：扩展名过滤；
+// N70：文件名注入）
 constexpr char kItemFields[] = "MediaSources,DateCreated,PremiereDate,Path";
 
-// 文件路径的原始后缀（无点小写；取不到为空串）。服务器路径分隔符随服务器操作
-// 系统而异，'/' 与 '\' 都作边界
-QString extractSuffix(const QString &path) {
+// 文件路径的末段 = 服务器上的原始文件名（N70：文件名注入的唯一来源）。服务器路径
+// 分隔符随服务器操作系统而异，'/' 与 '\' 都作边界；路径为空返回空串
+QString extractFileName(const QString &path) {
     if (path.isEmpty())
         return {};
     const qsizetype sep =
         qMax(path.lastIndexOf(QLatin1Char('/')), path.lastIndexOf(QLatin1Char('\\')));
-    const QString name = sep >= 0 ? path.mid(sep + 1) : path;
+    return sep >= 0 ? path.mid(sep + 1) : path;
+}
+
+// 文件路径的原始后缀（无点小写；取不到为空串）。末段切分复用 extractFileName，
+// 同一运算不留两份拷贝
+QString extractSuffix(const QString &path) {
+    const QString name = extractFileName(path);
     const qsizetype dot = name.lastIndexOf(QLatin1Char('.'));
     if (dot <= 0)
         return {}; // 无点或点在首字符（隐藏文件形态）→ 无有效后缀
@@ -338,14 +344,15 @@ JellyfinProvider::enumerate(const QStringList &parent) const {
             continue;
         }
 
-        // 原始文件路径 → 原始后缀（fields=Path 显式声明；回退 mediaSources[0].path，
-        // 变更记录 5）。后缀两用：追加到服务端标题之后（后缀名排序可用——标题仍以
-        // Jellyfin 提供的名称为主，不直接用原始文件名）+ 扩展名过滤
+        // 原始文件路径（fields=Path 显式声明；回退 mediaSources[0].path，N69 变更记录 5）。
+        // 一份来源两用：末段作**文件名**（N70，排序键取值）+ 点后段作后缀（扩展名过滤
+        // 判据与 Extension 排序键）
         const QJsonArray sources = obj.value(QLatin1String("mediaSources")).toArray();
         QString rawPath = obj.value(QLatin1String("path")).toString();
         if (rawPath.isEmpty() && !sources.isEmpty())
             rawPath = sources.at(0).toObject().value(QLatin1String("path")).toString();
         const QString suffix = extractSuffix(rawPath);
+        const QString rawName = extractFileName(rawPath);
 
         // 扩展名过滤（与本地目录表同语义）：清单非空时，无后缀 / 不在清单内的
         // 条目跳过
@@ -363,11 +370,15 @@ JellyfinProvider::enumerate(const QStringList &parent) const {
                                 .arg(QLatin1String(kJellyfinScheme), m_serverId,
                                      type.isEmpty() ? QStringLiteral("unknown") : type, id);
         auto entity = std::make_shared<JellyfinEntity>(urn, registry());
-        // 服务端标题注入（URN 尾段无语义，派生名只是占位）；原始后缀无脑追加在
-        // 名称之后（服务端名称恒不含后缀，维护者实测口径），setFilename 派生
-        // suffix 供 Extension / FileName 排序
+        // 名称两句注入（显示名与文件名分家）：显示名 = 服务端标题原样（URN 尾段是 itemId
+        // 噪声，派生值不可用；不再往里追加原始后缀——那正是 N69 变更记录 5 的权宜写法）；
+        // 文件名 = 原始路径末段（服务器上的真实文件名，FileName / FileNameNumeric /
+        // Extension 三个排序键的取值来源）。各按"空则不注"，拿不到就不给假值，落回派生
+        // 占位；两个出口调用顺序无关（显示名一经 setTitle 置旗，文件名不再联动它）
         if (!name.isEmpty())
-            injectDisplayName(*entity, suffix.isEmpty() ? name : name + QLatin1Char('.') + suffix);
+            injectDisplayName(*entity, name);
+        if (!rawName.isEmpty())
+            injectFileName(*entity, rawName);
 
         // 元数据注入（N29 通道，枚举期零额外请求）：
         // 大小 ← mediaSources[0].size，创建时间 ← dateCreated

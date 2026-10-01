@@ -148,6 +148,10 @@ class TestPlaylistEntity : public QObject {
     void setFilenameSyncsSuffixAndTitle();
     // setTitle 显式设置后，setFilename 不再联动 title
     void setTitlePinsTitle();
+    // N70：两个名字注入出口（injectFileName / injectDisplayName 的同一条通路）调用顺序
+    // 无关——两种顺序下 title / fileName / suffix 三个终值逐一相同
+    void nameInjectionOrderIndependentFileNameFirst();
+    void nameInjectionOrderIndependentDisplayNameFirst();
     // fileMeta 惰性求值 + 实体内缓存 + refresh() 清空后重新求值
     void lazyFileMetaCachedAndRefreshed();
     // mediaMeta 惰性求值 + 实体内缓存 + refresh() 清空后重新求值
@@ -328,6 +332,26 @@ void TestPlaylistEntity::setTitlePinsTitle() {
     QCOMPARE(e.fileName(), QStringLiteral("c.flv"));
     QCOMPARE(e.suffix(), QStringLiteral("flv"));
     QCOMPARE(e.title(), QStringLiteral("我的标题")); // 显式设置后不再联动
+}
+
+// N70：注入顺序无关——先文件名后显示名
+void TestPlaylistEntity::nameInjectionOrderIndependentFileNameFirst() {
+    TestEntity e(QStringLiteral("dir/a.mp4"), testRegistry());
+    e.applyFilename(QStringLiteral("Movie.2009.1080p.mkv"));
+    e.applyTitle(QStringLiteral("Movie"));
+    QCOMPARE(e.title(), QStringLiteral("Movie"));
+    QCOMPARE(e.fileName(), QStringLiteral("Movie.2009.1080p.mkv"));
+    QCOMPARE(e.suffix(), QStringLiteral("mkv"));
+}
+
+// N70：注入顺序无关——先显示名后文件名（与上一例逐字段同值）
+void TestPlaylistEntity::nameInjectionOrderIndependentDisplayNameFirst() {
+    TestEntity e(QStringLiteral("dir/a.mp4"), testRegistry());
+    e.applyTitle(QStringLiteral("Movie"));
+    e.applyFilename(QStringLiteral("Movie.2009.1080p.mkv"));
+    QCOMPARE(e.title(), QStringLiteral("Movie"));
+    QCOMPARE(e.fileName(), QStringLiteral("Movie.2009.1080p.mkv"));
+    QCOMPARE(e.suffix(), QStringLiteral("mkv"));
 }
 
 void TestPlaylistEntity::lazyFileMetaCachedAndRefreshed() {

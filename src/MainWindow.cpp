@@ -725,7 +725,7 @@ void MainWindow::connectController() {
     // pos 推送时刻按旧镜像取的错名会挂到下一次切条目——仅错名时主动刷新标题/OSD
     // （追加等不影响正播名的收编不弹 OSD）
     connect(m_playlist, &PlaylistWidget::playingListAdopted, this, [this]() {
-        const QString f = playingFilename();
+        const QString f = playingDisplayName();
         if (!f.isEmpty() && f != windowTitle())
             updateNowPlayingUi();
     });
@@ -2537,23 +2537,17 @@ void MainWindow::applyMuteState(bool muted) {
         style()->standardIcon(muted ? QStyle::SP_MediaVolumeMuted : QStyle::SP_MediaVolume));
 }
 
-// B11：正在播放的真实文件名（含后缀不含路径），标题与 OSD #2 同源。
-// 列表镜像优先——playlist-pos 推送早于新文件装载完成，此刻读属性
-// 会拿到上一个文件的残留值（概率性错名根因）；本地镜像顺序与 mpv 恒一致，
-// 按 pos 取名为确定性来源。属性仅作镜像缺失时的兜底（如起播早期回刷未达）。
-// N37：WebDAV 条目的身份串为完整 URL，末段经 percent-decode 才是显示名
-// （Util::Url::fileName，与列表显示名同一出口），否则标题 / OSD 出现 "%XX" 形态
-// N51：兜底不读 mpv 的 filename 属性（basename 语义依赖 mpv 实现），一律以
-// path 为准——转码后仍是条目身份，与主路径共用同一取名出口 Util::Url::fileName
-// B11：正在播放的真实文件名（含后缀不含路径），标题与 OSD #2 同源。
-// N56 §2.7：取名一律取正播实体——列表镜像优先（playlist-pos 推送早于新文件装载
-// 完成，此刻读属性会拿到上一个文件的残留值，概率性错名的根因），镜像顺序与 mpv
-// 恒一致，按 pos 取正播实体是确定性来源；实体的 fileName() 即显示名（HttpEntity
-// 构造期已 percent-decode）。不再保留属性兜底——回刷收编 / duration 推送 /
-// playlist-pos 变化都会再次驱动本函数，空窗期跳过一次标题刷新即可
-QString MainWindow::playingFilename() {
-    if (const auto e = playingEntity(); e && !e->fileName().isEmpty())
-        return e->fileName();
+// B11 / N56 §2.7：取名一律读正播实体的显示名 title()（与列表行同一字段，标题与 OSD #2
+// 同源）。列表镜像优先——playlist-pos 推送早于新文件装载完成，此刻读属性会拿到上一个
+// 文件的残留值（概率性错名的根因），镜像顺序与 mpv 恒一致，按 pos 取实体是确定性来源。
+// 不再保留属性兜底（N51 亦不读 mpv 的 filename 属性，basename 语义依赖 mpv 实现）：回刷
+// 收编 / duration 推送 / playlist-pos 变化都会再次驱动本函数，空窗期跳过一次刷新即可。
+// N37：percent-decode 与 http / WebDAV 末段取名由实体构造期收口（HttpEntity），本处只读
+// title() 不再自行加工。N70：分家后 title() 不再等于 fileName()——注入过显示名的表上是
+// 频道名 / 服务端标题，未注入者按 fileName() 派生。
+QString MainWindow::playingDisplayName() {
+    if (const auto e = playingEntity(); e && !e->title().isEmpty())
+        return e->title();
     return QString();
 }
 
@@ -2564,15 +2558,14 @@ QString MainWindow::playingFilename() {
 void MainWindow::updateNowPlayingUi() {
     if (m_playlistPos < 0)
         return; // 停止态无"正在播放"可言
-    QString filename = playingFilename();
+    QString name = playingDisplayName();
     const int pt = m_playlist->playingTabIndex();
     const int total = pt >= 0 ? int(m_playlist->queueEntitiesOf(pt).size()) : m_playlistPos + 1;
-    if (!filename.isEmpty())
-        setWindowTitle(filename); // N8 Part1：标题跟随真实文件名
+    if (!name.isEmpty())
+        setWindowTitle(name); // N8 Part1：标题跟随正播项显示名
     else
-        filename = tr("Unknown File");
-    m_pendingNowPlaying =
-        QStringLiteral("[%1/%2] %3").arg(m_playlistPos + 1).arg(total).arg(filename);
+        name = tr("Unknown File");
+    m_pendingNowPlaying = QStringLiteral("[%1/%2] %3").arg(m_playlistPos + 1).arg(total).arg(name);
     if (!m_osdCoalescePending) {
         m_osdCoalescePending = true;
         QTimer::singleShot(0, this, &MainWindow::flushOsd);

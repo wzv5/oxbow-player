@@ -697,8 +697,14 @@ ExternalProvider::enumerate(const QStringList &parent) const {
         container.title = group;
         out.containers.push_back(std::move(container));
     }
-    // 实体铸造 + 显示名三档回退链（§2.5）：#EXTINF 标题 → tvg-name → URL 末段
-    // （剥 query / fragment，避免一排 index.m3u8?token=xx）；三档皆空则原样不动。
+    // 实体铸造 + 显示名两档回退链（N63 §2.5，N70 收口）：#EXTINF 标题 → tvg-name；两档
+    // 皆空则不注入，显示名落回实体构造期按身份串派生的末段（http 支走 Util::Url::fileName
+    // 剥 query / fragment 并 percent-decode、本地支走 QFileInfo::fileName）——原第三档
+    // 与这份派生值同函数同入参，逐字节相同，故取消。
+    // 文件名侧本轮不注入（N70 §2.4 定案）：fileName / suffix 就是那份派生真名，与显示名
+    // 分家——代价是 SortKey::FileName / FileNameNumeric 在本表上从频道名序变为条目文件名
+    // 序（末段同名者由稳定排序落回枚举序），收益是 Extension 排序的后缀来自真名（N63
+    // §2.5 记明的噪声随之消失）。
     // 同名不同 URL 天然得到不同实体与不同行——显示名不是身份，身份是定形后的
     // path()，本篇绝不做按名判重（§2.3 硬要求）
     auto makeEntity = [this](const Entry &entry) -> PlaylistEntity::Ptr {
@@ -706,8 +712,6 @@ ExternalProvider::enumerate(const QStringList &parent) const {
         QString name = entry.title;
         if (name.isEmpty())
             name = entry.tvgName;
-        if (name.isEmpty())
-            name = Util::Url::fileName(entry.target);
         if (!name.isEmpty())
             injectDisplayName(*entity, name);
         // N65：条目级单文件选项随实体携带——解析内已成型（键 = mpv 选项名，值

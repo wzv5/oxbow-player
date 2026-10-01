@@ -826,17 +826,28 @@ void TestExternalProvider::displayNameFallbackChain() {
     LocalList list(QByteArrayLiteral("#EXTM3U\n"
                                      "#EXTINF:-1,Channel One\nhttp://a/1\n"
                                      "#EXTINF:-1 tvg-name=\"Fallback Name\"\nhttp://a/2\n"
-                                     "http://host/path/file.m3u8?token=xx\n"));
+                                     "http://host/path/file.m3u8?token=xx\n"
+                                     "#EXTINF:-1,Colors. Movies\nhttp://a/movie.mkv\n"));
     const auto result = list.provider->enumerate({});
     QVERIFY(result.has_value());
     const auto &entities = result->entities;
-    QCOMPARE(entities.size(), 3);
+    QCOMPARE(entities.size(), 4);
     // 第一档：EXTINF 逗号后的标题
     QCOMPARE(entities.at(0)->title(), QStringLiteral("Channel One"));
     // 第二档：属性区 tvg-name（iptv-org 常见形态：标题缺失而 tvg-name 在）
     QCOMPARE(entities.at(1)->title(), QStringLiteral("Fallback Name"));
-    // 第三档：URL 末段（剥 query / fragment，不出现 index.m3u8?token=xx 噪声）
+    // 两档皆空者不注入，显示名落回实体派生的 URL 末段（剥 query / fragment，不出现
+    // index.m3u8?token=xx 噪声）——N70 取消原第三档后终值不变
     QCOMPARE(entities.at(2)->title(), QStringLiteral("file.m3u8"));
+    // N70 分家：文件名 / 后缀一律是条目自身的末段，与显示名无关
+    QCOMPARE(entities.at(0)->fileName(), QStringLiteral("1"));
+    QCOMPARE(entities.at(1)->fileName(), QStringLiteral("2"));
+    QCOMPARE(entities.at(2)->fileName(), QStringLiteral("file.m3u8"));
+    QCOMPARE(entities.at(2)->suffix(), QStringLiteral("m3u8"));
+    // 显示名含点不再污染后缀（N63 §2.5 的噪声档）：后缀取自条目真名
+    QCOMPARE(entities.at(3)->title(), QStringLiteral("Colors. Movies"));
+    QCOMPARE(entities.at(3)->fileName(), QStringLiteral("movie.mkv"));
+    QCOMPARE(entities.at(3)->suffix(), QStringLiteral("mkv"));
 }
 
 void TestExternalProvider::sameNameAndDuplicateRows() {

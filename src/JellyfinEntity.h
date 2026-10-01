@@ -19,8 +19,9 @@ inline constexpr char kJellyfinScheme[] = "jellyfin://";
 // 元数据值只来自提供者注入（/Items 的 fields 显式字段随 N39 注入通道写入），
 // 实体自身不发起任何请求；未注入时空求值返回结果，与"值未知"同口径（WebDavEntity
 // 先例）。能力位恒真不随单次枚举结果变化：刷新 = 重新枚举 = 重新注入。
-// 服务端标题由提供者枚举期经注入口写入（URN 尾段 itemId 无语义，派生名只是
-// 占位）。key() 用基类默认派生：URN 与地址、凭据解耦且形态恒定，无需重写。
+// 服务端标题（显示名）与原始文件名均由提供者枚举期经注入口写入（URN 尾段 itemId 无语义，
+// 派生名只是占位；N70 分家后两者各走各的出口）。key() 用基类默认派生：URN 与地址、
+// 凭据解耦且形态恒定，无需重写。
 class JellyfinEntity : public PlaylistEntity {
   public:
     // registry 经基类持有（构造契约同基类：必填，无缺省）

@@ -763,8 +763,13 @@ void PlaylistWidget::setItemEntity(QListWidgetItem *item, const PlaylistEntity::
     item->setData(Qt::DisplayRole, entity->title());
     item->setData(Qt::DecorationRole, entity->icon());
     item->setData(EntityRole, QVariant::fromValue<quintptr>(quintptr(entity.get())));
-    // N56 §2.4：tooltip 走显示出口（剥凭据），凭据不再明文可见
-    item->setToolTip(entity->displayUrl());
+    // N56 §2.4：tooltip 第一行走显示出口（剥凭据），凭据不再明文可见。
+    // N70：第二行给文件名（名称类排序键在读的那个串）——显示名与文件名分家后，外部表与
+    // Jellyfin 表上两者不再相同，这一行让用户一眼对照；文件名为空则只给一行
+    QString tip = entity->displayUrl();
+    if (!entity->fileName().isEmpty())
+        tip += QLatin1Char('\n') + entity->fileName();
+    item->setToolTip(tip);
 }
 
 // ——N55 §2.2：盖章落点共用——归属 = 列表身份 + 该列表当前提供者的弱引用。
@@ -3704,6 +3709,13 @@ void PlaylistWidget::showPropertiesDialog(const PlaylistEntity::Ptr &entityPtr) 
         QList<Row> general;
         // N56 §2.4：属性对话框 File Path 走显示出口（剥凭据）
         general.append({tr("File Path"), entity.displayUrl()});
+        // N70：紧随路径并列两行——File Name（名称类排序键的取值）与 Display Name（列表行
+        // 上显示的那份名字）。分家后两者在远端表上不再相同，此两行是唯一的核对面；
+        // 值为空则省略该行，与本对话框 Format / Duration 的既有口径一致
+        if (!entity.fileName().isEmpty())
+            general.append({tr("File Name"), entity.fileName()});
+        if (!entity.title().isEmpty())
+            general.append({tr("Display Name"), entity.title()});
         if (mi && !mi->format.isEmpty())
             general.append({tr("Format"), mi->format});
         if (totalSize > 0)

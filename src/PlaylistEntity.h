@@ -170,7 +170,10 @@ class PlaylistEntity {
     // （成型只发生在提供者的解析里）。空 map = 无选项；不参与任何判据、
     // 不进 key()、不进回显比对
     const QVariantMap &playOptions() const { return m_playOptions; }
-    const QString &title() const { return m_title; } // 列表显示名，恒为有效值（本地回退文件名）
+    // ——N70：显示名与文件名是两个字段，各有注入口——
+    // title 是显示面（列表行文本、搜索命中、窗口标题与 OSD、属性对话框 Display Name），
+    // fileName / suffix 是名称类排序键的取值；远端表上两者可以不同（提供者分别注入）
+    const QString &title() const { return m_title; } // 恒为有效值（未注入显示名时回退文件名）
     const QString &fileName() const {
         return m_fileName;
     } // 含扩展名：FileName / FileNameNumeric 排序用
@@ -206,9 +209,11 @@ class PlaylistEntity {
     PlaylistEntity &operator=(const PlaylistEntity &) = delete;
 
     // 子类修正文件名：网络 / 远端地址无法从 path() 中准确提取文件名时调用。
-    // 基类随之重算 suffix()，并在 title() 未被显式设置时同步 title()
+    // 基类随之重算 suffix()，并在 title() 未被显式设置时同步 title()。
+    // 提供者侧经 PlaylistProvider::injectFileName 走本写点（N70）
     void setFilename(QString fileName);
-    // 子类构造后修正显示名（远端取服务端标题）
+    // 子类构造后修正显示名（远端取服务端标题 / 清单频道名）。置旗后 setFilename 不再
+    // 联动 title，故两个写点调用顺序无关。提供者侧经 injectDisplayName（N70）
     void setTitle(QString title) {
         m_title = std::move(title);
         m_titleSet = true;
