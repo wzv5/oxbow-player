@@ -20,7 +20,8 @@ inline constexpr char kJellyfinScheme[] = "jellyfin://";
 // 实体自身不发起任何请求；未注入时空求值返回结果，与"值未知"同口径（WebDavEntity
 // 先例）。能力位恒真不随单次枚举结果变化：刷新 = 重新枚举 = 重新注入。
 // 服务端标题（显示名）与原始文件名均由提供者枚举期经注入口写入（URN 尾段 itemId 无语义，
-// 派生名只是占位；N70 分家后两者各走各的出口）。key() 用基类默认派生：URN 与地址、
+// 派生名只是占位；N70 分家后两者各走各的出口）。Episode 叶子的显示名在服务端标题前
+// 带集号前缀（N72，S01E02 - 形态，季号缺位退化为 E02 - ）。key() 用基类默认派生：URN 与地址、
 // 凭据解耦且形态恒定，无需重写。
 class JellyfinEntity : public PlaylistEntity {
   public:

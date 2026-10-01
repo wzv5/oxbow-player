@@ -45,6 +45,29 @@ QString extractSuffix(const QString &path) {
     return name.mid(dot + 1).toLower();
 }
 
+// 叶子显示名 = 集号前缀 + 服务端标题（N72）：仅 Episode 叶子生效，其余类型原样
+// 返回服务端标题（音乐库的 Audio 带曲目号语义的 indexNumber，判据取 type 而非
+// "有集号就加"）。前缀按"有则写、无则省"拼装——季号非空拼 S%02dE%02d - ，季号
+// 空退化为 E%02d - （保留 E 标记，不与列表行首恒画的行号混淆），集号空不加任何
+// 前缀；数字至少两位、不足补零、超出原样。字段缺位判据是 toVariant().isValid()
+// ——直接 toLongLong() 会把 JSON null 落成 0，把"未知"显示成"第 0 季 / 第 0 集"
+// （与下方 size 注入处的保护同口径）。name 为空原样返回（空则不注，落 URN 派生
+// 占位名，不凑前缀造名）
+QString episodeDisplayName(const QString &type, const QString &name, const QJsonObject &obj) {
+    if (type != QLatin1String("episode") || name.isEmpty())
+        return name;
+    const QVariant season = obj.value(QLatin1String("parentIndexNumber")).toVariant();
+    const QVariant episode = obj.value(QLatin1String("indexNumber")).toVariant();
+    if (!episode.isValid())
+        return name;
+    const auto padded = [](const QVariant &v) {
+        return QString::number(v.toLongLong()).rightJustified(2, QLatin1Char('0'));
+    };
+    if (!season.isValid())
+        return QStringLiteral("E%1 - %2").arg(padded(episode), name);
+    return QStringLiteral("S%1E%2 - %3").arg(padded(season), padded(episode), name);
+}
+
 // ISO 8601 → QDateTime（空 / 解析失败返回无效 QDateTime 即"缺失"，与
 // MediaMeta::recordedDate 的缺位语义同形）。服务器对缺失日期序列化为 .NET
 // DateTime.MinValue（0001-01-01，实测复现），解析成功但年份 ≤1 视作缺位。
@@ -370,13 +393,15 @@ JellyfinProvider::enumerate(const QStringList &parent) const {
                                 .arg(QLatin1String(kJellyfinScheme), m_serverId,
                                      type.isEmpty() ? QStringLiteral("unknown") : type, id);
         auto entity = std::make_shared<JellyfinEntity>(urn, registry());
-        // 名称两句注入（显示名与文件名分家）：显示名 = 服务端标题原样（URN 尾段是 itemId
-        // 噪声，派生值不可用；不再往里追加原始后缀——那正是 N69 变更记录 5 的权宜写法）；
+        // 名称两句注入（显示名与文件名分家）：显示名 = 剧集叶子带集号前缀的服务端
+        // 标题（N72），其余类型仍是服务端标题原样（URN 尾段是 itemId 噪声，派生值
+        // 不可用；不再往里追加原始后缀——那正是 N69 变更记录 5 的权宜写法）；
         // 文件名 = 原始路径末段（服务器上的真实文件名，FileName / FileNameNumeric /
         // Extension 三个排序键的取值来源）。各按"空则不注"，拿不到就不给假值，落回派生
         // 占位；两个出口调用顺序无关（显示名一经 setTitle 置旗，文件名不再联动它）
-        if (!name.isEmpty())
-            injectDisplayName(*entity, name);
+        const QString displayName = episodeDisplayName(type, name, obj);
+        if (!displayName.isEmpty())
+            injectDisplayName(*entity, displayName);
         if (!rawName.isEmpty())
             injectFileName(*entity, rawName);
 
