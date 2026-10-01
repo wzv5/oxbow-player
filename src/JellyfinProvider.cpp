@@ -68,6 +68,21 @@ QString episodeDisplayName(const QString &type, const QString &name, const QJson
     return QStringLiteral("S%1E%2 - %3").arg(padded(season), padded(episode), name);
 }
 
+// performer 取值（N73）：artists 数组按 "; " 拼接（跳过空成员）；数组为空或缺键
+// 回退 albumArtist（单值）；两者皆空返回空串——空则不注，不给假值
+QString performerOf(const QJsonObject &obj) {
+    QStringList names;
+    const QJsonArray arr = obj.value(QLatin1String("artists")).toArray();
+    for (const QJsonValue &value : arr) {
+        const QString artist = value.toString();
+        if (!artist.isEmpty())
+            names << artist;
+    }
+    if (!names.isEmpty())
+        return names.join(QLatin1String("; "));
+    return obj.value(QLatin1String("albumArtist")).toString();
+}
+
 // ISO 8601 → QDateTime（空 / 解析失败返回无效 QDateTime 即"缺失"，与
 // MediaMeta::recordedDate 的缺位语义同形）。服务器对缺失日期序列化为 .NET
 // DateTime.MinValue（0001-01-01，实测复现），解析成功但年份 ≤1 视作缺位。
@@ -422,17 +437,36 @@ JellyfinProvider::enumerate(const QStringList &parent) const {
                 fm.created = created;
             injectFileMeta(*entity, fm);
         }
-        // 时长 ← runTimeTicks（100ns 计数 → 秒），发行时间 ← premiereDate
+        // 时长 ← runTimeTicks（100ns 计数 → 秒），发行时间 ← premiereDate；媒体标签
+        // 四字段（N73）：format ← container（空回退 mediaSources[0].container，纯防御
+        // ——实测顶层恒有）；title ← 服务端标题原样（不带 N72 集号前缀——那是列表
+        // 显示名语义，媒体标签的 title 是媒体自身标题）；album ← album；performer
+        // 见 performerOf。全部随 /Items 默认响应携带，零额外请求；逐字段
+        // "有则写、无则省"，门控是六项任一存在
         const qint64 runTimeTicks =
             obj.value(QLatin1String("runTimeTicks")).toVariant().toLongLong();
         const QDateTime premiered =
             parseIsoDate(obj.value(QLatin1String("premiereDate")).toString());
-        if (runTimeTicks > 0 || premiered.isValid()) {
+        QString format = obj.value(QLatin1String("container")).toString();
+        if (format.isEmpty() && !sources.isEmpty())
+            format = sources.at(0).toObject().value(QLatin1String("container")).toString();
+        const QString album = obj.value(QLatin1String("album")).toString();
+        const QString performer = performerOf(obj);
+        if (runTimeTicks > 0 || premiered.isValid() || !format.isEmpty() || !name.isEmpty() ||
+            !album.isEmpty() || !performer.isEmpty()) {
             PlaylistEntity::MediaMeta mm;
             if (runTimeTicks > 0)
                 mm.duration = runTimeTicks / 10000000.0;
             if (premiered.isValid())
                 mm.recordedDate = premiered;
+            if (!format.isEmpty())
+                mm.format = format;
+            if (!name.isEmpty())
+                mm.title = name;
+            if (!album.isEmpty())
+                mm.album = album;
+            if (!performer.isEmpty())
+                mm.performer = performer;
             injectMediaMeta(*entity, mm);
         }
         out.entities.push_back(std::move(entity));
