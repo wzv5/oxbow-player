@@ -373,7 +373,8 @@ const QList<SettingCategory> &settingCatalog() {
         // ⑤ 网络 —— N35：远端浏览链路（WebDAV 枚举）所用 client 的缺省参数（写 mpv-qt.ini）；N37
         // 起并列 mpv 侧播放证书开关
         // （写 mpv.conf + 下发 tls-verify）——两条链路的证书校验各自独立，
-        // 只关一侧就会出现"能列出、播不了"（或反之），两开关互不联动
+        // 只关一侧就会出现"能列出、播不了"（或反之），两开关互不联动；
+        // 并列 mpv 侧 ytdl hook 开关（写 mpv.conf + 下发 ytdl）
         {.title = QT_TRANSLATE_NOOP("SettingsDialog", "Network"),
          .items =
              {
@@ -400,6 +401,14 @@ const QList<SettingCategory> &settingCatalog() {
                   .choices = tlsVerifyChoices,
                   .fallback = false,
                   .mpvType = MpvType::String},
+                 // mpv 侧 ytdl hook 开关（ytdl 选项，bool）：勾选 = ytdl=yes（mpv
+                 // 内置默认即启用，可实时读写——ytdl hook 脚本逐文件加载时现读该
+                 // 选项，改动对后续播放立即生效）；无 choices 走 Flag 直通两态
+                 {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Enable youtube-dl hook script"),
+                  .widget = WidgetKind::CheckBox,
+                  .mpvKeys = {"ytdl"},
+                  .fallback = true,
+                  .mpvType = MpvType::Flag},
              }},
     };
     return catalog;
