@@ -65,6 +65,10 @@
     <target>全屏(&amp;F)</target>
 </phrase>
 <phrase>
+    <source>Mini &amp;Window</source>
+    <target>小窗(&amp;W)</target>
+</phrase>
+<phrase>
     <source>Toggle &amp;Status Info</source>
     <target>切换状态信息(&amp;S)</target>
 </phrase>
@@ -273,8 +277,8 @@
     <target>此列表中已跳过格式错误的行。</target>
 </phrase>
 <phrase>
-    <source>Some entries request per-entry HTTP headers that this plugin ignores; whether they play depends on the origin.</source>
-    <target>某些条目请求了逐条目的 HTTP 头，但此插件会忽略；它们能否播放取决于源站。</target>
+    <source>Some per-entry options in this playlist are not supported and were ignored.</source>
+    <target>此播放列表中的某些逐条目选项不受支持，已被忽略。</target>
 </phrase>
 <phrase>
     <source>No path configured.</source>
@@ -423,6 +427,122 @@
 <phrase>
     <source>Request aborted</source>
     <target></target>
+</phrase>
+<phrase>
+    <source>Invalid JSON response from server.</source>
+    <target>来自服务器的 JSON 响应无效。</target>
+</phrase>
+<phrase>
+    <source>Request canceled.</source>
+    <target>请求已取消。</target>
+</phrase>
+<phrase>
+    <source>Network error: %1</source>
+    <target>网络错误：%1</target>
+</phrase>
+<phrase>
+    <source>Server returned HTTP %1.</source>
+    <target></target>
+</phrase>
+<phrase>
+    <source>Enter the server URL.</source>
+    <target>请输入服务器 URL。</target>
+</phrase>
+<phrase>
+    <source>Invalid server URL: %1</source>
+    <target>服务器 URL 无效：%1</target>
+</phrase>
+<phrase>
+    <source>HTTP client is not available.</source>
+    <target>HTTP client 不可用。</target>
+</phrase>
+<phrase>
+    <source>Not signed in to the Jellyfin server.</source>
+    <target>未登录到 Jellyfin 服务器。</target>
+</phrase>
+<phrase>
+    <source>Quick Connect is not enabled on this server.</source>
+    <target>此服务器未启用快速连接。</target>
+</phrase>
+<phrase>
+    <source>Timed out waiting for approval.</source>
+    <target>等待批准超时。</target>
+</phrase>
+<phrase>
+    <source>Server is reachable.</source>
+    <target>服务器可访问。</target>
+</phrase>
+<phrase>
+    <source>Credentials rejected by the server.</source>
+    <target>凭据被服务器拒绝。</target>
+</phrase>
+<phrase>
+    <source>Credentials are valid.</source>
+    <target>凭据有效。</target>
+</phrase>
+<phrase>
+    <source>Jellyfin</source>
+    <target></target>
+</phrase>
+<phrase>
+    <source>Jellyfin Quick Connect</source>
+    <target>Jellyfin 快速连接</target>
+</phrase>
+<phrase>
+    <source>Enter this code on your Jellyfin server to approve sign-in:</source>
+    <target>请在您的 Jellyfin 服务器上输入此代码以批准登录：</target>
+</phrase>
+<phrase>
+    <source>Contacting server…</source>
+    <target>正在连接服务器…</target>
+</phrase>
+<phrase>
+    <source>Cancel</source>
+    <target>取消</target>
+</phrase>
+<phrase>
+    <source>Waiting for approval…</source>
+    <target>正在等待批准…</target>
+</phrase>
+<phrase>
+    <source>URL</source>
+    <target>URL</target>
+</phrase>
+<phrase>
+    <source>Test</source>
+    <target>测试</target>
+</phrase>
+<phrase>
+    <source>Reset to default extension list</source>
+    <target>恢复默认扩展名清单</target>
+</phrase>
+<phrase>
+    <source>Space-separated file extensions; leave empty for no filter</source>
+    <target>空格分割的文件扩展名，留空不过滤</target>
+</phrase>
+<phrase>
+    <source>Filter</source>
+    <target>过滤器</target>
+</phrase>
+<phrase>
+    <source>Test Result</source>
+    <target>测试结果</target>
+</phrase>
+<phrase>
+    <source>Signed In</source>
+    <target>已登录</target>
+</phrase>
+<phrase>
+    <source>Not Signed In</source>
+    <target>未登录</target>
+</phrase>
+<phrase>
+    <source>Sign Out</source>
+    <target>退出登录</target>
+</phrase>
+<phrase>
+    <source>Quick Connect…</source>
+    <target>快速连接…</target>
 </phrase>
 <phrase>
     <source>List Settings</source>
@@ -721,6 +841,10 @@ Video rendering is performed by mpv; this plugin only provides the graphical int
 <phrase>
     <source>File Path</source>
     <target>文件路径</target>
+</phrase>
+<phrase>
+    <source>Display Name</source>
+    <target>显示名</target>
 </phrase>
 <phrase>
     <source>Format</source>
@@ -1149,6 +1273,10 @@ Video rendering is performed by mpv; this plugin only provides the graphical int
 <phrase>
     <source>Ignore HTTPS Certificate Errors (mpv side)</source>
     <target>忽略 HTTPS 证书错误（mpv 侧）</target>
+</phrase>
+<phrase>
+    <source>Enable youtube-dl hook script</source>
+    <target>启用 youtube-dl hook 脚本</target>
 </phrase>
 <phrase>
     <source>Settings</source>
