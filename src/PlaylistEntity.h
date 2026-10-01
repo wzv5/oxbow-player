@@ -20,6 +20,9 @@ struct FileMeta {
 // N18：枚举序与菜单显示顺序解耦——菜单 action 通过 setData(int(SortKey)) 显式携带
 // 键值，派发时按 data 取键，不依赖数组下标 +1 的隐式映射。
 // N57：既有取值冻结在 0..8，新键只准追加末尾（实现侧 static_assert 守候）
+// N71：DisplayName = 显示名（title），**只有一档**——实际比较走数字化对比
+// （Util::segmentName / naturalCompare），不平行提供纯字典序档；容器侧按
+// Container::title 排（容器无显示名 / 文件名之分，与名称类各档同源）
 enum class SortKey {
     None,
     FileName,
@@ -31,6 +34,7 @@ enum class SortKey {
     Duration,
     ReleaseDate,
     EnumerationOrder,
+    DisplayName,
 };
 
 // 排序规则值对象（N57 §2.9）：取代提供者侧的两个散字段与视图里的散参数
@@ -173,6 +177,8 @@ class PlaylistEntity {
     // ——N70：显示名与文件名是两个字段，各有注入口——
     // title 是显示面（列表行文本、搜索命中、窗口标题与 OSD、属性对话框 Display Name），
     // fileName / suffix 是名称类排序键的取值；远端表上两者可以不同（提供者分别注入）
+    // N71：title 另是 SortKey::DisplayName 的取值来源（数字化对比）——显示面上
+    // "看到的名字"与"排出来的序"由此同源
     const QString &title() const { return m_title; } // 恒为有效值（未注入显示名时回退文件名）
     const QString &fileName() const {
         return m_fileName;

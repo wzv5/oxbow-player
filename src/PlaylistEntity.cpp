@@ -10,12 +10,15 @@
 #include "PlaylistProvider.h"
 #include "Util.h"
 
-// N57 §2.9：排序键取值冻结（对 N58 的契约③）——既有 0..8 不得重编，新键只准追加末尾
-static_assert(int(SortKey::ReleaseDate) == 8, "新键只准追加末尾，既有取值不得重编");
-static_assert(int(SortKey::EnumerationOrder) == 9, "新键只准追加末尾，既有取值不得重编");
+// N57 §2.9：排序键取值冻结（对 N58 的契约③）——既有取值不得重编，新键只准追加末尾
+static_assert(int(SortKey::ReleaseDate) == 8);
+static_assert(int(SortKey::EnumerationOrder) == 9);
+static_assert(int(SortKey::DisplayName) == 10);
 
 // N29：排序键 → 预读元数据类别的唯一映射（各判定点共用，防散写漂移）。
-// N57 §2.9：随键搬到实体侧，视图的菜单灰态判据仍调它
+// N57 §2.9：随键搬到实体侧，视图的菜单灰态判据仍调它。
+// None 档收三个不依赖预读的键：名称类三档与枚举序，加 N71 的 DisplayName
+// （显示名枚举期即成型，与元数据无关）
 MetaCategory metaCategoryOf(SortKey key) {
     switch (key) {
     case SortKey::Created:
@@ -30,6 +33,7 @@ MetaCategory metaCategoryOf(SortKey key) {
     case SortKey::FileNameNumeric:
     case SortKey::Extension:
     case SortKey::EnumerationOrder:
+    case SortKey::DisplayName:
         return MetaCategory::None;
     }
     return MetaCategory::None;

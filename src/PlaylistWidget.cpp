@@ -2667,8 +2667,8 @@ void PlaylistWidget::abandonJob() {
 // 让新增键只加一处、判空只有一份。三条由既有代码带来的语义逐字保留：
 // 1. "未知值恒归末尾"不参与方向翻转——故 ascending 必须进函数内部，不由调用方外层
 //    flip 包装（外层包装会把"未知归末尾"一起翻掉）；
-// 2. FileNameNumeric 的分段序列只在需要时由调用方提供（sortListItems 预切分一次，
-//    sortLevelData 现算；其余键传空占位）；
+// 2. 两个数字化键（FileNameNumeric / N71 的 DisplayName）的分段序列只在需要时由
+//    调用方提供（sortListItems 预切分一次，sortLevelData 现算；其余键传空占位）；
 // 3. null 实体按等键保序（applyEntitiesToRows 的 resize 兜底会造出 null 槽位）。
 // 新键 EnumerationOrder 比包装体序号：两侧恒有值、不碰元数据、不属"未知归末尾"档，
 // ascending 照常生效（降序即枚举序反转，与其余键同形）
@@ -2678,6 +2678,21 @@ void PlaylistWidget::abandonJob() {
 enum class MetaAccess { Evaluated, Cached };
 
 static const Util::SegmentedName s_emptySeg; // 其余键的分段序列空占位
+
+// N71：走数字化对比的两个键——判据与比较串取法收在这一对符号里，四个调用点
+// （两个执行面各备序列一处）共用，不各写一遍而漂移。DisplayName 只有一档
+// （不平行提供纯字典序档），它与 FileNameNumeric 的差别只在于读 title() 还是
+// fileName()。容器侧两键同读 Container::title（容器无显示名 / 文件名之分），
+// 故取名不需经此对——直接用 container.title
+static bool isNaturalNameKey(SortKey key) {
+    return key == SortKey::FileNameNumeric || key == SortKey::DisplayName;
+}
+
+static QString naturalNameOf(SortKey key, const PlaylistEntity *e) {
+    if (!e)
+        return QString();
+    return key == SortKey::DisplayName ? e->title() : e->fileName();
+}
 
 static bool containerLess(SortKey key, const PlaylistListView::Level::ContainerEntry &a,
                           const PlaylistListView::Level::ContainerEntry &b, bool ascending,
@@ -2693,6 +2708,7 @@ static bool containerLess(SortKey key, const PlaylistListView::Level::ContainerE
     case SortKey::FileName:
         return flip(QString::compare(ca.title, cb.title, Qt::CaseInsensitive));
     case SortKey::FileNameNumeric:
+    case SortKey::DisplayName: // N71：与 FileNameNumeric 同读 Container::title，仅数字化与否不同
         return flip(Util::naturalCompare(segA, segB));
     case SortKey::Extension: {
         const int da = ca.title.lastIndexOf(QLatin1Char('.'));
@@ -2751,6 +2767,7 @@ static bool entityLess(SortKey key, const PlaylistListView::Level::EntityEntry &
     case SortKey::FileName:
         return flip(QString::compare(pa->fileName(), pb->fileName(), Qt::CaseInsensitive));
     case SortKey::FileNameNumeric:
+    case SortKey::DisplayName: // N71：分段序列由调用方按本键取好（naturalNameOf），此处只比
         return flip(Util::naturalCompare(segA, segB));
     case SortKey::Extension:
         return flip(QString::compare(pa->suffix(), pb->suffix(), Qt::CaseInsensitive));
@@ -2802,7 +2819,8 @@ static bool entityLess(SortKey key, const PlaylistListView::Level::EntityEntry &
 // 无停止/恢复副作用，四步式流程（sortCurrent）与加载填充共用。
 // N45 §2.6：行序 = [上一级行][容器行…][实体行…]——上一级行恒第 0 行不动；
 // 排序施加顺序 = 容器组内排 → 实体组内排（两组分界即模型不变式）；
-// 取值面对容器扩为 title 顶 fileName/suffix、元数据取 FileMeta；"未知值恒归末尾组"
+// 取值面对容器扩为 title 顶 fileName/suffix（N71：DisplayName 档对容器亦读
+// title，容器无显示名 / 文件名之分）、元数据取 FileMeta；"未知值恒归末尾组"
 // 只在组内成立（容器组内部全为未知值时退化为保持提供者初始序，稳定排序保序）
 void PlaylistWidget::sortListItems(PlaylistListView *list, SortRule rule) {
     const SortKey key = rule.key; // N57 §2.9：入参值对象化，函数体不动
@@ -2830,8 +2848,9 @@ void PlaylistWidget::sortListItems(PlaylistListView *list, SortRule rule) {
     Q_ASSERT(entityRows.size() == int(lvl->entities.size()));
 
     // ——容器组：比较逻辑在共用比较器内（含翻转与未知归末尾），此处只备分段序列——
+    // N71：数字化键两档（FileNameNumeric / DisplayName）共用此备序列，容器侧两键同串
     QVector<Util::SegmentedName> containerSegs;
-    if (key == SortKey::FileNameNumeric) {
+    if (isNaturalNameKey(key)) {
         containerSegs.reserve(containerRows.size());
         for (const auto &entry : lvl->containers)
             containerSegs.push_back(Util::segmentName(entry.container.title));
@@ -2849,15 +2868,14 @@ void PlaylistWidget::sortListItems(PlaylistListView *list, SortRule rule) {
 
     // ——实体组：元数据取用档 = Evaluated（显示层已预读，求值即命中缓存）——
     const int ne = int(lvl->entities.size());
-    QVector<Util::SegmentedName> numericSegs;
-    if (key == SortKey::FileNameNumeric) {
-        numericSegs.resize(ne);
+    QVector<Util::SegmentedName> entitySegs;
+    if (isNaturalNameKey(key)) {
+        entitySegs.resize(ne);
         for (int i = 0; i < ne; ++i)
-            numericSegs[i] = Util::segmentName(
-                lvl->entities[i].entity ? lvl->entities[i].entity->fileName() : QString());
+            entitySegs[i] = Util::segmentName(naturalNameOf(key, lvl->entities[i].entity.get()));
     }
-    auto entitySegAt = [&numericSegs](int i) -> const Util::SegmentedName & {
-        return numericSegs.isEmpty() ? s_emptySeg : numericSegs.at(i);
+    auto entitySegAt = [&entitySegs](int i) -> const Util::SegmentedName & {
+        return entitySegs.isEmpty() ? s_emptySeg : entitySegs.at(i);
     };
     std::vector<int> eOrd(ne);
     for (int i = 0; i < ne; ++i)
@@ -2910,11 +2928,12 @@ void PlaylistWidget::sortLevelData(Level &lvl, SortRule rule) {
     if (key == SortKey::None)
         return;
 
-    // ——容器组：分段序列现算（仅 FileNameNumeric 需要，不在比较器里逐次切分）——
+    // ——容器组：分段序列现算（仅两个数字化键需要，不在比较器里逐次切分；容器侧
+    // 两键同读 container.title）——
     std::stable_sort(
         lvl.containers.begin(), lvl.containers.end(),
         [key, ascending](const Level::ContainerEntry &a, const Level::ContainerEntry &b) {
-            if (key == SortKey::FileNameNumeric)
+            if (isNaturalNameKey(key))
                 return containerLess(key, a, b, ascending, Util::segmentName(a.container.title),
                                      Util::segmentName(b.container.title));
             return containerLess(key, a, b, ascending, s_emptySeg, s_emptySeg);
@@ -2926,10 +2945,10 @@ void PlaylistWidget::sortLevelData(Level &lvl, SortRule rule) {
     std::stable_sort(
         lvl.entities.begin(), lvl.entities.end(),
         [key, ascending](const Level::EntityEntry &a, const Level::EntityEntry &b) {
-            if (key == SortKey::FileNameNumeric) {
+            if (isNaturalNameKey(key)) {
                 return entityLess(key, a, b, MetaAccess::Cached, ascending,
-                                  Util::segmentName(a.entity ? a.entity->fileName() : QString()),
-                                  Util::segmentName(b.entity ? b.entity->fileName() : QString()));
+                                  Util::segmentName(naturalNameOf(key, a.entity.get())),
+                                  Util::segmentName(naturalNameOf(key, b.entity.get())));
             }
             return entityLess(key, a, b, MetaAccess::Cached, ascending, s_emptySeg, s_emptySeg);
         });
@@ -4157,28 +4176,31 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
     menu.addSeparator();
 
     QMenu *sortMenu = menu.addMenu(tr("Sort"));
-    QAction *sortActions[9];
+    QAction *sortActions[10];
     // N58：Original Order 置首位——回到枚举返回序（文案迁就读者、标识符
     // SortKey::EnumerationOrder 迁就实现，与 Released ↔ ReleaseDate 同形）
     sortActions[0] = sortMenu->addAction(tr("Original Order"));
     sortActions[1] = sortMenu->addAction(tr("File Name"));
     sortActions[2] = sortMenu->addAction(tr("File Name (Numeric)"));
     sortActions[3] = sortMenu->addAction(tr("Extension"));
-    sortActions[4] = sortMenu->addAction(tr("Created"));
-    sortActions[5] = sortMenu->addAction(tr("Modified"));
-    sortActions[6] = sortMenu->addAction(tr("File Size"));
-    sortActions[7] = sortMenu->addAction(tr("Duration"));
-    sortActions[8] = sortMenu->addAction(tr("Released"));
+    // N71：显示名档——只有一档（实际排序走数字化对比），落在 Extension 之后
+    sortActions[4] = sortMenu->addAction(tr("Display Name"));
+    sortActions[5] = sortMenu->addAction(tr("Created"));
+    sortActions[6] = sortMenu->addAction(tr("Modified"));
+    sortActions[7] = sortMenu->addAction(tr("File Size"));
+    sortActions[8] = sortMenu->addAction(tr("Duration"));
+    sortActions[9] = sortMenu->addAction(tr("Released"));
     // N18：菜单 action 显式携带 SortKey，解除"菜单数组下标 +1 == 枚举值"的脆弱不变式
     sortActions[0]->setData(int(SortKey::EnumerationOrder));
     sortActions[1]->setData(int(SortKey::FileName));
     sortActions[2]->setData(int(SortKey::FileNameNumeric));
     sortActions[3]->setData(int(SortKey::Extension));
-    sortActions[4]->setData(int(SortKey::Created));
-    sortActions[5]->setData(int(SortKey::Modified));
-    sortActions[6]->setData(int(SortKey::FileSize));
-    sortActions[7]->setData(int(SortKey::Duration));
-    sortActions[8]->setData(int(SortKey::ReleaseDate));
+    sortActions[4]->setData(int(SortKey::DisplayName));
+    sortActions[5]->setData(int(SortKey::Created));
+    sortActions[6]->setData(int(SortKey::Modified));
+    sortActions[7]->setData(int(SortKey::FileSize));
+    sortActions[8]->setData(int(SortKey::Duration));
+    sortActions[9]->setData(int(SortKey::ReleaseDate));
     sortMenu->addSeparator();
     // N9：规则为单选勾选组（与持久化配套），方向互斥勾选且切向即时重排
     for (QAction *a : sortActions)
