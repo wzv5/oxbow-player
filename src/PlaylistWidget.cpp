@@ -11,6 +11,7 @@
 #include "PlaylistListView.h" // N57 §2.2：视图即状态载体，本页所有列表页由 createView 出生
 #include "PlaylistRegistry.h" // N57 §2.3：默认 tab 的列表与默认名出口
 #include "ServiceRegistry.h"
+#include "StaticProvider.h" // N79：新表提供者经 createDefault 出生
 #include "StreamTransit.h"
 #include "Util.h"
 
@@ -4267,6 +4268,10 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
     QAction *refreshAction = menu.addAction(tr("Refresh"));
     // N49：原"Locate Playing Item"项已上移为底部工具条的定位按钮，此处不再列该项
     menu.addSeparator();
+    // N79：列表维护类（Refresh）→ 本组 → 条目类（Reveal / Copy Path / Properties）
+    // 三段；后续"保存为 m3u"即加在本项之下
+    QAction *copyContentsAction = menu.addAction(tr("Copy Contents to New List"));
+    menu.addSeparator();
 
     QAction *openLocationAction = menu.addAction(tr("Reveal in File Explorer"));
     QAction *copyPathAction = menu.addAction(tr("Copy Path"));
@@ -4288,6 +4293,15 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
     removeMenu->setEnabled(hasList && modifiable && !loadFailed);
     removeSelAction->setEnabled(hasList && !list->selectedItems().isEmpty());
     clearAction->setEnabled(itemCount > 0);
+    // N79 启用判据（exec() 前一次算好）：有当前列表、当前层已加载且未失败、有实体、
+    // 本列表非转接形态（N52 §2.8 三态表的唯一有效决策出口；取不到提供者按禁用）。
+    // 其中 layerLoaded 已蕴含 !loadFailed（同一层同一 loadError），按规格两行分列写而不合并。
+    // 有实体一项只判空、不换算内容：itemCount 不可作判据（容器行与"上一级"行也计行），
+    // 整表副本的量级与本类既有本层遍历判据（anyEntitySupports*）同档
+    // 其余不设限——默认 tab 同样可复制；忙时由菜单入口既有 m_busy 守卫统一挡住
+    copyContentsAction->setEnabled(
+        hasList && !loadFailed && list->layerLoaded(list->browsePathIds()) &&
+        !currentLayerEntitiesOf(tab).empty() && menuProvider && !menuProvider->usesTransit());
 
     // N26：启用真值统一绑定实体（占位 / 上一级行已在命中检测时挡掉，此处指针即真相）。
     // N47：容器目标绑定容器副本——属性恒启用；复制需 path 非空；打开需本地且存在
@@ -4343,6 +4357,8 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
             addFiles(files);
     } else if (chosen == refreshAction) {
         refreshCurrentTab();
+    } else if (chosen == copyContentsAction) {
+        copyContentsToNewList(tab);
     } else if (chosen == openLocationAction) {
         // N47：容器目标打开其 path（本地目录本身）；实体走原身份串
         Util::openFileLocation(targetContainer ? containerPath : targetUrl, this);
@@ -4579,6 +4595,63 @@ void PlaylistWidget::duplicateList(int tabIndex) {
     // 建视图 → 挂 tab → 激活 → 保存
     const int nextN = Util::nextSequenceNumber(tr("Playlist "), m_lists->names());
     auto *pl = m_lists->append(tr("Playlist %1").arg(nextN), std::move(dup), QUuid());
+    auto *newView = createView(pl);
+    addTab(newView, pl->name());
+    requestTab(count() - 1); // 非忙时即 setCurrentIndex，激活经 onTabChanged 触发首载（N28）
+    savePlaylists();
+}
+
+// N79：复制当前层内容到新建静态列表——内容的拍平快照，与 duplicateList 的整表
+// 配置复制不是一回事：脱钩源类型，落成一串可独立播放的地址。只读动作：不停播、
+// 不经 markPlayingTab、不动会话键（m_lastPlayingTargetUuid），播放语义什么都没发生
+void PlaylistWidget::copyContentsToNewList(int tabIndex) {
+    if (tabIndex < 0 || m_busy)
+        return; // 与 openListSettings 同档兜底（N19：忙时菜单已禁用），但本项默认 tab 亦可，
+                // 故只挡 <0（openListSettings 挡 <=0）
+    PlaylistListView *srcView = viewAt(tabIndex);
+    if (!srcView || !srcView->list())
+        return;
+
+    // 取串走既有 playTargets 出口（全仓唯一能取得直接形态的生产通路），串原样
+    // 取用不做任何加工——WebDAV 直发串可能已含凭据，那正是"一份能直接播的地址"
+    const PlaylistEntity::List src = currentLayerEntitiesOf(tabIndex);
+    if (src.empty())
+        return; // 防御：判据在 exec() 前算，此处按点击后的当下现取（菜单已置灰即不可达）
+    const QVector<PlayTarget> targets = playTargets(tabIndex, src);
+    QStringList urls;
+    urls.reserve(targets.size());
+    bool skippedSome = false;
+    for (const PlayTarget &target : targets) {
+        if (target.url.isEmpty())
+            continue; // 空槽位占位（N55 §2.3），不进新表
+        // 转接串脱离本进程无意义（端点与列表身份都是会话内的），不进新表——兜住
+        // "收编实体带原归属、原提供者是 Required 转接型仍铸转接串"的缝隙
+        if (StreamTransit::isTransitUri(target.url)) {
+            skippedSome = true;
+            continue;
+        }
+        urls.append(target.url);
+    }
+    // 跳过告知只记"有没有"不记条数（免复数译文负担）；延后出口，不在本栈 exec()
+    if (skippedSome)
+        queueDeferredNotice(tr("Some items were skipped because they use transit URLs"));
+    if (urls.isEmpty())
+        return;
+
+    // 造表与 createNewList 同形：铸提供者 → 灌内容（新表的身份串就是播放串本身，
+    // 元数据一切由 url 当场派生，fromPath 的已定形契约由播放串形态天然满足）→
+    // 排序取提供者自述默认（静态即 {}）
+    auto provider = StaticProvider::createDefault(m_registry);
+    PlaylistProvider::EntityList items;
+    items.reserve(urls.size());
+    for (const QString &url : urls)
+        items.push_back(PlaylistEntity::fromPath(url, m_registry));
+    provider->setItems(items);
+    provider->setSortRule(provider->defaultSortRule());
+
+    // 登记与落位（N57 §2.7 同形）：登记（现铸身份）→ 建视图 → 挂 tab → 激活 → 保存
+    const int nextN = Util::nextSequenceNumber(tr("Playlist "), m_lists->names());
+    auto *pl = m_lists->append(tr("Playlist %1").arg(nextN), std::move(provider), QUuid());
     auto *newView = createView(pl);
     addTab(newView, pl->name());
     requestTab(count() - 1); // 非忙时即 setCurrentIndex，激活经 onTabChanged 触发首载（N28）

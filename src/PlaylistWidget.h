@@ -639,6 +639,9 @@ class PlaylistWidget : public QTabWidget {
     // 过去三样：提供者类型与自身参数（经唯一序列化器往返）、条目内容（回传先行）、
     // 当前排序规则；身份现铸、名字走默认命名算法、视图态不带
     void duplicateList(int tabIndex);
+    // N79：复制当前层内容到新建静态列表（主体菜单入口）——内容的拍平快照，
+    // 与 duplicateList 的整表配置复制不是一回事；只读动作，不停播不动会话键
+    void copyContentsToNewList(int tabIndex);
     // N35：改收共享计数副本——异步属性对话框跨嵌套事件循环持有实体，
     // 求值转发取回的值经注入口写回该实体（关闭即取消）
     void showPropertiesDialog(const PlaylistEntity::Ptr &entity);
