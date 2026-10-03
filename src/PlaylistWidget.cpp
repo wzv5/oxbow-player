@@ -921,9 +921,11 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
     // 自覆盖情形清表后克隆仍可用）。同形态取首个；首个未解析而重复项已解析时
     // 复用落空无正确性代价（缺失元数据按需链自补）。
     // N45：收编源 = 正在播放 tab 队列根层的实体序列（§2.9）。
-    // R：索引键与判据**同源同形**——N55 §2.3 归属化后同为唯一出口 entity->playUrl()，
-    // 命中即克隆源实体——克隆携带源实体原身份串、缓存与原归属，克隆再经第 4 步现算
-    // 仍得同一形态，下一次回显必静默（自愈不变式）
+    // R：索引键与判据**同源同形**——N55 §2.3 归属化后同为唯一出口 entity->playUrl()。
+    // 命中支按形态分流（N76 §2.2）：转接命中原样克隆（携带源实体原身份、缓存与原
+    // 归属，归属提供者现算重铸同一形态）；直接命中以播放 URL 重造默认归属实体
+    // （身份 = 含凭据的下发串，判据同样逐字节闭合）——两条路的下一次回显都必静默
+    // （自愈不变式）
     QHash<QString, PlaylistEntity::Ptr> reuse;
     if (const Level *srcLvl = list->findLevel(list->queueRootIds())) {
         for (const auto &src : srcLvl->entities) {
@@ -975,28 +977,50 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
         if (hasAnomaly && StreamTransit::isTransitUri(pushed.at(i)) &&
             !reuse.contains(pushed.at(i)))
             continue;
-        // N31：命中索引复用源实体克隆（携带已解析缓存，身份串与源实体一致，不破静默
-        // 不变式）；未命中经工厂新建（网络路径落 UnknownEntity）。
-        // R：未命中项的回显是"播放形态"，先经 StreamTransit::unwrap 折回身份再进
-        // 工厂（N56 §2.6：工厂只收已定形身份）。unwrap 是纯解码（非 mpvqt:// 原样
-        // 返回），这一句不得省——漏折即让转接项以 mpvqt:// 落进实体身份，破 N52 / N56
-        // 的折叠纪律（整形只补形态、不拆包装：mpvqt:// 含 "://" 属已定形，逐字节放行）。
-        // N61 变更记录第 1 条：工厂走回显专用入口 fromMpvEcho——补不出形态的串（空
-        // filename、裸 file:）不撞 fromPath 那句断言，原样落 UnknownEntity 保行。
+        // 未命中支（N31 / N61 不变）：回显是"播放形态"，先经 StreamTransit::unwrap
+        // 折回身份再进工厂（N56 §2.6：工厂只收已定形身份）。unwrap 是纯解码（非
+        // mpvqt:// 原样返回），这一句不得省——漏折即让转接项以 mpvqt:// 落进实体身份，
+        // 破 N52 / N56 的折叠纪律（整形只补形态、不拆包装：mpvqt:// 含 "://" 属已定形，
+        // 逐字节放行）。工厂走回显专用入口 fromMpvEcho——补不出形态的串（空 filename、
+        // 裸 file:）不撞 fromPath 那句断言，原样落 UnknownEntity 保行。
         // 两条路不得互换：索引键若改用折叠键（小写归一）就与判据不同形，命中的克隆会被
         // 下次回显判成"外部改动"而重复收编永续；建实体若改用折叠键，则展示形态被
-        // 小写化（破 B15）
-        // N55 §2.2：未命中项盖默认列表归属——默认列表是收编未命中、命令行与手工添加
-        // 项的归属来源；命中项经 clone() 携带原归属，不再盖（显式赋盖纪律下靠"不再盖"
-        // 保住原归属）。含补不出形态落占位的 UnknownEntity：isLocalFile() 为假 ⇒
-        // StaticProvider 恒等下发 ⇒ 判据两侧同为那份原串 ⇒ 静默，不落重复收编
+        // 小写化（破 B15）。未命中项盖默认列表归属（N55 §2.2）——默认列表是收编、
+        // 命令行与手工添加项的归属来源。含补不出形态落占位的 UnknownEntity：
+        // isLocalFile() 为假 ⇒ StaticProvider 恒等下发 ⇒ 判据两侧同为那份原串 ⇒
+        // 静默，不落重复收编
+        //
+        // N76 §2.2：命中支按形态分流——
+        // 转接命中原样收编：clone() 携带源实体原身份、缓存与原归属，归属提供者现算
+        // 重铸同一形态，判据闭合（N55 自愈不变式）；书签侧对这类项维持拒收（N76 §2.1）。
+        // 直接命中当场以播放 URL 重造新实体：fromPath 严格入口即可（命中即该串与源
+        // 实体 playUrl() 逐字节相等，必已定形，不撞断言），身份 = 含凭据的下发串、
+        // 归属盖默认列表——项从此自含可播（与命令行 / 手工远端串同类），不随来源列表
+        // 退役被清扫（applySourceRetired 的实际作用面收窄为只剩转接收编项）。判据
+        // 闭合性保持：新实体 playUrl() = StaticProvider 恒等 = path() = 回显串，逐字节
+        // 相等。显示面与缓存经友元注入口从源实体拷贝（N76 §2.3 定案）：N70 注入的
+        // title / fileName 与 N65 playOptions 不因重造退化，已解析元数据顺路带走
+        // （cached*() 有值才拷；icon 无注入口，惰性重算）
         const auto rit = reuse.constFind(pushed.at(i));
         const bool hit = rit != reuse.constEnd();
-        PlaylistEntity::Ptr entity =
-            hit ? rit.value()->clone()
-                : PlaylistEntity::fromMpvEcho(StreamTransit::unwrap(pushed.at(i)), m_registry);
-        if (!hit)
+        PlaylistEntity::Ptr entity;
+        if (hit && StreamTransit::isTransitUri(pushed.at(i))) {
+            entity = rit.value()->clone();
+        } else if (hit) {
+            entity = PlaylistEntity::fromPath(pushed.at(i), m_registry);
             stampOwnership(*entity, m_lists->defaultList());
+            const PlaylistEntity::Ptr &src = rit.value();
+            entity->setFilename(src->fileName());
+            entity->setTitle(src->title());
+            entity->setPlayOptions(src->playOptions());
+            if (const auto *fm = src->cachedFileMeta())
+                entity->setFileMeta(*fm);
+            if (const auto *mm = src->cachedMediaMeta())
+                entity->setMediaMeta(*mm);
+        } else {
+            entity = PlaylistEntity::fromMpvEcho(StreamTransit::unwrap(pushed.at(i)), m_registry);
+            stampOwnership(*entity, m_lists->defaultList());
+        }
         QListWidgetItem *item = makeItem(def, std::move(entity));
         // N55 §3.6 处置 2：异常支的重建不写 PlayingRole——队列即将作废，回显里的
         // current 是停播前的旧值，照抄会挂出一个 mpv 已不持有的正播行（与 runFourStep
@@ -2032,6 +2056,8 @@ void PlaylistWidget::pumpDeferredNotices() {
 // 各接一处，均与触发动作同栈同步调用；retiredName 须在摘除前采集（摘除后 nameOf 即
 // 空返回）。清扫面封闭：归属 U 的显示中实体只可能在默认 tab 的收编层——其余列表的
 // 实体归属即自身列表，随列表同生死；默认列表归属的提供者永生且 U 恒非保留身份。
+// N76 §2.2：实际作用面收窄——收编直接形态项重造后归属默认列表（身份 = 自含凭据串，
+// 自含可播，非"能看不能播"的僵尸项），不再被本清扫移除；本清扫只余转接收编项。
 // 行面依赖"默认 tab 恒平铺"：默认列表的提供者是 StaticProvider、无容器 ⇒ 显示层 ==
 // 队列根层，removeRowsLocal 作用的 levelOf() 即队列根层，清扫不必先归位显示层
 // （若将来给默认列表配可钻取的提供者，须显式先 setDisplayedIds(queueRootIds())）

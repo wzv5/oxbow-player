@@ -3542,34 +3542,32 @@ PlaylistEntity::Ptr MainWindow::playingEntity() const {
 }
 
 void MainWindow::onAddBookmark() {
-    // N56 §2.3/§2.7 + N55 §2.7：书签的存储串 = 该项的下发形态（entity->playUrl()）。
-    // 直接形态（含提供者注入的凭据快照）原样落盘——N48 的"凭据不落盘"约束随之作废
-    // （事实上早已破，见规格 §2.7）；键侧不受影响（BookmarkManager 内部归一为键，
-    // Util::Url::key 先剥凭据），展示保原样（大小写/分隔符，B15）
+    // N76 §2.1：书签的存储串恒为身份串（entity->path()）。真列表直接形态从此存干净
+    // 身份，提供者注入的凭据退出书签 INI（N55 §2.7"下发形态落盘"的口径废止）——回跳
+    // 真列表后由提供者以当前凭据现算重铸，快照陈旧一类失败面（改密码后 401）随之消失。
+    // 默认归属项（收编重造 / 命令行 / 手工）StaticProvider 恒等下发，path() 与下发串
+    // 同值，自含串照旧。键侧不受影响（BookmarkManager 内部归一为键，Util::Url::key
+    // 先剥凭据——存储串换干净身份后同一内容的键不变），展示保原样（大小写/分隔符，B15）
     const auto entity = playingEntity();
     if (!entity)
         return;
-    QString rawPath = entity->playUrl();
-    // N55 §2.7：形态带 mpvqt:// 前缀时按归属分岔——归属真列表（Origin 有效且非
-    // 保留身份）⇒ 改存 entity->path() 身份（跳回所属列表能重铸 URI，N54 不退化）；
-    // 归属默认列表 ⇒ 拒收：那条 URI 的端点是会话内的，跨会话必死，它本来就不该有
-    // 书签。判据只有一个前缀判断加一次身份比对，不新增概念。拒收时经 showOsd 给
-    // 一条失败提示（与成功那条同一通道、同一强度——用户按了键就得当场听到回音，
-    // 静默早退等于没响应），不调 addBookmark、不发成功 OSD
-    if (StreamTransit::isTransitUri(rawPath)) {
-        // 此处"归属"取书签承诺的归属（正播 tab 的列表，即下面 origin 的算法），
-        // 不是实体的 m_ownerUuid——变更记录 2。二者在"默认 tab 播收编来的转接项"
-        // 这一格分叉：按实体归属该存身份，可那条书签的 origin 必是默认列表，回跳
-        // 落到默认 tab 的补项播分支，存的又是无凭据身份 → 跨会话必静默放不开。
-        // 拒收（验收 7）才是那条承诺能落地的形状
+    // N55 §2.7 / N76 §2.1：拒收分支保持——判据落在下发形态上（现算一次 playUrl()，
+    // 仅作判据用；转接项的 path() 是干净身份、不带协议前缀，判据落不到身份串上）：
+    // 形态带 mpvqt:// 且正播 tab 是默认列表 ⇒ 拒收——那条 URI 的端点是会话内的，
+    // 跨会话必死，它本来就不该有书签（N76 §2.2 后，默认 tab 里唯一可能播着 mpvqt://
+    // 的项就是收编来的转接项）。此处"归属"取书签承诺的归属（正播 tab 的列表，即
+    // 下面 origin 的算法），不是实体的 m_ownerUuid——N55 变更记录 2 的钉定，N76 维持。
+    // 拒收时经 showOsd 给一条失败提示（与成功那条同一通道、同一强度——用户按了键
+    // 就得当场听到回音，静默早退等于没响应），不调 addBookmark、不发成功 OSD
+    if (StreamTransit::isTransitUri(entity->playUrl())) {
         const int playingTab = m_playlist->playingTabIndex();
         const Playlist *playing = m_playlist->listOf(playingTab);
         if (!playing || playing->uuid() == kDefaultListUuid) {
             showOsd(tr("This item does not support bookmarks."));
             return;
         }
-        rawPath = entity->path();
     }
+    const QString rawPath = entity->path();
     const QString path = entity->key();
     const double t = m_timePos;
     // 自动命名：取"本文件既有书签名的最大序号 +1"，与播放列表自动命名共用同一份算法
