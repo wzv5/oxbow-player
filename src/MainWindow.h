@@ -58,7 +58,9 @@ class MainWindow : public QMainWindow {
     void seekReleased();
     void setPlaylistVisible(bool visible);
     void setNavigatorVisible(bool visible);
-    void ensureSettingsDialog(); // R3：按需创建/唤起设置对话框（非模态）
+    void ensureSettingsDialog();      // R3：按需创建/唤起设置对话框（非模态）
+    void copyScreenshotToClipboard(); // N78：截图 → 剪贴板（Ctrl+C 与文件菜单共用）
+    void saveScreenshotToFile();      // N78：截图另存为（Ctrl+E 与文件菜单共用）
     void showAboutDialog();
     // N6：速度控制（读改写 speed 属性，钳制 0.25~8）
     void changeSpeed(double delta);
@@ -325,6 +327,9 @@ class MainWindow : public QMainWindow {
     void repositionVideoOverlay();
     void flushOsd();
     void ensureVideoOverlay();
+
+    // N78：截图两槽的公共前置——取图失败（无正播 / 载荷异常）即 OSD 报错并返空图
+    QImage grabScreenshotOrNotify();
 
     // ---- N8：主窗口显示优化 ----
     QString playingDisplayName(); // 正播项显示名（与列表行同一字段，标题与 OSD 同源）

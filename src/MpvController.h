@@ -24,6 +24,12 @@ class MpvController : public QObject {
     void command(const QString &cmd);
     void command(const QStringList &args);
 
+    // N78：screenshot-raw 取内存原始图像——命令不带参数，flags 省略即默认
+    // subtitles（原始视频分辨率、带字幕），format 省略即默认 bgr0（小端下与
+    // QImage::Format_RGB32 同布局）。返回深拷贝出的独立 QImage（mpv 侧数据随
+    // result node 释放而失效）；失败（含空闲态无视频）返回空 QImage
+    QImage screenshotRaw();
+
     // N52 §2.10：loadfile 唯一出口。N65：逐文件选项由调用方**显式**传入（不给
     // 缺省值——缺省会藏起"这条链路某天忘了带选项"），本函数退成纯管道：不判
     // scheme、不补选项、不校验键名、不改值（判据只在提供者的解析里，下游一律

@@ -47,6 +47,8 @@
 #include <QHelpEvent>
 #include <QIODevice>
 #include <QIcon>
+#include <QImage>
+#include <QImageWriter>
 #include <QInputDialog>
 #include <QJsonArray>
 #include <QJsonDocument>

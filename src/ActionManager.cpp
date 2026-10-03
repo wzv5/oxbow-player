@@ -6,6 +6,12 @@ ActionManager::ActionManager(QWidget *host) : m_host(host) {
     // 注册表 = 全部 UI 入口清单（A15）
     declareAction(Id::Open, tr("&Open File…"), QKeySequence::Open);
     declareAction(Id::Settings, tr("&Settings"));
+    // N78：视频截图两动作——取图经 MpvController::screenshotRaw，逻辑归主窗口。
+    // Ctrl+C 全仓无占用：焦点在文本控件时控件以 ShortcutOverride 认领（仍是
+    // 文本复制），主窗体焦点下触发截图
+    declareAction(Id::ScreenshotCopy, tr("&Copy Screenshot to Clipboard"),
+                  QStringLiteral("Ctrl+C"));
+    declareAction(Id::ScreenshotSave, tr("Save Screenshot &As…"), QStringLiteral("Ctrl+E"));
     declareAction(Id::Quit, tr("&Quit"), QKeySequence::Quit);
     declareAction(Id::PlayPause, tr("&Play/Pause"), Qt::Key_Space);
     declareAction(Id::Stop, tr("&Stop"));

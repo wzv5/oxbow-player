@@ -419,6 +419,75 @@ void MpvController::command(const QStringList &args) {
     mpv_command(m_mpv, argv.data());
 }
 
+QImage MpvController::screenshotRaw() {
+    // N78：screenshot-raw 经节点通道取内存原始图像（仅 client API 可用）。
+    // 命令不带参数：flags 省略 = subtitles（原始视频分辨率、带字幕），
+    // format 省略 = bgr0（B8G8R8X8，B 为 LSB，X 填充未定义）
+    const QByteArray cmd = QByteArrayLiteral("screenshot-raw");
+    mpv_node cmdNode;
+    cmdNode.format = MPV_FORMAT_STRING;
+    cmdNode.u.string = const_cast<char *>(cmd.constData());
+    mpv_node_list argList;
+    argList.num = 1;
+    argList.keys = nullptr; // 顶层是数组无键（与 loadFile 节点通道同口径）
+    argList.values = &cmdNode;
+    mpv_node argRoot;
+    argRoot.format = MPV_FORMAT_NODE_ARRAY;
+    argRoot.u.list = &argList;
+
+    mpv_node result;
+    const int err = mpv_command_node(m_mpv, &argRoot, &result);
+    if (err != 0) {
+        // 含空闲态无视频（命令即报错），空 QImage 交调用方出提示
+        qDebug() << "[mpvqt] screenshot-raw failed:" << err;
+        return QImage();
+    }
+
+    QImage out;
+    // 返回 map 键：w / h / stride（INT64）、format（STRING）、data（BYTE_ARRAY，
+    // 随 result node 释放而失效，故必须逐行拷进自建 QImage）
+    const mpv_node_list *map = result.format == MPV_FORMAT_NODE_MAP ? result.u.list : nullptr;
+    qint64 w = 0, h = 0, stride = 0;
+    const char *format = nullptr;
+    const mpv_byte_array *ba = nullptr;
+    if (map) {
+        for (int i = 0; i < map->num; ++i) {
+            const mpv_node &v = map->values[i];
+            const QLatin1String key(map->keys[i]);
+            if (key == QLatin1String("w") && v.format == MPV_FORMAT_INT64)
+                w = v.u.int64;
+            else if (key == QLatin1String("h") && v.format == MPV_FORMAT_INT64)
+                h = v.u.int64;
+            else if (key == QLatin1String("stride") && v.format == MPV_FORMAT_INT64)
+                stride = v.u.int64;
+            else if (key == QLatin1String("format") && v.format == MPV_FORMAT_STRING)
+                format = v.u.string;
+            else if (key == QLatin1String("data") && v.format == MPV_FORMAT_BYTE_ARRAY)
+                ba = v.u.ba;
+        }
+    }
+
+    // 只认 bgr0（下发未带 format 参数，mpv 恒给默认值）；stride 只收 ≥ w*4 的正值
+    // ——本命令载荷由 mpv 侧新建缓冲区、按现行实现只给正值，取到 0/负值或行重叠
+    // 的畸形载荷即上游语义变化，判异常返空图，交由调用方 OSD 报错（偏离见变更记录）
+    const bool shapeOk = w > 0 && h > 0 && stride >= w * 4 && ba && format &&
+                         qstrcmp(format, "bgr0") == 0 &&
+                         qint64(ba->size) >= (h - 1) * stride + w * 4;
+    if (shapeOk) {
+        QImage img(int(w), int(h), QImage::Format_RGB32);
+        const uchar *base = static_cast<const uchar *>(ba->data);
+        for (int y = 0; y < int(h); ++y) // byte_index = y*stride 手册原始语义
+            std::memcpy(img.scanLine(y), base + qint64(y) * stride, size_t(w) * 4);
+        out = img;
+    } else {
+        qDebug() << "[mpvqt] screenshot-raw unexpected payload:" << w << h << stride
+                 << (format ? format : "(null)");
+    }
+
+    mpv_free_node_contents(&result); // 节点内存（含图像 data）按既有用法规还
+    return out;
+}
+
 void MpvController::loadFile(const QString &url, const QString &appendMode,
                              const QVariantMap &options) {
     // N65：纯管道——选项调用方给什么发什么，不判 scheme、不补选项、不校验键名、

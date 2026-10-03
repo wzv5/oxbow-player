@@ -11,6 +11,8 @@ class ActionManager : public QObject {
     enum class Id {
         Open,
         Settings,
+        ScreenshotCopy, // N78：复制截图到剪贴板（Ctrl+C）
+        ScreenshotSave, // N78：截图另存为（Ctrl+E）
         Quit,
         PlayPause,
         Stop,

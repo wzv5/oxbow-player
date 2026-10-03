@@ -559,6 +559,14 @@ void MainWindow::createMenus() {
     connect(act(AM::Id::Open), &QAction::triggered, this, &MainWindow::openFiles);
     fileMenu->addAction(act(AM::Id::Settings));
     connect(act(AM::Id::Settings), &QAction::triggered, this, &MainWindow::ensureSettingsDialog);
+    // N78：截图组——与 Settings 间加分隔符独立成组，其后原有「分隔符 + Quit」不动
+    fileMenu->addSeparator();
+    fileMenu->addAction(act(AM::Id::ScreenshotCopy));
+    connect(act(AM::Id::ScreenshotCopy), &QAction::triggered, this,
+            &MainWindow::copyScreenshotToClipboard);
+    fileMenu->addAction(act(AM::Id::ScreenshotSave));
+    connect(act(AM::Id::ScreenshotSave), &QAction::triggered, this,
+            &MainWindow::saveScreenshotToFile);
     fileMenu->addSeparator();
     fileMenu->addAction(act(AM::Id::Quit));
     connect(act(AM::Id::Quit), &QAction::triggered, this, &QWidget::close);
@@ -1012,6 +1020,104 @@ void MainWindow::openFiles() {
     m_playlist->markPlayingTab(0);
     m_playlist->requestTab(0); // Q2 裁决：抢占切换时激活态同步跳到默认 tab（N19 忙时排队）
     onPlayRequested(entities, 0, 0, -1.0);
+}
+
+QImage MainWindow::grabScreenshotOrNotify() {
+    // N78：取图失败（空闲态无视频 / 命令报错 / 载荷异常）统一在此出 OSD，
+    // 两个入口槽只看空图短路
+    const QImage img = m_controller->screenshotRaw();
+    if (img.isNull())
+        showOsd(tr("No screenshot available"));
+    return img;
+}
+
+void MainWindow::copyScreenshotToClipboard() {
+    const QImage img = grabScreenshotOrNotify();
+    if (img.isNull())
+        return;
+    QApplication::clipboard()->setImage(img); // 与 FilterListWidget / PlaylistWidget 同源
+    showOsd(tr("Screenshot copied to clipboard"));
+}
+
+void MainWindow::saveScreenshotToFile() {
+    // 先取图：失败即 OSD 报错，不弹对话框
+    const QImage img = grabScreenshotOrNotify();
+    if (img.isNull())
+        return;
+
+    // 预填名：<在播文件名去后缀>_<yyyyMMdd_HHmmss_zzz>。在播路径走 N61 唯一出口
+    // currentPlayingPath()，末段经 Util::Url::fileName（http(s) 按既有语义解码），
+    // completeBaseName 剥一个后缀；末段为空回退 screenshot
+    QString base =
+        QFileInfo(Util::Url::fileName(m_controller->currentPlayingPath())).completeBaseName();
+    if (base.isEmpty())
+        base = QStringLiteral("screenshot");
+    const QString prefill =
+        base + u'_' + QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss_zzz"));
+
+    // 固定三档过滤器；首选后缀形如 "*.png" → 取首个。静态 Qt 构建无 webp 编码、
+    // qgif 仅解码不可写，故只列该构建可写的三档（png/bmp 内建、jpg 已实测可写）
+    const QString filters = QStringLiteral("PNG (*.png);;JPEG (*.jpg *.jpeg);;BMP (*.bmp)");
+    // 解析假设依赖本文件内硬编码的过滤器写法：indexOf('(') 取描述里首个括号、
+    // 首选后缀恒为 "*.xxx" 两字符前缀（下面的 mid(2) 与之配套）——若改成动态
+    // 生成过滤器串，此二处须一并重审
+    const auto preferredSuffix = [](const QString &filter) -> QString {
+        const int open = filter.indexOf(QLatin1Char('('));
+        const int close = filter.indexOf(QLatin1Char(')'), open);
+        if (open < 0 || close < 0)
+            return QString();
+        const QStringList exts =
+            filter.mid(open + 1, close - open - 1).split(u' ', Qt::SkipEmptyParts);
+        return exts.value(0);
+    };
+    // 后缀与格式名的映射收口：jpg 与 QImageWriter 的 jpeg 格式名在此对齐
+    const auto suffixToFormat = [](const QString &suffix) -> QByteArray {
+        if (suffix == QLatin1String("png"))
+            return QByteArrayLiteral("png");
+        if (suffix == QLatin1String("jpg") || suffix == QLatin1String("jpeg"))
+            return QByteArrayLiteral("jpeg");
+        if (suffix == QLatin1String("bmp"))
+            return QByteArrayLiteral("bmp");
+        return QByteArray();
+    };
+
+    // 栈上实例（非静态便捷函数）：要连 filterSelected 与读 selectedNameFilter。
+    // 起始目录不设置、用系统默认；预填名只含文件名。后缀补齐双保险——Qt 自绘
+    // 对话框不自动补后缀，经 defaultSuffix 补；Windows 原生由系统按选中过滤器补
+    // （同"无后缀才补"语义，两路不冲突不双补）
+    QFileDialog dlg(this, tr("Save Screenshot"), prefill, filters);
+    dlg.setAcceptMode(QFileDialog::AcceptSave);
+    const auto applyDefaultSuffix = [&dlg, &preferredSuffix](const QString &filter) {
+        const QString suffix = preferredSuffix(filter).mid(2); // 去 "*."
+        if (!suffix.isEmpty())
+            dlg.setDefaultSuffix(suffix);
+    };
+    applyDefaultSuffix(dlg.selectedNameFilter());
+    connect(&dlg, &QFileDialog::filterSelected, &dlg, applyDefaultSuffix);
+    if (dlg.exec() != QDialog::Accepted)
+        return; // 取消静默返回（无 OSD）
+    QString path = dlg.selectedFiles().value(0);
+    if (path.isEmpty())
+        return;
+
+    // 后缀即格式：以最终后缀定编码器；不受支持 → 按所选过滤器首选后缀补齐，
+    // 兜住手删后缀 / 手输怪后缀等全部路径
+    QByteArray format = suffixToFormat(QFileInfo(path).suffix().toLower());
+    if (format.isEmpty()) {
+        const QString preferred = preferredSuffix(dlg.selectedNameFilter()).mid(2);
+        if (preferred.isEmpty())
+            return; // 理论不可达：过滤器三档的首选后缀均在映射表内
+        path += QLatin1Char('.') + preferred;
+        format = suffixToFormat(preferred);
+    }
+
+    QImageWriter writer(path, format);
+    if (!writer.write(img)) {
+        qDebug() << "[mpvqt] screenshot write failed:" << writer.errorString() << path;
+        showOsd(tr("Failed to save screenshot"));
+        return;
+    }
+    showOsd(tr("Screenshot saved"));
 }
 
 void MainWindow::playAt(int index) {
