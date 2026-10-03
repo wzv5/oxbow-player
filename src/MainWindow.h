@@ -103,6 +103,9 @@ class MainWindow : public QMainWindow {
     // 返回空 Ptr。返回 Ptr 而非 optional<Ptr>：shared_ptr 本身就是可空句柄，
     // 再包一层 optional 只会引入语义上不存在区分的第二重空态
     PlaylistEntity::Ptr playingEntity() const;
+    // N77 §2.3：正播 tab 的列表身份——凡书签读点（聚合器三查询 / 取号 / 编辑器聚焦）
+    // 与 key 一并传给消费方；停止态或无列表返回 nil（nil 键组照常参与严格口径）
+    QUuid playingListUuid() const;
     // N56：注册表维护的设置变更入口（自 PlaylistWidget 上移）——命中相关键时
     // 重读 ini 覆盖注册表内部实例，下一次求值即生效
     void onPluginIniKeysChanged(const QStringList &keys);
@@ -395,4 +398,7 @@ class MainWindow : public QMainWindow {
     // 章节+书签标记聚合器（MainWindow.cpp 内实现）：合并规则 + 缓存
     // 收口于此，主窗口不再持有抽象成员；进程生命周期随主窗口
     MarkAggregator *m_marks = nullptr;
+    // N77 §2.3：最近一次 requestLevelItemJump 的源组——jumpToBookmark 每次发射前
+    // 记账（单槽覆盖，与 widget 侧单待办同形），ready / failed 两槽据此按组取展示串
+    BookmarkManager::Group m_jumpSourceGroup;
 };

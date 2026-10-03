@@ -28,13 +28,15 @@
 // 原始书签（书签按冻结口径永不查重，BookmarkManager 即原始源，此处为
 // 统一读入口）。三处消费者（滑条标记 / tooltip 命中 / 章节菜单勾选）共用
 // 同一合并规则。缓存键仅剩脏标志：章节/书签/文件切换均为低频信号，全部
-// 经 setChapters/invalidate 置脏，path 只在脏时惰性同步查询一次——命中路径零 IPC
+// 经 setChapters/invalidate 置脏，身份与 key 只在脏时惰性同步查询一次——
+// 命中路径零 IPC
 class MarkAggregator {
   public:
     struct Mark {
         double time = 0.0;
         QString title;
         bool isBookmark = false;
+        BookmarkManager::Origin origin; // N77：书签条目逐组随条（章节条目为空 Origin）
     };
 
     explicit MarkAggregator(BookmarkManager *bookmarks) : m_bookmarks(bookmarks) {}
@@ -64,11 +66,32 @@ class MarkAggregator {
     const QList<MpvController::ChapterInfo> &chapters() const { return m_chapters; }
     // 原始章节（原样不去重；需要全量时用）
     const QList<MpvController::ChapterInfo> &rawChapters() const { return m_rawChapters; }
-    // 原始书签（书签永不查重；path 归一化后查表，空路径返回空）
-    QList<BookmarkManager::Bookmark> bookmarks(const QString &path) const {
-        if (path.isEmpty() || !m_bookmarks)
-            return {};
-        return m_bookmarks->bookmarks(Util::Url::key(path));
+    // N77 §2.3：书签读入口统一收 (uuid, key)，内部按豁免分派——本地内容按 key 合并
+    // 同键全部组（逐组条目带各自来源，按组序拼接），远端严格按 (uuid, key) 单组读。
+    // 返回 Mark 形态（isBookmark 恒真），菜单陈列 / 自动取号 / 合并标记共用同一分派
+    // 结果；空 key（无正播）返回空
+    QList<Mark> bookmarks(const QUuid &listUuid, const QString &key) const {
+        QList<Mark> out;
+        if (key.isEmpty() || !m_bookmarks)
+            return out;
+        auto push = [&out](const BookmarkManager::Origin &origin,
+                           const QList<BookmarkManager::Bookmark> &list) {
+            for (const auto &b : list)
+                out.append({b.time, b.title, true, origin});
+        };
+        if (m_bookmarks->allGroupsLocal(key)) {
+            for (const auto &ge : m_bookmarks->groupsByKey(key))
+                push(ge.origin, ge.bookmarks);
+        } else {
+            push(m_bookmarks->bookmarkOrigin({listUuid, key}),
+                 m_bookmarks->bookmarks({listUuid, key}));
+        }
+        // 合并视图按组序拼接后在消费侧补一次时间序：groupsByKey 的组序是记账口径，
+        // 单组本按 time 有序，跨组拼接不再保证全局有序（改前单组恒有序，菜单直接
+        // 消费本查询，乱序即回归）；稳定序保持同刻条目的组内相对次序
+        std::stable_sort(out.begin(), out.end(),
+                         [](const Mark &a, const Mark &b) { return a.time < b.time; });
+        return out;
     }
     // 书签/装载完成等任意内容变更后调用
     void invalidate() { m_dirty = true; }
@@ -77,18 +100,17 @@ class MarkAggregator {
     // 返回内部缓存 const 引用（零拷贝）；引用仅在下次 marks()/invalidate 前有效，
     // 调用方须即时消费，不得跨变更持有。
     // N56 §2.7：书签查表键取自调用方给的正播实体（空指针即无正播，书签段为空），
-    // 本类不再读 mpv 属性——凡"以当前内容为对象"的读点统一归正播实体
-    const QList<Mark> &marks(const PlaylistEntity *playing) const {
+    // 本类不再读 mpv 属性——凡"以当前内容为对象"的读点统一归正播实体。
+    // N77 §2.3：签名收 (uuid, key)，书签段经豁免分派（本地合并读、远端严格读）
+    const QList<Mark> &marks(const QUuid &listUuid, const QString &key) const {
         if (!m_dirty)
             return m_cache;
         QList<Mark> out;
         for (const auto &c : m_chapters)
-            out.append({c.time, c.title, false});
-        const QString playingKey = playing ? playing->key() : QString();
-        if (!playingKey.isEmpty() && m_bookmarks) {
-            const auto bms = m_bookmarks->bookmarks(playingKey);
-            for (const auto &b : bms)
-                out.append({b.time, b.title, true});
+            out.append({c.time, c.title, false, BookmarkManager::Origin()});
+        if (!key.isEmpty() && m_bookmarks) {
+            for (const Mark &m : bookmarks(listUuid, key))
+                out.append(m);
         }
         std::stable_sort(out.begin(), out.end(),
                          [](const Mark &a, const Mark &b) { return a.time < b.time; });
@@ -112,8 +134,8 @@ class MarkAggregator {
     }
 
     // 命中：marks 中 time ≤ timePos 的最大项；无命中返回空
-    std::optional<Mark> hit(double timePos, const PlaylistEntity *playing) const {
-        const auto &list = marks(playing);
+    std::optional<Mark> hit(double timePos, const QUuid &listUuid, const QString &key) const {
+        const auto &list = marks(listUuid, key);
         std::optional<Mark> result;
         for (const auto &m : list) {
             if (m.time <= timePos)
@@ -2469,7 +2491,10 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
                 break;
             const double hoverTime = m_duration * percent / 100.0;
             QString tip;
-            if (const auto hit = m_marks->hit(hoverTime, playingEntity().get());
+            // N77 §2.3：命中查询收（正播身份，key），豁免分派在聚合器内
+            const auto cur = playingEntity();
+            if (const auto hit =
+                    m_marks->hit(hoverTime, playingListUuid(), cur ? cur->key() : QString());
                 hit && !hit->title.isEmpty())
                 tip = hit->title + QStringLiteral("\n");
             tip += Util::formatTimePercent(hoverTime, m_duration);
@@ -3191,7 +3216,9 @@ void MainWindow::toggleFilterEntry(const QString &property, int index) {
 // ---- N15：章节与书签 ----
 void MainWindow::updateChapterSlider() {
     m_progressSlider->setDuration(m_duration);
-    const auto &marks = m_marks->marks(playingEntity().get());
+    // N77 §2.3：标记查询收（正播身份，key），豁免分派在聚合器内
+    const auto cur = playingEntity();
+    const auto &marks = m_marks->marks(playingListUuid(), cur ? cur->key() : QString());
     QList<double> times;
     times.reserve(marks.size());
     for (const auto &m : marks)
@@ -3209,7 +3236,10 @@ void MainWindow::updateChapterMenuState() {
 void MainWindow::updateChapterMenuChecked() {
     if (!m_chapterMenu || !m_chapterGroup)
         return;
-    const auto hit = m_marks->hit(m_timePos, playingEntity().get()); // std::optional<Mark>
+    // N77 §2.3：命中查询收（正播身份，key），豁免分派在聚合器内
+    const auto cur = playingEntity();
+    const auto hit = m_marks->hit(m_timePos, playingListUuid(),
+                                  cur ? cur->key() : QString()); // std::optional<Mark>
     const bool hasHit = hit.has_value();
     const bool wasExclusive = m_chapterGroup->isExclusive();
     m_chapterGroup->setExclusive(false);
@@ -3238,15 +3268,18 @@ void MainWindow::rebuildChapterMenu() {
     // 此处重建 action 后重新入组即可
     const auto marksChapters = m_marks->chapters();
     // N56 §2.7：以当前内容为对象的取串点统一取正播实体——key 作书签仓键匹配（B15），
-    // path 作跳转用的原始显示路径；无正播实体（停止态）两者为空，菜单只剩章节段
+    // path 作跳转用的原始显示路径；无正播实体（停止态）两者为空，菜单只剩章节段。
+    // N77 §2.3：书签读入口现取正播 tab 身份一并传入，豁免分派（本地合并 / 远端严格）
+    // 在聚合器内，条目 Origin 逐组随条
     const auto playing = playingEntity();
-    const QString curPath = playing ? playing->key() : QString();
+    const QUuid curUuid = playingListUuid();
+    const QString curKey = playing ? playing->key() : QString();
     const QString curDisplay = playing ? playing->path() : QString();
     // 书签经聚合器统一读入口（书签永不查重，即原始）
-    const auto bms = m_marks->bookmarks(curPath);
+    const QList<MarkAggregator::Mark> bookmarkMarks = m_marks->bookmarks(curUuid, curKey);
 
     // 跳转目标 = 菜单构建时的当前文件（菜单条目语义上属于该文件）
-    auto addSection = [this, curPath, curDisplay](const QList<MarkAggregator::Mark> &items) {
+    auto addSection = [this, curDisplay](const QList<MarkAggregator::Mark> &items) {
         for (const auto &it : items) {
             const QString text =
                 QStringLiteral("[%1] %2").arg(Util::formatTimeHMSms(it.time), it.title);
@@ -3257,10 +3290,11 @@ void MainWindow::rebuildChapterMenu() {
             a->setProperty("title", it.title);
             m_chapterGroup->addAction(a);
             const double t = it.time;
-            // N54：书签条目带上它自带的来源（列表身份 + 所在层），走"回绑定列表"的
-            // 跳转；章节条目属"当前文件的这一时刻"，恒在现有列表里解决，不传来源
+            // N54：书签条目带上来源走"回绑定列表"的跳转；N77：合并视图内各组来源
+            // 不同，每条捕获自己组的来源，不再整文件取一次。章节条目属"当前文件的
+            // 这一时刻"，恒在现有列表里解决，不传来源
             if (it.isBookmark) {
-                const BookmarkManager::Origin origin = m_bookmarkMgr->bookmarkOrigin(curPath);
+                const BookmarkManager::Origin origin = it.origin;
                 connect(a, &QAction::triggered, this,
                         [this, curDisplay, t, origin] { jumpToBookmark(curDisplay, t, origin); });
             } else {
@@ -3270,13 +3304,10 @@ void MainWindow::rebuildChapterMenu() {
         }
     };
 
-    // 准备章节/书签的 Mark 列表用于菜单分段显示
+    // 章节段列表（书签段已在聚合器返回处成形）
     QList<MarkAggregator::Mark> chapterMarks;
     for (const auto &c : marksChapters)
-        chapterMarks.append({c.time, c.title, false});
-    QList<MarkAggregator::Mark> bookmarkMarks;
-    for (const auto &b : bms)
-        bookmarkMarks.append({b.time, b.title, true});
+        chapterMarks.append({c.time, c.title, false, BookmarkManager::Origin()});
 
     // 去重：章节内部严格 == 已在聚合器 chapters 处理；此处仅分段显示，保持原序
     // 若书签与章节同 time，菜单两段都会显示各自项，但选中跟随以书签优先（updateChapterMenuChecked）
@@ -3368,8 +3399,9 @@ void MainWindow::jumpToChapter(const QString &path, double time) {
     fallbackPlayInDefaultTab(path, time);
 }
 
-// N54 §2.2：书签跳转。只认书签自带的身份，两条路——回绑定的列表与层，或回默认 tab；
-// 不再有“先在别的列表里找一把”的扫描（那套扫描是列表身份缺位时代的替代品）
+// N54 §2.2：书签跳转。只认书签自带的身份；N77 §2.4：目标在位 ⇒ 原样发请求（先记
+// 源组）；否则 nil 与"真列表已删"并入同一分流——本地过户落默认组后按既有请求路径走
+// （播放入口同路），远端不过户、弹窗中止。不再有"先在别的列表里找一把"的扫描
 void MainWindow::jumpToBookmark(const QString &path, double time,
                                 const BookmarkManager::Origin &origin) {
     if (path.isEmpty())
@@ -3380,41 +3412,36 @@ void MainWindow::jumpToBookmark(const QString &path, double time,
         warnBookmarkJump(tr("The bookmarked file no longer exists on disk."), path, QString());
         return;
     }
-    PlaylistWidget::LevelJump req;
-    req.itemKey = Util::Url::key(path);
-    req.time = time;
-    // N55 §3.4：主判据是书签承诺的归属。真列表在位 ⇒ 回绑该列表与层（现状语义）；
-    // 已删 ⇒ 就地分流，不再发任何请求——N57 §2.8 的"查不到就把目标改写成
-    // kDefaultListUuid 再找一遍"的复找删除：那次复找按 N55 §3.6 第二条注定落空
-    // （未命中的转接回显是异常数据），且正是把"归属真列表已删"与"归属默认列表"
-    // 糊成一团、销毁归属信息的环节。本槽握着 origin 原值、注册表直查结果与
-    // isLocal(path)，第 1 / 2 / 3 行分流够用，不需要任何新载荷与新通道
+    const QString key = Util::Url::key(path);
+    // 主判据是书签承诺的归属。真列表在位 ⇒ 回绑该列表与层（现状语义），先记源组
     const bool targetAlive = origin.isValid() && m_listRegistry->find(origin.listUuid);
     if (targetAlive) {
+        PlaylistWidget::LevelJump req;
+        req.itemKey = key;
+        req.time = time;
         req.listUuid = origin.listUuid;
         req.levelIds = origin.levelIds;
+        m_jumpSourceGroup = {origin.listUuid, key};
         m_playlist->requestLevelItemJump(req);
         return;
     }
-    if (origin.isValid()) {
-        // 归属真列表但列表已删：本地项静默落默认 tab 播；远端项不回退、不试播——
-        // 即使书签的存储串自带凭据快照、技术上播得开，也不得回退（§3.4：这是归属
-        // 纪律，不是可播性判断——把它捞进默认 tab 播一条来路不正的串，是把"归属
-        // 失效"这个事实藏起来）。文案与请求路径的 ListGone 档同源
-        if (Util::Url::isLocal(path)) {
-            fallbackPlayInDefaultTab(path, time);
-            return;
-        }
-        warnBookmarkJump(tr("The list this bookmark belongs to no longer exists."), path,
-                         QString());
+    // N77 §2.4/§2.5：本地 ⇒ 源组过户（默认组恒在位，过户源恒非默认），随后按默认组
+    // 走既有请求路径——过户组自此与原生默认组无异，播放入口也同路：项已在默认 tab
+    // 队列根层 ⇒ onLevelItemReady 原样复用（同队列只 seek / 切条目，默认 tab 内容
+    // 不动）；不在 ⇒ onLevelItemFailed 默认支补项播。远端 ⇒ 不过户，弹窗中止——归属
+    // 纪律而非可播性判断（N55 §3.4 同调），nil 远端组同样到此（不再走"与默认同路"）
+    if (Util::Url::isLocal(path)) {
+        m_bookmarkMgr->transferToDefault(origin.listUuid, key);
+        PlaylistWidget::LevelJump req;
+        req.itemKey = key;
+        req.time = time;
+        req.listUuid = kDefaultListUuid;
+        req.levelIds = m_playlist->queueRootIdsOf(0);
+        m_jumpSourceGroup = {kDefaultListUuid, key};
+        m_playlist->requestLevelItemJump(req);
         return;
     }
-    // Origin 缺键 / 无效：按硬性前置规定视为旧数据（不识别旧形态、不猜测、不回填），
-    // 与归属默认列表同路——请求进默认 tab 的队列根层，失败支由 onLevelItemFailed
-    // 按默认归属补项播
-    req.listUuid = kDefaultListUuid;
-    req.levelIds = m_playlist->queueRootIdsOf(0);
-    m_playlist->requestLevelItemJump(req);
+    warnBookmarkJump(tr("The list this bookmark belongs to no longer exists."), path, QString());
 }
 
 // N54 §2.2 第 3 步：命中即播，三档全走既有出口（与 jumpToChapter 的三档同一形状）。
@@ -3423,7 +3450,9 @@ void MainWindow::jumpToBookmark(const QString &path, double time,
 // 时刻由 req.listUuid 现换算的坐标（N57 §2.8），本槽是它唯一的消费者
 void MainWindow::onLevelItemReady(const PlaylistWidget::LevelJump &req, int tabIndex,
                                   int entityIndex) {
-    const QString path = m_bookmarkMgr->displayPath(req.itemKey);
+    // N77 §2.3：展示解析改按组——（源组，itemKey）取 displayPath（自含凭据串与干净
+    // 身份同键异展，按组取才无歧义）
+    const QString path = m_bookmarkMgr->displayPath({m_jumpSourceGroup.listUuid, req.itemKey});
     const bool sameQueue = tabIndex == m_playlist->playingTabIndex() &&
                            req.levelIds == m_playlist->queueRootIdsOf(tabIndex);
     if (sameQueue) {
@@ -3456,7 +3485,8 @@ void MainWindow::onLevelItemReady(const PlaylistWidget::LevelJump &req, int tabI
 // 不做注定失败的尝试
 void MainWindow::onLevelItemFailed(const PlaylistWidget::LevelJump &req,
                                    PlaylistWidget::JumpFailure why, const QString &detail) {
-    const QString path = m_bookmarkMgr->displayPath(req.itemKey);
+    // N77 §2.3：展示解析改按组——（源组，itemKey）取 displayPath
+    const QString path = m_bookmarkMgr->displayPath({m_jumpSourceGroup.listUuid, req.itemKey});
     if (req.listUuid == kDefaultListUuid) {
         fallbackPlayInDefaultTab(path, req.time);
         return;
@@ -3513,10 +3543,13 @@ void MainWindow::ensureBookmarkEditor() {
         m_bookmarkEditor->raise();
         return;
     }
-    // N16：传入当前播放文件归一化键，使编辑器打开即聚焦该文件（若存在书签）。
-    // N56 §2.7：键取正播实体，不再读 mpv 属性
+    // N16：传入当前播放文件使编辑器打开即聚焦该文件（若存在书签）。
+    // N56 §2.7：键取正播实体，不再读 mpv 属性；N77 §2.3：聚焦改传组（正播身份 +
+    // key），无正播不聚焦
     const auto cur = playingEntity();
-    const QString curKey = cur ? cur->key() : QString();
+    BookmarkManager::Group focusGroup;
+    if (cur)
+        focusGroup = {playingListUuid(), cur->key()};
     m_bookmarkEditor = new BookmarkEditorDialog(
         m_bookmarkMgr,
         [this](const QString &p, double t, const BookmarkManager::Origin &origin) {
@@ -3524,7 +3557,8 @@ void MainWindow::ensureBookmarkEditor() {
         },
         // N57 §2.6：一个出口同时供"叫什么名字"与"还在不在"（对话框就地派生存活判据），
         // 按身份直查注册表——名字住列表对象，改名即刻生效，不经视图反查 tab
-        [this](const QUuid &listUuid) { return m_listRegistry->nameOf(listUuid); }, curKey, this);
+        [this](const QUuid &listUuid) { return m_listRegistry->nameOf(listUuid); }, focusGroup,
+        this);
     m_bookmarkEditor->setAttribute(Qt::WA_DeleteOnClose, true);
     connect(m_bookmarkEditor, &QObject::destroyed, this, [this] { m_bookmarkEditor = nullptr; });
     // N66 §二-9：同设置对话框——关闭重评由 PopupCloseWatch 统一兜住，不单独连线
@@ -3539,6 +3573,12 @@ PlaylistEntity::Ptr MainWindow::playingEntity() const {
     if (m_playlistPos < 0)
         return nullptr;
     return m_playlist->playingEntityOf(m_playlist->playingTabIndex(), m_playlistPos);
+}
+
+QUuid MainWindow::playingListUuid() const {
+    if (const Playlist *playing = m_playlist->listOf(m_playlist->playingTabIndex()))
+        return playing->uuid();
+    return {};
 }
 
 void MainWindow::onAddBookmark() {
@@ -3568,15 +3608,18 @@ void MainWindow::onAddBookmark() {
         }
     }
     const QString rawPath = entity->path();
-    const QString path = entity->key();
+    const QString curKey =
+        entity->key(); // 归一化键，与 jumpToBookmark 的显示串形参同名异物，改名防混
     const double t = m_timePos;
     // 自动命名：取"本文件既有书签名的最大序号 +1"，与播放列表自动命名共用同一份算法
     // （Util::nextSequenceNumber）。原实现找的是"第一个空号"——已有 Bookmark 1 与 3 时
     // 会补出 2，删掉中间一条后新条目又能复用其号，序号不随时间单调、读不出先后。
-    // 作用域仍是"本文件的书签集"（各文件各自从 1 起属既有语义，本轮不动）
+    // 作用域仍是"本文件的书签集"（各文件各自从 1 起属既有语义，本轮不动）。
+    // N77 §2.3：取号与显示同口径——本地按合并视图取号（命名空间不分组，接受历史
+    // 重名），远端组内取号，豁免分派在聚合器内
     QStringList titles;
-    for (const auto &b : m_marks->bookmarks(path))
-        titles << b.title;
+    for (const auto &m : m_marks->bookmarks(playingListUuid(), curKey))
+        titles << m.title;
     const QString title = tr("Bookmark %1").arg(Util::nextSequenceNumber(tr("Bookmark "), titles));
     // N54：来源 = 播放 tab 的列表身份 + 其队列根层 id 序列。此刻正播项必在播放 tab 的
     // 队列根层（凡 mpv 侧语义一律在队列根层上工作，N45 §2.4.2），所以"这条书签在哪一层"
