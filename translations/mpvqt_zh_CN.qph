@@ -1373,8 +1373,8 @@ These values were not written to mpv.conf.</source>
     <target></target>
 </phrase>
 <phrase>
-    <source>WebDAV Directory</source>
-    <target>WebDAV 目录</target>
+    <source>WebDAV</source>
+    <target></target>
 </phrase>
 <phrase>
     <source>URL</source>

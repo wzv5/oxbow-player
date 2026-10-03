@@ -7,8 +7,7 @@
 
 // N44：身份常量（类型键 + 显示名源文案），登记表与 writeProviderKey 共用同一点定义
 inline constexpr char kWebDavProviderKey[] = "webdav";
-inline constexpr char kWebDavProviderName[] =
-    QT_TRANSLATE_NOOP("WebDavProvider", "WebDAV Directory");
+inline constexpr char kWebDavProviderName[] = QT_TRANSLATE_NOOP("WebDavProvider", "WebDAV");
 
 class ProviderSettingsPage;
 
