@@ -66,7 +66,7 @@ PlaylistWidget::PlaylistWidget(const QString &configFile, std::shared_ptr<Servic
     // 定位，而不是走全局暂停
     m_locateButton->setFocusPolicy(Qt::NoFocus);
     // 不设 iconSize 时 QToolButton 取样式的工具栏图标度量（常为 24px 而非 16px），
-    // 钉死之后"素材按 4 倍给"才是硬保证（§2.1）
+    // 故钉死显示尺寸；素材是矢量，缩放不失真，这里只定观感大小（§2.1）
     m_locateButton->setIconSize(QSize(16, 16));
     m_locateButton->setIcon(QIcon(App::iconPath(App::iconLocatePlaying())));
     m_locateButton->setToolTip(tr("Locate Playing Item")); // §2.8：由被删的右键菜单项平移而来
@@ -76,10 +76,8 @@ PlaylistWidget::PlaylistWidget(const QString &configFile, std::shared_ptr<Servic
     m_searchBox->setClearButtonEnabled(true);
     // 框内右侧装饰图标：Qt 为其预留位置（文字不压图、长文本滚动也不盖图），与清除
     // 按钮并存时排在清除按钮左侧。只作标识——不接 triggered、不设 tooltip、不置灰，
-    // 点击无行为；半透明由 App::searchIconOpacity() 单点控制（§2.2）
-    m_searchBox->addAction(
-        Util::fadedIcon(QIcon(App::iconPath(App::iconSearch())), App::searchIconOpacity()),
-        QLineEdit::TrailingPosition);
+    // 点击无行为；半透明已烘进素材的 fill-opacity，代码不再合成（§2.2）
+    m_searchBox->addAction(QIcon(App::iconPath(App::iconSearch())), QLineEdit::TrailingPosition);
     // §2.7：焦点在搜索框时认领按键（与列表同为 ShortcutOverride 认领，同一实现）
     m_searchBox->installEventFilter(this);
     connect(m_searchBox, &QLineEdit::returnPressed, this, &PlaylistWidget::searchNextInCurrentList);

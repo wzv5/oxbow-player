@@ -1,5 +1,6 @@
 #include "pch.h"
 
+#include "Constants.h"
 #include "FilterListWidget.h"
 
 // ——滤镜串编译 / 解析纯函数实现——
@@ -228,13 +229,12 @@ FilterListWidget::FilterListWidget(const QString &title, const QList<FilterPrese
             [this] { updateButtons(); }); // 当前项与选中项独立变化，两路都要刷新
     layout->addWidget(m_tree, 1);
 
-    // 按钮行（单行）：预设插入 + 条目操作（图标按钮，Qt 内置标准图标）+ 整串出入口
+    // 按钮行（单行）：预设插入 + 条目操作（图标按钮）+ 整串出入口
     auto *buttons = new QHBoxLayout;
     buttons->setSpacing(4);
 
     m_addButton = new QToolButton(this);
-    m_addButton->setText(
-        QStringLiteral("\u271A")); // U+271A 转义写法：Qt 无内置 add 图标，单色字符与主题无关
+    m_addButton->setIcon(QIcon(App::iconPath(App::iconFilterAdd())));
     m_addButton->setToolTip(tr("Add Filter"));
     m_addButton->setPopupMode(QToolButton::InstantPopup);
     QMenu *presetMenu = new QMenu(m_addButton);
@@ -258,9 +258,9 @@ FilterListWidget::FilterListWidget(const QString &title, const QList<FilterPrese
     m_addButton->setMenu(presetMenu);
     buttons->addWidget(m_addButton);
 
-    // 条目操作：图标按钮 + tooltip（Qt 内置标准图标，随主题）
+    // 条目操作：图标按钮 + tooltip（增删取图标包素材，上下移用 Qt 内置标准图标）
     m_removeButton = new QToolButton(this);
-    m_removeButton->setIcon(style()->standardIcon(QStyle::SP_TrashIcon));
+    m_removeButton->setIcon(QIcon(App::iconPath(App::iconFilterRemove())));
     m_removeButton->setToolTip(tr("Remove selected entries"));
     buttons->addWidget(m_removeButton);
     m_upButton = new QToolButton(this);

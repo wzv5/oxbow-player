@@ -468,10 +468,13 @@ QWidget *MainWindow::createLeftArea() {
     m_streamButton->setToolTip(tr("Switch Stream"));
     m_streamButton->setFixedSize(36, 36);
     m_streamButton->hide();
-    auto *settingsButton = new QPushButton(QStringLiteral("⚙"));
+    auto *settingsButton = new QPushButton(QIcon(App::iconPath(App::iconSettings())), QString());
     settingsButton->setToolTip(tr("Settings"));
     settingsButton->setFixedSize(36, 36);
-    m_playlistToggle = new QPushButton(QStringLiteral("☰"));
+    // 该按钮可切换：选中底偏深，On 态换白色版素材（两态各按显示尺寸现绘，不涉缩放）
+    QIcon playlistIcon(App::iconPath(App::iconPlaylist()));
+    playlistIcon.addFile(App::iconPath(App::iconPlaylistOn()), QSize(), QIcon::Normal, QIcon::On);
+    m_playlistToggle = new QPushButton(playlistIcon, QString());
     m_playlistToggle->setToolTip(tr("Show/Hide Playlist"));
     m_playlistToggle->setFixedSize(36, 36);
     m_playlistToggle->setCheckable(true);

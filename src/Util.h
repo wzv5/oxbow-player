@@ -71,12 +71,6 @@ QString trimTrailingZeros(const QString &fixed);
 // 故 "List 03 " 与 "List 3" 同样按 3 计入
 int nextSequenceNumber(const QString &prefix, const QStringList &existing);
 
-// N49：图标按给定 alpha 淡化——取素材最大可用尺寸为合成底（源分辨率不低于
-// 最终显示尺寸，后续由 QIcon 缩放显示不糊），以 QPainter::setOpacity 合成到
-// 透明底新位图后再建 QIcon。透明度与缩放无关，故随后缩放不丢效果。
-// 空图标原样返回（不做兜底，与"资源缺失即空图标"同口径）
-QIcon fadedIcon(const QIcon &icon, qreal opacity);
-
 // 发行时间解析：ISO 8601 优先，兼容常见格式（yyyy-MM-dd / yyyy/MM/dd / yyyy-MM / yyyy）；
 // 全败返回无效 QDateTime
 QDateTime parseReleaseDate(const QString &s);

@@ -131,6 +131,8 @@ if(MPVQT_PUREQT)
 endif()
 
 target_link_libraries(mpvqtcore PRIVATE Qt6::Widgets Qt6::Concurrent Qt6::Network)
+# SVG 图标引擎插件：静态构建下插件不会自动注册，漏链的症状是 QIcon 拿到空图标且不报错
+qt_import_plugins(mpvqtcore INCLUDE Qt6::QSvgIconPlugin)
 # A19：全屏期 DWM 圆角裁切抑制（仅 Windows；dwmapi 为 Vista 起系统组件）
 if(WIN32)
     target_link_libraries(mpvqtcore PRIVATE dwmapi)
@@ -140,14 +142,19 @@ endif()
 target_precompile_headers(mpvqtcore PRIVATE src/pch.h)
 set_target_properties(mpvqtcore PROPERTIES PREFIX "" OUTPUT_NAME "mpvqtcore")
 
-# N49：图标素材内嵌为资源（icons/<包名>/<语义键>.png → :/icons/<包名>/<语义键>.png）。
+# N49：图标素材内嵌为资源（icons/<包名>/<语义键>.svg → :/icons/<包名>/<语义键>.svg）。
 # 与 qt_add_translations 生成的资源并存；静态构建下随二进制内嵌，无外部文件与部署路径问题
 qt_add_resources(mpvqtcore "icons"
     PREFIX "/icons"
     BASE "icons"
     FILES
-        icons/icons8/locate-playing.png
-        icons/icons8/search.png
+        icons/icons8/locate-playing.svg
+        icons/icons8/search.svg
+        icons/icons8/playlist.svg
+        icons/icons8/playlist-on.svg
+        icons/icons8/settings.svg
+        icons/icons8/filter-add.svg
+        icons/icons8/filter-remove.svg
 )
 
 qt_add_translations(mpvqtcore MERGE_QT_TRANSLATIONS
