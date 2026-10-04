@@ -30,4 +30,15 @@ struct Entry {
 // errorString / 后缀不受支持），调用方只负责弹窗与日志。
 std::expected<void, QString> writeFile(const QString &path, const QList<Entry> &tracks);
 
+// 按 path 后缀分派读取（pls / m3u / m3u8，不区分大小写，分派口径与 writeFile
+// 同一份）。只取 url、不产元数据——标题与时长是导出侧概念，注入显示名持久化
+// 不了（静态表落盘只有 url 串，重启即丢），导入侧不假装带得回来（N81 §4）。
+// 条目定形是调用方的责任（N56 §2.6：造实体一方的纪律），本模块只把文件里的行
+// 还原成原始串。定形四步与 ExternalProvider::normalizeTarget 的本地清单分支同源
+// （N81 变更记录 2）：网络/流经 toNative 收口 → file: 前缀先经 toIdentity 折本地
+// → 绝对形态（含 UNC）经 toNative 收口 → 余者按清单目录拼接后 toNative。
+// 解析恒宽容：坏行与空串条目跳过；零有效条目返回空表而非 error——"读成功了
+// 但没东西"的处置归调用方（N81 §7）。error 仅两种：打不开、后缀不受支持。
+std::expected<QStringList, QString> readFile(const QString &path);
+
 } // namespace PlaylistFile

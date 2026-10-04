@@ -2839,6 +2839,13 @@ void MainWindow::onClearRequested() {
 void MainWindow::onFilesAdded(const PlaylistEntity::List &entities) {
     updateNavigationActions(); // 本地 tab 新增内容影响停止态步进（A16）；播放态由 playlistChanged
                                // 兜底
+    // 停止态判据与 togglePause / playlistPrev / playlistNext 同源（m_playlistPos < 0）。
+    // 列表增补在停止态是插件内部行为，不推送 mpv：此刻 mpv 队列无人消费——一切播放
+    // 经统一入口 onPlayRequested 整表载入（停止态点播放与步进均不兜底旧播放列表）；
+    // 推送反而有实害——append-play 在 mpv idle 下会装载并启动追加的首条（N81 变更
+    // 记录 1），append 则把条目塞进一份停止态无人读取的残留队列。两皆不取，直接不推
+    if (m_playlistPos < 0)
+        return;
     // 只有添加到“正在播放”tab 的文件才同步进 mpv 播放列表；
     // 其他 tab 为本地列表，双击播放时整体载入。
     if (!m_playlist->currentIsPlayingTab())

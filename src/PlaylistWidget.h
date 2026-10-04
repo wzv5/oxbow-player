@@ -651,6 +651,10 @@ class PlaylistWidget : public QTabWidget {
     // N80 §4：导出当前层内容为清单文件（主体菜单入口）——另存对话框后缀即格式，
     // PLS/M3U 两档；只读动作，同 N79 不停播、不经 markPlayingTab、不动会话键
     void exportListAs(int tabIndex);
+    // N81 §3-6：从 PLS / M3U 清单文件导入条目末尾追加进当前列表（主体菜单入口）
+    // ——只取 url（注入显示名持久化不了，同 N79 理由）；相对路径按清单文件所在
+    // 目录拼绝对后交既有 addFiles，不停播、不经 markPlayingTab、不动会话键
+    void importFromFile();
     // N35：改收共享计数副本——异步属性对话框跨嵌套事件循环持有实体，
     // 求值转发取回的值经注入口写回该实体（关闭即取消）
     void showPropertiesDialog(const PlaylistEntity::Ptr &entity);

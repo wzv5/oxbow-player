@@ -4269,8 +4269,11 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
     // N49：原"Locate Playing Item"项已上移为底部工具条的定位按钮，此处不再列该项
     menu.addSeparator();
     // N79：列表维护类（Refresh）→ 本组 → 条目类（Reveal / Copy Path / Properties）
-    // 三段；N80 导出落位后本组三项的最终次序固定（N81 导入居中、另行落位）
+    // 三段；N81 导入落位后本组三项的最终次序固定（复制 → 导入 → 导出）
     QAction *copyContentsAction = menu.addAction(tr("Copy Contents to New List"));
+    // N81：导入与导出成对反向；文案不点名格式与来源——格式由模块按后缀认，
+    // 来源由上下文承担；省略号表会弹对话框
+    QAction *importListAction = menu.addAction(tr("Import Playlist…"));
     // N80：文案不点名格式——格式由另存对话框的过滤器选；省略号表会弹对话框
     QAction *exportListAction = menu.addAction(tr("Export Playlist As…"));
     menu.addSeparator();
@@ -4307,6 +4310,11 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
         !currentLayerEntitiesOf(tab).empty() && menuProvider && !menuProvider->usesTransit();
     copyContentsAction->setEnabled(contentsActionsEnabled);
     exportListAction->setEnabled(contentsActionsEnabled);
+    // N81 导入判据：有当前列表、可修改（= 静态表，恒平铺根层、恒非转接）、当前层
+    // 已加载（静态表恒根层，此判据属防御；layerLoaded 已蕴含 !loadFailed）。不设
+    // "有实体"——空表亦可导入；不设转接判据——走得到这里的只有静态表。忙时由
+    // 菜单入口既有 m_busy 守卫统一挡住
+    importListAction->setEnabled(hasList && modifiable && list->layerLoaded(list->browsePathIds()));
 
     // N26：启用真值统一绑定实体（占位 / 上一级行已在命中检测时挡掉，此处指针即真相）。
     // N47：容器目标绑定容器副本——属性恒启用；复制需 path 非空；打开需本地且存在
@@ -4364,6 +4372,8 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
         refreshCurrentTab();
     } else if (chosen == copyContentsAction) {
         copyContentsToNewList(tab);
+    } else if (chosen == importListAction) {
+        importFromFile(); // N81：对话框、定形与失败处置收口在函数内，追加走 addFiles
     } else if (chosen == exportListAction) {
         exportListAs(tab);
     } else if (chosen == openLocationAction) {
@@ -4772,6 +4782,67 @@ void PlaylistWidget::exportListAs(int tabIndex) {
                             result.error());
     }
     // 成功静默；写出的文件不登记进任何列表
+}
+
+// N81 §3-6：从 PLS / M3U 清单文件导入条目，末尾追加进当前列表。只取 url——
+// 注入显示名持久化不了（静态表落盘只有 url 串），与 N79"只含播放 url"同一条
+// 理由；条目定形与 ExternalProvider::normalizeTarget 的本地清单分支同一条规则
+// （N81 变更记录 2：网络收口 → file: 折本地 → 绝对收口 → 余者按清单目录拼接，
+// 四步次序不可乱）；定形后的串表交既有 addFiles——守卫、排序复位、元数据失效、
+// 入列盖章、重编号、落盘、filesAdded 全由既有实现承担，本函数不另做追加、
+// addFiles 不改
+void PlaylistWidget::importFromFile() {
+    // 栈上实例（N78 §5 同款）：打开模式，起始目录用系统默认；取消即静默返回。
+    // 不设格式判定——格式由 PlaylistFile 按后缀认（只认后缀，不内容嗅探）
+    QFileDialog dlg(this, tr("Import Playlist"), QString(),
+                    tr("Playlist Files (*.pls *.m3u *.m3u8);;All Files (*)"));
+    dlg.setAcceptMode(QFileDialog::AcceptOpen);
+    if (dlg.exec() != QDialog::Accepted)
+        return;
+    const QString path = dlg.selectedFiles().value(0);
+    if (path.isEmpty())
+        return;
+
+    const auto read = PlaylistFile::readFile(path);
+    if (!read) {
+        // 失败弹一次窗（与导出同款：首行固定文案，第二行模块给出的具体原因，
+        // 诊断串不进翻译清单；延后出口不在本栈 exec()），日志留路径与错误
+        qWarning() << "Failed to read playlist file:" << path << read.error();
+        queueDeferredNotice(tr("Failed to read playlist file") + QLatin1Char('\n') + read.error());
+        return;
+    }
+    if (read->isEmpty()) {
+        // 零有效条目：解析层空表非 error，处置归调用方（§7）
+        queueDeferredNotice(tr("No entries found in the selected playlist file"));
+        return;
+    }
+
+    // 条目定形：四步次序与 ExternalProvider::normalizeTarget 的本地清单分支同源
+    // （N63：本地清单基址 = 清单文件所在目录，此处基址即它）。次序即正确性——file:
+    // 前缀若不先折本地，它会被当相对串拼进基址；UNC 等无盘符绝对形态若不直接收口，
+    // 有被补上基址盘符之虞（N81 变更记录 2）。唯一不跟 N63 的一处：畸形 file: 串折
+    // 不出本地路径时本侧整条跳过，N63 侧会落基址目录——读侧既有"空串条目跳过"的
+    // 口径优先
+    const QDir baseDir(QFileInfo(path).absolutePath());
+    QStringList urls;
+    urls.reserve(read->size());
+    for (const QString &entry : *read) {
+        if (Util::Url::isNetworkStream(entry)) {
+            urls.push_back(Util::Url::toNative(entry)); // 网络/流收口（http(s) 收规范形态）
+            continue;
+        }
+        QString local = entry;
+        if (local.startsWith(QLatin1String("file:"), Qt::CaseInsensitive)) {
+            local = Util::Url::toIdentity(local); // file:// 折本地盘符串
+            if (local.isEmpty())
+                continue; // 畸形 file: 串折不出本地路径——与解析层"空串条目跳过"同口径
+        }
+        urls.push_back(QDir::isAbsolutePath(local)
+                           ? Util::Url::toNative(local) // 绝对形态（含 UNC）直接收口
+                           : Util::Url::toNative(baseDir.filePath(local)));
+    }
+    // 播放中 tab 的追加经 filesAdded 由 MainWindow 在喂入侧开推送会话同步进 mpv
+    addFiles(urls);
 }
 
 // N9：存量列表设置——改名/换提供者。非法参数由对话框校验报错留在窗口；
