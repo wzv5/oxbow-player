@@ -1263,6 +1263,10 @@ Video rendering is performed by mpv; this plugin only provides the graphical int
     <target>语言</target>
 </phrase>
 <phrase>
+    <source>Takes effect after restart</source>
+    <target>重启生效</target>
+</phrase>
+<phrase>
     <source>Wheel Step</source>
     <target>滚轮步长</target>
 </phrase>
