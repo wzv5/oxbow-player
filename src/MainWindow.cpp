@@ -186,7 +186,8 @@ class PopupCloseWatch : public QObject {
 // ---- N67：播放时视频区光标自动隐藏 ----
 // 视频区光标行为机（文件内类，PopupCloseWatch 同款口径；唯一调用方是 MainWindow，
 // 不另立文件）。播放中光标停在视频区 3 秒无鼠标活动即藏（Qt::BlankCursor），
-// 任何活动立即恢复并重新计时；暂停 / 停止立即恢复。不区分全屏与否。
+// 任何活动立即恢复并重新计时；暂停 / 停止立即恢复。不区分全屏与否，但小窗模式
+// 整体不布防。
 // mpv 侧 cursor-autohide 不参与本行为——插件不向 mpv 透传鼠标事件，该选项实际
 // 不生效（N67 §二-1），光标行为单源于本类
 class CursorAutoHider : public QObject {
@@ -217,6 +218,13 @@ class CursorAutoHider : public QObject {
         if (m_idle == idle)
             return;
         m_idle = idle;
+        updateState();
+    }
+    // 小窗模式喂入：小窗内视频区就是整个窗口，指针是唯一的操作凭据
+    void setMini(bool mini) {
+        if (m_mini == mini)
+            return;
+        m_mini = mini;
         updateState();
     }
 
@@ -253,7 +261,7 @@ class CursorAutoHider : public QObject {
     // 在区内 → 布防（start 即从头计满时长）。隐藏只发生在到期复核通过的那一次
     void updateState() {
         showCursor();
-        if (playing() && m_video->isVisible() && cursorInVideo())
+        if (!m_mini && playing() && m_video->isVisible() && cursorInVideo())
             m_timer.start();
         else
             m_timer.stop();
@@ -263,7 +271,7 @@ class CursorAutoHider : public QObject {
 
     // 到期四条件复核（N67 §二-5）：任一不过只停表不动作，不自动续期、不轮询
     void onTimeout() {
-        if (!playing() || !m_video->isVisible() || QApplication::activePopupWidget() ||
+        if (m_mini || !playing() || !m_video->isVisible() || QApplication::activePopupWidget() ||
             !cursorInVideo())
             return;
         m_video->setCursor(Qt::BlankCursor);
@@ -282,6 +290,7 @@ class CursorAutoHider : public QObject {
     QPointer<QWindow> m_videoWindow;
     bool m_paused = true; // 初值即"暂停"：接线后由属性观察初值推送校正
     bool m_idle = true;
+    bool m_mini = false; // 小窗期不布防，初值即"非小窗"（启动不进小窗）
     bool m_hidden = false;
 };
 
@@ -2442,6 +2451,8 @@ void MainWindow::toggleMini() {
         QSignalBlocker blocker(m_miniAction); // 防循环触发 toggleMini（全屏同款）
         m_miniAction->setChecked(m_mini);     // 两分支走完后按真相统一回写
     }
+    // 同一收口喂给光标行为机：进小窗即解除布防并恢复已藏的指针，退出重新计时长
+    m_cursorHider->setMini(m_mini);
 }
 
 // 实时读 mpv 的 pause（缓存可能滞后一个事件周期）；读取失败按已暂停处理，
