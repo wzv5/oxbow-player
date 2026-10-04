@@ -389,7 +389,7 @@ const QList<SettingCategory> &settingCatalog() {
                   .fallback = App::ignoreHttpsErrorsDefault(),
                   // N37：澄清只管浏览侧（列表与元数据请求），不影响播放
                   .note = QT_TRANSLATE_NOOP("SettingsDialog",
-                                            "Applies to list and metadata requests only; "
+                                            "Applies to playlist and metadata requests only; "
                                             "playback is governed by the mpv-side option below")},
                  // N37：播放侧（mpv / ffmpeg 发请求）证书开关。fallback 为未勾选——
                  // 只在属性不可读或取值未命中两项赋值时兜底；mpv 内置默认 tls-verify=no

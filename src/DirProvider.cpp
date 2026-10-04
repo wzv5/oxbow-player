@@ -209,7 +209,7 @@ std::optional<QString> DirProvider::validateInput(const QString &rawRoot) {
     // QUrl::fromUserInput 误判相对名 "a" 为非本地
     if (Util::Url::isNetworkStream(root))
         return trText(QT_TRANSLATE_NOOP(
-            "DirProvider", "Local directory lists do not support network or stream paths."));
+            "DirProvider", "Local directory playlists do not support network or stream paths."));
     if (!QDir(root).exists())
         return trText(QT_TRANSLATE_NOOP("DirProvider", "Directory does not exist: %1")).arg(root);
     return std::nullopt;

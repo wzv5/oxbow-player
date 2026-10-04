@@ -17,7 +17,7 @@ void ProviderSettingsPage::enableTransitOption(std::optional<bool> initial) {
         box->addWidget(m_transitCheck);
     } else {
         // Required：形态恒转接，勾选框不存在（改为说明文字）
-        auto *note = new QLabel(tr("This list always plays through the plugin relay"));
+        auto *note = new QLabel(tr("This playlist always plays through the plugin relay"));
         note->setEnabled(false); // 禁用态取调色板的灰，跟随主题
         box->addWidget(note);
     }

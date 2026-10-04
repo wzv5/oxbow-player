@@ -3554,7 +3554,8 @@ void MainWindow::jumpToBookmark(const QString &path, double time,
         m_playlist->requestLevelItemJump(req);
         return;
     }
-    warnBookmarkJump(tr("The list this bookmark belongs to no longer exists."), path, QString());
+    warnBookmarkJump(tr("The playlist this bookmark belongs to no longer exists."), path,
+                     QString());
 }
 
 // N54 §2.2 第 3 步：命中即播，三档全走既有出口（与 jumpToChapter 的三档同一形状）。
@@ -3611,15 +3612,15 @@ void MainWindow::onLevelItemFailed(const PlaylistWidget::LevelJump &req,
     QString reason;
     switch (why) {
     case PlaylistWidget::JumpFailure::ListGone:
-        reason = tr("The list this bookmark belongs to no longer exists.");
+        reason = tr("The playlist this bookmark belongs to no longer exists.");
         break;
     case PlaylistWidget::JumpFailure::LevelLoadFailed:
         // 正文不提"层级 / 层"这类内部概念（用户视角只有"这个列表打不开"）；detail 是
         // 提供者回传的原文（widget 只在本类失败时填），交 warnBookmarkJump 进正文之外
-        reason = tr("Failed to load the list.");
+        reason = tr("Failed to load the playlist.");
         break;
     case PlaylistWidget::JumpFailure::ItemNotFound:
-        reason = tr("The bookmarked item could not be found in its list.");
+        reason = tr("The bookmarked item could not be found in its playlist.");
         break;
     }
     warnBookmarkJump(reason, path, detail);

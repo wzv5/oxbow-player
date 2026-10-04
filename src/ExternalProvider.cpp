@@ -599,8 +599,8 @@ ExternalProvider::Parsed ExternalProvider::parseSource(const QString &text,
         out.warnings.append(trText(QT_TRANSLATE_NOOP(
             "ExternalProvider", "No playable entries were found in this playlist.")));
     if (malformed)
-        out.warnings.append(trText(
-            QT_TRANSLATE_NOOP("ExternalProvider", "Malformed lines were skipped in this list.")));
+        out.warnings.append(trText(QT_TRANSLATE_NOOP(
+            "ExternalProvider", "Malformed lines were skipped in this playlist.")));
     // N65 警告换代：取代 N63 的"headers … ignored"旧串（头已落地，语义作废），
     // 改判"白名单外的键"。串里不出现计数与键名（键名成千上万，进串等于把警告
     // 变成日志）；只含白名单两键的清单不再出现任何此类警告

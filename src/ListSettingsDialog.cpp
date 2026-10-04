@@ -9,7 +9,7 @@ ListSettingsDialog::ListSettingsDialog(QWidget *parent, const QString &currentNa
                                        const QStringList &occupiedNames,
                                        const std::shared_ptr<ServiceRegistry> &registry)
     : QDialog(parent), m_occupiedNames(occupiedNames), m_seed(current) {
-    setWindowTitle(tr("List Settings"));
+    setWindowTitle(tr("Playlist Settings"));
     // 最小宽度写死 450：窗口宽度本由 sizeHint 链算出（行 2 单选项数、行 3 当前页表单、
     // 按钮行三者取最大），内容窄的页（如静态页只有一句提示）会把窗口压得很窄。
     // 钉一个下限同时兼顾将来登记表加提供者后单选行变宽的情形
@@ -19,7 +19,7 @@ ListSettingsDialog::ListSettingsDialog(QWidget *parent, const QString &currentNa
     // ——行 1 + 行 2：名称与列表类型同属一个 QFormLayout，标签列自动对齐——
     auto *formLayout = new QFormLayout;
     m_nameEdit = new QLineEdit(currentName);
-    formLayout->addRow(tr("List Name"), m_nameEdit);
+    formLayout->addRow(tr("Playlist Name"), m_nameEdit);
 
     auto *typeRow = new QHBoxLayout;
     auto *group = new QButtonGroup(this);
@@ -53,7 +53,7 @@ ListSettingsDialog::ListSettingsDialog(QWidget *parent, const QString &currentNa
     // 尾部固定留 12px：伸缩项在空间不足时会收缩到 0，届时最后那个单选项会贴住窗口
     // 右边——登记表加提供者、单选项变多后就会发生，故在伸缩项之后再钉一段固定间距
     typeRow->addSpacing(12);
-    formLayout->addRow(tr("List Type"), typeRow);
+    formLayout->addRow(tr("Playlist Type"), typeRow);
 
     layout->addLayout(formLayout);
     // 表单区承担纵向伸缩，按钮行因此固定在底部
@@ -91,15 +91,15 @@ void ListSettingsDialog::accept() {
     // 名称三条（列表级，与提供者无关，留在对话框）
     const QString name = listName();
     if (name.isEmpty()) {
-        QMessageBox::warning(this, tr("List Settings"), tr("List name cannot be empty."));
+        QMessageBox::warning(this, tr("Playlist Settings"), tr("Playlist name cannot be empty."));
         return;
     }
     // N57 §2.5：原"名称不得等于 tr(\"Default\")"这条自带判据删除——默认列表名换到
     // PlaylistRegistry 上下文后，本类那份源文案已不相干（正是拆串要消除的跨语境耦合）；
     // 该情形的拒判由注册表清单承担（names() 含默认列表名 ⇒ 走下面的重名档）
     if (m_occupiedNames.contains(name)) {
-        QMessageBox::warning(this, tr("List Settings"),
-                             tr("This name is already used by another list."));
+        QMessageBox::warning(this, tr("Playlist Settings"),
+                             tr("This name is already used by another playlist."));
         return;
     }
     // 提供者三条：校验与错误文案都由选中页给出，非选中页既不显示也不参与
@@ -107,7 +107,7 @@ void ListSettingsDialog::accept() {
     Q_ASSERT(index >= 0 && index < m_pages.size());
     ProviderSettingsPage *page = m_pages.at(index);
     if (const std::optional<QString> error = page->validate()) {
-        QMessageBox::warning(this, tr("List Settings"), *error);
+        QMessageBox::warning(this, tr("Playlist Settings"), *error);
         return; // 留在对话框
     }
     // 未变更（存量同类型且参数未动）→ 不产出新提供者，调用方仅应用改名

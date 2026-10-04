@@ -1065,9 +1065,9 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
     // 命令行启动 prevPlayingTab 恒为 0，不告知）。文案只述"远端项已收编、可能含访问
     // 凭据"，不做逐项断言、不提项数与逐项清单
     if (prevPlayingTab != 0 && hasRemote)
-        queueDeferredNotice(tr("The playing list was changed externally. Remote entries have "
-                               "been adopted into the default list and may contain access "
-                               "credentials."));
+        queueDeferredNotice(tr("The playlist you were playing was changed externally. Remote "
+                               "entries have been adopted into the default playlist and may "
+                               "contain access credentials."));
     // N55 §3.6 处置 4：异常数据告知（与收编告知合用出口；同一次第 5 步既判出异常又
     // 触发收编告知时，两条文案并入同一次弹窗）。不点列表名——那条串的来源本就不可信，
     // 也不得按它读 uuid。不恢复播放：用户要继续，从默认 tab 手动双击剩余项
@@ -2096,8 +2096,8 @@ void PlaylistWidget::applySourceRetired(const QUuid &retiredUuid, const QString 
     // 用户没有可操作价值）；判据命中而停播则加一句"播放已停止"。去处写明"默认列表"
     // （变更记录 1，维护者裁决）：收编项的常住地是默认 tab，正播在第三个列表时，
     // 只说"来自列表 X 的条目已失效并被移除"读不出从哪里移除，报错会显得莫名其妙
-    QString text = tr("Entries from list %1 are no longer valid and have been removed from "
-                      "the default list.")
+    QString text = tr("Entries from playlist %1 are no longer valid and have been removed "
+                      "from the default playlist.")
                        .arg(retiredName);
     if (stopAlreadyDone || playingDefault)
         text += QLatin1Char('\n') + tr("Playback has been stopped.");
@@ -4110,8 +4110,8 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
         menu.addSeparator();
         QAction *newTabAction = menu.addAction(tr("New Playlist"));
         // N62 §2.3：点一下立即复制同配置同条目的新表（落末尾并激活），无对话框
-        QAction *duplicateAction = menu.addAction(tr("Duplicate List"));
-        QAction *closeTabAction = menu.addAction(tr("Delete List"));
+        QAction *duplicateAction = menu.addAction(tr("Duplicate Playlist"));
+        QAction *closeTabAction = menu.addAction(tr("Delete Playlist"));
         duplicateAction->setEnabled(hitTab > 0);
         closeTabAction->setEnabled(hitTab > 0); // 默认 tab 与空白区均无复制/删除
         // N62 §2.2 / §2.5：改序组——前移 = 朝表头起点（索引减小），后移 = 朝表尾；
@@ -4123,7 +4123,7 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
         moveForwardAction->setEnabled(hitTab > 1);
         moveBackwardAction->setEnabled(hitTab > 0 && hitTab < count() - 1);
         menu.addSeparator();
-        QAction *settingsAction = menu.addAction(tr("List Settings…"));
+        QAction *settingsAction = menu.addAction(tr("Playlist Settings…"));
         settingsAction->setEnabled(hitTab > 0); // 默认 tab 与空白区无设置
 
         QAction *chosen = menu.exec(event->globalPos());
@@ -4260,7 +4260,7 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
 
     QMenu *removeMenu = menu.addMenu(tr("Remove"));
     QAction *removeSelAction = removeMenu->addAction(tr("Remove Selected"));
-    QAction *clearAction = removeMenu->addAction(tr("Clear Current List"));
+    QAction *clearAction = removeMenu->addAction(tr("Clear Current Playlist"));
     removeMenu->addSeparator();
     QAction *removeInvalidAction = removeMenu->addAction(tr("Remove Invalid"));
     QAction *removeDupAction = removeMenu->addAction(tr("Remove Duplicates"));
@@ -4270,7 +4270,7 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
     menu.addSeparator();
     // N79：列表维护类（Refresh）→ 本组 → 条目类（Reveal / Copy Path / Properties）
     // 三段；N81 导入落位后本组三项的最终次序固定（复制 → 导入 → 导出）
-    QAction *copyContentsAction = menu.addAction(tr("Copy Contents to New List"));
+    QAction *copyContentsAction = menu.addAction(tr("Copy Contents to New Playlist"));
     // N81：导入与导出成对反向；文案不点名格式与来源——格式由模块按后缀认，
     // 来源由上下文承担；省略号表会弹对话框
     QAction *importListAction = menu.addAction(tr("Import Playlist…"));
@@ -4463,7 +4463,7 @@ void PlaylistWidget::removeTabAt(int tabIndex) {
         QMessageBox box(window());
         box.setIcon(QMessageBox::Question);
         box.setWindowTitle(tr("Confirm"));
-        box.setText(tr("Delete list \"%1\"?").arg(confirmView->list()->name()));
+        box.setText(tr("Delete playlist \"%1\"?").arg(confirmView->list()->name()));
         box.setTextFormat(Qt::PlainText);
         box.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
         box.setDefaultButton(QMessageBox::No);
