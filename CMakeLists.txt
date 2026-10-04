@@ -131,8 +131,6 @@ if(MPVQT_PUREQT)
 endif()
 
 target_link_libraries(mpvqtcore PRIVATE Qt6::Widgets Qt6::Concurrent Qt6::Network)
-# SVG 图标引擎插件：静态构建下插件不会自动注册，漏链的症状是 QIcon 拿到空图标且不报错
-qt_import_plugins(mpvqtcore INCLUDE Qt6::QSvgIconPlugin)
 # A19：全屏期 DWM 圆角裁切抑制（仅 Windows；dwmapi 为 Vista 起系统组件）
 if(WIN32)
     target_link_libraries(mpvqtcore PRIVATE dwmapi)
