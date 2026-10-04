@@ -62,6 +62,8 @@ add_library(mpvqtcore MODULE
     src/PlaylistRegistry.h
     src/PlaylistListView.cpp
     src/PlaylistListView.h
+    src/PlaylistFile.cpp
+    src/PlaylistFile.h
     src/LocalFileEntity.cpp
     src/LocalFileEntity.h
     src/HttpEntity.cpp
@@ -231,6 +233,8 @@ if(MPVQT_BUILD_TESTS)
         src/Playlist.h
         src/PlaylistRegistry.cpp
         src/PlaylistRegistry.h
+        src/PlaylistFile.cpp
+        src/PlaylistFile.h
         src/LocalFileEntity.cpp
         src/LocalFileEntity.h
         src/HttpEntity.cpp
@@ -283,6 +287,7 @@ if(MPVQT_BUILD_TESTS)
 
     mpvqt_add_test(MpvConf)
     mpvqt_add_test(PlaylistEntity)
+    mpvqt_add_test(PlaylistFile)
     mpvqt_add_test(HttpClient)
     mpvqt_add_test(DirProvider)
     mpvqt_add_test(WebDavProvider)

@@ -76,6 +76,7 @@
 #include <QObject>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPair>
 #include <QPixmap>
 #include <QPointer>
 #include <QPromise>
@@ -95,6 +96,7 @@
 #include <QStackedWidget>
 #include <QStandardPaths>
 #include <QString>
+#include <QStringConverter>
 #include <QStringList>
 #include <QStringView>
 #include <QStyle>
@@ -105,6 +107,7 @@
 #include <QTemporaryFile>
 #include <QTextEdit>
 #include <QTextOption>
+#include <QTextStream>
 #include <QThread>
 #include <QTimeZone>
 #include <QTimer>

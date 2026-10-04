@@ -4269,8 +4269,10 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
     // N49：原"Locate Playing Item"项已上移为底部工具条的定位按钮，此处不再列该项
     menu.addSeparator();
     // N79：列表维护类（Refresh）→ 本组 → 条目类（Reveal / Copy Path / Properties）
-    // 三段；后续"保存为 m3u"即加在本项之下
+    // 三段；N80 导出落位后本组三项的最终次序固定（N81 导入居中、另行落位）
     QAction *copyContentsAction = menu.addAction(tr("Copy Contents to New List"));
+    // N80：文案不点名格式——格式由另存对话框的过滤器选；省略号表会弹对话框
+    QAction *exportListAction = menu.addAction(tr("Export Playlist As…"));
     menu.addSeparator();
 
     QAction *openLocationAction = menu.addAction(tr("Reveal in File Explorer"));
@@ -4293,15 +4295,18 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
     removeMenu->setEnabled(hasList && modifiable && !loadFailed);
     removeSelAction->setEnabled(hasList && !list->selectedItems().isEmpty());
     clearAction->setEnabled(itemCount > 0);
-    // N79 启用判据（exec() 前一次算好）：有当前列表、当前层已加载且未失败、有实体、
-    // 本列表非转接形态（N52 §2.8 三态表的唯一有效决策出口；取不到提供者按禁用）。
-    // 其中 layerLoaded 已蕴含 !loadFailed（同一层同一 loadError），按规格两行分列写而不合并。
-    // 有实体一项只判空、不换算内容：itemCount 不可作判据（容器行与"上一级"行也计行），
-    // 整表副本的量级与本类既有本层遍历判据（anyEntitySupports*）同档
-    // 其余不设限——默认 tab 同样可复制；忙时由菜单入口既有 m_busy 守卫统一挡住
-    copyContentsAction->setEnabled(
+    // N79/N80 启用判据（exec() 前一次算好，两动作共用一份表达式）：有当前列表、
+    // 当前层已加载且未失败、有实体、本列表非转接形态（N52 §2.8 三态表的唯一有效
+    // 决策出口；取不到提供者按禁用）。其中 layerLoaded 已蕴含 !loadFailed（同一层
+    // 同一 loadError），按规格两行分列写而不合并。有实体一项只判空、不换算内容：
+    // itemCount 不可作判据（容器行与"上一级"行也计行），整表副本的量级与本类既有
+    // 本层遍历判据（anyEntitySupports*）同档。其余不设限——默认 tab 同样可复制 /
+    // 导出；忙时由菜单入口既有 m_busy 守卫统一挡住
+    const bool contentsActionsEnabled =
         hasList && !loadFailed && list->layerLoaded(list->browsePathIds()) &&
-        !currentLayerEntitiesOf(tab).empty() && menuProvider && !menuProvider->usesTransit());
+        !currentLayerEntitiesOf(tab).empty() && menuProvider && !menuProvider->usesTransit();
+    copyContentsAction->setEnabled(contentsActionsEnabled);
+    exportListAction->setEnabled(contentsActionsEnabled);
 
     // N26：启用真值统一绑定实体（占位 / 上一级行已在命中检测时挡掉，此处指针即真相）。
     // N47：容器目标绑定容器副本——属性恒启用；复制需 path 非空；打开需本地且存在
@@ -4359,6 +4364,8 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
         refreshCurrentTab();
     } else if (chosen == copyContentsAction) {
         copyContentsToNewList(tab);
+    } else if (chosen == exportListAction) {
+        exportListAs(tab);
     } else if (chosen == openLocationAction) {
         // N47：容器目标打开其 path（本地目录本身）；实体走原身份串
         Util::openFileLocation(targetContainer ? containerPath : targetUrl, this);
@@ -4601,9 +4608,42 @@ void PlaylistWidget::duplicateList(int tabIndex) {
     savePlaylists();
 }
 
+// N80 §2：条目采集共用化——N79 取数段（现取实体表 → playTargets → 逐项跳空串、
+// 跳转接串）的原样收拢，复制与导出两个动作逐字共用同一段，不再有第二处取数真相；
+// playTargets 仍是唯一的形态来源，本函数只是"既有出口的产物过一遍滤"，不是另造
+// 通路。导出元数据只有标题（变更记录 2）：时长不进条目、不查任何时长源
+QList<PlaylistFile::Entry> PlaylistWidget::collectTrackEntries(int tabIndex,
+                                                               bool *skippedSome) const {
+    if (skippedSome)
+        *skippedSome = false;
+    QList<PlaylistFile::Entry> entries;
+    const PlaylistEntity::List src = currentLayerEntitiesOf(tabIndex);
+    if (src.empty())
+        return entries;
+    const QVector<PlayTarget> targets = playTargets(tabIndex, src);
+    entries.reserve(targets.size());
+    for (int i = 0; i < targets.size(); ++i) {
+        const PlayTarget &target = targets.at(i);
+        if (target.url.isEmpty())
+            continue; // 空槽位占位（N55 §2.3），不进产物
+        // 转接串脱离本进程无意义（端点与列表身份都是会话内的），不进产物——兜住
+        // "收编实体带原归属、原提供者是 Required 转接型仍铸转接串"的缝隙
+        if (StreamTransit::isTransitUri(target.url)) {
+            if (skippedSome)
+                *skippedSome = true;
+            continue;
+        }
+        // playTargets 与实体表一一对应（空实体也占位回空串），按下标取回标题
+        entries.push_back(PlaylistFile::Entry{target.url, src[i]->title()});
+    }
+    return entries;
+}
+
 // N79：复制当前层内容到新建静态列表——内容的拍平快照，与 duplicateList 的整表
 // 配置复制不是一回事：脱钩源类型，落成一串可独立播放的地址。只读动作：不停播、
-// 不经 markPlayingTab、不动会话键（m_lastPlayingTargetUuid），播放语义什么都没发生
+// 不经 markPlayingTab、不动会话键（m_lastPlayingTargetUuid），播放语义什么都没发生。
+// N80 §2：取数段收拢进 collectTrackEntries（两动作共用一个采集点），本动作只取
+// url 字段——新静态表仍只含播放 url，标题与时长对它无意义（N79 §4 口径不动）
 void PlaylistWidget::copyContentsToNewList(int tabIndex) {
     if (tabIndex < 0 || m_busy)
         return; // 与 openListSettings 同档兜底（N19：忙时菜单已禁用），但本项默认 tab 亦可，
@@ -4612,31 +4652,17 @@ void PlaylistWidget::copyContentsToNewList(int tabIndex) {
     if (!srcView || !srcView->list())
         return;
 
-    // 取串走既有 playTargets 出口（全仓唯一能取得直接形态的生产通路），串原样
-    // 取用不做任何加工——WebDAV 直发串可能已含凭据，那正是"一份能直接播的地址"
-    const PlaylistEntity::List src = currentLayerEntitiesOf(tabIndex);
-    if (src.empty())
-        return; // 防御：判据在 exec() 前算，此处按点击后的当下现取（菜单已置灰即不可达）
-    const QVector<PlayTarget> targets = playTargets(tabIndex, src);
-    QStringList urls;
-    urls.reserve(targets.size());
     bool skippedSome = false;
-    for (const PlayTarget &target : targets) {
-        if (target.url.isEmpty())
-            continue; // 空槽位占位（N55 §2.3），不进新表
-        // 转接串脱离本进程无意义（端点与列表身份都是会话内的），不进新表——兜住
-        // "收编实体带原归属、原提供者是 Required 转接型仍铸转接串"的缝隙
-        if (StreamTransit::isTransitUri(target.url)) {
-            skippedSome = true;
-            continue;
-        }
-        urls.append(target.url);
-    }
+    const QList<PlaylistFile::Entry> collected = collectTrackEntries(tabIndex, &skippedSome);
     // 跳过告知只记"有没有"不记条数（免复数译文负担）；延后出口，不在本栈 exec()
     if (skippedSome)
         queueDeferredNotice(tr("Some items were skipped because they use transit URLs"));
-    if (urls.isEmpty())
+    if (collected.isEmpty())
         return;
+    QStringList urls;
+    urls.reserve(collected.size());
+    for (const PlaylistFile::Entry &entry : collected)
+        urls.append(entry.url); // 只取 url：标题与时长一律无视
 
     // 造表与 createNewList 同形：铸提供者 → 灌内容（新表的身份串就是播放串本身，
     // 元数据一切由 url 当场派生，fromPath 的已定形契约由播放串形态天然满足）→
@@ -4656,6 +4682,96 @@ void PlaylistWidget::copyContentsToNewList(int tabIndex) {
     addTab(newView, pl->name());
     requestTab(count() - 1); // 非忙时即 setCurrentIndex，激活经 onTabChanged 触发首载（N28）
     savePlaylists();
+}
+
+// N80 §4：导出当前层内容为清单文件——采集 → 另存对话框（后缀即格式）→ 写盘 →
+// 结果处置。只读动作：不停播、不经 markPlayingTab、不动会话键（N79 同款）；
+// 成功静默（目标文件出现在用户选的位置即反馈），失败经延后出口弹一次窗
+void PlaylistWidget::exportListAs(int tabIndex) {
+    if (tabIndex < 0 || m_busy)
+        return; // 与 copyContentsToNewList 同档兜底（忙时菜单已禁用），默认 tab 亦可
+    if (!listOf(tabIndex))
+        return; // listOf 内含 viewAt（view → list 一致性由构造断言守候），无需另判 view
+    const QString listName = listOf(tabIndex)->name();
+
+    bool skippedSome = false;
+    const QList<PlaylistFile::Entry> tracks = collectTrackEntries(tabIndex, &skippedSome);
+    // 转接跳过告知（文案与 N79 那处逐字相同——queueDeferredNotice 按串去重，同串
+    // 天然合并，两处字面量不可各自改写）：本动作随后要开自己的嵌套循环（另存对话
+    // 框），若走 singleShot 延后投递会落在对话框循环里、告知窗压住刚弹出的对话框
+    // （N79 的调用序列无嵌套循环故无此患）——变更记录 2：入队后本栈直接同步投递，
+    // 告知先于对话框出现（其描述的是采集结果，取消与否不影响）
+    if (skippedSome) {
+        queueDeferredNotice(tr("Some items were skipped because they use transit URLs"));
+        pumpDeferredNotices();
+    }
+    // 采空早退：条目全部被滤掉（启用判据只保证有实体、不保证滤后非空）不开对话框，
+    // 告知（上一条已投递）后静默返回——与 N79 空集早退对称
+    if (tracks.isEmpty())
+        return;
+
+    // 两档（过滤器串，首选后缀）常量对摆在本侧：filterSelected 回串与两者逐字节
+    // 相等比对即用对应后缀，不解析过滤器括号（N78 那处就地解析的写法不沿用）。
+    // PLS 首位即默认选中；M3U 档括号内双 glob 以空格分隔是 Qt 语法，首选恒 .m3u。
+    // ASX 档曾在冻结稿内，实测兼容性极差删除（N80 变更记录 1）
+    const QList<QPair<QString, QString>> formats = {
+        {tr("Playlist (*.pls)"), QStringLiteral("pls")},
+        {tr("Winamp Playlist (*.m3u *.m3u8)"), QStringLiteral("m3u")},
+    };
+    QStringList filterTexts;
+    for (const auto &f : formats)
+        filterTexts.append(f.first);
+
+    // 栈上实例（N78 §5 同款）：起始目录不设置、用系统默认；预填名 = 当前列表名
+    // 原样拼默认格式后缀 .pls（名内 Windows 非法字符不处理，与 N78 变更记录 3
+    // 同源、登记不做）；后缀联动——非原生对话框由 Qt 补，原生由系统补，两路不冲突
+    QFileDialog dlg(this, tr("Export Playlist As"), listName + QStringLiteral(".pls"),
+                    filterTexts.join(QStringLiteral(";;")));
+    dlg.setAcceptMode(QFileDialog::AcceptSave);
+    const auto applyDefaultSuffix = [&dlg, &formats](const QString &filter) {
+        for (const auto &f : formats) {
+            if (f.first == filter) {
+                dlg.setDefaultSuffix(f.second);
+                return;
+            }
+        }
+    };
+    applyDefaultSuffix(dlg.selectedNameFilter());
+    connect(&dlg, &QFileDialog::filterSelected, &dlg, applyDefaultSuffix);
+    if (dlg.exec() != QDialog::Accepted)
+        return; // 取消静默返回
+    QString path = dlg.selectedFiles().value(0);
+    if (path.isEmpty())
+        return;
+
+    // 后缀即格式：不在两档后缀常量内（不区分大小写）→ 按当前选中档首选后缀补齐，
+    // 兜住手删后缀 / 手输怪后缀；selectedNameFilter 与两档常量都比对不上（理论
+    // 不可达）→ 回退默认档首选后缀 .pls 继续写出，不静默返回——点了导出至少得到
+    // 一个文件，writeFile 内部仍按后缀显影（N80 变更记录 2）。此后 writeFile 自己
+    // 按后缀分派，此处不再传格式
+    const QStringList knownSuffixes = {QStringLiteral("pls"), QStringLiteral("m3u"),
+                                       QStringLiteral("m3u8")};
+    if (!knownSuffixes.contains(QFileInfo(path).suffix().toLower())) {
+        QString preferred = QStringLiteral("pls");
+        for (const auto &f : formats) {
+            if (f.first == dlg.selectedNameFilter()) {
+                preferred = f.second;
+                break;
+            }
+        }
+        path += QLatin1Char('.') + preferred;
+    }
+
+    const auto result = PlaylistFile::writeFile(path, tracks);
+    if (!result) {
+        // 失败弹一次窗：首行固定文案，第二行模块给出的具体原因（诊断串不进翻译
+        // 清单）——让用户看得出是权限不足、路径不可写还是格式不对；延后出口不在
+        // 本栈 exec()（与 N79 跳过告知同款），日志留路径与错误
+        qWarning() << "Failed to export playlist file:" << path << result.error();
+        queueDeferredNotice(tr("Failed to export playlist file") + QLatin1Char('\n') +
+                            result.error());
+    }
+    // 成功静默；写出的文件不登记进任何列表
 }
 
 // N9：存量列表设置——改名/换提供者。非法参数由对话框校验报错留在窗口；

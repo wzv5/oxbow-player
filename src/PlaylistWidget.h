@@ -4,6 +4,7 @@
 
 #include "LoadingOverlay.h"
 #include "PlaylistEntity.h"
+#include "PlaylistFile.h"     // N80：导出条目结构 Entry 与清单写出；本类只留菜单与编排
 #include "PlaylistListView.h" // N57 §2.2：视图态的家，本类的编排一律经它读写
 #include "PlaylistProvider.h"
 #include "PlaylistRegistry.h" // N57 §2.5：播放目标初值取保留身份 kDefaultListUuid
@@ -642,6 +643,14 @@ class PlaylistWidget : public QTabWidget {
     // N79：复制当前层内容到新建静态列表（主体菜单入口）——内容的拍平快照，
     // 与 duplicateList 的整表配置复制不是一回事；只读动作，不停播不动会话键
     void copyContentsToNewList(int tabIndex);
+    // N80 §2：N79 取数段的原样收拢——取串通路仍是 currentLayerEntitiesOf →
+    // playTargets（全仓唯一直接形态出口）→ 逐项跳空串、跳转接串并置 *skippedSome；
+    // 每项再带实体 title（时长不导出，N80 变更记录 2，不查任何时长源）。
+    // 两个动作共用一个采集点：复制侧只取 url 字段，导出侧 url 与标题全用
+    QList<PlaylistFile::Entry> collectTrackEntries(int tabIndex, bool *skippedSome = nullptr) const;
+    // N80 §4：导出当前层内容为清单文件（主体菜单入口）——另存对话框后缀即格式，
+    // PLS/M3U 两档；只读动作，同 N79 不停播、不经 markPlayingTab、不动会话键
+    void exportListAs(int tabIndex);
     // N35：改收共享计数副本——异步属性对话框跨嵌套事件循环持有实体，
     // 求值转发取回的值经注入口写回该实体（关闭即取消）
     void showPropertiesDialog(const PlaylistEntity::Ptr &entity);
