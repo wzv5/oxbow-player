@@ -9,6 +9,14 @@
     <target>设置(&amp;S)</target>
 </phrase>
 <phrase>
+    <source>&amp;Copy Screenshot to Clipboard</source>
+    <target>复制屏幕截图到剪切板(&amp;C)</target>
+</phrase>
+<phrase>
+    <source>Save Screenshot &amp;As…</source>
+    <target>保存屏幕截图…(&amp;A)</target>
+</phrase>
+<phrase>
     <source>&amp;Quit</source>
     <target>退出(&amp;Q)</target>
 </phrase>
@@ -177,8 +185,8 @@
     <target>请选择绑定目录。</target>
 </phrase>
 <phrase>
-    <source>Local directory lists do not support network or stream paths.</source>
-    <target>本地目录列表不支持网络或流路径。</target>
+    <source>Local directory playlists do not support network or stream paths.</source>
+    <target>本地目录播放列表不支持网络或流路径。</target>
 </phrase>
 <phrase>
     <source>Directory is not readable: %1</source>
@@ -273,8 +281,8 @@
     <target>此播放列表中未找到可播放的条目。</target>
 </phrase>
 <phrase>
-    <source>Malformed lines were skipped in this list.</source>
-    <target>此列表中已跳过格式错误的行。</target>
+    <source>Malformed lines were skipped in this playlist.</source>
+    <target>此播放列表中已跳过格式错误的行。</target>
 </phrase>
 <phrase>
     <source>Some per-entry options in this playlist are not supported and were ignored.</source>
@@ -314,7 +322,7 @@
 </phrase>
 <phrase>
     <source>Playlist files (*.m3u *.m3u8 *.txt);;All files (*)</source>
-    <target>播放列表文件 (*.m3u *.m3u8 *.txt);;All files (*)</target>
+    <target>播放列表文件 (*.m3u *.m3u8 *.txt);;所有文件 (*)</target>
 </phrase>
 <phrase>
     <source>Add Filter</source>
@@ -545,24 +553,24 @@
     <target>快速连接…</target>
 </phrase>
 <phrase>
-    <source>List Settings</source>
-    <target>列表设置</target>
+    <source>Playlist Settings</source>
+    <target>播放列表设置</target>
 </phrase>
 <phrase>
-    <source>List Name</source>
-    <target>列表名称</target>
+    <source>Playlist Name</source>
+    <target>播放列表名称</target>
 </phrase>
 <phrase>
-    <source>List Type</source>
-    <target>列表类型</target>
+    <source>Playlist Type</source>
+    <target>播放列表类型</target>
 </phrase>
 <phrase>
-    <source>List name cannot be empty.</source>
-    <target>列表名称不能为空。</target>
+    <source>Playlist name cannot be empty.</source>
+    <target>播放列表名称不能为空。</target>
 </phrase>
 <phrase>
-    <source>This name is already used by another list.</source>
-    <target>该名称已被其他列表使用。</target>
+    <source>This name is already used by another playlist.</source>
+    <target>该名称已被其他播放列表使用。</target>
 </phrase>
 <phrase>
     <source>Cancel</source>
@@ -677,6 +685,26 @@
     <target>媒体文件 (%1);;所有文件 (*)</target>
 </phrase>
 <phrase>
+    <source>No screenshot available</source>
+    <target>屏幕截图不可用</target>
+</phrase>
+<phrase>
+    <source>Screenshot copied to clipboard</source>
+    <target>屏幕截图已复制到剪切板</target>
+</phrase>
+<phrase>
+    <source>Save Screenshot</source>
+    <target>保存屏幕截图</target>
+</phrase>
+<phrase>
+    <source>Failed to save screenshot</source>
+    <target>保存屏幕截图失败</target>
+</phrase>
+<phrase>
+    <source>Screenshot saved</source>
+    <target>屏幕截图已保存</target>
+</phrase>
+<phrase>
     <source>Seek: %1</source>
     <target>进度跳转: %1</target>
 </phrase>
@@ -739,16 +767,16 @@ Video rendering is performed by mpv; this plugin only provides the graphical int
     <target>已加书签的文件在磁盘上已不存在。</target>
 </phrase>
 <phrase>
-    <source>The list this bookmark belongs to no longer exists.</source>
-    <target>此书签所属的列表已不存在。</target>
+    <source>The playlist this bookmark belongs to no longer exists.</source>
+    <target>此书签所属的播放列表已不存在。</target>
 </phrase>
 <phrase>
-    <source>Failed to load the list.</source>
-    <target>加载列表失败。</target>
+    <source>Failed to load the playlist.</source>
+    <target>加载播放列表失败。</target>
 </phrase>
 <phrase>
-    <source>The bookmarked item could not be found in its list.</source>
-    <target>已加书签的项目在其列表中无法找到。</target>
+    <source>The bookmarked item could not be found in its playlist.</source>
+    <target>已加书签的项目在其播放列表中无法找到。</target>
 </phrase>
 <phrase>
     <source>Bookmark Jump</source>
@@ -807,8 +835,8 @@ Video rendering is performed by mpv; this plugin only provides the graphical int
     <target>搜索</target>
 </phrase>
 <phrase>
-    <source>The playing list was changed externally. Remote entries have been adopted into the default list and may contain access credentials.</source>
-    <target>正在播放的列表已被外部更改。远程条目已并入默认列表，其中可能包含访问凭据。</target>
+    <source>The playlist you were playing was changed externally. Remote entries have been adopted into the default playlist and may contain access credentials.</source>
+    <target>正在播放的列表已被外部更改。远程条目已并入默认播放列表，其中可能包含访问凭据。</target>
 </phrase>
 <phrase>
     <source>An invalid playback address was detected and removed. Playback has been stopped.</source>
@@ -817,10 +845,6 @@ Video rendering is performed by mpv; this plugin only provides the graphical int
 <phrase>
     <source>Playlist Notice</source>
     <target>播放列表通知</target>
-</phrase>
-<phrase>
-    <source>Entries from list %1 are no longer valid and have been removed from the default list.</source>
-    <target>来自列表 %1 的条目已失效，并已从默认列表中移除。</target>
 </phrase>
 <phrase>
     <source>Playback has been stopped.</source>
@@ -959,12 +983,44 @@ Video rendering is performed by mpv; this plugin only provides the graphical int
     <target>新建播放列表</target>
 </phrase>
 <phrase>
-    <source>Duplicate List</source>
-    <target>复制列表</target>
+    <source>Delete playlist &quot;%1&quot;?</source>
+    <target>删除播放列表 &quot;%1&quot;？</target>
 </phrase>
 <phrase>
-    <source>Delete List</source>
-    <target>删除列表</target>
+    <source>Some items were skipped because they use transit URLs</source>
+    <target>某些条目因使用转接 URL 而被跳过</target>
+</phrase>
+<phrase>
+    <source>Playlist (*.pls)</source>
+    <target>播放列表 (*.pls)</target>
+</phrase>
+<phrase>
+    <source>Winamp Playlist (*.m3u *.m3u8)</source>
+    <target>Winamp 播放列表 (*.m3u *.m3u8)</target>
+</phrase>
+<phrase>
+    <source>Export Playlist As</source>
+    <target>导出播放列表</target>
+</phrase>
+<phrase>
+    <source>Failed to export playlist file</source>
+    <target>导出播放列表文件失败</target>
+</phrase>
+<phrase>
+    <source>Import Playlist</source>
+    <target>导入播放列表</target>
+</phrase>
+<phrase>
+    <source>Playlist Files (*.pls *.m3u *.m3u8);;All Files (*)</source>
+    <target>播放列表文件 (*.pls *.m3u *.m3u8);;所有文件 (*)</target>
+</phrase>
+<phrase>
+    <source>Failed to read playlist file</source>
+    <target>读取播放列表文件失败</target>
+</phrase>
+<phrase>
+    <source>No entries found in the selected playlist file</source>
+    <target>所选播放列表文件中未找到任何条目</target>
 </phrase>
 <phrase>
     <source>Move Forward</source>
@@ -979,16 +1035,28 @@ Video rendering is performed by mpv; this plugin only provides the graphical int
     <target>原始顺序</target>
 </phrase>
 <phrase>
+    <source>Clear Current Playlist</source>
+    <target>清空当前播放列表</target>
+</phrase>
+<phrase>
+    <source>Copy Contents to New Playlist</source>
+    <target>复制内容到新播放列表</target>
+</phrase>
+<phrase>
+    <source>Import Playlist…</source>
+    <target>导入播放列表…</target>
+</phrase>
+<phrase>
+    <source>Export Playlist As…</source>
+    <target>导出播放列表…</target>
+</phrase>
+<phrase>
     <source>Reveal in File Explorer</source>
     <target>在文件资源管理器中显示</target>
 </phrase>
 <phrase>
     <source>Copy Path</source>
     <target>复制路径</target>
-</phrase>
-<phrase>
-    <source>List Settings…</source>
-    <target>列表设置…</target>
 </phrase>
 <phrase>
     <source>Add Files…</source>
@@ -1001,6 +1069,22 @@ Video rendering is performed by mpv; this plugin only provides the graphical int
 <phrase>
     <source>File Name</source>
     <target>文件名</target>
+</phrase>
+<phrase>
+    <source>Entries from playlist %1 are no longer valid and have been removed from the default playlist.</source>
+    <target>来自播放列表 %1 的条目已失效，并已从默认播放列表中移除。</target>
+</phrase>
+<phrase>
+    <source>Duplicate Playlist</source>
+    <target>复制播放列表</target>
+</phrase>
+<phrase>
+    <source>Delete Playlist</source>
+    <target>删除播放列表</target>
+</phrase>
+<phrase>
+    <source>Playlist Settings…</source>
+    <target>播放列表设置…</target>
 </phrase>
 <phrase>
     <source>File Name (Numeric)</source>
@@ -1027,10 +1111,6 @@ Video rendering is performed by mpv; this plugin only provides the graphical int
     <target>移除选中</target>
 </phrase>
 <phrase>
-    <source>Clear Current List</source>
-    <target>清空当前列表</target>
-</phrase>
-<phrase>
     <source>Remove Invalid</source>
     <target>移除失效项</target>
 </phrase>
@@ -1055,10 +1135,6 @@ Video rendering is performed by mpv; this plugin only provides the graphical int
     <target>确认</target>
 </phrase>
 <phrase>
-    <source>Delete list &quot;%1&quot;?</source>
-    <target>删除列表 &quot;%1&quot;？</target>
-</phrase>
-<phrase>
     <source>Playlist </source>
     <target>播放列表 </target>
 </phrase>
@@ -1071,8 +1147,8 @@ Video rendering is performed by mpv; this plugin only provides the graphical int
     <target>通过插件转接（自定义协议）</target>
 </phrase>
 <phrase>
-    <source>This list always plays through the plugin relay</source>
-    <target>此列表始终通过插件转接播放</target>
+    <source>This playlist always plays through the plugin relay</source>
+    <target>此播放列表始终通过插件转接播放</target>
 </phrase>
 <phrase>
     <source>Auto</source>
@@ -1207,6 +1283,10 @@ Video rendering is performed by mpv; this plugin only provides the graphical int
     <target>音量上限</target>
 </phrase>
 <phrase>
+    <source>Applies to playlist and metadata requests only; playback is governed by the mpv-side option below</source>
+    <target>仅用于播放列表和元数据请求，播放由下方的 mpv 侧选项控制</target>
+</phrase>
+<phrase>
     <source>Loop Playback</source>
     <target>循环播放</target>
 </phrase>
@@ -1265,10 +1345,6 @@ Video rendering is performed by mpv; this plugin only provides the graphical int
 <phrase>
     <source>Ignore HTTPS Certificate Errors</source>
     <target>忽略 HTTPS 证书错误</target>
-</phrase>
-<phrase>
-    <source>Applies to list and metadata requests only; playback is governed by the mpv-side option below</source>
-    <target>仅用于列表和元数据请求，播放由下方的 mpv 侧选项控制</target>
 </phrase>
 <phrase>
     <source>Ignore HTTPS Certificate Errors (mpv side)</source>
