@@ -19,7 +19,7 @@ typedef struct mpv_handle mpv_handle; // 与 client.h 的 typedef 重复声明�
 // 写该字段是越界写，症状是内存损坏而非优雅失败。
 
 // ——取用侧接缝（实施勘误，随 N52 变更记录留档）——
-// PlaylistProvider::playUrl 只需要 publish 一个动作，而它编进 mpvqt_testlib
+// PlaylistProvider::playUrl 只需要 publish 一个动作，而它编进 oxbow_testlib
 // （L4 实现体不入 testlib，且其 .cpp 含 mpv 符号解析不可链入测试）。故取用侧面向
 // 本抽象基编程：解析与发布经虚函数完成，测试链接不携带 L4。行为等价于规格 §2.8
 // 的 resolve<StreamRelay>() 直取——同一注册表、同一实例、同一动作，纯头无实现体。
@@ -37,7 +37,7 @@ class StreamRelay final : public StreamRelayIf {
     StreamRelay(const StreamRelay &) = delete;
     StreamRelay &operator=(const StreamRelay &) = delete;
 
-    // 注册 mpvqt 协议（注册名取 StreamTransit::kProtocol）并置 cancel_fn。
+    // 注册 oxbow 协议（注册名取 StreamTransit::kProtocol）并置 cancel_fn。
     // 硬顺序①：必须早于 MpvController::startEventThread——首次 mpv_wait_event
     // 解除 mpv 启动门控后，命令行首文件即会 open 流。
     bool install(mpv_handle *handle);

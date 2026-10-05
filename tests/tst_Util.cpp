@@ -2,7 +2,7 @@
 // 覆盖：分段正确性（文本/数值/前导零/ASCII 判定/超限降级）、排序语义（数值序/
 // 跨类型/前缀/大小写不敏感）、视图有效性（拥有者+移动后仍有效）、调用方整链排序。
 // 无 GUI 依赖，一类一可执行（R5）：ctest --test-dir build -C Debug -R Util 跑本套件；
-//   mpvqt_tests_Util <槽名> 跑单个用例。
+//   oxbow_tests_Util <槽名> 跑单个用例。
 
 #include "pch.h"
 
@@ -70,7 +70,7 @@ class TestUtil : public QObject {
     // ——N48：Util::Url::pathEnd（显示名取末段与基 URL 尾斜杠补位共用的分界口径）——
     void pathEndFindsSpecBoundary();
     // ——N54：Util::Url::isMissingLocal（本地来源缺失判据，书签失效清理与书签跳转共用）——
-    // 存在/不存在/目录/file:///网络与流/mpvqt:// 折叠/相对名绝对化后判定
+    // 存在/不存在/目录/file:///网络与流/oxbow:// 折叠/相对名绝对化后判定
     void missingLocalJudgesByForm();
     // ——N54：nextSequenceNumber（播放列表与书签共用的自动命名算法）——
     // 最大序号 +1 而非第一个空号；前缀不匹配与序号段解析失败一律不计入
@@ -421,7 +421,7 @@ void TestUtil::pathEndFindsSpecBoundary() {
 
 // N54：本地来源缺失判据（书签失效清理与书签跳转共用）。三件事各钉一刀：
 // 网络/流恒假（不可判定 ≠ 缺失）、目录不算缺失（QFileInfo 而非 QFile 的存在性）、
-// 相对名先绝对化再判定、file:// 与 mpvqt:// 经 Util::Url::toIdentity 折叠后再判
+// 相对名先绝对化再判定、file:// 与 oxbow:// 经 Util::Url::toIdentity 折叠后再判
 void TestUtil::missingLocalJudgesByForm() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -446,7 +446,7 @@ void TestUtil::missingLocalJudgesByForm() {
     QVERIFY(!Util::Url::isMissingLocal(QStringLiteral("rtsp://host/stream")));
     // N52 折叠：转接 URI 先还原成条目身份（此处是 http URL）→ 仍判假
     QVERIFY(
-        !Util::Url::isMissingLocal(QStringLiteral("mpvqt://11111111-2222-3333-4444-555555555555/"
+        !Util::Url::isMissingLocal(QStringLiteral("oxbow://11111111-2222-3333-4444-555555555555/"
                                                   "http%3A%2F%2Fhost%2Fdav%2Fa.mkv")));
 
     // file:// 形态转本地后判定
@@ -454,7 +454,7 @@ void TestUtil::missingLocalJudgesByForm() {
     QVERIFY(Util::Url::isMissingLocal(QUrl::fromLocalFile(gone).toString()));
 
     // 相对名：绝对化（基于进程 CWD 的纯字符串变换）后判定，不因"非绝对路径"早退
-    QVERIFY(Util::Url::isMissingLocal(QStringLiteral("mpvqt-absent-probe-file.mkv")));
+    QVERIFY(Util::Url::isMissingLocal(QStringLiteral("oxbow-absent-probe-file.mkv")));
 }
 
 // N54：自动命名的单点。钉住两件事——① 取"最大 +1"而不是"第一个空号"（1 与 3 并存时
@@ -487,7 +487,7 @@ void TestUtil::nextSequenceNumberTakesMaxPlusOne() {
 
 // N61 §2.1：整形的另一侧——**已定形者逐字节不动**。这组用例是判据 R（N56 §2.5）的
 // 守门人：任何"顺手归一一下"的改动都会让回刷判据把真失配看成一致——正斜杠绝对串被
-// 转成反斜杠，或 mpvqt:// 被折成条目身份（后者等于把转接形态与条目身份在判据上合并，
+// 转成反斜杠，或 oxbow:// 被折成条目身份（后者等于把转接形态与条目身份在判据上合并，
 // 转接开关切换后界面永不收编）。实测 mpv 对绝对正斜杠下发原样回显，故该形态必须活着
 void TestUtil::mpvEchoKeepsDefiniteFormsByteIdentical() {
     const QStringList definite{
@@ -498,7 +498,7 @@ void TestUtil::mpvEchoKeepsDefiniteFormsByteIdentical() {
         QStringLiteral("http://host/dav/a.mkv"),      // 网络
         QStringLiteral("https://user:pw@host/a.mkv"), // 带凭据的网络串（整形不问凭据）
         QStringLiteral("file:///D:/dir/a.mkv"),       // file URL 绝对形态：含 "://" → 原样
-        QStringLiteral("mpvqt://11111111-2222-3333-4444-555555555555/http%3A%2F%2Fhost%2Fdav"),
+        QStringLiteral("oxbow://11111111-2222-3333-4444-555555555555/http%3A%2F%2Fhost%2Fdav"),
         QString(), // 空串（回显条目无 filename 的异常形）
     };
     for (const QString &s : definite)

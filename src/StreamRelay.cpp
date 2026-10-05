@@ -26,14 +26,14 @@ void probeLog(StreamCookie *cookie, qint64 n) {
     const ByteStream::Stats st = cookie->stream->stats();
     const qint64 served = st.pos - st.skipBytes;
     if (n == ByteStream::kEof || n == ByteStream::kError) {
-        qDebug() << "[mpvqt]" << cookie->uuidTag << "probe read-terminal n=" << n
+        qDebug() << "[oxbow]" << cookie->uuidTag << "probe read-terminal n=" << n
                  << "served=" << served << "pos=" << st.pos << "reopens=" << st.reopens
                  << "t=" << cookie->clock.elapsed() << "ms";
         cookie->loggedServed = served;
         return;
     }
     if (n > 0 && served - cookie->loggedServed >= 8 * 1024 * 1024) {
-        qDebug() << "[mpvqt]" << cookie->uuidTag << "probe served=" << served << "pos=" << st.pos
+        qDebug() << "[oxbow]" << cookie->uuidTag << "probe served=" << served << "pos=" << st.pos
                  << "reopens=" << st.reopens << "skips=" << st.skipHits
                  << "t=" << cookie->clock.elapsed() << "ms";
         cookie->loggedServed = served;
@@ -57,12 +57,12 @@ int64_t seekCb(void *cookiePtr, int64_t offset) {
     if (r >= 0) {
         // N52 探针（临时）：成功 seek 也记——demuxer 的索引扫描（如 mkv cues）
         // 会触发后向重开，是拉取节奏的一部分
-        qDebug() << "[mpvqt]" << cookie->uuidTag << "probe seek" << offset
+        qDebug() << "[oxbow]" << cookie->uuidTag << "probe seek" << offset
                  << "ok t=" << cookie->clock.elapsed() << "ms";
         return r;
     }
     // mpv 对两档失败行为一致：seek 不成、原位续播
-    qDebug() << "[mpvqt]" << cookie->uuidTag << "seek" << offset << "failed:" << r;
+    qDebug() << "[oxbow]" << cookie->uuidTag << "seek" << offset << "failed:" << r;
     return r == ByteStream::kSeekUnsupported ? int64_t(MPV_ERROR_UNSUPPORTED)
                                              : int64_t(MPV_ERROR_GENERIC);
 }
@@ -82,7 +82,7 @@ void closeCb(void *cookiePtr) {
     auto *cookie = static_cast<StreamCookie *>(cookiePtr);
     // 观测计数经 Stats 由 close 一行带出：HTTP 之外任何传输自动获得同等可观测性
     const ByteStream::Stats st = cookie->stream->stats();
-    qDebug() << "[mpvqt]" << cookie->uuidTag << "close pos=" << st.pos << "total=" << st.total
+    qDebug() << "[oxbow]" << cookie->uuidTag << "close pos=" << st.pos << "total=" << st.total
              << "reopens=" << st.reopens << "skips=" << st.skipHits << "skipBytes=" << st.skipBytes;
     delete cookie; // 释放最后一份 shared_ptr 即触发流析构
 }
@@ -95,7 +95,7 @@ int openCb(void *user_data, char *uri, mpv_stream_cb_info *info) {
     const QString identity = StreamTransit::unwrap(path);
     const QUuid listUuid = StreamTransit::listUuidOfUri(path);
     auto fail = [&](const QString &why) {
-        qDebug() << "[mpvqt] open" << path << "failed:" << why;
+        qDebug() << "[oxbow] open" << path << "failed:" << why;
         return int(MPV_ERROR_LOADING_FAILED); // 不静默降级为无凭据直连（N51 §2.3 纪律）
     };
 
@@ -125,7 +125,7 @@ int openCb(void *user_data, char *uri, mpv_stream_cb_info *info) {
     info->seek_fn = cookie->stream->isSeekable() ? &seekCb : nullptr;
     info->size_fn = cookie->stream->size() >= 0 ? &sizeCb : nullptr;
 
-    qDebug() << "[mpvqt]" << cookie->uuidTag << "open ok total=" << cookie->stream->size()
+    qDebug() << "[oxbow]" << cookie->uuidTag << "open ok total=" << cookie->stream->size()
              << "seekable=" << cookie->stream->isSeekable();
     return 0;
 }
@@ -136,7 +136,7 @@ bool StreamRelay::install(mpv_handle *handle) {
     m_handle = handle;
     const int err = mpv_stream_cb_add_ro(handle, StreamTransit::kProtocol, this, &openCb);
     if (err != 0) {
-        qDebug() << "[mpvqt] stream_cb register failed:" << err;
+        qDebug() << "[oxbow] stream_cb register failed:" << err;
         return false;
     }
     return true;

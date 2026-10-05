@@ -11,7 +11,7 @@
 // 必须先解开 junction 链（见 DirProvider::canonicalDirPath），否则环会被当成普通
 // 目录逐层展开——表现为结果重复收录（曾实测出 41 条，应为 2 条）。
 // 一类一可执行（R5）：ctest --test-dir build -C Debug -R DirProvider 跑本套件；
-//   mpvqt_tests_DirProvider symlinkLoop* 只跑环相关。
+//   oxbow_tests_DirProvider symlinkLoop* 只跑环相关。
 
 #include "pch.h"
 
@@ -461,11 +461,11 @@ void TestDirProvider::validateInputCoversEmptyStreamMissingAndValid() {
     QVERIFY(DirProvider::validateInput(QStringLiteral("http://host/dav/")).has_value());
     QVERIFY(DirProvider::validateInput(QStringLiteral("ftp://host/dir/")).has_value());
     // 目录不存在 ⇒ 报错（并带出路径）
-    const QString missing = QDir::temp().filePath(QStringLiteral("mpvqt-n44-missing-dir"));
+    const QString missing = QDir::temp().filePath(QStringLiteral("oxbow-n44-missing-dir"));
     QVERIFY(!QDir(missing).exists());
     const auto missingError = DirProvider::validateInput(missing);
     QVERIFY(missingError.has_value());
-    QVERIFY(missingError->contains(QStringLiteral("mpvqt-n44-missing-dir")));
+    QVERIFY(missingError->contains(QStringLiteral("oxbow-n44-missing-dir")));
     // 合法目录 ⇒ 通过
     QTemporaryDir tmp;
     QVERIFY(tmp.isValid());

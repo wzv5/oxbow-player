@@ -229,7 +229,7 @@ PlaylistEntity::Ptr PlaylistWidget::playingEntityOf(int tabIndex, int entityInde
 }
 
 // N48/R：实体表 → 喂 mpv 的播放形态。N52：走基类非虚 playTarget 模板
-// 方法——usesTransit() 为假走 directPlayUrl（直发形态），为真铸 mpvqt:// 转接
+// 方法——usesTransit() 为假走 directPlayUrl（直发形态），为真铸 oxbow:// 转接
 // URI 并随串交出 cache=yes（N65：申报落点在铸造点）；
 // 本出口由此成为全仓唯一能取得"直接形态"的生产调用点（directPlayUrl 已 protected）。
 // 凭据只在此处与 PROPFIND 请求两个使用点注入；本出口只服务下发 mpv 的 loadfile
@@ -936,7 +936,7 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
         }
     }
 
-    // N55 §3.6：未命中的转接回显＝异常数据。合法的 mpvqt:// 只有两条来路——插件自己
+    // N55 §3.6：未命中的转接回显＝异常数据。合法的 oxbow:// 只有两条来路——插件自己
     // 从归属真列表的实体现算下发（必命中 reuse，索引键就是同一个函数），或收编项经
     // clone() 带着原归属进默认 tab（同样命中）。故"转接形态且未命中"当且仅当外部把
     // 本仓私有协议的串喂进了 mpv 队列（IPC loadfile / append，或清单文件里写着它）。
@@ -978,8 +978,8 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
             continue;
         // 未命中支（N31 / N61 不变）：回显是"播放形态"，先经 StreamTransit::unwrap
         // 折回身份再进工厂（N56 §2.6：工厂只收已定形身份）。unwrap 是纯解码（非
-        // mpvqt:// 原样返回），这一句不得省——漏折即让转接项以 mpvqt:// 落进实体身份，
-        // 破 N52 / N56 的折叠纪律（整形只补形态、不拆包装：mpvqt:// 含 "://" 属已定形，
+        // oxbow:// 原样返回），这一句不得省——漏折即让转接项以 oxbow:// 落进实体身份，
+        // 破 N52 / N56 的折叠纪律（整形只补形态、不拆包装：oxbow:// 含 "://" 属已定形，
         // 逐字节放行）。工厂走回显专用入口 fromMpvEcho——补不出形态的串（空 filename、
         // 裸 file:）不撞 fromPath 那句断言，原样落 UnknownEntity 保行。
         // 两条路不得互换：索引键若改用折叠键（小写归一）就与判据不同形，命中的克隆会被
@@ -1132,7 +1132,7 @@ void PlaylistWidget::endLocalPush(quint64 gen) {
     // 会自然到达并走正常判定。残余见规格 §2.2：该路径只在 mpv 正在退出 / 参数非法
     // 时出现，下一轮回显即自愈，不为此加超时兜底（否则世代泄漏成永久吞域）
     if (!m_mpv)
-        qDebug() << "[mpvqt] push barrier skipped, no controller: gen" << gen; // 装配异常才到这
+        qDebug() << "[oxbow] push barrier skipped, no controller: gen" << gen; // 装配异常才到这
     m_openPushGens.remove(gen);
 }
 
@@ -1151,7 +1151,7 @@ void PlaylistWidget::onPushBarrier(quint64 gen, bool ok, const QVariantList &ite
     // 观测点（§四.3）：摘除后在册规模须在下面对账**之前**取——对账的收编会就地
     // 再起会话，事后读到的集合规模不是这一瞬的
     const int stillOpen = int(m_openPushGens.size());
-    qDebug() << "[mpvqt] push barrier gen" << gen << "ok" << ok << "still open" << stillOpen;
+    qDebug() << "[oxbow] push barrier gen" << gen << "ok" << ok << "still open" << stillOpen;
     if (stillOpen > 0)
         return;
 
@@ -1162,7 +1162,7 @@ void PlaylistWidget::onPushBarrier(quint64 gen, bool ok, const QVariantList &ite
     // 世代的 ok 载荷——只递减返回（§2.3 第 2 条）
     if (settled.ok)
         setPlaylist(settled.items);
-    qDebug() << "[mpvqt] push barrier settled with gen" << settled.gen << "ok" << settled.ok;
+    qDebug() << "[oxbow] push barrier settled with gen" << settled.gen << "ok" << settled.ok;
 }
 
 // N11：主菜单"打开文件"固定落点——整体替换默认 tab 内容并作废其续播记忆

@@ -439,7 +439,7 @@ QImage MpvController::screenshotRaw() {
     const int err = mpv_command_node(m_mpv, &argRoot, &result);
     if (err != 0) {
         // 含空闲态无视频（命令即报错），空 QImage 交调用方出提示
-        qDebug() << "[mpvqt] screenshot-raw failed:" << err;
+        qDebug() << "[oxbow] screenshot-raw failed:" << err;
         return QImage();
     }
 
@@ -480,7 +480,7 @@ QImage MpvController::screenshotRaw() {
             std::memcpy(img.scanLine(y), base + qint64(y) * stride, size_t(w) * 4);
         out = img;
     } else {
-        qDebug() << "[mpvqt] screenshot-raw unexpected payload:" << w << h << stride
+        qDebug() << "[oxbow] screenshot-raw unexpected payload:" << w << h << stride
                  << (format ? format : "(null)");
     }
 
@@ -567,7 +567,7 @@ void MpvController::loadFile(const QString &url, const QString &appendMode,
     if (err == 0)
         mpv_free_node_contents(&result); // 节点内存按既有用法规还
     else
-        qDebug() << "[mpvqt] loadfile(node) failed:" << err << url;
+        qDebug() << "[oxbow] loadfile(node) failed:" << err << url;
 }
 
 bool MpvController::pushBarrier(quint64 gen) {
@@ -577,7 +577,7 @@ bool MpvController::pushBarrier(quint64 gen) {
     // 非法时出现，故此处不重试也不排队；发射失败不产生 reply，调用方就地摘除
     const int err = mpv_get_property_async(m_mpv, gen, "playlist", MPV_FORMAT_NODE);
     if (err != 0)
-        qDebug() << "[mpvqt] push barrier failed:" << err << "gen" << gen;
+        qDebug() << "[oxbow] push barrier failed:" << err << "gen" << gen;
     return err == 0;
 }
 

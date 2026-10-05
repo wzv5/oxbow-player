@@ -38,7 +38,7 @@ class SettingsDialog : public QDialog {
                             const QString &pluginIniPath);
 
   signals:
-    // N35：Apply/OK 应用成功后发出，keys 为本轮实际写入 mpv-qt.ini 的键集合
+    // N35：Apply/OK 应用成功后发出，keys 为本轮实际写入 oxbow.ini 的键集合
     // （与快照比对后确有变化者）。仅覆盖 ini 配置变化；mpv 配置变化已由
     // mpv 属性事件跟踪，不在此列。无 ini 变更则不发射
     void pluginIniKeysChanged(const QStringList &keys);
@@ -75,7 +75,7 @@ class SettingsDialog : public QDialog {
     QVariant readControlValue(QWidget *control) const;
 
     MpvController *m_controller = nullptr;
-    QString m_pluginIniPath;            // mpv-qt.ini 完整路径
+    QString m_pluginIniPath;            // oxbow.ini 完整路径
     QString m_mpvConfPath;              // mpv.conf 路径（resolveMpvConfPath 解析后）
     std::optional<MpvConf> m_confCache; // 构造期 open 一次，写盘时直接 commit
 

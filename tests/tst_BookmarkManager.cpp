@@ -5,7 +5,7 @@
 // 波及；本地同键合并读与"全部组本地"判据；过户迁移与合并；旧 INI 按自带 uuid 归组
 // （混账不拆）；removeInvalid 保留目录形态键、远端项按归属判失效。
 // 一类一可执行（R5）：ctest --test-dir build -C Debug -R BookmarkManager 跑本套件；
-//   mpvqt_tests_BookmarkManager <槽名> 跑单个用例。
+//   oxbow_tests_BookmarkManager <槽名> 跑单个用例。
 
 #include "pch.h"
 

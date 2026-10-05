@@ -2,7 +2,7 @@
 // url）与后缀分派的边界 case 覆盖。测试无副作用：每个 case 用 QTemporaryFile /
 // QTemporaryDir 隔离，结束时自动清理。一类一可执行（R5）：
 //   ctest --test-dir build -C Debug -R PlaylistFile 跑本套件；
-//   mpvqt_tests_PlaylistFile <槽名> 跑单个用例。
+//   oxbow_tests_PlaylistFile <槽名> 跑单个用例。
 
 #include "pch.h"
 

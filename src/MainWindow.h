@@ -44,7 +44,7 @@ class MainWindow : public QMainWindow {
     // N5：空白区域点击清焦（未被交互控件消费的按下事件冒泡至此）
     void mousePressEvent(QMouseEvent *event) override;
     // N68：小窗态等比缩放（WM_SIZING）与边缘吸附（WM_MOVING）——函数体整体经
-    // Windows 且未定义 MPVQT_PUREQT 门禁。降级形态两项都不做（循环外改窗位会被原生
+    // Windows 且未定义 OXBOW_PUREQT 门禁。降级形态两项都不做（循环外改窗位会被原生
     // 模态循环覆写，实测乱跳；§一 原裁决），只留定态保比（scheduleMiniRefit →
     // refitMiniToAspect）与进窗贴角
     bool nativeEvent(const QByteArray &eventType, void *message, qintptr *result) override;
@@ -155,7 +155,7 @@ class MainWindow : public QMainWindow {
     // N68 外框越出工作区即按最小移动原则收回（未越界空操作）。只由程序性场景调用：
     // 换片自适应（§6 整窗不越界）与降级路径的进窗贴角；用户拖动/松手不钳（第 8 条裁决）
     void clampMiniIntoWorkArea();
-#if !defined(Q_OS_WIN) || defined(MPVQT_PUREQT)
+#if !defined(Q_OS_WIN) || defined(OXBOW_PUREQT)
     // N68 降级路径的纯 Qt 定态收口触发器——move/resize 事件去抖（无跨平台松手信号），
     // 静默达 miniRefitDebounceMs 即保宽调高；进窗那一次另做贴角
     void scheduleMiniRefit();
@@ -223,7 +223,7 @@ class MainWindow : public QMainWindow {
     void onAddBookmark();
 
     MpvController *m_controller;
-    QString m_configFile; // 配置文件完整路径（插件 DLL 同目录下的 mpv-qt.ini）
+    QString m_configFile; // 配置文件完整路径（插件 DLL 同目录下的 oxbow.ini）
     // N52：转接协议适配层（寿命归 plugin.cpp 的 shared_ptr，覆盖 exec 全程）
     std::shared_ptr<StreamRelay> m_relay;
     ActionManager *m_actions = nullptr; // A15：全部 UI 动作出生与登记处，先于容器构建
@@ -353,7 +353,7 @@ class MainWindow : public QMainWindow {
     bool m_preMiniMaximized = false; // 进小窗前是否最大化（退出分流依据）
     QRect m_preMiniRect;             // 进小窗前完整几何（最大化时取 normalGeometry）
     Qt::WindowFlags m_preMiniFlags;  // 进小窗前窗口样式（退出恢复触发重建）
-#if defined(Q_OS_WIN) && !defined(MPVQT_PUREQT)
+#if defined(Q_OS_WIN) && !defined(OXBOW_PUREQT)
     // N68：小窗拖动期的**未吸附基准**（物理像素，仅 GUI 线程在拖动模态循环内读写）。
     // 吸附结果不得作为下一条 WM_MOVING 的判定基准——系统给的下条矩形建立在上一次
     // 已吸附的位置上，据此判距离会把每轮位移又拉回贴齐位，慢速拖动永远脱不开（实测）。
@@ -366,7 +366,7 @@ class MainWindow : public QMainWindow {
     QMargins m_miniFrameInsets;
     bool m_miniFrameInsetsValid = false;
 #endif
-#if !defined(Q_OS_WIN) || defined(MPVQT_PUREQT)
+#if !defined(Q_OS_WIN) || defined(OXBOW_PUREQT)
     // N68 降级路径收口去抖定时器（惰性创建；主路径无此需要）
     QTimer *m_miniRefitTimer = nullptr;
     // 进窗贴角待办：置位期间那次收口改做贴角（装饰尺寸要 show 之后才落定，即时读

@@ -1,16 +1,16 @@
 cmake_minimum_required(VERSION 3.16)
-project(mpvqt VERSION 0.1.0 LANGUAGES CXX)
+project(oxbow-player VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-option(MPVQT_BUILD_TESTS "Build Qt Test unit tests for mpv-qt" OFF)
-option(MPVQT_STATICQT "Link Qt statically (skip windeployqt at deploy time)" OFF)
+option(OXBOW_BUILD_TESTS "Build Qt Test unit tests for oxbow" OFF)
+option(OXBOW_STATICQT "Link Qt statically (skip windeployqt at deploy time)" OFF)
 # N68：强行令 Windows 也走小窗的纯 Qt 降级路径（无等比缩放/边缘吸附），便于本机验证降级形态
-option(MPVQT_PUREQT "Use the pure-Qt implementation path for the mini window" OFF)
+option(OXBOW_PUREQT "Use the pure-Qt implementation path for the mini window" OFF)
 
-if(MPVQT_STATICQT)
+if(OXBOW_STATICQT)
     set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreaded)
 endif()
 
@@ -18,20 +18,20 @@ find_package(Qt6 REQUIRED COMPONENTS Widgets LinguistTools Concurrent Network)
 
 # ---------------------------------------------------------------------------
 # 目标 1：加载壳 main.dll（纯 Win32，无 Qt 依赖）
-# mpv 启动时会加载 scripts/mpvqt/main.dll 并调用其导出的 mpv_open_cplugin。
-# 壳仅负责把插件目录加入 DLL 搜索路径，再动态加载真正带 Qt 的 mpvqtcore.dll，
+# mpv 启动时会加载 scripts/oxbow/main.dll 并调用其导出的 mpv_open_cplugin。
+# 壳仅负责把插件目录加入 DLL 搜索路径，再动态加载真正带 Qt 的 oxbowcore.dll，
 # 从而让 Qt 运行库能与插件共置、随插件目录分发。
 # ---------------------------------------------------------------------------
-add_library(mpvqt_loader MODULE src/loader/loader.cpp)
-set_target_properties(mpvqt_loader PROPERTIES PREFIX "" OUTPUT_NAME "main")
+add_library(oxbow_loader MODULE src/loader/loader.cpp)
+set_target_properties(oxbow_loader PROPERTIES PREFIX "" OUTPUT_NAME "main")
 if(MSVC)
-    target_compile_options(mpvqt_loader PRIVATE /utf-8)
+    target_compile_options(oxbow_loader PRIVATE /utf-8)
 endif()
 
 # ---------------------------------------------------------------------------
-# 目标 2：真正的插件 mpvqtcore.dll（Qt + mpv 逻辑）
+# 目标 2：真正的插件 oxbowcore.dll（Qt + mpv 逻辑）
 # ---------------------------------------------------------------------------
-add_library(mpvqtcore MODULE
+add_library(oxbowcore MODULE
     src/plugin.cpp
     src/Constants.h
     src/StreamTransit.cpp
@@ -114,35 +114,35 @@ add_library(mpvqtcore MODULE
 )
 
 # mpv/client.h 已内置在仓库根目录的 mpv/ 下
-target_include_directories(mpvqtcore PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(oxbowcore PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 # C 插件不链接 libmpv，符号由 mpv 在加载时动态解析。
 # 注意：不要定义 MPV_ENABLE_DEPRECATED=0，内置 client.h 的动态符号段
 # 无条件引用已弃用的 mpv_get_wakeup_pipe，关掉弃用声明会编译失败。
-target_compile_definitions(mpvqtcore PRIVATE MPV_CPLUGIN_DYNAMIC_SYM)
+target_compile_definitions(oxbowcore PRIVATE MPV_CPLUGIN_DYNAMIC_SYM)
 if(MSVC)
-    target_compile_options(mpvqtcore PRIVATE /utf-8)
+    target_compile_options(oxbowcore PRIVATE /utf-8)
 endif()
-if(MPVQT_STATICQT)
-    target_compile_definitions(mpvqtcore PRIVATE MPVQT_STATICQT)
+if(OXBOW_STATICQT)
+    target_compile_definitions(oxbowcore PRIVATE OXBOW_STATICQT)
 endif()
-if(MPVQT_PUREQT)
-    target_compile_definitions(mpvqtcore PRIVATE MPVQT_PUREQT)
+if(OXBOW_PUREQT)
+    target_compile_definitions(oxbowcore PRIVATE OXBOW_PUREQT)
 endif()
 
-target_link_libraries(mpvqtcore PRIVATE Qt6::Widgets Qt6::Concurrent Qt6::Network)
+target_link_libraries(oxbowcore PRIVATE Qt6::Widgets Qt6::Concurrent Qt6::Network)
 # A19：全屏期 DWM 圆角裁切抑制（仅 Windows；dwmapi 为 Vista 起系统组件）
 if(WIN32)
-    target_link_libraries(mpvqtcore PRIVATE dwmapi)
+    target_link_libraries(oxbowcore PRIVATE dwmapi)
 endif()
 
 # 预编译头：Qt 与标准库集中进 src/pch.h，加快编译
-target_precompile_headers(mpvqtcore PRIVATE src/pch.h)
-set_target_properties(mpvqtcore PROPERTIES PREFIX "" OUTPUT_NAME "mpvqtcore")
+target_precompile_headers(oxbowcore PRIVATE src/pch.h)
+set_target_properties(oxbowcore PROPERTIES PREFIX "" OUTPUT_NAME "oxbowcore")
 
 # N49：图标素材内嵌为资源（icons/<包名>/<语义键>.svg → :/icons/<包名>/<语义键>.svg）。
 # 与 qt_add_translations 生成的资源并存；静态构建下随二进制内嵌，无外部文件与部署路径问题
-qt_add_resources(mpvqtcore "icons"
+qt_add_resources(oxbowcore "icons"
     PREFIX "/icons"
     BASE "icons"
     FILES
@@ -155,36 +155,36 @@ qt_add_resources(mpvqtcore "icons"
         icons/icons8/filter-remove.svg
 )
 
-qt_add_translations(mpvqtcore MERGE_QT_TRANSLATIONS
+qt_add_translations(oxbowcore MERGE_QT_TRANSLATIONS
     LUPDATE_OPTIONS -no-obsolete
-    TS_FILES translations/mpvqt_zh_CN.ts
+    TS_FILES translations/oxbow_zh_CN.ts
 )
 
 # ---------------------------------------------------------------------------
 # 部署：把插件建成独立脚本目录
-#   portable_config/scripts/mpvqt/main.dll        （加载壳）
-#   portable_config/scripts/mpvqt/mpvqtcore.dll    （真插件）
-#   portable_config/scripts/mpvqt/*.dll + plugins/ （Qt 运行库，随插件目录分发）
+#   portable_config/scripts/oxbow/main.dll        （加载壳）
+#   portable_config/scripts/oxbow/oxbowcore.dll    （真插件）
+#   portable_config/scripts/oxbow/*.dll + plugins/ （Qt 运行库，随插件目录分发）
 # Qt 运行库用 windeployqt 部署到插件所在目录，而不是 mpv 主程序目录。
-# MPVQT_STATICQT=ON 时 Qt 已静态链接进 mpvqtcore.dll，跳过 windeployqt；
+# OXBOW_STATICQT=ON 时 Qt 已静态链接进 oxbowcore.dll，跳过 windeployqt；
 # 加载壳 main.dll 仍照常部署——MediaInfo.dll 依赖壳预加载才能被解析。
 # ---------------------------------------------------------------------------
 set(MPV_BIN_DIR "" CACHE PATH "mpv.exe 所在目录；设置后构建完毕自动部署")
 if(MPV_BIN_DIR)
-    if(NOT MPVQT_STATICQT)
+    if(NOT OXBOW_STATICQT)
         find_program(WINDEPLOYQT_EXE windeployqt HINTS "${Qt6_DIR}/../../../bin")
         if(NOT WINDEPLOYQT_EXE)
             message(FATAL_ERROR "windeployqt 未找到：请确认 CMAKE_PREFIX_PATH 指向 Qt 安装目录（其 bin 下含 windeployqt）")
         endif()
     endif()
-    set(MPVQT_SCRIPT_DIR "${MPV_BIN_DIR}/portable_config/scripts/mpvqt")
-    add_custom_command(TARGET mpvqtcore POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${MPVQT_SCRIPT_DIR}"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:mpvqt_loader> "${MPVQT_SCRIPT_DIR}/main.dll"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:mpvqtcore> "${MPVQT_SCRIPT_DIR}/mpvqtcore.dll")
-    if(NOT MPVQT_STATICQT)
-        add_custom_command(TARGET mpvqtcore POST_BUILD
-            COMMAND ${WINDEPLOYQT_EXE} --no-translations --compiler-runtime "${MPVQT_SCRIPT_DIR}/mpvqtcore.dll")
+    set(OXBOW_SCRIPT_DIR "${MPV_BIN_DIR}/portable_config/scripts/oxbow")
+    add_custom_command(TARGET oxbowcore POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${OXBOW_SCRIPT_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:oxbow_loader> "${OXBOW_SCRIPT_DIR}/main.dll"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:oxbowcore> "${OXBOW_SCRIPT_DIR}/oxbowcore.dll")
+    if(NOT OXBOW_STATICQT)
+        add_custom_command(TARGET oxbowcore POST_BUILD
+            COMMAND ${WINDEPLOYQT_EXE} --no-translations --compiler-runtime "${OXBOW_SCRIPT_DIR}/oxbowcore.dll")
     endif()
 endif()
 
@@ -194,24 +194,24 @@ endif()
 # ---------------------------------------------------------------------------
 set(MEDIAINFO_DLL "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/mediainfo/MediaInfo.dll")
 if(MPV_BIN_DIR AND EXISTS "${MEDIAINFO_DLL}")
-    add_custom_command(TARGET mpvqtcore POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${MEDIAINFO_DLL}" "${MPVQT_SCRIPT_DIR}/MediaInfo.dll")
+    add_custom_command(TARGET oxbowcore POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${MEDIAINFO_DLL}" "${OXBOW_SCRIPT_DIR}/MediaInfo.dll")
 endif()
 
 # ---------------------------------------------------------------------------
 # R3：单元测试（默认不构建）。不纳入插件部署路径。
-# 启用方式：cmake -B build -DMPVQT_BUILD_TESTS=ON ...
+# 启用方式：cmake -B build -DOXBOW_BUILD_TESTS=ON ...
 # 运行：ctest --test-dir build -C Debug -R <套件短名>   （如 ctest --test-dir build -C Debug -R Util）
-#       ./build/Debug/mpvqt_tests_Util    （直调 exe；末尾加槽名即单用例）
+#       ./build/Debug/oxbow_tests_Util    （直调 exe；末尾加槽名即单用例）
 # R5：一类一可执行（QTest 标准用法）+ 测试静态库，被测源码只编一份；
-# 插件构建图（mpvqtcore / 翻译 / 部署）不受影响。
+# 插件构建图（oxbowcore / 翻译 / 部署）不受影响。
 # ---------------------------------------------------------------------------
-if(MPVQT_BUILD_TESTS)
+if(OXBOW_BUILD_TESTS)
     find_package(Qt6 REQUIRED COMPONENTS Test)
     enable_testing()
 
     # 被测源码进测试静态库，各测试 exe 链接复用（静态归档只拉被引用 object）
-    add_library(mpvqt_testlib STATIC
+    add_library(oxbow_testlib STATIC
         src/DirProvider.cpp
         src/DirProvider.h
         src/WebDavProvider.cpp
@@ -264,43 +264,43 @@ if(MPVQT_BUILD_TESTS)
         src/HttpClient.cpp
         src/HttpClient.h
     )
-    target_include_directories(mpvqt_testlib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(mpvqt_testlib PUBLIC Qt6::Widgets Qt6::Concurrent Qt6::Network)
-    target_precompile_headers(mpvqt_testlib PRIVATE src/pch.h)
+    target_include_directories(oxbow_testlib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(oxbow_testlib PUBLIC Qt6::Widgets Qt6::Concurrent Qt6::Network)
+    target_precompile_headers(oxbow_testlib PRIVATE src/pch.h)
     if(MSVC)
-        target_compile_options(mpvqt_testlib PRIVATE /utf-8)
+        target_compile_options(oxbow_testlib PRIVATE /utf-8)
     endif()
 
     # 注册一个单类测试 exe：源文件固定为 tests/tst_<name>.cpp
-    # 用法：mpvqt_add_test(MpvConf)
-    function(mpvqt_add_test name)
-        add_executable(mpvqt_tests_${name} tests/tst_${name}.cpp)
-        target_include_directories(mpvqt_tests_${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-        target_precompile_headers(mpvqt_tests_${name} REUSE_FROM mpvqt_testlib)
-        target_link_libraries(mpvqt_tests_${name} PRIVATE mpvqt_testlib Qt6::Test)
+    # 用法：oxbow_add_test(MpvConf)
+    function(oxbow_add_test name)
+        add_executable(oxbow_tests_${name} tests/tst_${name}.cpp)
+        target_include_directories(oxbow_tests_${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+        target_precompile_headers(oxbow_tests_${name} REUSE_FROM oxbow_testlib)
+        target_link_libraries(oxbow_tests_${name} PRIVATE oxbow_testlib Qt6::Test)
         if(MSVC)
-            target_compile_options(mpvqt_tests_${name} PRIVATE /utf-8)
+            target_compile_options(oxbow_tests_${name} PRIVATE /utf-8)
         endif()
-        add_test(NAME ${name} COMMAND mpvqt_tests_${name})
+        add_test(NAME ${name} COMMAND oxbow_tests_${name})
         # 各 exe 落同一输出目录，windeployqt 只需跑一遍：首个注册者挂载即全覆盖
-        if(NOT MPVQT_STATICQT AND NOT _mpvqt_test_deployed)
-            add_custom_command(TARGET mpvqt_tests_${name} POST_BUILD
-                COMMAND ${WINDEPLOYQT_EXE} --no-translations --compiler-runtime $<TARGET_FILE:mpvqt_tests_${name}>)
-            set(_mpvqt_test_deployed TRUE PARENT_SCOPE)
+        if(NOT OXBOW_STATICQT AND NOT _oxbow_test_deployed)
+            add_custom_command(TARGET oxbow_tests_${name} POST_BUILD
+                COMMAND ${WINDEPLOYQT_EXE} --no-translations --compiler-runtime $<TARGET_FILE:oxbow_tests_${name}>)
+            set(_oxbow_test_deployed TRUE PARENT_SCOPE)
         endif()
     endfunction()
 
-    mpvqt_add_test(MpvConf)
-    mpvqt_add_test(PlaylistEntity)
-    mpvqt_add_test(PlaylistFile)
-    mpvqt_add_test(HttpClient)
-    mpvqt_add_test(DirProvider)
-    mpvqt_add_test(WebDavProvider)
-    mpvqt_add_test(ExternalProvider)
-    mpvqt_add_test(Util)
-    mpvqt_add_test(BookmarkManager)
-    mpvqt_add_test(StreamTransit)
-    mpvqt_add_test(PlaylistRegistry)
-    mpvqt_add_test(HttpByteStream)
-    mpvqt_add_test(FilterList)
+    oxbow_add_test(MpvConf)
+    oxbow_add_test(PlaylistEntity)
+    oxbow_add_test(PlaylistFile)
+    oxbow_add_test(HttpClient)
+    oxbow_add_test(DirProvider)
+    oxbow_add_test(WebDavProvider)
+    oxbow_add_test(ExternalProvider)
+    oxbow_add_test(Util)
+    oxbow_add_test(BookmarkManager)
+    oxbow_add_test(StreamTransit)
+    oxbow_add_test(PlaylistRegistry)
+    oxbow_add_test(HttpByteStream)
+    oxbow_add_test(FilterList)
 endif()

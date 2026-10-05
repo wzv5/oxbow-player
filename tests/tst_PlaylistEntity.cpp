@@ -2,7 +2,7 @@
 // 惰性求值与缓存清空、能力位与静态空回落、clone 深拷贝互不影响。
 // 测试无副作用：文件级 case 用 QTemporaryDir 隔离，结束时自动清理。
 // 一类一可执行（R5）：ctest --test-dir build -C Debug -R PlaylistEntity 跑本套件；
-//   mpvqt_tests_PlaylistEntity <槽名> 跑单个用例。
+//   oxbow_tests_PlaylistEntity <槽名> 跑单个用例。
 
 #include "pch.h"
 
@@ -103,7 +103,7 @@ class TestRelay : public StreamRelayIf {
     std::shared_ptr<StreamEndpoint> lastEndpoint;
 };
 
-// 转接测试提供者：Required（形态恒 mpvqt:// 铸造，偏好关不掉），端点返回测试桩
+// 转接测试提供者：Required（形态恒 oxbow:// 铸造，偏好关不掉），端点返回测试桩
 class TransitTestProvider : public PlaylistProvider {
   public:
     explicit TransitTestProvider(const std::shared_ptr<ServiceRegistry> &registry)
@@ -194,7 +194,7 @@ class TestPlaylistEntity : public QObject {
 
 void TestPlaylistEntity::factoryDispatchesLocalAndNetwork() {
     auto registry = std::make_shared<ServiceRegistry>();
-    const QString local = QDir::tempPath() + QStringLiteral("/mpvqt_entity_dispatch.mp4");
+    const QString local = QDir::tempPath() + QStringLiteral("/oxbow_entity_dispatch.mp4");
     auto l = PlaylistEntity::fromPath(local, registry);
     QVERIFY(dynamic_cast<LocalFileEntity *>(l.get()) != nullptr);
     QVERIFY(dynamic_cast<UnknownEntity *>(l.get()) == nullptr);
@@ -220,7 +220,7 @@ void TestPlaylistEntity::factoryDispatchesHttpWithRegistry() {
 
     // 本地路径忽略 registry（类型不受影响）
     auto l = PlaylistEntity::fromPath(
-        QDir::tempPath() + QStringLiteral("/mpvqt_entity_http_local.mp4"), registry);
+        QDir::tempPath() + QStringLiteral("/oxbow_entity_http_local.mp4"), registry);
     QVERIFY(dynamic_cast<LocalFileEntity *>(l.get()) != nullptr);
 }
 
@@ -294,7 +294,7 @@ void TestPlaylistEntity::httpEntityKeyPreservesCase() {
 void TestPlaylistEntity::factoryRoundtripIdempotent() {
     // 本地路径：入参已定形（绝对 + 原生分隔符），往返不变
     auto registry = std::make_shared<ServiceRegistry>();
-    const QString local = QDir::tempPath() + QStringLiteral("/mpvqt_entity_roundtrip.mp4");
+    const QString local = QDir::tempPath() + QStringLiteral("/oxbow_entity_roundtrip.mp4");
     auto e = PlaylistEntity::fromPath(local, registry);
     QCOMPARE(PlaylistEntity::fromPath(e->path(), registry)->path(), e->path());
 
@@ -517,11 +517,11 @@ void TestPlaylistEntity::keyIsNormalizedPlayUrl() {
 void TestPlaylistEntity::matchesKeyLevelEquality() {
     auto registry = std::make_shared<ServiceRegistry>();
     // 本地：大小写 / 分隔符漂移仍命中
-    const QString local = QDir::tempPath() + QStringLiteral("/mpvqt_entity_matches.mp4");
+    const QString local = QDir::tempPath() + QStringLiteral("/oxbow_entity_matches.mp4");
     auto l = PlaylistEntity::fromPath(local, registry);
     QVERIFY(l->matches(l->path()));
     QVERIFY(l->matches(local.toLower()));
-    QVERIFY(!l->matches(QDir::tempPath() + QStringLiteral("/mpvqt_entity_other.mp4")));
+    QVERIFY(!l->matches(QDir::tempPath() + QStringLiteral("/oxbow_entity_other.mp4")));
     // http：无凭据身份 matches 带凭据回显（N56 §2.3——凭据准入后回显含注入凭据，
     // 判据侧不剥凭据、剥凭据在键内完成）；scheme / host 大小写漂移亦命中
     auto h = PlaylistEntity::fromPath(QStringLiteral("https://example.com/dir/a.mp4"), registry);
@@ -552,12 +552,12 @@ void TestPlaylistEntity::displayUrlStripsCredentials() {
 
 // N61 变更记录第 1 条：工厂的回显专用入口。它只放宽一件事——不炸。三条纪律各钉一组
 // 用例：① 已定形者与 fromPath 同类型同身份（正常路径零变化）；② 入口不做加工，折叠
-// 仍归调用点（漏折即让 mpvqt:// 落进实体身份，这条用例把纪律钉在断言上）；
+// 仍归调用点（漏折即让 oxbow:// 落进实体身份，这条用例把纪律钉在断言上）；
 // ③ 补不出形态者不撞 fromPath 那句断言、以原串落 UnknownEntity（系统边界上降级而非
 // 终止进程，且行不丢 ⇒ 实体序与 mpv 队列序对位不破）
 void TestPlaylistEntity::echoEntryFallsBackToPlaceholder() {
     auto registry = testRegistry();
-    const QString local = QDir::tempPath() + QStringLiteral("/mpvqt_entity_echo_local.mp4");
+    const QString local = QDir::tempPath() + QStringLiteral("/oxbow_entity_echo_local.mp4");
 
     // ① 已定形本地串：类型与身份与 fromPath 逐字一致
     auto l = PlaylistEntity::fromMpvEcho(local, registry);
@@ -575,7 +575,7 @@ void TestPlaylistEntity::echoEntryFallsBackToPlaceholder() {
     auto t = PlaylistEntity::fromMpvEcho(StreamTransit::unwrap(transit), registry);
     QVERIFY(dynamic_cast<LocalFileEntity *>(t.get()) != nullptr);
     QCOMPARE(t->path(), local);
-    // 漏折的对照：mpvqt:// 含 "://" 属已定形，入口原样放行、不代拆——转接串就当身份
+    // 漏折的对照：oxbow:// 含 "://" 属已定形，入口原样放行、不代拆——转接串就当身份
     // 落进了实体（N52 / N56 折叠纪律破）。setPlaylist 第 5 步那一句 unwrap 因此不得省
     auto unfolded = PlaylistEntity::fromMpvEcho(transit, registry);
     QVERIFY(dynamic_cast<UnknownEntity *>(unfolded.get()) != nullptr);
@@ -630,7 +630,7 @@ void TestPlaylistEntity::ownershipStampDrivesPlayUrl() {
     e.applyOwnership(QUuid::createUuid(), staticProvider);
     QCOMPARE(e.playUrl(), e.path());
 
-    // ② 转接提供者（Required）：形态 = mpvqt://<归属 uuid>/<剥凭据身份>。
+    // ② 转接提供者（Required）：形态 = oxbow://<归属 uuid>/<剥凭据身份>。
     //    身份段取归属 uuid 而非任何"所在列表"——断言形态出自归属
     auto transitProvider = std::make_shared<TransitTestProvider>(registry);
     const QUuid uuidB = QUuid::createUuid();

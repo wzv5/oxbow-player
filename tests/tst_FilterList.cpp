@@ -4,7 +4,7 @@
 // 编译→解析→编译往返恒等、参数值引号选择（裸值 / [...] 配平 / %n% 不配平，
 // 含非 ASCII 值的 UTF-8 字节长度口径）、顶层冒号与顶层逗号扫描。
 // 无 GUI 依赖，一类一可执行（R5）：ctest --test-dir build -C Debug -R FilterList
-// 跑本套件；mpvqt_tests_FilterList <槽名> 跑单个用例。
+// 跑本套件；oxbow_tests_FilterList <槽名> 跑单个用例。
 
 #include "pch.h"
 

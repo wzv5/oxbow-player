@@ -197,7 +197,7 @@ int BookmarkManager::removeInvalid(const ListAlivePredicate &listAlive) {
     QList<Group> toRemove;
     for (const Group &group : std::as_const(m_order)) {
         // 校验以原始显示路径为准（而非小写归一键）。本地项判据收在 Util::Url::isMissingLocal
-        // 单点（与书签跳转的本地闸门同一口径，N54 §2.7）：file:// 与 mpvqt:// 先还原成
+        // 单点（与书签跳转的本地闸门同一口径，N54 §2.7）：file:// 与 oxbow:// 先还原成
         // 来源路径，目录不算缺失（mpv 能播目录）
         const QString disp = m_displayOf.value(group, group.key);
         if (Util::Url::isMissingLocal(disp)) {

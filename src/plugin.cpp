@@ -1,4 +1,4 @@
-// mpv C 插件本体（mpvqtcore）。
+// mpv C 插件本体（oxbowcore）。
 // 无论 Windows（两段式壳转发）还是 Linux / 静态链接 Qt 的单一 DLL，本模块都导出
 // 标准入口 mpv_open_cplugin：
 //   - Windows：mpv 只加载 scripts/<name>/main.dll（加载壳），壳 LoadLibrary 本模块
@@ -60,25 +60,25 @@ static bool resolveMpvSymbols() {
     RESOLVE(mpv_free_node_contents); // B18：FILE_LOADED 主动读 NODE 属性后释放
     RESOLVE(mpv_command_node);       // N52：loadfile 逐文件选项的节点通道
     RESOLVE(mpv_wait_event);
-    RESOLVE(mpv_stream_cb_add_ro);   // N52：mpvqt:// 转接协议注册
+    RESOLVE(mpv_stream_cb_add_ro);   // N52：oxbow:// 转接协议注册
     RESOLVE(mpv_get_property_async); // N60：推送会话的屏障读（playlist 终值自带终点）
 #undef RESOLVE
 
     if (missing) {
 #ifdef _WIN32
-        OutputDebugStringA("[mpvqt] 无法从宿主解析 mpv 符号: ");
+        OutputDebugStringA("[oxbow] 无法从宿主解析 mpv 符号: ");
         OutputDebugStringA(missing);
         OutputDebugStringA("\n");
 #else
-        fprintf(stderr, "[mpvqt] 无法从宿主解析 mpv 符号: %s\n", missing);
+        fprintf(stderr, "[oxbow] 无法从宿主解析 mpv 符号: %s\n", missing);
 #endif
         return false;
     }
     return true;
 }
 
-// 解析插件配置文件完整路径：直接放在插件 DLL 所在目录下，命名为 mpv-qt.ini。
-// 取本模块（mpvqtcore.dll）所在目录，在其下直接读写配置文件，目录本身已存在。
+// 解析插件配置文件完整路径：直接放在插件 DLL 所在目录下，命名为 oxbow.ini。
+// 取本模块（oxbowcore.dll）所在目录，在其下直接读写配置文件，目录本身已存在。
 // 无法获取模块路径时退回到 Qt 标准配置位置。
 static QString resolveConfigFilePath() {
     QString modulePath;
@@ -105,7 +105,7 @@ static QString resolveConfigFilePath() {
         // 目录只读（如安装于 Program Files）时 QSettings 会静默失败，
         // 以写探针判定；不可写则走标准配置位置
         const QString dir = QFileInfo(modulePath).absolutePath();
-        QTemporaryFile probe(dir + QStringLiteral("/mpvqt-XXXXXX.tmp"));
+        QTemporaryFile probe(dir + QStringLiteral("/oxbow-XXXXXX.tmp"));
         if (probe.open())
             return QDir(dir).filePath(App::iniFileName());
     }
@@ -118,8 +118,8 @@ static QString resolveConfigFilePath() {
 
 // 在 QApplication 就绪、MainWindow 构造前安装内嵌翻译：
 // 仅从 :/i18n 资源加载（qt_add_translations 嵌入），失败则静默回退英文原文。
-// 语言来源：mpv-qt.ini 的 language 键；空/"auto" 表示跟随系统， "en" 为英文原文，
-// 其余按 QLocale 对应 :/i18n/mpvqt_<locale>.qm
+// 语言来源：oxbow.ini 的 language 键；空/"auto" 表示跟随系统， "en" 为英文原文，
+// 其余按 QLocale 对应 :/i18n/oxbow_<locale>.qm
 static void installTranslator() {
     if (!qApp)
         return;
@@ -131,16 +131,16 @@ static void installTranslator() {
     auto *translator = new QTranslator(qApp);
     bool loaded = false;
     if (lang.isEmpty() || lang.compare(QStringLiteral("auto"), Qt::CaseInsensitive) == 0) {
-        loaded = translator->load(QLocale(), QStringLiteral("mpvqt"), QStringLiteral("_"),
+        loaded = translator->load(QLocale(), QStringLiteral("oxbow"), QStringLiteral("_"),
                                   QStringLiteral(":/i18n"));
     } else if (lang.compare(QStringLiteral("en"), Qt::CaseInsensitive) == 0) {
         loaded = false;
     } else {
         const QLocale loc(lang);
-        if (translator->load(loc, QStringLiteral("mpvqt"), QStringLiteral("_"),
+        if (translator->load(loc, QStringLiteral("oxbow"), QStringLiteral("_"),
                              QStringLiteral(":/i18n")))
             loaded = true;
-        else if (translator->load(QStringLiteral("mpvqt_") + lang, QStringLiteral(":/i18n")))
+        else if (translator->load(QStringLiteral("oxbow_") + lang, QStringLiteral(":/i18n")))
             loaded = true;
     }
     if (loaded) {

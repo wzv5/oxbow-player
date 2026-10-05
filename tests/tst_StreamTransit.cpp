@@ -4,7 +4,7 @@
 
 #include "StreamTransit.h"
 
-// N52 L1：mpvqt:// 语法纯函数的契约测试——往返、幂等、形态不合恒等与前缀判定。
+// N52 L1：oxbow:// 语法纯函数的契约测试——往返、幂等、形态不合恒等与前缀判定。
 // 全部为纯字符串断言，无 GUI，无网络。
 // 注意：mint 的凭据拒绝分支由 Q_ASSERT 守候，Debug 构建下构造 userinfo 输入
 // 会触发断言中止，故本套件不覆盖该分支（Release 行为由代码走查确认）。
@@ -37,7 +37,7 @@ void TestStreamTransit::roundtripPreservesIdentity() {
     for (const QString &id : identities) {
         const QString uri = StreamTransit::mint(kUuid, id);
         QVERIFY(!uri.isEmpty());
-        QVERIFY(uri.startsWith(QLatin1String("mpvqt://")));
+        QVERIFY(uri.startsWith(QLatin1String("oxbow://")));
         QCOMPARE(StreamTransit::unwrap(uri), id);
     }
 }
@@ -63,22 +63,22 @@ void TestStreamTransit::unwrapMalformedReturnsAsIs() {
     const QStringList malformed{
         QStringLiteral(""),
         QStringLiteral("https://dav.example.com/dav/a.mp4"),
-        QStringLiteral("mpvqt:"),
-        QStringLiteral("mpvqt://"),
-        QStringLiteral("mpvqt://") + kUuidText,
-        QStringLiteral("mpvqt://") + kUuidText + QStringLiteral("/"),
-        QStringLiteral("mpvqt:///"),
+        QStringLiteral("oxbow:"),
+        QStringLiteral("oxbow://"),
+        QStringLiteral("oxbow://") + kUuidText,
+        QStringLiteral("oxbow://") + kUuidText + QStringLiteral("/"),
+        QStringLiteral("oxbow:///"),
     };
     for (const QString &p : malformed)
         QCOMPARE(StreamTransit::unwrap(p), p);
 }
 
 void TestStreamTransit::isTransitUriPrefixOnly() {
-    QVERIFY(StreamTransit::isTransitUri(QStringLiteral("mpvqt://abc/def")));
-    QVERIFY(StreamTransit::isTransitUri(QStringLiteral("MPVQT://abc/def"))); // 大小写不敏感
-    QVERIFY(!StreamTransit::isTransitUri(QStringLiteral("xmpvqt://abc/def")));
-    QVERIFY(!StreamTransit::isTransitUri(QStringLiteral("mpvqt:/abc")));
-    QVERIFY(!StreamTransit::isTransitUri(QStringLiteral("https://example.com/mpvqt://x")));
+    QVERIFY(StreamTransit::isTransitUri(QStringLiteral("oxbow://abc/def")));
+    QVERIFY(StreamTransit::isTransitUri(QStringLiteral("OXBOW://abc/def"))); // 大小写不敏感
+    QVERIFY(!StreamTransit::isTransitUri(QStringLiteral("xoxbow://abc/def")));
+    QVERIFY(!StreamTransit::isTransitUri(QStringLiteral("oxbow:/abc")));
+    QVERIFY(!StreamTransit::isTransitUri(QStringLiteral("https://example.com/oxbow://x")));
 }
 
 void TestStreamTransit::nilIdentityNeverMatches() {
@@ -95,7 +95,7 @@ void TestStreamTransit::nilIdentityNeverMatches() {
     // mint 与 listUuidOfUri 成对：URI 段取回的身份与铸造时所用同一
     const QString uri = StreamTransit::mint(kUuid, QStringLiteral("https://x/a"));
     QVERIFY(StreamTransit::listUuidOfUri(uri) == kUuid);
-    QVERIFY(StreamTransit::listUuidOfUri(QStringLiteral("mpvqt://nope/x")).isNull());
+    QVERIFY(StreamTransit::listUuidOfUri(QStringLiteral("oxbow://nope/x")).isNull());
     QVERIFY(StreamTransit::listUuidOfUri(QStringLiteral("https://x/a")).isNull());
     // 条目身份为空仍拒铸（纯数据判据，前面没有断言拦路）
     QVERIFY(StreamTransit::mint(kUuid, QString()).isEmpty());
@@ -107,7 +107,7 @@ void TestStreamTransit::prefixNotHandTruncated() {
     const QString id = QStringLiteral("https://dav.example.com/dav/0123456789abcdef.mp4");
     const QString uri = StreamTransit::mint(kUuid, id);
     QCOMPARE(StreamTransit::unwrap(uri), id);
-    QVERIFY(uri.mid(8).startsWith(kUuidText)); // 偏移 8 = sizeof("mpvqt://")-1
+    QVERIFY(uri.mid(8).startsWith(kUuidText)); // 偏移 8 = sizeof("oxbow://")-1
 }
 
 QTEST_GUILESS_MAIN(TestStreamTransit)

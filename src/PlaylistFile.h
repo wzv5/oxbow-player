@@ -14,7 +14,7 @@
 // error 显影，不会静默出错（N80 §1）。ASX 档曾入冻结稿，实测兼容性极差删除
 // （变更记录 1）；时长不进条目，导出元数据只有标题（变更记录 2）。
 //
-// 编进 mpvqtcore 与 mpvqt_testlib 两个源列表（纯函数族按既有归类同编测试库，
+// 编进 oxbowcore 与 oxbow_testlib 两个源列表（纯函数族按既有归类同编测试库，
 // N81 的解析用例与 N80 的写出用例都挂 tests/tst_PlaylistFile.cpp）。
 namespace PlaylistFile {
 

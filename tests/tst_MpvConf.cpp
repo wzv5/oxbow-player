@@ -1,7 +1,7 @@
 // MpvConf 单元测试（R3）：手写 mpv.conf 解析器的边界 case 覆盖。
 // 测试无副作用：每个 case 用 QTemporaryFile 隔离路径，结束时自动清理。
 // 一类一可执行（R5）：ctest --test-dir build -C Debug -R MpvConf 跑本套件；
-//   mpvqt_tests_MpvConf <槽名> 跑单个用例。
+//   oxbow_tests_MpvConf <槽名> 跑单个用例。
 
 #include "pch.h"
 

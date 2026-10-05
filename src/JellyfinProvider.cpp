@@ -17,7 +17,7 @@ QString trText(const char *source) {
 }
 
 // 授权头与 UA 用的固定客户端标识（协议取值，非 UI 文案，不翻译）
-constexpr char kClientName[] = "mpv-qt";
+constexpr char kClientName[] = "oxbow";
 constexpr char kClientVersion[] = "1.0";
 
 // 枚举请求显式元数据字段（N69 背景：默认不返回，须逐请求声明）。Path 为原始

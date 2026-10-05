@@ -58,7 +58,7 @@ PlaylistEntity::PlaylistEntity(QString path, const std::shared_ptr<ServiceRegist
 
 PlaylistEntity::Ptr PlaylistEntity::fromPath(const QString &path,
                                              const std::shared_ptr<ServiceRegistry> &registry) {
-    // N56 §2.6：定形（mpvqt:// 折叠、相对转绝对、file:// 转本地）上移到造实体的
+    // N56 §2.6：定形（oxbow:// 折叠、相对转绝对、file:// 转本地）上移到造实体的
     // 一方，工厂只按前缀分派——它可能不属于任何已知协议，只是"提供者当初拿来
     // 标识这条内容的那个串"，工厂对着读不懂的串加工等于猜。
     // Debug 断言：既非绝对路径、也非含 "://" 的形态即调用方违约——撤掉兜底后，

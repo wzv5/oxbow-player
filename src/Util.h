@@ -95,7 +95,7 @@ namespace Url {
 
 // "来源串 → 已定形身份"的唯一出口（N52 更名 resolveLocalPath → resolveSourcePath、
 // N56 收族更名 → toIdentity：它从不只处理本地路径——网络/流路径首行即原样返回；且
-// N52 起还要剥掉传输包装（mpvqt:// → 条目身份），与 "local" 字面意思正相反）。
+// N52 起还要剥掉传输包装（oxbow:// → 条目身份），与 "local" 字面意思正相反）。
 // 首行经 StreamTransit::unwrap 折叠还原（幂等，可重复施加）。
 // 本地路径相对→绝对（基于进程 CWD，纯字符串变换，不访问文件系统，文件不存在亦可），
 // 结果转原生分隔符；网络/流路径（含 :// 或非 file scheme）保持原样。cleanPath 由
@@ -206,14 +206,14 @@ bool isHttp(const QString &path);
 // N56 收族更名 isNetworkStreamPath → isNetworkStream。
 bool isNetworkStream(const QString &path);
 
-// 是否本地来源路径：经 toIdentity（含 mpvqt:// 折叠）后**不是**网络/流形态。
+// 是否本地来源路径：经 toIdentity（含 oxbow:// 折叠）后**不是**网络/流形态。
 // 判据单点在此——isMissingLocal 用它，书签失效清理与书签跳转的本地/远端分流也
 // 用它（两处同口径，不各写一遍 !isNetworkStream(toIdentity(...))）。
 // N56 收族更名 isLocalSourcePath → isLocal；归属不变（书签层纯字符串，不归实体）。
 bool isLocal(const QString &path);
 
 // N54：本地来源是否已从磁盘消失——入参为显示路径，先经 toIdentity（含
-// mpvqt:// 折叠），网络/流路径恒假（不可判定 ≠ 缺失），否则按 QFileInfo::exists 判定。
+// oxbow:// 折叠），网络/流路径恒假（不可判定 ≠ 缺失），否则按 QFileInfo::exists 判定。
 // 与实体侧 isLocalFile() && !exists() 同口径，是"这条来源能不能就地播"的判据单点
 // （书签失效清理与书签跳转共用）。目录不算缺失（mpv 能播目录）。
 // N56 收族更名 isMissingLocalSource → isMissingLocal。

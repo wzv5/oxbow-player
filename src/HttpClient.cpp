@@ -9,7 +9,7 @@
 //    证书、headersOnly 截断、体上限、缺陷登记、池化快照、停机。
 // 调用方不认识 QNAM；公开入口含策略，内部单跳 sendHop 为裸机制。
 
-#define MPVQT_ASSERT_TASK_THREAD()                                                                 \
+#define OXBOW_ASSERT_TASK_THREAD()                                                                 \
     Q_ASSERT(!QCoreApplication::instance() ||                                                      \
              QThread::currentThread() != QCoreApplication::instance()->thread())
 
@@ -174,7 +174,7 @@ void streamingReadyRead(const std::shared_ptr<HttpClient::HttpJobState> &job,
             // 直接验证该限流是否兑现
             static std::atomic<int> s_gateHits{0};
             if (s_gateHits.fetch_add(1, std::memory_order_relaxed) % 256 == 0)
-                qDebug() << "[mpvqt] probe watermark-full queue=" << job->chunksBytes
+                qDebug() << "[oxbow] probe watermark-full queue=" << job->chunksBytes
                          << "qtBuf=" << reply->bytesAvailable()
                          << "qtLimit=" << reply->readBufferSize();
             return; // 已到水位：留着让消费方取走后再续泵
@@ -749,7 +749,7 @@ HttpClient::HttpClient(const Config &config) : m_config(config) {
 }
 
 HttpClient::Response HttpClient::exec(const Request &request) const {
-    MPVQT_ASSERT_TASK_THREAD();
+    OXBOW_ASSERT_TASK_THREAD();
     const RequestId id = submit(request);
     wait(id, -1);
     return take(id);
@@ -849,7 +849,7 @@ HttpClient::RequestId HttpClient::submit(const Request &request) const {
 }
 
 bool HttpClient::wait(RequestId id, int timeoutMs) {
-    MPVQT_ASSERT_TASK_THREAD();
+    OXBOW_ASSERT_TASK_THREAD();
     if (!id)
         return false;
     if (timeoutMs != -1 && timeoutMs < 0)
@@ -866,7 +866,7 @@ bool HttpClient::wait(RequestId id, int timeoutMs) {
 }
 
 HttpClient::Response HttpClient::take(const RequestId &id) {
-    MPVQT_ASSERT_TASK_THREAD();
+    OXBOW_ASSERT_TASK_THREAD();
     if (!id)
         return Response{
             0, {}, {}, trText(QT_TRANSLATE_NOOP("HttpClient", "Invalid job handle")), false};
@@ -932,7 +932,7 @@ void HttpClient::abort(const RequestId &id) {
 // ——N50 流式消费面。三条唤醒源供这些等待者共用：字节入队 / 响应头捕获 / 终态落定。
 
 bool HttpClient::waitHeaders(RequestId id, int timeoutMs) {
-    MPVQT_ASSERT_TASK_THREAD();
+    OXBOW_ASSERT_TASK_THREAD();
     if (!id)
         return false;
     if (timeoutMs != -1 && timeoutMs < 0)
@@ -949,7 +949,7 @@ bool HttpClient::waitHeaders(RequestId id, int timeoutMs) {
 }
 
 qint64 HttpClient::readBlocking(const RequestId &id, char *out, qint64 maxBytes, int timeoutMs) {
-    MPVQT_ASSERT_TASK_THREAD();
+    OXBOW_ASSERT_TASK_THREAD();
     if (!id || !out || maxBytes <= 0)
         return kReadError;
     if (timeoutMs != -1 && timeoutMs < 0)
@@ -1027,7 +1027,7 @@ qint64 HttpClient::readBlocking(const RequestId &id, char *out, qint64 maxBytes,
 }
 
 HttpClient::Response HttpClient::statusOf(const RequestId &id) {
-    MPVQT_ASSERT_TASK_THREAD();
+    OXBOW_ASSERT_TASK_THREAD();
     if (!id)
         return Response{
             0, {}, {}, trText(QT_TRANSLATE_NOOP("HttpClient", "Invalid job handle")), false};

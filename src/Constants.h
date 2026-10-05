@@ -7,13 +7,13 @@
 namespace App {
 
 // 窄字符名：QApplication 的 argv 签名要求可写 char*，故为非 const 数组（勿运行期改写）
-inline char nameAscii[] = "mpv-qt";
+inline char nameAscii[] = "oxbow";
 
 // 显示名：QString 场景统一入口（标题/关于对话框/applicationName）
-inline QString name() { return QString::fromLatin1(nameAscii); }
+inline QString name() { return QStringLiteral("Oxbow"); }
 
-// 配置文件名：由名称派生（mpv-qt.ini）
-inline QString iniFileName() { return name() + QStringLiteral(".ini"); }
+// 配置文件名：小写基名（oxbow.ini），与翻译基名（oxbow_<locale>.qm）同族
+inline QString iniFileName() { return QStringLiteral("oxbow.ini"); }
 
 // 媒体扩展名默认清单（无点、小写）：文件对话框过滤器与 DirProvider 枚举的共用默认值。
 // 动态列表的扩展名是每 tab 可编辑参数，此处仅为初始预填来源（N9）

@@ -1125,7 +1125,7 @@ void MainWindow::saveScreenshotToFile() {
 
     QImageWriter writer(path, format);
     if (!writer.write(img)) {
-        qDebug() << "[mpvqt] screenshot write failed:" << writer.errorString() << path;
+        qDebug() << "[oxbow] screenshot write failed:" << writer.errorString() << path;
         showOsd(tr("Failed to save screenshot"));
         return;
     }
@@ -1628,7 +1628,7 @@ void MainWindow::moveEvent(QMoveEvent *event) {
     repositionNavigator();
     repositionVideoOverlay();
     repositionFullscreenOverlays(); // N66：全屏期两条带贴边跟随
-#if !defined(Q_OS_WIN) || defined(MPVQT_PUREQT)
+#if !defined(Q_OS_WIN) || defined(OXBOW_PUREQT)
     if (m_mini)
         scheduleMiniRefit(); // N68 降级路径：拖动中事件持续重置，静默即松手收口
 #endif
@@ -1639,7 +1639,7 @@ void MainWindow::resizeEvent(QResizeEvent *event) {
     repositionNavigator();
     repositionVideoOverlay();
     repositionFullscreenOverlays(); // N66：全屏期两条带贴边跟随
-#if !defined(Q_OS_WIN) || defined(MPVQT_PUREQT)
+#if !defined(Q_OS_WIN) || defined(OXBOW_PUREQT)
     if (m_mini)
         scheduleMiniRefit(); // N68 降级路径：缩放中事件持续重置，静默即松手收口
 #endif
@@ -1936,7 +1936,7 @@ void MainWindow::clampMiniIntoWorkArea() {
         move(tl); // 与既有普通态钳回同款：move 传外框左上角，Qt 按 frameMargins 折算
 }
 
-#if !defined(Q_OS_WIN) || defined(MPVQT_PUREQT)
+#if !defined(Q_OS_WIN) || defined(OXBOW_PUREQT)
 // N68 降级路径的定态收口触发器（纯 Qt，不借任何平台消息）：原生模态拖动/缩放循环期间
 // Qt 持续收到 move/resize 事件，但"松手"本身无跨平台信号——每条事件重置去抖定时器，
 // 事件静默（即松手，或程序性几何序列终止）达 miniRefitDebounceMs 后触发一次：只保宽
@@ -2107,7 +2107,7 @@ void MainWindow::toggleFullscreen() {
 // 是阴影），客户区不含发丝边框（贴边裁边），均非人眼可见框。inset 在循环公共
 // 起点（WM_ENTERSIZEMOVE，窗口静止）测一次缓存，EXITSIZEMOVE 作废，循环内复用；
 // WM_SIZING 定框另经工作区钳制收口（尺寸上限 + 最小移动钳位），右下角贴边起步、
-// 拖左/上边扩大时整窗不再越出工作区。降级路径（非 Windows 或 MPVQT_PUREQT）整段不在
+// 拖左/上边扩大时整窗不再越出工作区。降级路径（非 Windows 或 OXBOW_PUREQT）整段不在
 // 此处处理消息，两项增强一概不做：等比缩放只留定态保比（松手去抖 → refitMiniToAspect），
 // 吸附连"松手贴齐"也不做——循环外改窗位会被原生模态循环按自己的轨迹覆写（逐条事件贴齐
 // 实测乱跳，第 10 条），退到松手时点仍会在拖拽中途停顿时闪回（第 11 条撤销第 9 条的扩大）。
@@ -2116,7 +2116,7 @@ void MainWindow::toggleFullscreen() {
 // DPI 纪律：消息的 RECT 均为物理像素，运算一律在物理域——逻辑常量与逻辑工作区
 // 统一按窗口 devicePixelRatioF 换算（同一标度），装饰差值现读、不读 Qt 缓存几何
 bool MainWindow::nativeEvent(const QByteArray &eventType, void *message, qintptr *result) {
-#if defined(Q_OS_WIN) && !defined(MPVQT_PUREQT)
+#if defined(Q_OS_WIN) && !defined(OXBOW_PUREQT)
     auto *msg = static_cast<MSG *>(message);
     // 拖动/缩放模态循环的起点锚：只在此刻记一次，整轮拖动都以此为原始位置基准
     if (m_mini && msg->message == WM_ENTERSIZEMOVE) {
@@ -2347,7 +2347,7 @@ void MainWindow::toggleMini() {
                 layout()->activate();
         }
         m_mini = true;
-#if defined(Q_OS_WIN) && !defined(MPVQT_PUREQT)
+#if defined(Q_OS_WIN) && !defined(OXBOW_PUREQT)
         // 主路径：新一轮生命周期开始，上轮拖动的锚点与 inset 缓存先作废（正常由
         // WM_EXITSIZEMOVE 清，异常序可能压根没走到）——陈旧锚点会让首轮 WM_MOVING
         // 按上一轮的起点判距离，小窗一上手就跳到别处
@@ -2377,7 +2377,7 @@ void MainWindow::toggleMini() {
         const QPoint tl(work.right() + 1 - clientW, work.bottom() + 1 - clientH);
         setGeometry(QRect(tl, QSize(clientW, clientH)));
         show();
-#if defined(Q_OS_WIN) && !defined(MPVQT_PUREQT)
+#if defined(Q_OS_WIN) && !defined(OXBOW_PUREQT)
         {
             // 贴角以**可见外框**为准（第 5 条）：原生外框含不可见缩放边框（贴角
             // 留缝、缝中是阴影），客户区不含发丝边框（贴角裁角）。位移必须经
@@ -2414,7 +2414,7 @@ void MainWindow::toggleMini() {
         syncVideoGeometry(); // 铺满后视频区对位；随后的 resizeEvent 幂等兜底
     } else {
         m_mini = false;
-#if !defined(Q_OS_WIN) || defined(MPVQT_PUREQT)
+#if !defined(Q_OS_WIN) || defined(OXBOW_PUREQT)
         // 降级：进窗贴角待办随小窗生命周期了结，去抖定时器可能正挂着
         m_miniEntryGluePending = false;
         if (m_miniRefitTimer)
@@ -3721,8 +3721,8 @@ void MainWindow::onAddBookmark() {
         return;
     // N55 §2.7 / N76 §2.1：拒收分支保持——判据落在下发形态上（现算一次 playUrl()，
     // 仅作判据用；转接项的 path() 是干净身份、不带协议前缀，判据落不到身份串上）：
-    // 形态带 mpvqt:// 且正播 tab 是默认列表 ⇒ 拒收——那条 URI 的端点是会话内的，
-    // 跨会话必死，它本来就不该有书签（N76 §2.2 后，默认 tab 里唯一可能播着 mpvqt://
+    // 形态带 oxbow:// 且正播 tab 是默认列表 ⇒ 拒收——那条 URI 的端点是会话内的，
+    // 跨会话必死，它本来就不该有书签（N76 §2.2 后，默认 tab 里唯一可能播着 oxbow://
     // 的项就是收编来的转接项）。此处"归属"取书签承诺的归属（正播 tab 的列表，即
     // 下面 origin 的算法），不是实体的 m_ownerUuid——N55 变更记录 2 的钉定，N76 维持。
     // 拒收时经 showOsd 给一条失败提示（与成功那条同一通道、同一强度——用户按了键

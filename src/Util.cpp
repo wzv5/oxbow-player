@@ -447,7 +447,7 @@ QString toNative(const QString &path) {
 
 // N52：更名 resolveLocalPath → resolveSourcePath（N56 收族再更名 → toIdentity）。
 // 理由：① 它从来不只处理本地路径——网络/流路径在首行即原样返回，入参也包括手工
-// 输入的目录根，"Local" 是既有误名；② N52 起本函数还要剥掉传输包装（mpvqt:// →
+// 输入的目录根，"Local" 是既有误名；② N52 起本函数还要剥掉传输包装（oxbow:// →
 // 条目身份），与 "local" 字面意思正相反。名字取"定形"义：入参是来自某个来源的
 // 串（mpv 属性、文件对话框、拖放、用户输入），产出是已定形的条目身份。
 // N56 §2.6 起：工厂不再代做本加工——定形是造实体一方的责任，本函数收归
@@ -455,7 +455,7 @@ QString toNative(const QString &path) {
 QString toIdentity(const QString &path) {
     if (path.isEmpty())
         return path;
-    // N52：剥传输包装——mpvqt:// 转接 URI 还原为条目身份。unwrap 幂等（非本
+    // N52：剥传输包装——oxbow:// 转接 URI 还原为条目身份。unwrap 幂等（非本
     // 协议原样返回），故本折叠点可安全常驻首行，比对类（key）读点自动覆盖：
     // 走本函数或 key 的 mpv path 读取点自动还原，无需显式套函数。
     const QString unwrapped = StreamTransit::unwrap(path);
@@ -490,7 +490,7 @@ bool isNetworkStream(const QString &path) {
            !path.startsWith(QStringLiteral("file:"), Qt::CaseInsensitive);
 }
 
-// N54：本地/远端定性的单点——来源串经折叠（含 mpvqt://）后不是网络/流形态即为本地。
+// N54：本地/远端定性的单点——来源串经折叠（含 oxbow://）后不是网络/流形态即为本地。
 // 既是 isMissingLocal 的前半，也是"这条来源离开所属列表还能不能播"的分界：本地
 // 项就在磁盘上，远端项的播放形态依赖列表（N48 之后 URL 恒无凭据、N52 的转接 URI 依赖
 // 列表端点）。空串判"非本地"（无从定性）

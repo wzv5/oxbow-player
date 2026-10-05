@@ -58,7 +58,7 @@ QString unwrap(const QString &path) {
     if (!isTransitUri(path))
         return path;
 
-    // mpvqt://<uuid>/<segment>：slash <= 0 覆盖两栏非法——authority 空（==0）
+    // oxbow://<uuid>/<segment>：slash <= 0 覆盖两栏非法——authority 空（==0）
     // 与无条目段（<0）；段在但解出空串同样原样返回。命中即返回身份原串，
     // 重复施加不再命中前缀，故幂等。
     const QString tail = path.mid(kSchemeLen);

@@ -46,7 +46,7 @@ struct IntRange {
 struct SettingItem {
     const char *label = nullptr;       // 未翻译原文（英文），构建控件时经 tr() 翻译
     WidgetKind widget;                 // 控件类型（必填：无默认值，漏写编译报错）
-    QString iniKey;                    // 后端互斥（恰好一个非空）：非空 ⇒ 插件选项（mpv-qt.ini）
+    QString iniKey;                    // 后端互斥（恰好一个非空）：非空 ⇒ 插件选项（oxbow.ini）
     QStringList mpvKeys;               // 非空 ⇒ mpv 选项（本项管辖的全部 key，含复合项）
     ChoiceProvider choices;            // Combo 必填；EditableCombo = 快选预设；mpv CheckBox
                                        // = 两态映射（N33 §2.1）；SpinBox/LineEdit 忽略
@@ -169,9 +169,9 @@ QList<SettingChoice> languageChoices() {
     QStringList locales{QStringLiteral("en")};
     QDir dir(QStringLiteral(":/i18n"));
     const QStringList qmFiles =
-        dir.entryList(QStringList() << QStringLiteral("mpvqt_*.qm"), QDir::Files);
+        dir.entryList(QStringList() << QStringLiteral("oxbow_*.qm"), QDir::Files);
     for (const QString &f : qmFiles) {
-        if (f.startsWith(QStringLiteral("mpvqt_")) && f.endsWith(QStringLiteral(".qm"))) {
+        if (f.startsWith(QStringLiteral("oxbow_")) && f.endsWith(QStringLiteral(".qm"))) {
             QString loc = f.chopped(3).mid(6);
             if (!loc.isEmpty() && !locales.contains(loc))
                 locales << loc;
@@ -289,7 +289,7 @@ QList<SettingChoice> tlsVerifyChoices() {
 // 指定初始化器：省略的字段取声明处默认值，新增可选字段零波及。
 const QList<SettingCategory> &settingCatalog() {
     static const QList<SettingCategory> catalog = {
-        // ① 基本 —— 插件本体选项（写 mpv-qt.ini）
+        // ① 基本 —— 插件本体选项（写 oxbow.ini）
         {.title = QT_TRANSLATE_NOOP("SettingsDialog", "Basic"),
          .items =
              {
@@ -371,7 +371,7 @@ const QList<SettingCategory> &settingCatalog() {
                       "output sample rate; add aresample=48000 when a fixed rate is needed"),
                   .filterPresets = audioFilterPresets},
              }},
-        // ⑤ 网络 —— N35：远端浏览链路（WebDAV 枚举）所用 client 的缺省参数（写 mpv-qt.ini）；N37
+        // ⑤ 网络 —— N35：远端浏览链路（WebDAV 枚举）所用 client 的缺省参数（写 oxbow.ini）；N37
         // 起并列 mpv 侧播放证书开关
         // （写 mpv.conf + 下发 tls-verify）——两条链路的证书校验各自独立，
         // 只关一侧就会出现"能列出、播不了"（或反之），两开关互不联动；
@@ -1110,7 +1110,7 @@ bool SettingsDialog::applyAll() {
             continue;
 
         if (!item->iniKey.isEmpty()) {
-            // === 插件本体选项：写 mpv-qt.ini ===
+            // === 插件本体选项：写 oxbow.ini ===
             QSettings s(m_pluginIniPath, QSettings::IniFormat);
             s.setValue(item->iniKey, val);
             changedIniKeys << item->iniKey;

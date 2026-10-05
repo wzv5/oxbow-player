@@ -141,7 +141,7 @@ class PlaylistProvider {
     bool usesTransit() const;
 
     // ——喂 mpv 的播放形态（模板方法，非虚公开出口）——
-    // usesTransit() 为假 → 走 directPlayUrl()（直发形态）；为真 → 铸 mpvqt:// 转接
+    // usesTransit() 为假 → 走 directPlayUrl()（直发形态）；为真 → 铸 oxbow:// 转接
     // URI 并把端点发布进注册表（发布即下发，N52 §2.6）。这样"把直接形态误当播放
     // 串下发"在编译期就不可能——directPlayUrl 降为 protected，外部拿不到那个钩子。
     // 实现必须轻（playTargets 是整表逐条调用）：一次哈希查找 + 一次前缀判定 +

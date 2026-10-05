@@ -1,19 +1,19 @@
 // 加载壳（loader shell）。
 //
-// mpv 加载本 DLL（scripts/mpvqt/main.dll）并调用 mpv_open_cplugin。
+// mpv 加载本 DLL（scripts/oxbow/main.dll）并调用 mpv_open_cplugin。
 // 本文件刻意保持为纯 Win32、零 Qt 依赖：这样编译产物没有任何 Qt 导入，
 // 也就不会在加载时要求 Qt 运行库能被搜索到（避免之前“Qt 必须放在 mpv.exe 旁”
 // 的限制，以及 MSVC 延迟加载对 Qt moc 数据符号 staticMetaObject 的 LNK1194 报错）。
 //
 // 壳的工作：
-//   1. 取得自身所在目录（即 scripts/mpvqt/）；
+//   1. 取得自身所在目录（即 scripts/oxbow/）；
 //   2. 设置 Qt 插件搜索环境变量，指向共置的 Qt 插件子目录；
 //   3. 以 LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR 精确加载真正带 Qt 的插件
-//      mpvqtcore.dll（同目录），其依赖的 Qt 运行库从该目录解析；
+//      oxbowcore.dll（同目录），其依赖的 Qt 运行库从该目录解析；
 //      不改动进程级默认搜索行为，避免影响 mpv 自身的延迟 DLL 加载；
-//   4. 把 mpv 的入口调用转发给 mpvqtcore.dll 导出的 mpv_open_cplugin。
+//   4. 把 mpv 的入口调用转发给 oxbowcore.dll 导出的 mpv_open_cplugin。
 //
-// 这样 Qt 运行库随插件一起放在 scripts/mpvqt/ 下即可，无需污染 mpv.exe 目录。
+// 这样 Qt 运行库随插件一起放在 scripts/oxbow/ 下即可，无需污染 mpv.exe 目录。
 
 #define _WIN32_WINNT 0x0A00
 #include <windows.h>
@@ -61,7 +61,7 @@ static bool LoadCore() {
     if (pluginDir.empty())
         return false;
 
-#ifndef MPVQT_STATICQT
+#ifndef OXBOW_STATICQT
     // 让 Qt 在运行时能定位到共置的插件（平台插件/样式/图像格式等）。
     // windeployqt 默认把这些插件类型目录直接部署在插件目录下
     // （platforms/qwindows.dll、styles/、imageformats/ …），因此：
@@ -73,16 +73,16 @@ static bool LoadCore() {
     SetEnvironmentVariableW(L"QT_QPA_PLATFORM_PLUGIN_PATH", platformPath.c_str());
 #endif
 
-    const std::wstring corePath = pluginDir + L"mpvqtcore.dll";
+    const std::wstring corePath = pluginDir + L"oxbowcore.dll";
 
-    // DLL_LOAD_DIR：加载期间把 mpvqtcore.dll 自身目录临时置于依赖搜索序之首，
+    // DLL_LOAD_DIR：加载期间把 oxbowcore.dll 自身目录临时置于依赖搜索序之首，
     // 共置的 Qt 运行库借此解析；DEFAULT_DIRS 保留系统目录与应用程序目录。
     // 相比改写进程级默认搜索（SetDefaultDllDirectories），此处作用域仅限本次
     // 加载，不影响 mpv 之后按 PATH/CWD 的延迟 DLL 加载。
     g_core = LoadLibraryExW(corePath.c_str(), nullptr,
                             LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
     if (!g_core) {
-        OutputDebugStringW(L"[mpvqt] 加载 mpvqtcore.dll 失败\n");
+        OutputDebugStringW(L"[oxbow] 加载 oxbowcore.dll 失败\n");
         return false;
     }
 

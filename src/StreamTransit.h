@@ -2,10 +2,10 @@
 
 #include "pch.h"
 
-// N52 L1：mpvqt:// 转接 URI 语法唯一持有者（协议名与 scheme 常量只住在这里）。
+// N52 L1：oxbow:// 转接 URI 语法唯一持有者（协议名与 scheme 常量只住在这里）。
 //
 // URI 形态（沿用 N51 已实证结论，逐字不改）：
-//   mpvqt://<listUuid>/<条目段>
+//   oxbow://<listUuid>/<条目段>
 // 条目段 = 条目身份整体 QUrl::toPercentEncoding（unreserved 之外全编码，'/' 编成
 // %2F）——整段只占一个路径段，段尾保留原扩展名，不挂显示名段，不追求可读性；
 // fromPercentEncoding 严格互逆。
@@ -21,13 +21,13 @@ namespace StreamTransit {
 // —— 协议名与 scheme 常量唯一持有者（N52 §2.2）——
 // L4 注册协议名取 kProtocol；URI 判定与铸造取 kScheme。二者同源，禁止在本层
 // 之外复制协议名或手算前缀长度。
-inline constexpr char kProtocol[] = "mpvqt";  // mpv_stream_cb_add_ro 的注册名
-inline constexpr char kScheme[] = "mpvqt://"; // URI 前缀 = kProtocol + "://"
+inline constexpr char kProtocol[] = "oxbow";  // mpv_stream_cb_add_ro 的注册名
+inline constexpr char kScheme[] = "oxbow://"; // URI 前缀 = kProtocol + "://"
 
 // 仅前缀判定（大小写不敏感，与 Util::Url::isHttp 同款串前缀口径，不解析 QUrl）。
 bool isTransitUri(const QString &path);
 
-// 铸造转接 URI：mpvqt://<uuid>/<percent-encoded identity>。
+// 铸造转接 URI：oxbow://<uuid>/<percent-encoded identity>。
 // 入参应为无凭据身份（由调用方——基类下发点——先 Util::Url::stripCredentials 保证，
 // 本层不依赖 Util、不代剥）；listUuid 为列表身份，字面形态恒为 toString 的
 // WithoutBraces 小写串（N57 §2.4：内存中一律 QUuid，大小写与花括号不再参与判等）。
