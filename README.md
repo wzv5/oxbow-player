@@ -106,11 +106,6 @@ No `Qt6_ROOT` is needed — `find_package` picks up the system Qt. The artifact 
 | `OXBOW_PUREQT` | `OFF` | Force some features (e.g. the mini window) onto the pure-Qt fallback path (development aid). |
 | `MPV_BIN_DIR` | *(empty)* | Directory containing `mpv.exe`; enables automatic post-build deployment. **Windows only** — Linux builds artifacts only. |
 
-## Linux notes
-
-- **Tested baseline**: *(to be recorded after the first verified run)* — the plugin uses only the standard mpv cplugin interface, which every current distro build provides.
-- **KDE / KWin**: KWin ignores the window hints that keep extra buttons off the mini window and may add minimize / maximize buttons to it. A KWin window rule matching `WM_CLASS = oxbow` (force "no border" or "no maximize") hides them; the player itself is unaffected either way.
-
 ## Why the name
 
 This project was started purely to test Ox Alpha's capabilities — the test went so well that it simply grew into a player. The name keeps the ox: an *oxbow* is the U-shaped bow of an ox yoke, the part that fits around the ox's neck and connects its pulling power to the plow — mpv is the ox pulling the cart, and Oxbow is that yoke.
