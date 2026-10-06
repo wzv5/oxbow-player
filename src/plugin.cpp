@@ -22,6 +22,7 @@
 #include "MainWindow.h"
 #include "MpvController.h"
 #include "StreamRelay.h"
+#include "Version.h"
 
 // 本模块在 Windows 上通过 MPV_CPLUGIN_DYNAMIC_SYM 把 mpv_* 编译为指向 pfn_* 的
 // 指针：PE 加载器没有全局符号概念，本模块又是由壳动态加载的（mpv 不会填充这里的
@@ -161,6 +162,19 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle) {
     if (started)
         return 0;
     started = true;
+
+    // N84：启动诊断行——产物自报版本身份（版本 + 短 hash[-dirty]），逆向回答
+    // "手上这份产物是哪次提交、什么时候编的"。输出面与既有诊断一致：
+    // Windows 打调试器（OutputDebugStringW），Linux 打 stderr。串形为
+    // "[oxbow] 0.1.0 (cfaf552-dirty)"，与 About 对话框的 Version 行同源
+    {
+        const QString diag = QStringLiteral("[oxbow] %1\n").arg(App::versionInfo());
+#ifdef Q_OS_WIN
+        OutputDebugStringW(reinterpret_cast<const wchar_t *>(diag.utf16()));
+#else
+        fputs(diag.toUtf8().constData(), stderr);
+#endif
+    }
 
     // argc/argv 的生命周期必须覆盖整个进程
     static int argc = 1;

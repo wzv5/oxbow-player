@@ -97,6 +97,8 @@ cmake --build build
 
 No `Qt6_ROOT` is needed — `find_package` picks up the system Qt. The artifact is a single `build/main.so`; copy it to `~/.config/mpv/scripts/oxbow/main.so` (see [Installation](#installation)).
 
+Release discipline: the version lives solely in `project(oxbow-player VERSION …)` at the top of `CMakeLists.txt` — bump it by hand before each release and re-configure before building, so the version baked into the plugin (About dialog / startup diagnostic) matches the release. The commit hash and build time are recomputed on every build automatically.
+
 ### Build options
 
 | Option | Default | Description |

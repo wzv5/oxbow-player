@@ -1,0 +1,7 @@
+// 生成文件：由 cmake/OxbowRevision.cmake 在构建期写就（N84），勿手改、勿入库。
+// 全仓唯一消费者是 src/Version.cpp（N84 §1）；其余翻译单元一律改 include src/Version.h。
+#pragma once
+
+#define OXBOW_VERSION_STRING "@OXBOW_VERSION_STRING@"
+#define OXBOW_REVISION_STRING "@OXBOW_REVISION_STRING@"
+#define OXBOW_BUILD_TIME "@OXBOW_BUILD_TIME@"

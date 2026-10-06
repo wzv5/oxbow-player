@@ -45,6 +45,8 @@ endif()
 add_library(oxbowcore MODULE
     src/plugin.cpp
     src/Constants.h
+    src/Version.cpp
+    src/Version.h
     src/StreamTransit.cpp
     src/StreamTransit.h
     src/ByteStream.h
@@ -126,6 +128,38 @@ add_library(oxbowcore MODULE
 
 # mpv/client.h 已内置在仓库根目录的 mpv/ 下
 target_include_directories(oxbowcore PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+# ---------------------------------------------------------------------------
+# N84：构建期计算版本身份（短 hash[-dirty] + UTC 构建时刻），写生成头 revision.h。
+# custom target 刻意不给 OUTPUT：无输出的 custom target 每次构建都执行，hash 在
+# 构建期重算正是要的语义；configure_file 内容不变则不更新文件，版本与 hash 不变
+# 即不重编，构建时刻每次不同则 Version.cpp 每次必重编（已知代价，被"revision.h
+# 唯一消费者是 Version.cpp"的设计框死在一个小 TU 上，MainWindow.cpp / plugin.cpp
+# 一律只 include Version.h）。输入全部经 -D 传入，不得用 cache 变量承载 hash
+# （二次 configure 会短路复用旧值）。脚本内所有失败路径落 unknown 继续，
+# 绝不 FATAL_ERROR——源码包（无 .git）构建必须能过。
+# BYPRODUCTS 声明生成头路径，让 Ninja 认得这个由该步骤产出的文件；
+# add_dependencies 保证首次构建时 Version.cpp 编译前生成头已存在。
+# 生成器覆盖面：Ninja（multi/single config）与 MSBuild 均支持此组合。
+# ---------------------------------------------------------------------------
+set(OXBOW_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+# 注意：-D 值刻意不加引号（裸路径）。Windows 下 Ninja 经 cmd.exe /C 执行本命令，
+# \" 转义会被 MSVC 式参数解析吃成字面引号混进 -D 值，configure_file 随即把带引号
+# 的"绝对路径"当相对路径解析而失败；裸值没有引号可损耗。代价是含空格的路径不支持
+# （含空格时 CMake 会自动补引号重新踩坑）——与本项目其余路径假设一致，出现即构建
+# 期显式报错、可诊断
+add_custom_target(oxbow_revision
+    COMMAND ${CMAKE_COMMAND}
+        -DOXBOW_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+        -DOXBOW_VERSION_STRING=${PROJECT_VERSION}
+        -DOXBOW_REVISION_TEMPLATE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/revision.h.in
+        -DOXBOW_REVISION_OUTPUT=${OXBOW_GENERATED_DIR}/revision.h
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/OxbowRevision.cmake
+    BYPRODUCTS "${OXBOW_GENERATED_DIR}/revision.h"
+    COMMENT "重算版本身份并生成 revision.h"
+    VERBATIM)
+add_dependencies(oxbowcore oxbow_revision)
+target_include_directories(oxbowcore PRIVATE "${OXBOW_GENERATED_DIR}")
 
 # C 插件不链接 libmpv，符号由 mpv 在加载时动态解析。
 # 注意：不要定义 MPV_ENABLE_DEPRECATED=0，内置 client.h 的动态符号段

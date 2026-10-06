@@ -21,6 +21,7 @@
 #include "StreamTransit.h" // N55 §2.7：书签存储串的转接形态分岔（判据与 §3.6 同一条）
 #include "TraversalPolicy.h"
 #include "Util.h"
+#include "Version.h" // N84：About 三行版本身份（本文件只许 include 此口，不得 include revision.h）
 #ifndef Q_OS_WIN
 #include "X11Util.h" // N83：小窗置顶 EWMH 直发（仅非 Windows 编译，见 CMakeLists）
 #endif
@@ -3028,11 +3029,19 @@ void MainWindow::applyVolumeMax(int v) {
 }
 
 void MainWindow::showAboutDialog() {
+    // N84：正文后空一行接三行版本身份。标签为可翻译名词短语源串（写死）：
+    // Version / Qt version / Build time；Qt 版本取运行期（qVersion()），构建时刻
+    // 为 UTC 形态（偏移恒可推），三行取值与启动诊断行同源
+    const QString versionBlock = tr("Version") + QStringLiteral(": ") + App::versionInfo() +
+                                 QLatin1Char('\n') + tr("Qt version") + QStringLiteral(": ") +
+                                 App::qtVersion() + QLatin1Char('\n') + tr("Build time") +
+                                 QStringLiteral(": ") + App::buildDateTime();
     QMessageBox::about(this, tr("About %1").arg(App::name()),
                        tr("%1: a Qt-based player GUI loaded as an mpv C plugin.\n"
                           "Video rendering is performed by mpv; this plugin only provides the "
                           "graphical interface.")
-                           .arg(App::name()));
+                               .arg(App::name()) +
+                           QStringLiteral("\n\n") + versionBlock);
 }
 
 void MainWindow::onMpvShutdown() {

@@ -97,6 +97,8 @@ cmake --build build
 
 无需 `Qt6_ROOT`——`find_package` 直接命中系统 Qt。产物是单个 `build/main.so`，拷到 `~/.config/mpv/scripts/oxbow/main.so` 即可（见[安装](#安装)）。
 
+发版纪律：版本号单源于 `CMakeLists.txt` 顶部的 `project(oxbow-player VERSION …)`——每次发布前手工 +1 并保证重新 configure，插件内嵌的版本（关于对话框 / 启动诊断行）才与发布对应。commit hash 与构建时刻每次构建自动重算，无需人工干预。
+
 ### 构建选项
 
 | 选项 | 默认 | 说明 |
