@@ -144,16 +144,24 @@ class TestExternalProvider : public QObject {
 };
 
 void TestExternalProvider::normalizeSourceIdempotent() {
+    // 「本地绝对」串的本平台形态：Windows 取盘符，POSIX 取根下路径——"D:/media/…" 在
+    // POSIX 不是绝对串，会被当相对形态经进程 CWD 绝对化（判据随 QFileInfo::isAbsolute）
+#ifdef Q_OS_WIN
+    const QString absSrc = QStringLiteral("D:/media/list.m3u");
+    const QString fileUrl = QStringLiteral("file:///D:/media/list.m3u");
+#else
+    const QString absSrc = QStringLiteral("/media/list.m3u");
+    const QString fileUrl = QStringLiteral("file:///media/list.m3u");
+#endif
     // 本地绝对：转原生分隔符
-    const QString local = ExternalProvider::normalizeSource(QStringLiteral("D:/media/list.m3u"));
-    QCOMPARE(local, QDir::toNativeSeparators(QStringLiteral("D:/media/list.m3u")));
+    const QString local = ExternalProvider::normalizeSource(absSrc);
+    QCOMPARE(local, QDir::toNativeSeparators(absSrc));
     // 相对：基于进程 CWD 转绝对
     const QString relative = ExternalProvider::normalizeSource(QStringLiteral("sub/list.m3u"));
     QVERIFY(QDir::isAbsolutePath(relative));
-    // file:// 折本地盘符串
-    const QString folded =
-        ExternalProvider::normalizeSource(QStringLiteral("file:///D:/media/list.m3u"));
-    QCOMPARE(folded, QDir::toNativeSeparators(QStringLiteral("D:/media/list.m3u")));
+    // file:// 折本地绝对串
+    const QString folded = ExternalProvider::normalizeSource(fileUrl);
+    QCOMPARE(folded, QDir::toNativeSeparators(absSrc));
     // http：scheme / host 归小写、去默认端口
     QCOMPARE(ExternalProvider::normalizeSource(QStringLiteral("HTTP://EXAMPLE.com:80/a.m3u")),
              QStringLiteral("http://example.com/a.m3u"));
@@ -260,8 +268,8 @@ void TestExternalProvider::grammarBranchOrder() {
         QVERIFY(!out.isStreamSource);
         QVERIFY(out.groupOrder.isEmpty());
         QCOMPARE(out.entries.size(), 2);
-        QVERIFY(
-            out.warnings.contains(QStringLiteral("Malformed lines were skipped in this list.")));
+        QVERIFY(out.warnings.contains(
+            QStringLiteral("Malformed lines were skipped in this playlist.")));
     }
     // V10 连带：首数据行不是组行的文件即使后文有组行也按裸清单支——组行整行当
     // 目标。本例直调传空 base 故定形为空落异常③；生产中 base 恒非空（清单所在
@@ -431,7 +439,7 @@ void TestExternalProvider::danglingExtinf() {
     bool hasMalformed = false;
     bool hasNoPlayable = false;
     for (const QString &w : out.warnings) {
-        hasMalformed |= w == QStringLiteral("Malformed lines were skipped in this list.");
+        hasMalformed |= w == QStringLiteral("Malformed lines were skipped in this playlist.");
         hasNoPlayable |= w == QStringLiteral("No playable entries were found in this playlist.");
     }
     QVERIFY(hasMalformed);
@@ -718,7 +726,7 @@ void TestExternalProvider::groupedTextAnomalies() {
     QCOMPARE(out.entries.at(2).target, QStringLiteral("rtsp://server/live"));
     QCOMPARE(out.entries.at(3).target, QStringLiteral("https://a/4"));
     QCOMPARE(out.warnings.size(), 1);
-    QCOMPARE(out.warnings.at(0), QStringLiteral("Malformed lines were skipped in this list."));
+    QCOMPARE(out.warnings.at(0), QStringLiteral("Malformed lines were skipped in this playlist."));
     // 串里不见条数（§2.8 文案纪律）
     QVERIFY(!out.warnings.at(0).contains(QLatin1Char('2')));
 }
@@ -736,13 +744,23 @@ void TestExternalProvider::groupedTextBareLines() {
 }
 
 void TestExternalProvider::relativeTargetResolution() {
-    // 本地基址：相对目标按清单文件所在目录拼接，绝对目标原样收口
+    // 本地基址：相对目标按清单文件所在目录拼接，绝对目标原样收口。基址与绝对目标的
+    // 形态随平台——POSIX 下 "D:/…" 不是绝对串，会被当相对目标拼到基址目录之下
     {
-        const QString base = QDir::toNativeSeparators(QStringLiteral("D:/media"));
-        const auto out = parse(QStringLiteral("sub/rel.ts\nD:\\abs\\x.ts\n"), base);
+#ifdef Q_OS_WIN
+        const QString baseDir = QStringLiteral("D:/media");
+        const QString absDir = QStringLiteral("D:/abs");
+#else
+        const QString baseDir = QStringLiteral("/media");
+        const QString absDir = QStringLiteral("/abs");
+#endif
+        const QString base = QDir::toNativeSeparators(baseDir);
+        const QString absTarget = QDir::toNativeSeparators(absDir + QStringLiteral("/x.ts"));
+        const auto out =
+            parse(QStringLiteral("sub/rel.ts\n") + absTarget + QLatin1Char('\n'), base);
         QCOMPARE(out.entries.at(0).target,
-                 QDir::toNativeSeparators(QStringLiteral("D:/media/sub/rel.ts")));
-        QCOMPARE(out.entries.at(1).target, QDir::toNativeSeparators(QStringLiteral("D:/abs/x.ts")));
+                 QDir::toNativeSeparators(baseDir + QStringLiteral("/sub/rel.ts")));
+        QCOMPARE(out.entries.at(1).target, absTarget);
     }
     // http 基址：相对目标经 resolved 展开
     {
@@ -910,8 +928,8 @@ void TestExternalProvider::warningDiscipline() {
         QCOMPARE(out.warnings.size(), 3);
         QVERIFY(out.warnings.contains(
             QStringLiteral("No playable entries were found in this playlist.")));
-        QVERIFY(
-            out.warnings.contains(QStringLiteral("Malformed lines were skipped in this list.")));
+        QVERIFY(out.warnings.contains(
+            QStringLiteral("Malformed lines were skipped in this playlist.")));
         QVERIFY(out.warnings.contains(QStringLiteral(
             "Some per-entry options in this playlist are not supported and were ignored.")));
     }

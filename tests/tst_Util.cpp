@@ -81,6 +81,20 @@ class TestUtil : public QObject {
     // 未定形者补形态：产出自满足工厂断言谓词；补不出形态者按实测产物钉住（由工厂的
     // 回显入口落占位实体，见 tst_PlaylistEntity）
     void mpvEchoShapesUndefinedItems();
+#ifndef Q_OS_WIN
+    // ——N83：resolveMpvConfPath 的 POSIX 分支（Windows 构建整段编译排除，零负担；
+    // 任何 Linux 侧跑测试即生效）——
+    // XDG_CONFIG_HOME 绝对路径且其下 mpv.conf 存在：命中第二候选
+    void mpvConfPathXdgSecondCandidate();
+    // XDG_CONFIG_HOME 非绝对路径按 XDG 约定忽略，落缺省 ~/.config/mpv（HOME 注入；
+    // 整套件跑法下 home 多半已被前序解析而 QSKIP，单槽名新进程跑本槽即覆盖：
+    // oxbow_tests_Util mpvConfPathXdgNonAbsoluteIgnored）
+    void mpvConfPathXdgNonAbsoluteIgnored();
+    // 上溯目录存在：兜底创建目标维持 portable 口径，不建目录
+    void mpvConfPathFallbackKeepsPortableWhenBaseExists();
+    // 上溯目录不存在（系统目录安装）：兜底落 XDG mpv 目录并先 mkpath
+    void mpvConfPathFallbackCreatesXdgDirWhenBaseMissing();
+#endif
 };
 
 void TestUtil::emptyInputYieldsNoSegments() {
@@ -296,9 +310,15 @@ void TestUtil::networkMatchKeyRobustness() {
 }
 
 void TestUtil::fileNameExtraction() {
-    // 本地路径：QFileInfo::fileName 口径（本轮行为不变）
+    // 本地路径：QFileInfo::fileName 口径（本轮行为不变）。喂串按本平台形态——POSIX 下
+    // 反斜杠是文件名的合法字符，不得当分隔符切（判据随 QFileInfo 的平台口径）
+#ifdef Q_OS_WIN
     QCOMPARE(Util::Url::fileName(QStringLiteral("C:\\dir\\a b.mp4")), QStringLiteral("a b.mp4"));
     QCOMPARE(Util::Url::fileName(QStringLiteral("C:\\dir\\noext")), QStringLiteral("noext"));
+#else
+    QCOMPARE(Util::Url::fileName(QStringLiteral("/dir/a b.mp4")), QStringLiteral("a b.mp4"));
+    QCOMPARE(Util::Url::fileName(QStringLiteral("/dir/noext")), QStringLiteral("noext"));
+#endif
     // URL：末段 percent-decode（列表显示名与标题 / OSD 同一口径）
     QCOMPARE(Util::Url::fileName(QStringLiteral("http://u:p@host/dav/a%20b.mp4")),
              QStringLiteral("a b.mp4"));
@@ -490,17 +510,22 @@ void TestUtil::nextSequenceNumberTakesMaxPlusOne() {
 // 转成反斜杠，或 oxbow:// 被折成条目身份（后者等于把转接形态与条目身份在判据上合并，
 // 转接开关切换后界面永不收编）。实测 mpv 对绝对正斜杠下发原样回显，故该形态必须活着
 void TestUtil::mpvEchoKeepsDefiniteFormsByteIdentical() {
-    const QStringList definite{
-        QStringLiteral("D:/dir/test2.mp4"),         // 绝对 + 正斜杠（下发形态，非 Qt 规范化产物）
-        QStringLiteral("D:\\dir\\test2.mp4"),       // 绝对 + 反斜杠
-        QStringLiteral("\\\\server\\share\\a.mkv"), // UNC：Qt 判绝对
-        QStringLiteral("D:test2.mp4"), // 盘符相对串：Qt 的 isAbsolute 判绝对 → 原样（§2.1 残留②）
+    // 全平台同形的定形支：正斜杠绝对串（两平台 isAbsolute 均为真）、含 "://" 者
+    // （网络 / 带凭据 / file URL / 转接协议——判据认协议头，不碰内容）、空串
+    QStringList definite{
+        QStringLiteral("/dir/test2.mp4"),
         QStringLiteral("http://host/dav/a.mkv"),      // 网络
         QStringLiteral("https://user:pw@host/a.mkv"), // 带凭据的网络串（整形不问凭据）
         QStringLiteral("file:///D:/dir/a.mkv"),       // file URL 绝对形态：含 "://" → 原样
         QStringLiteral("oxbow://11111111-2222-3333-4444-555555555555/http%3A%2F%2Fhost%2Fdav"),
         QString(), // 空串（回显条目无 filename 的异常形）
     };
+#ifdef Q_OS_WIN
+    // Windows 专属形态（盘符绝对 + 正 / 反斜杠、UNC、盘符相对——Qt 的 isAbsolute 判绝对
+    // → 原样，§2.1 残留②）：POSIX 下这些串都不绝对，喂进去必然走绝对化支
+    definite << QStringLiteral("D:/dir/test2.mp4") << QStringLiteral("D:\\dir\\test2.mp4")
+             << QStringLiteral("\\\\server\\share\\a.mkv") << QStringLiteral("D:test2.mp4");
+#endif
     for (const QString &s : definite)
         QCOMPARE(Util::Url::identityFromMpvEcho(s), s);
     // 幂等：判据侧下一轮回显仍走同一道整形，必须得同一形态（§2.2 同形链）
@@ -521,7 +546,12 @@ void TestUtil::mpvEchoShapesUndefinedItems() {
     const QString absHere = nativeRel(QStringLiteral("test2.mp4"));
     const QString absSub = nativeRel(QStringLiteral("sub/test2.mp4"));
     const QString absSibling = nativeRel(QStringLiteral("../sibling/test2.mp4"));
-    const QString absDrive = QDir::toNativeSeparators(QStringLiteral("D:/dir/test2.mp4"));
+    // 「file: 前缀 + 已绝对」支的期望产物：不经 CWD，折成本平台的绝对本地串
+#ifdef Q_OS_WIN
+    const QString absPlain = QDir::toNativeSeparators(QStringLiteral("D:/dir/test2.mp4"));
+#else
+    const QString absPlain = QStringLiteral("/dir/test2.mp4");
+#endif
 
     // 纯相对、./ 与 ../
     QCOMPARE(Util::Url::identityFromMpvEcho(QStringLiteral("test2.mp4")), absHere);
@@ -529,24 +559,37 @@ void TestUtil::mpvEchoShapesUndefinedItems() {
     QCOMPARE(Util::Url::identityFromMpvEcho(QStringLiteral("../sibling/test2.mp4")), absSibling);
     // file: 前缀的相对形态——实测 Qt 6.11 的 QUrl::toLocalFile() 对 file scheme 的
     // 相对路径原样返回相对段（不要求绝对、不返空），故各支都折到与无前言版同一份身份；
-    // 带盘符的两支不经 CWD，直接折成该盘上的绝对路径
+    // 已绝对的那两支不经 CWD，直接折成本地绝对串
     QCOMPARE(Util::Url::identityFromMpvEcho(QStringLiteral("file:test2.mp4")), absHere);
     QCOMPARE(Util::Url::identityFromMpvEcho(QStringLiteral("file:./sub/test2.mp4")), absSub);
     QCOMPARE(Util::Url::identityFromMpvEcho(QStringLiteral("file:../sibling/test2.mp4")),
              absSibling);
-    QCOMPARE(Util::Url::identityFromMpvEcho(QStringLiteral("file:D:/dir/test2.mp4")), absDrive);
-    QCOMPARE(Util::Url::identityFromMpvEcho(QStringLiteral("file:/D:/dir/test2.mp4")), absDrive);
+#ifdef Q_OS_WIN
+    QCOMPARE(Util::Url::identityFromMpvEcho(QStringLiteral("file:D:/dir/test2.mp4")), absPlain);
+    QCOMPARE(Util::Url::identityFromMpvEcho(QStringLiteral("file:/D:/dir/test2.mp4")), absPlain);
+#else
+    QCOMPARE(Util::Url::identityFromMpvEcho(QStringLiteral("file:/dir/test2.mp4")), absPlain);
+    // POSIX 特有支：盘符串在本平台**不是**形态，按相对串经 CWD 绝对化（Windows 上同串
+    // 走定形直返，见上一条 #ifdef 支）
+    QCOMPARE(Util::Url::identityFromMpvEcho(QStringLiteral("D:/dir/test2.mp4")),
+             nativeRel(QStringLiteral("D:/dir/test2.mp4")));
+    QCOMPARE(Util::Url::identityFromMpvEcho(QStringLiteral("file:D:/dir/test2.mp4")),
+             nativeRel(QStringLiteral("D:/dir/test2.mp4")));
+#endif
 
     // 整形产物恒已定形（= 再进工厂不会撞断言）且再经同一道整形逐字节不动（§2.2 同形链）
-    const QStringList shapedList{absHere, absSub, absSibling, absDrive};
+    const QStringList shapedList{absHere, absSub, absSibling, absPlain};
     for (const QString &s : shapedList) {
         QVERIFY(QFileInfo(s).isAbsolute());
         QCOMPARE(Util::Url::identityFromMpvEcho(s), s);
     }
 
+#ifdef Q_OS_WIN
     // UNC 经 file: 前缀仍保住双反斜杠头部（实测 toIdentity 的既有产物，不被绝对化抹平）
+    // ——UNC 是 Windows 专属形态，POSIX 下整串是相对路径
     QCOMPARE(Util::Url::identityFromMpvEcho(QStringLiteral("file:\\\\server\\share\\a.mkv")),
              QStringLiteral("\\\\server\\share\\a.mkv"));
+#endif
     // file: 形态带百分号转义时顺带解码一次（QUrl 固有行为，§2.2 已声明的让步范围内）
     QCOMPARE(Util::Url::identityFromMpvEcho(QStringLiteral("file:a%20b.mkv")),
              nativeRel(QStringLiteral("a b.mkv")));
@@ -559,6 +602,101 @@ void TestUtil::mpvEchoShapesUndefinedItems() {
     QVERIFY(QFileInfo(QString()).absoluteFilePath().isEmpty());
     QVERIFY(!Util::Url::isDefiniteForm(Util::Url::identityFromMpvEcho(QStringLiteral("file:"))));
 }
+
+#ifndef Q_OS_WIN
+// ——N83：resolveMpvConfPath POSIX 分支——
+
+// 环境护栏：记录旧值，作用域结束恢复（进程级环境变量，不得泄漏给相邻用例）
+class EnvGuard {
+  public:
+    explicit EnvGuard(const char *name) : m_name(name), m_had(qEnvironmentVariableIsSet(name)) {
+        if (m_had)
+            m_old = qgetenv(name); // 原样存字节：qputenv 回写才不会经 local8bit↔UTF-8 往返
+    }
+    ~EnvGuard() {
+        if (m_had)
+            qputenv(m_name, m_old);
+        else
+            qunsetenv(m_name);
+    }
+    EnvGuard(const EnvGuard &) = delete;
+    EnvGuard &operator=(const EnvGuard &) = delete;
+
+  private:
+    const char *m_name;
+    bool m_had;
+    QByteArray m_old;
+};
+
+// 首候选必须落空的前提：pluginDir 上溯两级 = 临时目录根，其下无 mpv.conf
+// （QTemporaryDir 全新，天然成立）
+
+void TestUtil::mpvConfPathXdgSecondCandidate() {
+    EnvGuard xdg("XDG_CONFIG_HOME");
+    QTemporaryDir base, xdgHome;
+    QVERIFY(base.isValid());
+    QVERIFY(xdgHome.isValid());
+    QVERIFY(QDir(xdgHome.path()).mkpath(QStringLiteral("mpv")));
+    const QString conf = xdgHome.filePath(QStringLiteral("mpv/mpv.conf"));
+    {
+        QFile f(conf);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("x");
+    }
+    qputenv("XDG_CONFIG_HOME", xdgHome.path().toUtf8());
+    QCOMPARE(Util::resolveMpvConfPath(base.filePath(QStringLiteral("scripts/oxbow"))), conf);
+}
+
+void TestUtil::mpvConfPathXdgNonAbsoluteIgnored() {
+    EnvGuard xdg("XDG_CONFIG_HOME");
+    EnvGuard home("HOME"); // POSIX 下 QDir::homePath 读 HOME，注入后缺省路径可断言
+    QTemporaryDir base, homeDir;
+    QVERIFY(base.isValid());
+    QVERIFY(homeDir.isValid());
+    QVERIFY(QDir(homeDir.path()).mkpath(QStringLiteral(".config/mpv")));
+    const QString conf = homeDir.filePath(QStringLiteral(".config/mpv/mpv.conf"));
+    {
+        QFile f(conf);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("x");
+    }
+    qputenv("XDG_CONFIG_HOME", "relative/not/absolute"); // 非绝对路径按 XDG 约定忽略
+    qputenv("HOME", homeDir.path().toUtf8());
+    if (QDir::homePath() != homeDir.path())
+        QSKIP("QDir::homePath() 未反映注入的 HOME（进程内已解析缓存），缺省分支"
+              "按单槽名新进程跑本槽覆盖：oxbow_tests_Util mpvConfPathXdgNonAbsoluteIgnored");
+    QCOMPARE(Util::resolveMpvConfPath(base.filePath(QStringLiteral("scripts/oxbow"))), conf);
+}
+
+void TestUtil::mpvConfPathFallbackKeepsPortableWhenBaseExists() {
+    // XDG 必须隔离到空临时目录：否则测试机真实的 ~/.config/mpv/mpv.conf（装过 mpv
+    // 并正常用过的机器大概率存在）会让第二候选先命中，本用例的 portable 断言假失败
+    EnvGuard xdg("XDG_CONFIG_HOME");
+    QTemporaryDir base, emptyXdg;
+    QVERIFY(base.isValid());
+    QVERIFY(emptyXdg.isValid());
+    qputenv("XDG_CONFIG_HOME", emptyXdg.path().toUtf8());
+    const QString pluginDir = base.filePath(QStringLiteral("scripts/oxbow"));
+    const QString expect = base.filePath(QStringLiteral("mpv.conf"));
+    QCOMPARE(Util::resolveMpvConfPath(pluginDir), expect);
+    // 未触发任何兜底创建
+    QVERIFY(!QFileInfo::exists(expect));
+}
+
+void TestUtil::mpvConfPathFallbackCreatesXdgDirWhenBaseMissing() {
+    EnvGuard xdg("XDG_CONFIG_HOME");
+    QTemporaryDir xdgHome;
+    QVERIFY(xdgHome.isValid());
+    qputenv("XDG_CONFIG_HOME", xdgHome.path().toUtf8());
+    // 上溯目录不存在（模拟系统目录安装）：兜底落 XDG mpv 目录并先建目录
+    // （QSaveFile 不建目录，mkpath 必须发生在返回之前）
+    const QString probe = QStringLiteral("/nonexistent-oxbow-probe/scripts/oxbow");
+    QVERIFY(!QFileInfo::exists(QStringLiteral("/nonexistent-oxbow-probe")));
+    const QString expect = xdgHome.path() + QStringLiteral("/mpv/mpv.conf");
+    QCOMPARE(Util::resolveMpvConfPath(probe), expect);
+    QVERIFY(QDir(xdgHome.path() + QStringLiteral("/mpv")).exists());
+}
+#endif // !Q_OS_WIN
 
 // 一类一可执行（R5）：自带 main（QTEST_GUILESS_MAIN）
 QTEST_GUILESS_MAIN(TestUtil)

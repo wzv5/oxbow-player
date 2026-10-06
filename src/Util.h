@@ -81,9 +81,13 @@ QDateTime parseReleaseDate(const QString &s);
 // （Last-Modified 恒为 UTC 墙钟，正合需求）。失败返回无效 QDateTime（值未知）。
 QDateTime parseHttpDate(const QByteArray &raw);
 
-// R3：mpv.conf 路径解析。从 pluginDir（plugin.ini 的绝对目录）上溯两级即
-// portable_config（必存在目录），优先其下 mpv.conf；其次 %APPDATA%/mpv/mpv.conf；
-// 都不存在返回 portable_config/mpv.conf 作为创建目标（目录必然存在，无需 mkpath）。
+// R3：mpv.conf 路径解析（N83 分平台）。从 pluginDir（oxbow.ini 的绝对目录）上溯
+// 两级，优先其下 mpv.conf——Windows 为 portable_config（必存在目录），Linux 惯例
+// 落位 ~/.config/mpv/scripts/oxbow/ 时上溯恰为 ~/.config/mpv。其次为用户配置目录：
+// Windows %APPDATA%/mpv/，POSIX $XDG_CONFIG_HOME/mpv/（缺省 ~/.config/mpv/，非绝对
+// 路径按 XDG 约定忽略）。都不存在返回创建目标：Windows 维持 portable_config/mpv.conf
+// （目录必存在，无需 mkpath）；POSIX 上溯目录可能不存在（系统目录安装），此时兜底
+// XDG mpv 目录并先 mkpath（QSaveFile 不创建目录）。
 QString resolveMpvConfPath(const QString &pluginDir);
 
 // ——身份与形态一族（N56 收族）：嵌套命名空间即这一族的边界——

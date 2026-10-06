@@ -10,6 +10,15 @@ option(OXBOW_STATICQT "Link Qt statically (skip windeployqt at deploy time)" OFF
 # N68：强行令 Windows 也走小窗的纯 Qt 降级路径（无等比缩放/边缘吸附），便于本机验证降级形态
 option(OXBOW_PUREQT "Use the pure-Qt implementation path for the mini window" OFF)
 
+# N83：静态 Qt 依赖 MSVC 运行库口径与 windeployqt 部署语义，限 Windows（Linux 用系统
+# Qt 动态链接），非 Windows 在 configure 期拦截。运行库收紧只看 OXBOW_STATICQT：
+# clang（MSVC ABI、GNU 前端）下 CMake 的 MSVC 判定为假，若限定 MSVC，静态 Qt 的
+# Release 插件对象（_ITERATOR_DEBUG_LEVEL=0）会与 Debug 对象（=2）在链接期 failifmismatch
+# ——实测教训，不得加回 MSVC 限定
+if(OXBOW_STATICQT AND NOT WIN32)
+    message(FATAL_ERROR "OXBOW_STATICQT is Windows-only (Linux links the system Qt)")
+endif()
+
 if(OXBOW_STATICQT)
     set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreaded)
 endif()
@@ -22,10 +31,12 @@ find_package(Qt6 REQUIRED COMPONENTS Widgets LinguistTools Concurrent Network)
 # 壳仅负责把插件目录加入 DLL 搜索路径，再动态加载真正带 Qt 的 oxbowcore.dll，
 # 从而让 Qt 运行库能与插件共置、随插件目录分发。
 # ---------------------------------------------------------------------------
-add_library(oxbow_loader MODULE src/loader/loader.cpp)
-set_target_properties(oxbow_loader PROPERTIES PREFIX "" OUTPUT_NAME "main")
-if(MSVC)
-    target_compile_options(oxbow_loader PRIVATE /utf-8)
+if(WIN32)
+    add_library(oxbow_loader MODULE src/loader/loader.cpp)
+    set_target_properties(oxbow_loader PROPERTIES PREFIX "" OUTPUT_NAME "main")
+    if(MSVC)
+        target_compile_options(oxbow_loader PRIVATE /utf-8)
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------
@@ -119,7 +130,18 @@ target_include_directories(oxbowcore PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 # C 插件不链接 libmpv，符号由 mpv 在加载时动态解析。
 # 注意：不要定义 MPV_ENABLE_DEPRECATED=0，内置 client.h 的动态符号段
 # 无条件引用已弃用的 mpv_get_wakeup_pipe，关掉弃用声明会编译失败。
-target_compile_definitions(oxbowcore PRIVATE MPV_CPLUGIN_DYNAMIC_SYM)
+# N83：动态符号表为 Windows 专属机制——client.h 注释明确该表是 targeting Windows
+# 的推荐做法（PE 加载器无全局符号概念，多定义容忍依赖 selectany，ELF 无对应机制）。
+# Linux 走 cplugin 标准机制：mpv 以 -rdynamic 导出 client API，插件保留 mpv_* 未定义
+# 符号，dlopen 时由 ELF 动态链接器从宿主全局作用域解析；缺符号即加载失败，由 mpv
+# 记为脚本加载失败，同样可诊断。plugin.cpp 的解析代码同步收进同名宏守卫。
+if(WIN32)
+    target_compile_definitions(oxbowcore PRIVATE MPV_CPLUGIN_DYNAMIC_SYM)
+endif()
+# N83：MediaInfoDLL shim 以 UNICODE/_UNICODE 宏选宽/窄字符 API（MediaInfoHelper 全按
+# 宽字符口径书写）。全平台显式定义、不依赖 Qt/MSVC 的默认值（维护者裁决）；Linux 缺
+# 定义时 shim 落成 char 口径，宽字面量实参的重载解析失配到 size_t 章节重载
+target_compile_definitions(oxbowcore PRIVATE UNICODE _UNICODE)
 if(MSVC)
     target_compile_options(oxbowcore PRIVATE /utf-8)
 endif()
@@ -136,9 +158,34 @@ if(WIN32)
     target_link_libraries(oxbowcore PRIVATE dwmapi)
 endif()
 
+# N83：X11 专用小工具集（X11Util）——EWMH 直发置顶（小窗置顶，
+# 见 toggleMini）。Xlib 自建连接。Linux 本就依赖 X11（xcb 平台 + mpv X11 路径），
+# 此处为编译期硬依赖；X11Util 仅非 Windows 参与构建，Windows 完全不出现该翻译单元
+# （源文件不入主列表）。源内不再叠平台守卫：本段的构建条件是唯一权威——错误平台把
+# 它编进去会因缺 X11 头 / 库直接失败（要的显影），源内守卫反而把实现静默掏空、
+# 把编译错降级成链接期未定义符号。守卫用 NOT WIN32 而非 UNIX：UNIX 还含非目标的
+# macOS，而 NOT WIN32 与代码侧调用点（MainWindow.cpp）的 Q_OS_WIN 守卫同指
+# 非 Windows；X11::X11 为 imported target（CMake ≥3.14），自带 include 路径
+if(NOT WIN32)
+    find_package(X11 REQUIRED)
+    target_link_libraries(oxbowcore PRIVATE X11::X11)
+    target_sources(oxbowcore PRIVATE
+        src/X11Util.cpp
+        src/X11Util.h
+    )
+endif()
+
 # 预编译头：Qt 与标准库集中进 src/pch.h，加快编译
 target_precompile_headers(oxbowcore PRIVATE src/pch.h)
-set_target_properties(oxbowcore PROPERTIES PREFIX "" OUTPUT_NAME "oxbowcore")
+# N83：产物名分平台——Windows oxbowcore.dll（加载壳按名查找，不得改名）；其余平台
+# main.so（与 Windows 的 main.dll 命名对称，mpv 对脚本 .so 文件名无要求；PREFIX ""
+# 在 UNIX 下同时去掉 lib 前缀）
+set_target_properties(oxbowcore PROPERTIES PREFIX "")
+if(WIN32)
+    set_target_properties(oxbowcore PROPERTIES OUTPUT_NAME "oxbowcore")
+else()
+    set_target_properties(oxbowcore PROPERTIES OUTPUT_NAME "main")
+endif()
 
 # N49：图标素材内嵌为资源（icons/<包名>/<语义键>.svg → :/icons/<包名>/<语义键>.svg）。
 # 与 qt_add_translations 生成的资源并存；静态构建下随二进制内嵌，无外部文件与部署路径问题
@@ -169,8 +216,9 @@ qt_add_translations(oxbowcore MERGE_QT_TRANSLATIONS
 # OXBOW_STATICQT=ON 时 Qt 已静态链接进 oxbowcore.dll，跳过 windeployqt；
 # 加载壳 main.dll 仍照常部署——MediaInfo.dll 依赖壳预加载才能被解析。
 # ---------------------------------------------------------------------------
-set(MPV_BIN_DIR "" CACHE PATH "mpv.exe 所在目录；设置后构建完毕自动部署")
-if(MPV_BIN_DIR)
+# N83：部署为 Windows 专属（windeployqt 与 DLL 语义；Linux 不自动部署，只编译产物）
+set(MPV_BIN_DIR "" CACHE PATH "mpv.exe 所在目录（仅 Windows）；设置后构建完毕自动部署")
+if(WIN32 AND MPV_BIN_DIR)
     if(NOT OXBOW_STATICQT)
         find_program(WINDEPLOYQT_EXE windeployqt HINTS "${Qt6_DIR}/../../../bin")
         if(NOT WINDEPLOYQT_EXE)
@@ -193,7 +241,7 @@ endif()
 # 动态加载（不链接），存在即随插件目录部署；缺失仅跳过拷贝不影响编译。
 # ---------------------------------------------------------------------------
 set(MEDIAINFO_DLL "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/mediainfo/MediaInfo.dll")
-if(MPV_BIN_DIR AND EXISTS "${MEDIAINFO_DLL}")
+if(WIN32 AND MPV_BIN_DIR AND EXISTS "${MEDIAINFO_DLL}")
     add_custom_command(TARGET oxbowcore POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${MEDIAINFO_DLL}" "${OXBOW_SCRIPT_DIR}/MediaInfo.dll")
 endif()
@@ -266,6 +314,11 @@ if(OXBOW_BUILD_TESTS)
     )
     target_include_directories(oxbow_testlib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(oxbow_testlib PUBLIC Qt6::Widgets Qt6::Concurrent Qt6::Network)
+    # N83：同 oxbowcore——测试库也编 MediaInfoHelper，宽字符口径显式定义。PUBLIC：
+    # 随链接传播到各测试 exe——测试 exe 以 REUSE_FROM 复用 oxbow_testlib 的 PCH，
+    # 宏状态必须一致，PRIVATE 时宏不传播，gch 因 _UNICODE 未定义被弃用
+    # （-Winvalid-pch，维护者 Linux 构建实测）
+    target_compile_definitions(oxbow_testlib PUBLIC UNICODE _UNICODE)
     target_precompile_headers(oxbow_testlib PRIVATE src/pch.h)
     if(MSVC)
         target_compile_options(oxbow_testlib PRIVATE /utf-8)
@@ -283,7 +336,8 @@ if(OXBOW_BUILD_TESTS)
         endif()
         add_test(NAME ${name} COMMAND oxbow_tests_${name})
         # 各 exe 落同一输出目录，windeployqt 只需跑一遍：首个注册者挂载即全覆盖
-        if(NOT OXBOW_STATICQT AND NOT _oxbow_test_deployed)
+        # N83：windeployqt 为 Windows 专属，非 Windows 测试直调 exe 无需部署
+        if(WIN32 AND NOT OXBOW_STATICQT AND NOT _oxbow_test_deployed)
             add_custom_command(TARGET oxbow_tests_${name} POST_BUILD
                 COMMAND ${WINDEPLOYQT_EXE} --no-translations --compiler-runtime $<TARGET_FILE:oxbow_tests_${name}>)
             set(_oxbow_test_deployed TRUE PARENT_SCOPE)

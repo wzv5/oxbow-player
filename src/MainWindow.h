@@ -150,15 +150,18 @@ class MainWindow : public QMainWindow {
     void refitMiniToVideo();
     // N68 小窗几何收口（保宽调高）——客户区宽不变、高按视频比例（无流按 16:9）重算；
     // 幂等。两条路径共用：主路径只经换片自适应（定框由 WM_SIZING 在原生域保比与钳位），
-    // 降级路径另加松手去抖一次。越界钳回不在本函数，见 clampMiniIntoWorkArea
+    // 降级路径另加结果驱动的收口轮询（见 scheduleMiniRefit）。越界钳回不在本函数，
+    // 见 clampMiniIntoWorkArea
     void refitMiniToAspect();
     // N68 外框越出工作区即按最小移动原则收回（未越界空操作）。只由程序性场景调用：
     // 换片自适应（§6 整窗不越界）与降级路径的进窗贴角；用户拖动/松手不钳（第 8 条裁决）
     void clampMiniIntoWorkArea();
 #if !defined(Q_OS_WIN) || defined(OXBOW_PUREQT)
     // N68 降级路径的纯 Qt 定态收口触发器——move/resize 事件去抖（无跨平台松手信号），
-    // 静默达 miniRefitDebounceMs 即保宽调高；进窗那一次另做贴角
-    void scheduleMiniRefit();
+    // 静默达 miniRefitDebounceMs 触发一轮；N83 结果驱动：触发时查收敛（±1px），未收敛
+    // 调一次并续轮询；收敛即停，重试预算（miniRefitMaxAttempts）耗尽且无外部唤醒时停，
+    // 外部唤醒（位置变化 / 与请求不符的尺寸事件）随时重新武装
+    void scheduleMiniRefit(bool positionAroused = false);
 #endif
     // A20：播放列表显隐几何联动——左 pane 宽度不变、主窗口向右扩展，
     // 空间不足先压视频区触底再压播放列表宽度（实测值写回记忆）
@@ -369,6 +372,13 @@ class MainWindow : public QMainWindow {
 #if !defined(Q_OS_WIN) || defined(OXBOW_PUREQT)
     // N68 降级路径收口去抖定时器（惰性创建；主路径无此需要）
     QTimer *m_miniRefitTimer = nullptr;
+    // N83 结果驱动的重试预算：自最近一次外部几何唤醒起，未收敛的收口轮数。
+    // 耗尽即停，等下一次外部唤醒重新武装（清零规则见 scheduleMiniRefit）
+    int m_miniRefitAttempts = 0;
+    // N83：最近一次收口下发的客户区尺寸——区分「自家修正的回声」与「外部几何变化」。
+    // 与请求一致的尺寸事件不清预算（否则自家 resize 的回声把预算清零，上限形同虚设）；
+    // QSize() 为「从未下发」哨兵
+    QSize m_miniRefitRequested;
     // 进窗贴角待办：置位期间那次收口改做贴角（装饰尺寸要 show 之后才落定，即时读
     // frameGeometry 会偏）；首条去抖收口消费并清零
     bool m_miniEntryGluePending = false;

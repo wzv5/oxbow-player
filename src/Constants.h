@@ -88,9 +88,16 @@ inline int miniMinWidth() { return 200; }
 // 吸附触发距离（逻辑 px）：拖动中窗口边与工作区边距离不超过此值即贴齐
 // （与 N66 边缘触发带宽同风格）。仅 Windows 主路径生效——降级形态不做吸附
 inline int miniSnapDistancePx() { return 16; }
-// 降级路径收口去抖时长：move/resize 事件静默达此时长即视为松手，触发一次
-// refitMiniToAspect（非 Windows 无原生松手信号，以事件静默模拟，见
+// 降级路径收口去抖时长：move/resize 事件静默达此时长即触发一轮结果驱动收口
+// （N83：不判松手、只判收敛，非 Windows 无原生松手信号，见
 // MainWindow::scheduleMiniRefit）；进窗后的贴角收口同用这一延时
 inline int miniRefitDebounceMs() { return 250; }
+// N83：结果驱动收口的空转保险丝——自最近一次外部几何唤醒（位置变化，或与上次
+// 请求不符的尺寸事件）起，未收敛的收口轮数上限。自家 resize 的回声不清预算；
+// 两轮之间没有外部几何事件而收敛判定仍不过（比例在轮次中途改变、或钳制由 Qt
+// 内部完成且不产生事件）才会连续计数，耗尽即停。注意它**不是**「WM 拒绝场景的
+// 上界」：平台把请求钳回必然带一个与请求不符的尺寸事件 → 清预算，该场景轮询
+// 无上界（罕见且每轮代价极小，极端比例复测项见规格实测清单）
+inline int miniRefitMaxAttempts() { return 3; }
 
 } // namespace App

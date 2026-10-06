@@ -14,26 +14,28 @@
 #include <mpv/client.h>
 #include <mpv/stream_cb.h> // N52：RESOLVE(mpv_stream_cb_add_ro) 的符号声明
 
+#ifndef Q_OS_WIN
+#include <dlfcn.h> // dladdr / Dl_info：定位插件自身 .so（Linux 头不庞大，不进预编译）
+#endif
+
 #include "Constants.h"
 #include "MainWindow.h"
 #include "MpvController.h"
 #include "StreamRelay.h"
 
-// 本模块通过 MPV_CPLUGIN_DYNAMIC_SYM 把 mpv_* 编译为指向 pfn_* 的指针，
-// 这些指针本应由 mpv 在“直接加载的模块”里填充。但本模块在 Windows 上是由壳
-// 动态加载的（mpv 不会填充这里的 pfn_*）；即便在 Linux / 静态链接场景下由 mpv
-// 直接加载，统一在入口处自行解析也最稳妥、使模块自带符号。
-// 仅解析代码中实际用到的 10 个符号即可；其余 pfn_* 保持 NULL 也无关紧要。
-// 所列符号任一缺失说明宿主不是导出完整 client API 的 mpv，入口处快速失败，
-// 比运行到一半空指针崩溃更可诊断。
-// 平台差异：Windows 从 mpv.exe 取；POSIX 从全局符号表（RTLD_DEFAULT，即 mpv
-// 主程序导出的符号）取。
+// 本模块在 Windows 上通过 MPV_CPLUGIN_DYNAMIC_SYM 把 mpv_* 编译为指向 pfn_* 的
+// 指针：PE 加载器没有全局符号概念，本模块又是由壳动态加载的（mpv 不会填充这里的
+// pfn_*），故在入口处自行解析（client.h 注释同口径——该符号表是 targeting Windows
+// 的推荐做法，多定义容忍依赖 selectany）。仅解析代码中实际用到的符号即可；其余
+// pfn_* 保持 NULL 也无关紧要。所列符号任一缺失说明宿主不是导出完整 client API 的
+// mpv，入口处快速失败，比运行到一半空指针崩溃更可诊断。
+// N83：Linux 不定义该宏，走 cplugin 标准形态——mpv 以 -rdynamic 导出 client API，
+// 插件保留 mpv_* 未定义符号，dlopen 时由 ELF 动态链接器从宿主全局作用域解析；缺失
+// 符号即加载失败，由 mpv 记为脚本加载失败，同样可诊断。（宏成立即必为 Windows，
+// 内部不再有平台分支。）
+#ifdef MPV_CPLUGIN_DYNAMIC_SYM
 static void *resolveMpvSymbol(const char *name) {
-#ifdef _WIN32
     return reinterpret_cast<void *>(GetProcAddress(GetModuleHandleW(nullptr), name));
-#else
-    return dlsym(RTLD_DEFAULT, name);
-#endif
 }
 
 static bool resolveMpvSymbols() {
@@ -65,17 +67,15 @@ static bool resolveMpvSymbols() {
 #undef RESOLVE
 
     if (missing) {
-#ifdef _WIN32
-        OutputDebugStringA("[oxbow] 无法从宿主解析 mpv 符号: ");
-        OutputDebugStringA(missing);
-        OutputDebugStringA("\n");
-#else
-        fprintf(stderr, "[oxbow] 无法从宿主解析 mpv 符号: %s\n", missing);
-#endif
+        // 拼接后一次输出；missing 是 ASCII 符号名，fromLatin1 足够
+        const QString msg = QStringLiteral("[oxbow] 无法从宿主解析 mpv 符号: %1\n")
+                                .arg(QString::fromLatin1(missing));
+        OutputDebugStringW(reinterpret_cast<const wchar_t *>(msg.utf16()));
         return false;
     }
     return true;
 }
+#endif // MPV_CPLUGIN_DYNAMIC_SYM
 
 // 解析插件配置文件完整路径：直接放在插件 DLL 所在目录下，命名为 oxbow.ini。
 // 取本模块（oxbowcore.dll）所在目录，在其下直接读写配置文件，目录本身已存在。
@@ -151,8 +151,10 @@ static void installTranslator() {
 }
 
 extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle) {
+#ifdef MPV_CPLUGIN_DYNAMIC_SYM
     if (!resolveMpvSymbols())
         return 1; // 符号缺失：让 mpv 记为脚本加载失败，而非运行期崩溃
+#endif
 
     // 防御：同一进程内入口只执行一次
     static bool started = false;
@@ -165,6 +167,13 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle) {
     static char *argv[] = {App::nameAscii, nullptr};
 
     if (!qApp) {
+#ifndef Q_OS_WIN
+        // N83：wid 嵌入只在 X11 成立——Wayland 平台的 winId 非 XID（实测播视频即
+        // X Error BadWindow），故默认强制 xcb（XWayland 提供兼容）。用户显式设置
+        // 的 QT_QPA_PLATFORM 不覆盖；纯 Wayland（无 XWayland）不受支持。
+        if (qEnvironmentVariable("QT_QPA_PLATFORM").isEmpty())
+            qputenv("QT_QPA_PLATFORM", "xcb");
+#endif
         // 有意不 delete：QApplication 必须与进程同生命周期
         (void)new QApplication(argc, argv);
         QApplication::setApplicationName(App::name());
@@ -197,9 +206,42 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle) {
     // 关掉后空闲时视频输出销毁，露出视频区 widget 的黑色背景
     mpv_set_property_string(handle, "force-window", "no");
 
-    // 把视频渲染嵌入 Qt 窗口（与 libmpv 的 --wid 用法一致）
+#ifndef Q_OS_WIN
+    // N83：X11 嵌入的输入接管全关（实测 mpv 嵌入窗口的事件掩码截走指针事件，
+    // Qt 视频区收不到任何鼠标事件）——输入语义全部归插件：默认键位、指针事件、
+    // VO 键盘逐项关闭（input-vo-keyboard 不存在的旧版 mpv 回退
+    // input-x11-keyboard），另关 mpv 侧光标自动隐藏（N67 已在 Qt 层做，避免两层
+    // 打架）。Windows 上 mpv 自会向父窗口转发鼠标消息且插件依赖该路径，维持原状
+    mpv_set_property_string(handle, "input-default-bindings", "no");
+    mpv_set_property_string(handle, "input-cursor", "no");
+    mpv_set_property_string(handle, "cursor-autohide", "no");
+    if (mpv_set_property_string(handle, "input-vo-keyboard", "no") != 0)
+        mpv_set_property_string(handle, "input-x11-keyboard", "no");
+    // N83：Wayland 会话下强制 mpv 的 GL 上下文走 x11egl（实测嵌入成功）——mpv
+    // 默认优先 wayland 上下文，与 xcb 嵌入窗口不同源，vo 初始化落不到 wid 上。
+    // 判别用显式 wayland：未知会话类型交给 mpv 自选更稳，X11 会话不干预
+    if (qEnvironmentVariable("XDG_SESSION_TYPE") == QLatin1String("wayland"))
+        mpv_set_property_string(handle, "gpu-context", "x11egl");
+#endif
+
+    // N83：全平台统一先 show 再嵌入——xcb 下原生窗口链在 show 时才定型，此前取的
+    // winId 可能被 Qt 随后重建/重挂而失效；Windows 统一到此时序后不再依赖「子 HWND
+    // 平移保身份」的平台特性，两平台同一口径更稳健
+    window->show();
+
+    // 把视频渲染嵌入 Qt 窗口（与 libmpv 的 --wid 用法一致）。wid 不可 const：
+    // mpv_set_property 的 data 形参是 void *，取 const 对象地址会丢 const 报错
     int64_t wid = int64_t(window->videoWidget()->winId());
-    mpv_set_property(handle, "wid", MPV_FORMAT_INT64, &wid);
+    if (mpv_set_property(handle, "wid", MPV_FORMAT_INT64, &wid) < 0) {
+        fprintf(stderr, "[oxbow] wid 属性设置失败，视频嵌入将不可用\n");
+    } else {
+#ifndef Q_OS_WIN
+        // N83：诊断日志——与 xwininfo -root -tree 的窗口 ID 比对，确认 vo 初始化时
+        // 该窗口仍在（未被 Qt 重建/重挂）且与 mpv 实际处理的 ID 一致。判据：wid
+        // 生效时 mpv 绝不自建顶层窗口，出现独立窗口即 wid 未生效
+        fprintf(stderr, "[oxbow] wid=0x%llx 已设置\n", static_cast<unsigned long long>(wid));
+#endif
+    }
 
     // 嵌入属性全部就绪后才启动事件线程。首次 mpv_wait_event 会解除 mpv
     // 核心的启动门控（客户端 fuzzy_initialized），核心随即为命令行文件
@@ -210,7 +252,6 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle) {
     // mpv 退出（如 MPV_EVENT_SHUTDOWN）时由 MainWindow::onMpvShutdown
     // 补保存会话并结束 Qt 事件循环
 
-    window->show();
     QApplication::exec();
     return 0;
 }

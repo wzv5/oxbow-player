@@ -67,6 +67,7 @@ import json
 import os
 import ssl
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -81,16 +82,26 @@ def generate_cert_and_key(cert_dir, cert_path, key_path):
     cnf_path = os.path.join(cert_dir, "openssl.cnf")
     with open(cnf_path, "w") as f:
         f.write("[req]\ndistinguished_name = req_dn\n[req_dn]\n")
-    subprocess.run(
-        [
-            "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
-            "-keyout", key_path, "-out", cert_path,
-            "-days", "30", "-subj", "/CN=" + CN,
-            "-addext", "subjectAltName=IP:127.0.0.1,DNS:localhost",
-            "-config", cnf_path,
-        ],
-        check=True, capture_output=True,
-    )
+    # capture_output 把 openssl 的失败原因吞在异常对象里，桩进程的非零退出对上层只是
+    # "未就绪"——此处把原因透到本进程 stderr，让测试侧的报错能自证（缺 openssl /
+    # openssl 报错都一眼可辨）
+    try:
+        subprocess.run(
+            [
+                "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+                "-keyout", key_path, "-out", cert_path,
+                "-days", "30", "-subj", "/CN=" + CN,
+                "-addext", "subjectAltName=IP:127.0.0.1,DNS:localhost",
+                "-config", cnf_path,
+            ],
+            check=True, capture_output=True,
+        )
+    except FileNotFoundError:
+        sys.stderr.write("openssl executable not found on PATH\n")
+        raise
+    except subprocess.CalledProcessError as e:
+        sys.stderr.write("openssl failed with %s:\n%s\n" % (e, e.stderr.decode("utf-8", "replace")))
+        raise
 
 
 class StubServer(ThreadingHTTPServer):

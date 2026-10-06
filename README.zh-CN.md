@@ -6,7 +6,7 @@
 
 ## 简介
 
-Oxbow 是一款 Windows 桌面视频播放器：播放内核是 [mpv](https://mpv.io/)，界面由 Qt 构建。它以 mpv 插件的形式安装——放进 mpv 的 scripts 目录，之后每次启动 mpv，迎接你的都是一个带完整界面的播放器。
+Oxbow 是一款 Windows / Linux 桌面视频播放器：播放内核是 [mpv](https://mpv.io/)，界面由 Qt 构建。它以 mpv 插件的形式安装——放进 mpv 的 scripts 目录，之后每次启动 mpv，迎接你的都是一个带完整界面的播放器。
 
 Oxbow 的理念很朴素：**看视频时，任何多余的界面都是干扰**。它把力气花在需要的地方，补齐日常使用的便利：播放列表管理、书签、小窗、导航器。
 
@@ -32,7 +32,8 @@ Oxbow 的理念很朴素：**看视频时，任何多余的界面都是干扰**�
 ### 前置条件
 
 - Windows 10（1809+）及以上（64 位）——这一下限来自 Qt 6
-- [mpv](https://mpv.io/)——任意较新版本
+- Linux（x86_64），X11 会话，或带 XWayland 的 Wayland 会话——视频区经 mpv 的 `wid` 嵌入，只在 X11 一侧成立；无 XWayland 的纯 Wayland 会话不受支持
+- [mpv](https://mpv.io/)——任意较新版本（各发行版打包的 mpv 都带 Oxbow 所需的插件接口）
 
 ### 安装插件
 
@@ -41,12 +42,19 @@ Oxbow 的理念很朴素：**看视频时，任何多余的界面都是干扰**�
 插件是放在 mpv 脚本目录下的一个文件夹：
 
 ```text
-<mpv>/portable_config/scripts/oxbow/     # 便携版 mpv
-%APPDATA%/mpv/scripts/oxbow/             # 安装版 mpv
+<mpv>/portable_config/scripts/oxbow/     # 便携版 mpv（Windows）
+%APPDATA%/mpv/scripts/oxbow/             # 安装版 mpv（Windows）
 ├── main.dll        # 插件入口
 ├── oxbowcore.dll   # 插件本体
 └── MediaInfo.dll   # 可选，启用媒体元数据补全
 ```
+
+```text
+~/.config/mpv/scripts/oxbow/             # Linux
+└── main.so         # 整个插件就是这一个文件——从源码构建后手动拷入
+```
+
+Linux 上媒体元数据补全使用系统 `libmediainfo`（Debian/Ubuntu 装 `libmediainfo0`，Fedora 装 `mediainfo-libs`），缺库时该功能自动降级，不影响其余使用。
 
 启动 mpv——Oxbow 窗口自动弹出。
 
@@ -58,13 +66,16 @@ Oxbow 的理念很朴素：**看视频时，任何多余的界面都是干扰**�
 
 ### 环境要求
 
-- 任何支持 C++23 的工具链理论上均可；目前只验证过 Windows 目标，其他组合未测试
+- 任何支持 C++23 的工具链理论上均可；Windows 目标完整验证过，Linux（X11 / XWayland）受支持——其他组合未测试
 - CMake
 - Ninja
 - Qt 6.x
 - 无需 mpv 开发包——仓库内已内置 `mpv/client.h`
+- 仅 Linux：X11 开发头文件（Debian/Ubuntu 装 `libx11-dev`，Fedora 装 `libX11-devel`）与 Qt 6 开发包（Widgets、Concurrent、Network、LinguistTools）
 
 ### 配置与构建
+
+Windows：
 
 ```bash
 cd public
@@ -73,17 +84,32 @@ cmake --build build --config Release
 ```
 
 - `Qt6_ROOT` 指向本机 Qt 安装目录。
-- `MPV_BIN_DIR`（选填）指向 mpv.exe 所在目录。设置后每次构建会自动把插件部署到 mpv 旁的 `portable_config/scripts/oxbow/`——构建完即可直接运行。
+- `MPV_BIN_DIR`（选填，仅 Windows）指向 mpv.exe 所在目录。设置后每次构建会自动把插件部署到 mpv 旁的 `portable_config/scripts/oxbow/`——构建完即可直接运行。
 - 不设 `MPV_BIN_DIR` 时，产物落在 `build/Release/`，需手动拷贝（见[安装](#安装)）。
+
+Linux（单配置生成器；构建类型须显式给，默认为空）：
+
+```bash
+cd public
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+```
+
+无需 `Qt6_ROOT`——`find_package` 直接命中系统 Qt。产物是单个 `build/main.so`，拷到 `~/.config/mpv/scripts/oxbow/main.so` 即可（见[安装](#安装)）。
 
 ### 构建选项
 
 | 选项 | 默认 | 说明 |
 | --- | --- | --- |
-| `OXBOW_STATICQT` | `OFF` | 静态链接 Qt。减体积、加快启动，建议开启——需要静态版 Qt。 |
+| `OXBOW_STATICQT` | `OFF` | 静态链接 Qt。减体积、加快启动，建议开启——需要静态版 Qt。**仅 Windows。** |
 | `OXBOW_BUILD_TESTS` | `OFF` | 构建单元测试可执行文件；运行方式 `ctest --test-dir build -C <配置>`。 |
 | `OXBOW_PUREQT` | `OFF` | 强制部分功能（如小窗）走纯 Qt 降级路径（开发辅助）。 |
-| `MPV_BIN_DIR` | *（空）* | mpv.exe 所在目录；设置后启用构建后自动部署。 |
+| `MPV_BIN_DIR` | *（空）* | mpv.exe 所在目录；设置后启用构建后自动部署。**仅 Windows**——Linux 只编译产物。 |
+
+## Linux 说明
+
+- **实测基线**：*（首次验证运行后回填）*——插件只依赖标准 mpv cplugin 接口，当前各发行版打包的 mpv 均具备。
+- **KDE / KWin**：KWin 不理会用于隐藏多余按钮的窗口提示，可能给小窗加上最小化 / 最大化按钮。建一条匹配 `WM_CLASS = oxbow` 的 KWin 窗口规则（强制「无边框」或「禁止最大化」）即可隐藏；不改规则也不影响使用。
 
 ## 名字的由来
 

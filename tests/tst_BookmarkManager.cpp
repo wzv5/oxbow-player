@@ -216,8 +216,15 @@ void TestBookmarkManager::rootLevelDistinguishedFromNoOrigin() {
 // 被后来者改写（展示路径换了大小写形态也仍保首见原样）；跨 uuid 不再共组，见
 // crossGroupIsolation
 void TestBookmarkManager::originFirstWriteWins() {
+    // 「同键异形」一对：Windows 靠 key() 的本地支转小写折叠（大小写异形）；POSIX 大小写
+    // 敏感，改取 toIdentity 会清掉的冗余 "." 段——两平台的产物都是同键、异形
+#ifdef Q_OS_WIN
     const QString file = QStringLiteral("D:/twice.mkv");
-    const QString fileRecase = QStringLiteral("D:/Twice.MKV"); // 同键异形
+    const QString fileRecase = QStringLiteral("D:/Twice.MKV");
+#else
+    const QString file = QStringLiteral("/twice.mkv");
+    const QString fileRecase = QStringLiteral("/./twice.mkv");
+#endif
     const Group g = groupOf(file, defaultUuid());
     const Origin o = makeOrigin();
     BookmarkManager mgr(m_ini);
@@ -418,8 +425,14 @@ void TestBookmarkManager::transferToDefaultMigrates() {
 // N77 §2.5：过户·合并档——目标组已存在 ⇒ 书签并入后按时间稳定排序、不去重；展示串
 // 保留目标既有；源组层引用丢弃
 void TestBookmarkManager::transferToDefaultMerges() {
+    // 同键异形一对，取法同 originFirstWriteWins（Windows 大小写、POSIX 冗余 "." 段）
+#ifdef Q_OS_WIN
     const QString file = QStringLiteral("D:/merge.mkv");
     const QString fileRecase = QStringLiteral("D:/Merge.MKV");
+#else
+    const QString file = QStringLiteral("/merge.mkv");
+    const QString fileRecase = QStringLiteral("/./merge.mkv");
+#endif
     const QUuid uuidX = uuidFrom("66666666-6666-6666-6666-666666666666");
     BookmarkManager mgr(m_ini);
     mgr.load();

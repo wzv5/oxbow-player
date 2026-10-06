@@ -150,6 +150,4 @@
 #include <dwmapi.h>
 #include <qt_windows.h>
 #include <shlobj.h>
-#else
-#include <dlfcn.h> // dlsym / RTLD_DEFAULT
 #endif
