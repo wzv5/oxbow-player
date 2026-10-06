@@ -570,6 +570,11 @@ void MainWindow::createMenus() {
     using AM = ActionManager;
     auto act = [this](AM::Id id) { return m_actions->action(id); };
 
+    // N85：菜单栏按下清焦的过滤挂载——QMenuBar 自行消费按下事件，主窗
+    // mousePressEvent 的冒泡兜底（N5）够不到它，点击菜单栏焦点会原地留在
+    // 播放列表，方向键回不到全局音量模式。分支语义见 eventFilter
+    menuBar()->installEventFilter(this);
+
     QMenu *fileMenu = menuBar()->addMenu(tr("&File"));
     fileMenu->addAction(act(AM::Id::Open));
     connect(act(AM::Id::Open), &QAction::triggered, this, &MainWindow::openFiles);
@@ -2582,6 +2587,20 @@ void MainWindow::onVideoClickTimeout() {
 // N66：本过滤器只服务本类对象级安装（视频区 / 占位符 / 滑条 / 浮窗 / 热区条）；
 // app 级的弹层关闭观察由独立的 PopupCloseWatch 承载，不经此函数（§三-4）
 bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
+    // N85：菜单栏按下清焦——左键按下即对焦点控件清焦（方向键回到全局音量模式），
+    // 但恒返回 false 不吞事件，菜单照常打开。右键豁免（与视频区分支一致）。
+    // 弹层是独立 popup 窗口不参与主窗焦点链，清焦时机在按下瞬间即已足够
+    if (watched == menuBar()) {
+        if (event->type() == QEvent::MouseButtonPress) {
+            auto *me = static_cast<QMouseEvent *>(event);
+            if (me->button() == Qt::LeftButton) {
+                if (auto *fw = QApplication::focusWidget())
+                    fw->clearFocus();
+            }
+        }
+        return false;
+    }
+
     if (watched == m_fsResizeStrip) {
         // N66 §二-8：列表浮窗左缘拖宽——按下后改宿主矩形（面板自身不动、不改视频区
         // 几何），钳制在面板 minimumWidth 与客户区宽 50% 之间；拖动期间 m_fsResizing
