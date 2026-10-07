@@ -12,6 +12,7 @@
 class NavigatorPanel;
 class ActionManager;
 class BookmarkEditorDialog;
+class ShortcutsDialog;
 class ChapterSlider;
 class MarkAggregator;   // N15：章节+书签标记聚合器（定义于 MainWindow.cpp）
 class PlaylistRegistry; // N57：列表注册表（装配顶点创建并持有，注入 PlaylistWidget）
@@ -59,6 +60,8 @@ class MainWindow : public QMainWindow {
     void setPlaylistVisible(bool visible);
     void setNavigatorVisible(bool visible);
     void ensureSettingsDialog();      // R3：按需创建/唤起设置对话框（非模态）
+    void ensureShortcutsDialog();     // N86：快捷键编辑对话框（非模态、按需创建）
+    void applyShortcutsLive();        // N86：落盘成功后的即时生效（让位分支收在此处）
     void copyScreenshotToClipboard(); // N78：截图 → 剪贴板（Ctrl+C 与文件菜单共用）
     void saveScreenshotToFile();      // N78：截图另存为（Ctrl+E 与文件菜单共用）
     void showAboutDialog();
@@ -188,6 +191,7 @@ class MainWindow : public QMainWindow {
     // 持久化：关闭时保存 / 启动时恢复
     void saveSettings();
     void restoreSettings();
+    void applyShortcutOverrides(); // N86：键位收口（幂等，按 ini 现状重算；三路径同码）
     // 循环模式："none" / "file" / "playlist"
     void applyLoopMode(const QString &mode);
     QString currentLoopMode() const;
@@ -409,6 +413,8 @@ class MainWindow : public QMainWindow {
     BookmarkEditorDialog *m_bookmarkEditor = nullptr;
     // R3：设置对话框（非模态，按需创建）
     class SettingsDialog *m_settingsDialog = nullptr;
+    // N86：快捷键编辑对话框（非模态，按需创建）
+    class ShortcutsDialog *m_shortcutsDialog = nullptr;
     QActionGroup *m_chapterGroup = nullptr;
     // 章节+书签标记聚合器（MainWindow.cpp 内实现）：合并规则 + 缓存
     // 收口于此，主窗口不再持有抽象成员；进程生命周期随主窗口

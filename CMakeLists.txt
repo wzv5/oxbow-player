@@ -122,6 +122,8 @@ add_library(oxbowcore MODULE
     src/MpvConf.h
     src/SettingsDialog.cpp
     src/SettingsDialog.h
+    src/ShortcutsDialog.cpp
+    src/ShortcutsDialog.h
     src/FilterListWidget.cpp
     src/FilterListWidget.h
 )

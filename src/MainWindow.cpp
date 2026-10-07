@@ -17,6 +17,7 @@
 #include "ProviderCatalog.h" // N57 §2.3：后备提供者经登记表第 0 项出生，只此一处调用
 #include "ServiceRegistry.h"
 #include "SettingsDialog.h"
+#include "ShortcutsDialog.h" // N86
 #include "StreamRelay.h"
 #include "StreamTransit.h" // N55 §2.7：书签存储串的转接形态分岔（判据与 §3.6 同一条）
 #include "TraversalPolicy.h"
@@ -305,6 +306,8 @@ MainWindow::MainWindow(MpvController *controller, const QString &configFile,
     setWindowTitle(App::name());
 
     m_actions = new ActionManager(this); // A15：先于任何容器构建
+    // 启动装配期收口：菜单创建前把 ini 覆盖应用到键位
+    applyShortcutOverrides();
 
     // N56 §2.7：装配顶点——registry 由本类创建并持有，relay 的 provide<StreamRelayIf>
     // 亦在此完成（硬顺序②：必须早于 PlaylistWidget 构造期出生的第一个提供者）。
@@ -580,6 +583,8 @@ void MainWindow::createMenus() {
     connect(act(AM::Id::Open), &QAction::triggered, this, &MainWindow::openFiles);
     fileMenu->addAction(act(AM::Id::Settings));
     connect(act(AM::Id::Settings), &QAction::triggered, this, &MainWindow::ensureSettingsDialog);
+    fileMenu->addAction(act(AM::Id::Shortcuts));
+    connect(act(AM::Id::Shortcuts), &QAction::triggered, this, &MainWindow::ensureShortcutsDialog);
     // N78：截图组——与 Settings 间加分隔符独立成组，其后原有「分隔符 + Quit」不动
     fileMenu->addSeparator();
     fileMenu->addAction(act(AM::Id::ScreenshotCopy));
@@ -3037,6 +3042,41 @@ void MainWindow::ensureSettingsDialog() {
     connect(m_settingsDialog, &SettingsDialog::pluginIniKeysChanged, this,
             &MainWindow::onPluginIniKeysChanged);
     m_settingsDialog->show();
+}
+
+// 键位收口：逐 Id 应用归一键位（归一单点在 ActionManager::effectiveKeys）。
+// 幂等——按 ini 现状重算，调用方不负责"当前处于什么态"；三条路径同码：启动装配 /
+// Apply 即时生效 / N87 让位恢复
+void MainWindow::applyShortcutOverrides() {
+    if (!m_actions || m_configFile.isEmpty())
+        return;
+    const auto keys = m_actions->effectiveKeys(m_configFile);
+    for (ActionManager::Id id : m_actions->orderedIds()) {
+        // 不可改绑条目恒用声明默认
+        m_actions->applyKey(id,
+                            m_actions->modifiable(id) ? keys.value(id) : m_actions->defaultKey(id));
+    }
+}
+
+// 即时生效入口（N86 与 N87 共用）：非让位期从 ini 重载键位，让位期什么都不做
+// （运行期保持让位态的空绑定，待 console 关闭时由 N87 调同一次收口）。
+// N87 未落地，让位分支待此插入
+void MainWindow::applyShortcutsLive() { applyShortcutOverrides(); }
+
+// 按需创建/唤起快捷键编辑对话框（仿 ensureSettingsDialog 生命周期）：非模态、
+// 复用不重建。对话框是独立顶级窗口，与主窗快捷键天然互不干扰，无需绑定防护
+void MainWindow::ensureShortcutsDialog() {
+    if (m_shortcutsDialog) {
+        m_shortcutsDialog->show();
+        m_shortcutsDialog->raise();
+        m_shortcutsDialog->activateWindow();
+        return;
+    }
+    m_shortcutsDialog = new ShortcutsDialog(m_actions, m_configFile, this);
+    m_shortcutsDialog->setAttribute(Qt::WA_DeleteOnClose, true);
+    connect(m_shortcutsDialog, &ShortcutsDialog::applied, this, &MainWindow::applyShortcutsLive);
+    connect(m_shortcutsDialog, &QObject::destroyed, this, [this] { m_shortcutsDialog = nullptr; });
+    m_shortcutsDialog->show();
 }
 
 // R3：MpvController::volumeMaxChanged 回调——同步 m_volumeMax 与滑条量程。

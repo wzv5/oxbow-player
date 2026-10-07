@@ -55,6 +55,7 @@
 #include <QJsonObject>
 #include <QJsonParseError>
 #include <QKeySequence>
+#include <QKeySequenceEdit>
 #include <QLabel>
 #include <QLineEdit>
 #include <QList>
@@ -104,6 +105,7 @@
 #include <QStyledItemDelegate>
 #include <QTabBar>
 #include <QTabWidget>
+#include <QTableWidget>
 #include <QTemporaryFile>
 #include <QTextEdit>
 #include <QTextOption>
