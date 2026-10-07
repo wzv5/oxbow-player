@@ -25,6 +25,9 @@ enum ObservedProperty {
     // 事件驱动主动读取（见 publishVideoSize），
     // R3：音量上限（mpv 自管 volume-max 属性，运行时推送驱动 MainWindow 滑条量程）
     PropVolumeMax,
+    // N87：console 开关状态。新 token 一律加在末尾——token 就是下发给 mpv 的
+    // reply_userdata，插到中间会移位既有观察项的取值
+    PropConsoleOpen,
     // B18：metadata / file-format / track-list / chapter-list 四项文件级
     // 属性不再 observe，改由 FILE_LOADED 主动读（见 handleFileLoaded）
 };
@@ -307,6 +310,9 @@ MpvController::MpvController(mpv_handle *mpv, QObject *parent) : QObject(parent)
     // N40：width / height 不再观察——属性报解码尺寸且独立推送，改事件驱动（见 publishVideoSize）
     // R3：音量上限观测，启动后立即推送当前值（mpv 默认 130）
     mpv_observe_property(m_mpv, PropVolumeMax, "volume-max", MPV_FORMAT_DOUBLE);
+    // N87：console 脚本的开关位。属性在 console.lua 首次写入前不存在，观察注册成功但无
+    // 初值可推（NONE 不发射），故插件侧按"未收到推送即 false"处理
+    mpv_observe_property(m_mpv, PropConsoleOpen, "user-data/mpv/console/open", MPV_FORMAT_FLAG);
     // B18：metadata / file-format / track-list / chapter-list 改 FILE_LOADED
     // 主动读（见 handleFileLoaded），不再 observe
 }
@@ -417,6 +423,24 @@ void MpvController::command(const QStringList &args) {
         argv.append(arg.constData());
     argv.append(nullptr);
     mpv_command(m_mpv, argv.data());
+}
+
+// N87：与同步通道的差别只在下发方式——argv 构造逐字相同，因为 mpv 在 mpv_command_async
+// 调用内就用 mp_input_parse_cmd_strv 解析并复制参数，局部缓冲区不跨调用，无须堆上保命；
+// 回包由下一次 mpv_wait_event 自动释放，故事件线程不接它
+void MpvController::commandAsync(const QStringList &args) {
+    if (args.isEmpty())
+        return;
+    QList<QByteArray> utf8;
+    utf8.reserve(args.size());
+    for (const QString &arg : args)
+        utf8.append(arg.toUtf8());
+    QVector<const char *> argv;
+    argv.reserve(utf8.size() + 1);
+    for (const QByteArray &arg : utf8)
+        argv.append(arg.constData());
+    argv.append(nullptr);
+    mpv_command_async(m_mpv, 0, argv.data());
 }
 
 QImage MpvController::screenshotRaw() {
@@ -712,6 +736,11 @@ void MpvController::handlePropertyChange(const mpv_event *event) {
         // R3：音量上限推送；NONE（不可能）按 0 不发射，滑条量程保持现有值
         if (prop->format == MPV_FORMAT_DOUBLE && prop->data)
             emit volumeMaxChanged(*static_cast<double *>(prop->data));
+        break;
+    case PropConsoleOpen:
+        // NONE 是"属性尚未诞生"的常态，不发射——接收侧初值本就是 false，无须第二条兜底
+        if (prop->format == MPV_FORMAT_FLAG && prop->data)
+            emit consoleOpenChanged(*static_cast<int *>(prop->data) != 0);
         break;
     case PropPlaylistPos:
         // 停止后 playlist-pos 不可用（MPV_FORMAT_NONE），以 -1 表示无当前项

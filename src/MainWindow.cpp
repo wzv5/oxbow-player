@@ -10,6 +10,7 @@
 #include "FilterListWidget.h"
 #include "HttpClient.h"
 #include "MpvController.h"
+#include "MpvKeyName.h" // N87：未认领按键的 mpv 键名翻译
 #include "NavigatorPanel.h"
 #include "Playlist.h"         // N57 §2.6：经 PlaylistWidget::listOf 取身份，需完整类型
 #include "PlaylistRegistry.h" // N57 §2.3：装配顶点创建列表注册表（默认名与保留身份的出处）
@@ -975,6 +976,9 @@ void MainWindow::connectController() {
             [this]() { updateNavigationActions(); });
     // mpv 侧退出：补保存会话后再结束事件循环（A6）
     connect(m_controller, &MpvController::mpvShutdown, this, &MainWindow::onMpvShutdown);
+    // N87：console 开关 → 键盘让位（控制器观察 user-data/mpv/console/open）
+    connect(m_controller, &MpvController::consoleOpenChanged, this,
+            &MainWindow::onConsoleOpenChanged);
 }
 
 // N56：注册表维护（自 PlaylistWidget 上移装配顶点）。读 ini 两项构建 HttpClient
@@ -1690,6 +1694,10 @@ void MainWindow::changeEvent(QEvent *event) {
 // 再触发本事件，必须一次性守卫：重复执行会把窗口越推越大、把位置反复拉回居中
 void MainWindow::showEvent(QShowEvent *event) {
     QMainWindow::showEvent(event);
+    // N87：让位态下补装 Tab 过滤器——平台窗口经 setWindowFlags 重建后，旧句柄上的过滤器
+    // 已随之没掉而让位态不变；本函数在 flags 切换必经的 hide→show 里触发，新句柄已就位
+    if (m_inputYielded)
+        attachTabFilter();
     if (m_firstShowDone)
         return;
     m_firstShowDone = true;
@@ -2592,6 +2600,27 @@ void MainWindow::onVideoClickTimeout() {
 // N66：本过滤器只服务本类对象级安装（视频区 / 占位符 / 滑条 / 浮窗 / 热区条）；
 // app 级的弹层关闭观察由独立的 PopupCloseWatch 承载，不经此函数（§三-4）
 bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
+    // N87：让位期截走 Tab / Backtab——这两个键在窗口层就被 QWidgetWindow 的过滤器拿去当
+    // 焦点导航，到不了 keyPressEvent。本过滤器后装在同一个 QWindow 上（后装者先回调），
+    // 故赶在窗口层之前接手；非让位期不装，Tab 照旧归焦点导航
+    if (watched == windowHandle()) {
+        if (m_inputYielded && event->type() == QEvent::KeyPress) {
+            auto *ke = static_cast<QKeyEvent *>(event);
+            // 只截窗口层会当焦点导航的那一族：裸 Tab 与 Shift+Tab（Qt 归成 Backtab）；
+            // 带 Ctrl / Alt / Meta 的组合不属焦点导航，放行给 Qt
+            const bool tabFamily = ke->key() == Qt::Key_Tab || ke->key() == Qt::Key_Backtab;
+            const bool noCtrlAltMeta =
+                !(ke->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier));
+            if (tabFamily && noCtrlAltMeta) {
+                const QString keyName = MpvKey::nameFromEvent(ke);
+                if (!keyName.isEmpty())
+                    m_controller->commandAsync({QStringLiteral("keypress"), keyName});
+                return true; // 吞掉，不让窗口层再拿去当焦点转移
+            }
+        }
+        return false;
+    }
+
     // N85：菜单栏按下清焦——左键按下即对焦点控件清焦（方向键回到全局音量模式），
     // 但恒返回 false 不吞事件，菜单照常打开。右键豁免（与视频区分支一致）。
     // 弹层是独立 popup 窗口不参与主窗焦点链，清焦时机在按下瞬间即已足够
@@ -2918,6 +2947,16 @@ void MainWindow::mousePressEvent(QMouseEvent *event) {
     QMainWindow::mousePressEvent(event);
 }
 
+// N87：未被认领按键的回落出口——Qt 的 shortcut 匹配先于事件投递，焦点链上控件又各取
+// 所需，故冒泡到此的键必然插件没要（原本在事件链尽头直接蒸发）。按 mpv 键名注入
+// keypress 交给 mpv 默认键位与用户 input.conf；只转按下，延时步进靠 autorepeat 连打
+void MainWindow::keyPressEvent(QKeyEvent *event) {
+    const QString keyName = MpvKey::nameFromEvent(event);
+    if (!keyName.isEmpty())
+        m_controller->commandAsync({QStringLiteral("keypress"), keyName});
+    QMainWindow::keyPressEvent(event);
+}
+
 void MainWindow::onPlayRequested(const PlaylistEntity::List &entities, int tab, int index,
                                  double seekTo, bool keepPaused) {
     // 统一播放入口（N4 合并）：整表载入 → 跳转 index → 挂起恢复进度。
@@ -3058,10 +3097,61 @@ void MainWindow::applyShortcutOverrides() {
     }
 }
 
-// 即时生效入口（N86 与 N87 共用）：非让位期从 ini 重载键位，让位期什么都不做
-// （运行期保持让位态的空绑定，待 console 关闭时由 N87 调同一次收口）。
-// N87 未落地，让位分支待此插入
-void MainWindow::applyShortcutsLive() { applyShortcutOverrides(); }
+// 即时生效入口：非让位期从 ini 重载键位；让位期直接返回——对话框照常落盘、运行期保持
+// 空绑定，待 console 关闭时由同一条重载补回
+void MainWindow::applyShortcutsLive() {
+    if (m_inputYielded)
+        return;
+    applyShortcutOverrides();
+}
+
+// N87：console 开 → 让出全部键盘（清空按键绑定），关 → 从 ini 重载收回。不碰 enabled
+// （它有多处活体更新源，快照写回会把让位期内发生的合法状态拉回陈旧值），也不做键位
+// 暂存表——ini 是唯一真相源，effectiveKeys 对缺项回落 defaultKey。代价：让位期菜单项
+// 与工具栏按钮照常可点、不变灰
+void MainWindow::onConsoleOpenChanged(bool open) {
+    if (open == m_inputYielded)
+        return;
+    m_inputYielded = open;
+    if (open) {
+        yieldKeyBindings();
+        // 焦点收口：焦点留在播放列表时方向键会被列表的 ShortcutOverride 认领（N5），
+        // console 的历史导航与移光标就失效。绑定已全空，清焦后按键一律冒泡到主窗，
+        // 让位结束不抢回焦点
+        if (auto *fw = QApplication::focusWidget())
+            fw->clearFocus();
+        // Tab / Backtab 走的是窗口层，清焦拦不住它——挂 QWindow 过滤器接手（见 eventFilter）
+        attachTabFilter();
+    } else {
+        detachTabFilter();
+        // 顺序钉死：先复位 m_inputYielded 再调入口，反序则被入口自己的让位分支挡成
+        // 空操作——键位永久停在空绑定上且不报错
+        applyShortcutsLive();
+    }
+}
+
+// 让位用的清空：逐 Id 走 applyKey 单点（QAction 形态落到 setShortcut、QShortcut 形态
+// 落到 setKey，后者根本没有 setShortcut 可用）。空序列不卸载挂载——恢复由重载统一补回
+void MainWindow::yieldKeyBindings() {
+    if (!m_actions)
+        return;
+    for (ActionManager::Id id : m_actions->orderedIds())
+        m_actions->applyKey(id, QKeySequence());
+}
+
+// 把主窗装成平台窗口自己的事件过滤器，以赶在窗口层之前接手 Tab（判据见 eventFilter）。
+// 装的对象是 windowHandle() 那一个 QWindow，而它会被 setWindowFlags 重建（全屏与小窗进出
+// 都走那条路），旧句柄连同过滤器一起没掉——故本函数幂等（同对象重复安装只回调一次），
+// showEvent 里按让位态补装一次
+void MainWindow::attachTabFilter() {
+    if (auto *w = windowHandle())
+        w->installEventFilter(this);
+}
+
+void MainWindow::detachTabFilter() {
+    if (auto *w = windowHandle())
+        w->removeEventFilter(this);
+}
 
 // 按需创建/唤起快捷键编辑对话框（仿 ensureSettingsDialog 生命周期）：非模态、
 // 复用不重建。对话框是独立顶级窗口，与主窗快捷键天然互不干扰，无需绑定防护

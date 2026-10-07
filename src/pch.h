@@ -54,6 +54,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
+#include <QKeyEvent>
 #include <QKeySequence>
 #include <QKeySequenceEdit>
 #include <QLabel>

@@ -24,6 +24,11 @@ class MpvController : public QObject {
     void command(const QString &cmd);
     void command(const QStringList &args);
 
+    // N87：异步命令通道，供按键回落 mpv 的 keypress 注入。同步的 command() 会占住调用线程
+    // 直到 core 执行完，而注入进去的是用户自己绑的任意命令（截图落盘 / loadfile / Lua 回调
+    // 都可能被一个键拉起来），GUI 线程不等它。reply_userdata 恒 0、回执一律不读
+    void commandAsync(const QStringList &args);
+
     // N78：screenshot-raw 取内存原始图像——命令不带参数，flags 省略即默认
     // subtitles（原始视频分辨率、带字幕），format 省略即默认 bgr0（小端下与
     // QImage::Format_RGB32 同布局）。返回深拷贝出的独立 QImage（mpv 侧数据随
@@ -149,6 +154,10 @@ class MpvController : public QObject {
     void tracksChanged(const QString &path, const QList<TrackInfo> &tracks);
     // N15：章节列表
     void chaptersChanged(const QString &path, const QList<ChapterInfo> &chapters);
+    // N87：mpv 内建 console 脚本的开关状态（观察 user-data/mpv/console/open）。为真期间
+    // 主窗让出全部键盘。该属性在 console 首次写入前不存在，观察注册成功但不推初值，故
+    // 初值判据是"未收到推送即 false"，装配期不得读它
+    void consoleOpenChanged(bool open);
     void mpvShutdown();
 
   public:

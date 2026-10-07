@@ -61,6 +61,8 @@ add_library(oxbowcore MODULE
     src/MainWindow.h
     src/MpvController.cpp
     src/MpvController.h
+    src/MpvKeyName.cpp
+    src/MpvKeyName.h
     src/HttpClient.cpp
     src/HttpClient.h
     src/NavigatorPanel.cpp

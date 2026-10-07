@@ -65,6 +65,7 @@ static bool resolveMpvSymbols() {
     RESOLVE(mpv_wait_event);
     RESOLVE(mpv_stream_cb_add_ro);   // N52：oxbow:// 转接协议注册
     RESOLVE(mpv_get_property_async); // N60：推送会话的屏障读（playlist 终值自带终点）
+    RESOLVE(mpv_command_async); // N87：未认领按键的 keypress 注入（异步，GUI 线程不等用户命令）
 #undef RESOLVE
 
     if (missing) {
@@ -221,12 +222,14 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle) {
     mpv_set_property_string(handle, "force-window", "no");
 
 #ifndef Q_OS_WIN
-    // N83：X11 嵌入的输入接管全关（实测 mpv 嵌入窗口的事件掩码截走指针事件，
-    // Qt 视频区收不到任何鼠标事件）——输入语义全部归插件：默认键位、指针事件、
-    // VO 键盘逐项关闭（input-vo-keyboard 不存在的旧版 mpv 回退
-    // input-x11-keyboard），另关 mpv 侧光标自动隐藏（N67 已在 Qt 层做，避免两层
-    // 打架）。Windows 上 mpv 自会向父窗口转发鼠标消息且插件依赖该路径，维持原状
-    mpv_set_property_string(handle, "input-default-bindings", "no");
+    // N83：X11 嵌入的输入接管——**事件层**关到底（实测 mpv 嵌入窗口的事件掩码截走
+    // 指针事件，Qt 视频区收不到任何鼠标事件）：VO 键盘与指针事件逐项关闭
+    // （input-vo-keyboard 不存在的旧版 mpv 回退 input-x11-keyboard），另关 mpv 侧
+    // 光标自动隐藏（N67 已在 Qt 层做，避免两层打架）。键盘因此恒由 Qt 独占。
+    // N87：**绑定层不干涉**——不设 input-default-bindings，取值交给 mpv 默认与用户自己的
+    // mpv.conf。未认领按键经 keypress 注入后走的是绑定查找，那张默认键位表正是要查的表，
+    // 显式置 no 会挡掉它，显式置 yes 又替用户做了决定。Windows 上 mpv 本就拿不到键盘
+    // （wid 嵌入下焦点窗口是 Qt 的），且自会向父窗口转发鼠标消息（插件依赖该路径）
     mpv_set_property_string(handle, "input-cursor", "no");
     mpv_set_property_string(handle, "cursor-autohide", "no");
     if (mpv_set_property_string(handle, "input-vo-keyboard", "no") != 0)

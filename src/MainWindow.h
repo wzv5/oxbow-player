@@ -44,6 +44,8 @@ class MainWindow : public QMainWindow {
     bool eventFilter(QObject *watched, QEvent *event) override;
     // N5：空白区域点击清焦（未被交互控件消费的按下事件冒泡至此）
     void mousePressEvent(QMouseEvent *event) override;
+    // N87：插件未认领按键的兜底出口（翻译得出 mpv 键名即异步注入 keypress）
+    void keyPressEvent(QKeyEvent *event) override;
     // N68：小窗态等比缩放（WM_SIZING）与边缘吸附（WM_MOVING）——函数体整体经
     // Windows 且未定义 OXBOW_PUREQT 门禁。降级形态两项都不做（循环外改窗位会被原生
     // 模态循环覆写，实测乱跳；§一 原裁决），只留定态保比（scheduleMiniRefit →
@@ -59,9 +61,12 @@ class MainWindow : public QMainWindow {
     void seekReleased();
     void setPlaylistVisible(bool visible);
     void setNavigatorVisible(bool visible);
-    void ensureSettingsDialog();      // R3：按需创建/唤起设置对话框（非模态）
-    void ensureShortcutsDialog();     // N86：快捷键编辑对话框（非模态、按需创建）
-    void applyShortcutsLive();        // N86：落盘成功后的即时生效（让位分支收在此处）
+    void ensureSettingsDialog();  // R3：按需创建/唤起设置对话框（非模态）
+    void ensureShortcutsDialog(); // N86：快捷键编辑对话框（非模态、按需创建）
+    void applyShortcutsLive();    // N86：落盘成功后的即时生效（让位分支收在此处）
+    // N87：console 开关驱动的键盘让位。开：清空全部按键绑定（不碰 enabled）并把焦点收口
+    // 到主窗；关：从 ini 重载收回
+    void onConsoleOpenChanged(bool open);
     void copyScreenshotToClipboard(); // N78：截图 → 剪贴板（Ctrl+C 与文件菜单共用）
     void saveScreenshotToFile();      // N78：截图另存为（Ctrl+E 与文件菜单共用）
     void showAboutDialog();
@@ -192,6 +197,9 @@ class MainWindow : public QMainWindow {
     void saveSettings();
     void restoreSettings();
     void applyShortcutOverrides(); // N86：键位收口（幂等，按 ini 现状重算；三路径同码）
+    void yieldKeyBindings(); // N87：逐 Id 清空按键绑定（经 applyKey，不碰 enabled、不卸载挂载）
+    void attachTabFilter();  // N87：让位期把主窗装成 QWindow 过滤器（幂等，窗口重建后须补装）
+    void detachTabFilter();
     // 循环模式："none" / "file" / "playlist"
     void applyLoopMode(const QString &mode);
     QString currentLoopMode() const;
@@ -415,6 +423,8 @@ class MainWindow : public QMainWindow {
     class SettingsDialog *m_settingsDialog = nullptr;
     // N86：快捷键编辑对话框（非模态，按需创建）
     class ShortcutsDialog *m_shortcutsDialog = nullptr;
+    // N87：console 让位态（真 = 插件已让出键盘，全部按键绑定为空）
+    bool m_inputYielded = false;
     QActionGroup *m_chapterGroup = nullptr;
     // 章节+书签标记聚合器（MainWindow.cpp 内实现）：合并规则 + 缓存
     // 收口于此，主窗口不再持有抽象成员；进程生命周期随主窗口
