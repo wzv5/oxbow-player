@@ -369,6 +369,9 @@ class MainWindow : public QMainWindow {
     // B14：一次性吞咽标志——视频区单击引发的暂停/恢复属性回声不入 OSD 队列；
     // 暂停 OSD 由单击超时补显，双击场景全程静默
     bool m_suppressPlayPauseOsd = false;
+    // N91：退出区间标志。点过关闭钮即置位并保持——窗口此后须一直 mapped 到进程结束
+    // （提前 unmap 会让 vo 等不到 Present 完成事件而卡死），故重复关闭钮与标题回刷都由它挡
+    bool m_closing = false;
     bool m_fullscreen = false; // 覆盖式全屏态标志（syncVideoGeometry 分支依据）
     // N68：小窗态标志（与 m_fullscreen 互斥，syncVideoGeometry 同走"铺满客户区"分支）
     bool m_mini = false;

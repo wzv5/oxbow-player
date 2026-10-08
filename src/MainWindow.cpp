@@ -858,8 +858,9 @@ void MainWindow::connectController() {
             m_progressSlider->setValue(0);
             // N8 Part5：停止态禁用进度条（与 C1 归零同点）
             m_progressSlider->setEnabled(false);
-            // N8 Part1：无正在播放内容，标题恢复基名
-            setWindowTitle(App::name());
+            // N8 Part1：无正在播放内容，标题恢复基名（N91：退出区间内不夺走"正在关闭"标题）
+            if (!m_closing)
+                setWindowTitle(App::name());
             // N7 #3：停止 OSD（单源去重，playlistPos -1 不触发，以 m_playlistPos>=0 为守卫）
             if (m_playlistPos >= 0) {
                 m_pendingStop = tr("Stop");
@@ -2870,6 +2871,8 @@ QString MainWindow::playingDisplayName() {
 // 值不变不会再推送，pos 推送时刻按旧镜像取的错名会挂到下一次切条目——
 // 收编后经 playingListAdopted 主动刷新一次
 void MainWindow::updateNowPlayingUi() {
+    if (m_closing)
+        return; // 退出区间：标题归"正在关闭…"所有，正播项随 quit 消失后不再回刷标题与 OSD 文本
     if (m_playlistPos < 0)
         return; // 停止态无"正在播放"可言
     QString name = playingDisplayName();
@@ -3212,7 +3215,10 @@ void MainWindow::onMpvShutdown() {
     // mpv 侧发起退出（终端按 q、其他脚本发 quit）时 closeEvent 不会触发，
     // 在此补保存会话；窗口关闭路径随后到来的重复保存写同值幂等无害
     saveSettings();
-    QApplication::quit();
+    // 收口用 exit() 而非 quit()：本插件的 Qt 循环跑在 mpv 的 cplugin 线程（非进程主线程），
+    // quit() 在这种布局下只往 qApp 投递一个 Quit 事件、实测永不兑现；exit() 当场同步退出
+    // 本线程循环栈上的全部循环（模态对话框还开着时一并收掉）
+    QCoreApplication::exit(0);
 }
 
 void MainWindow::saveSettings() {
@@ -4039,6 +4045,13 @@ void MainWindow::onAddBookmark() {
 }
 
 void MainWindow::closeEvent(QCloseEvent *event) {
+    // N91：窗口不随关闭钮消失（见下方 ignore 的理由），退出区间内它照常可点，故只认第一次
+    // 关闭钮——重复点按不再落盘、不再重发 quit。置于小窗分支之前：退出区间内小窗态的点按
+    // 也不该去跑 toggleMini（重挂与改尺寸正是要避开的动作）
+    if (m_closing) {
+        event->ignore();
+        return;
+    }
     // N68：小窗态关闭钮 = 退出小窗回普通模式，不是退出程序——ignore 并转调
     // toggleMini 退出分支（不落盘、不向 mpv 发 quit），立即 return，不得落进
     // 下方 saveSettings + quit 流程
@@ -4047,7 +4060,9 @@ void MainWindow::closeEvent(QCloseEvent *event) {
         toggleMini();
         return;
     }
-    // N66 §二-2：全屏态先无条件收回原位再放行关闭——把对象树恢复成既有形状
+    m_closing = true;
+    setWindowTitle(tr("Closing…")); // 退出区间的可见反馈（idleActive 与切条目的标题回刷已被挡）
+    // N66 §二-2：全屏态先无条件收回原位再进入退出生序——把对象树恢复成既有形状
     // （N57 纪律：重挂改变子对象删除次序，不留到 ~MainWindow）。播放列表可见性
     // 属窗口态真相，saveSettings 读真相成员，不受重挂影响
     if (m_fullscreen) {
@@ -4057,7 +4072,10 @@ void MainWindow::closeEvent(QCloseEvent *event) {
         restoreOriginalParent(m_playlist);
     }
     saveSettings();
-    // mpv 是宿主进程：关闭 GUI 时让 mpv 一并退出
-    m_controller->command({QStringLiteral("quit")});
-    QMainWindow::closeEvent(event);
+    // mpv 是宿主进程：关闭 GUI 时让 mpv 一并退出。命令走异步通道（GUI 线程不等核心），
+    // 且此处 ignore 而非 accept：窗口须保持 mapped 到 vo 拆完，提前 unmap 会让 Mesa 的
+    // swap_buffers 永远等不到 Present 事件，vo 线程卡死、核心拆解随之挂住。
+    // 事件循环的出口只有 onMpvShutdown 收到 SHUTDOWN 那一路
+    m_controller->commandAsync({QStringLiteral("quit")});
+    event->ignore();
 }

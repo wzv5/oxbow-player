@@ -192,6 +192,10 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle) {
         // 有意不 delete：QApplication 必须与进程同生命周期
         (void)new QApplication(argc, argv);
         QApplication::setApplicationName(App::name());
+        // 退出只由 MPV_EVENT_SHUTDOWN 收口（见 onMpvShutdown）：Qt 默认的"末窗关闭即退"会让
+        // exec() 在核心还在拆 vo 时就抢先返回，入口一返回 mpv 即销毁本句柄，与仍在拆核心的
+        // 主线程互等成死锁（client.h 的销毁律）
+        QApplication::setQuitOnLastWindowClosed(false);
     }
 
     installTranslator();
@@ -266,9 +270,8 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle) {
     // 表现为启动时闪现 mpv 原生窗口
     controller->startEventThread();
 
-    // mpv 退出（如 MPV_EVENT_SHUTDOWN）时由 MainWindow::onMpvShutdown
-    // 补保存会话并结束 Qt 事件循环
-
+    // 事件循环只由 MPV_EVENT_SHUTDOWN 收口（MainWindow::onMpvShutdown 内 exit()）：入口
+    // 抢先返回会让 mpv 在核心还没拆完时就销毁本 client 句柄，两边互等成死锁
     QApplication::exec();
     return 0;
 }
