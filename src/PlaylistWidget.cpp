@@ -157,9 +157,9 @@ Playlist *PlaylistWidget::listOfView(const PlaylistListView *view) const {
 // 认领集合含 ←→/PgUp/PgDn/Home/End，为后续列表键盘功能预留。
 // accept 后按键作为普通键盘事件送达列表；过滤器须返回 false 放行事件本身
 bool PlaylistWidget::eventFilter(QObject *watched, QEvent *event) {
-    if (event->type() == QEvent::ShortcutOverride && qobject_cast<QListWidget *>(watched)) {
-        auto *ke = static_cast<QKeyEvent *>(event);
-        switch (ke->key()) {
+    // N90：列表认领的导航键集合——下方 ShortcutOverride 认领与 KeyPress 转投豁免共用
+    constexpr auto isNavigationKey = [](int key) {
+        switch (key) {
         case Qt::Key_Up:
         case Qt::Key_Down:
         case Qt::Key_Left:
@@ -168,11 +168,15 @@ bool PlaylistWidget::eventFilter(QObject *watched, QEvent *event) {
         case Qt::Key_PageDown:
         case Qt::Key_Home:
         case Qt::Key_End:
-            event->accept();
-            break;
+            return true;
         default:
-            break;
+            return false;
         }
+    };
+    const bool onList = qobject_cast<QListWidget *>(watched) != nullptr;
+    if (onList && event->type() == QEvent::ShortcutOverride) {
+        if (isNavigationKey(static_cast<QKeyEvent *>(event)->key()))
+            event->accept();
     }
     // N49 §2.7：焦点在搜索框时认领无修饰键的按键——全局单键动作（空格暂停、
     // ↑↓ 音量等）不再触发，文本输入与行内编辑照常。只认领无修饰键者是有意的：
@@ -181,6 +185,23 @@ bool PlaylistWidget::eventFilter(QObject *watched, QEvent *event) {
     if (event->type() == QEvent::ShortcutOverride && watched == m_searchBox) {
         if (static_cast<QKeyEvent *>(event)->modifiers() == Qt::NoModifier)
             event->accept();
+    }
+    // N90：QAbstractItemView 对有文本的可打印键走 keyboardSearch 并整键消费（不冒泡），
+    // "未认领按键冒泡到主窗兜底转发 mpv"的两层契约在列表持焦时断链——console 的 `
+    // 开关首当其冲。列表只认领上方那组导航键，其余可打印键（无 Ctrl/Alt/Meta；
+    // Tab/Backtab 文本非可打印故天然排除）在此转投主窗，走 keyPressEvent 的兜底单点
+    // 转发；组合键照旧归快捷键系统
+    if (onList && event->type() == QEvent::KeyPress) {
+        auto *ke = static_cast<QKeyEvent *>(event);
+        if (!isNavigationKey(ke->key()) && !ke->text().isEmpty() && ke->text().at(0).isPrint() &&
+            !(ke->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))) {
+            QCoreApplication::sendEvent(window(), event);
+            // 嵌套投递复用同一事件对象，投递归来其状态是 ignore——Qt 的按键父链传播循环
+            // 据此继续沿父链走到主窗，兜底转发会做第二遍（实测一次按键下发两个 keypress），
+            // 故此处显式置 accepted，配合 return true 把原事件真正了结
+            event->accept();
+            return true;
+        }
     }
     return QTabWidget::eventFilter(watched, event);
 }

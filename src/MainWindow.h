@@ -42,6 +42,9 @@ class MainWindow : public QMainWindow {
     void showEvent(QShowEvent *event) override;
     // N3：占位符几何跟随 + 视频区单击/双击分流
     bool eventFilter(QObject *watched, QEvent *event) override;
+    // N90：ShortcutOverride 否决的控件链侧兜底（常态由 eventFilter 的窗口层先收下，
+    // 本覆写只补过滤器随窗口重建而缺位的瞬间）
+    bool event(QEvent *event) override;
     // N5：空白区域点击清焦（未被交互控件消费的按下事件冒泡至此）
     void mousePressEvent(QMouseEvent *event) override;
     // N87：插件未认领按键的兜底出口（翻译得出 mpv 键名即异步注入 keypress）
@@ -63,9 +66,9 @@ class MainWindow : public QMainWindow {
     void setNavigatorVisible(bool visible);
     void ensureSettingsDialog();  // R3：按需创建/唤起设置对话框（非模态）
     void ensureShortcutsDialog(); // N86：快捷键编辑对话框（非模态、按需创建）
-    void applyShortcutsLive();    // N86：落盘成功后的即时生效（让位分支收在此处）
-    // N87：console 开关驱动的键盘让位。开：清空全部按键绑定（不碰 enabled）并把焦点收口
-    // 到主窗；关：从 ini 重载收回
+    void applyShortcutsLive();    // N86：落盘成功后的即时生效（从 ini 重载键位）
+    // N90：console 开关驱动的键盘让位。开：一次性焦点收口到主窗并装窗口级过滤器；
+    // 关：拆过滤器即完。键位表全程不动，让位期内键盘归属由焦点位置决定
     void onConsoleOpenChanged(bool open);
     void copyScreenshotToClipboard(); // N78：截图 → 剪贴板（Ctrl+C 与文件菜单共用）
     void saveScreenshotToFile();      // N78：截图另存为（Ctrl+E 与文件菜单共用）
@@ -196,10 +199,15 @@ class MainWindow : public QMainWindow {
     // 持久化：关闭时保存 / 启动时恢复
     void saveSettings();
     void restoreSettings();
-    void applyShortcutOverrides(); // N86：键位收口（幂等，按 ini 现状重算；三路径同码）
-    void yieldKeyBindings(); // N87：逐 Id 清空按键绑定（经 applyKey，不碰 enabled、不卸载挂载）
-    void attachTabFilter();  // N87：让位期把主窗装成 QWindow 过滤器（幂等，窗口重建后须补装）
-    void detachTabFilter();
+    void applyShortcutOverrides(); // N86：键位收口（幂等，按 ini 现状重算；两路径同码）
+    // N90：让位期键盘归属判据（合取式，单点）——eventFilter 与 event() 共用
+    bool yieldOwnsKeyboard() const;
+    // N90：让位转发单点——按 mpv 键名异步注入 keypress，eventFilter 的截断分支与
+    // keyPressEvent 兜底共用；全仓只允许这一种转发形态
+    void forwardKeyToMpv(const QKeyEvent *event);
+    // N90：让位期把主窗装成 QWindow 过滤器（幂等，窗口重建后须补装）
+    void attachYieldFilter();
+    void detachYieldFilter();
     // 循环模式："none" / "file" / "playlist"
     void applyLoopMode(const QString &mode);
     QString currentLoopMode() const;
@@ -423,7 +431,7 @@ class MainWindow : public QMainWindow {
     class SettingsDialog *m_settingsDialog = nullptr;
     // N86：快捷键编辑对话框（非模态，按需创建）
     class ShortcutsDialog *m_shortcutsDialog = nullptr;
-    // N87：console 让位态（真 = 插件已让出键盘，全部按键绑定为空）
+    // N90：console 让位态（真 = 让位生效：窗口级过滤器已装且焦点判据生效）
     bool m_inputYielded = false;
     QActionGroup *m_chapterGroup = nullptr;
     // 章节+书签标记聚合器（MainWindow.cpp 内实现）：合并规则 + 缓存

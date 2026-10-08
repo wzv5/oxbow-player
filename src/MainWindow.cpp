@@ -1694,10 +1694,10 @@ void MainWindow::changeEvent(QEvent *event) {
 // 再触发本事件，必须一次性守卫：重复执行会把窗口越推越大、把位置反复拉回居中
 void MainWindow::showEvent(QShowEvent *event) {
     QMainWindow::showEvent(event);
-    // N87：让位态下补装 Tab 过滤器——平台窗口经 setWindowFlags 重建后，旧句柄上的过滤器
-    // 已随之没掉而让位态不变；本函数在 flags 切换必经的 hide→show 里触发，新句柄已就位
+    // N90：让位态下补装窗口级过滤器——平台窗口经 setWindowFlags 重建后，旧句柄上的
+    // 过滤器已随之没掉而让位态不变；本函数在 flags 切换必经的 hide→show 里触发，新句柄已就位
     if (m_inputYielded)
-        attachTabFilter();
+        attachYieldFilter();
     if (m_firstShowDone)
         return;
     m_firstShowDone = true;
@@ -2595,27 +2595,41 @@ void MainWindow::onVideoClickTimeout() {
     }
 }
 
+// N90：ShortcutOverride 否决在控件链侧的兜底。实测（Windows 与 X11 同）让位期的征询一律被
+// 外层的 windowHandle 过滤器收下并 return true，到不了本覆写——它只在过滤器缺位的瞬间生效：
+// 平台窗口经 setWindowFlags 重建后旧句柄连同过滤器一起没掉，直到 showEvent 补装才接回；
+// 那段时间里征询沿控件链传到这里。
+// 判据同出 yieldOwnsKeyboard，接受即跳过本次 shortcut 匹配、键照常投递；忽略则快捷键照常触发
+bool MainWindow::event(QEvent *event) {
+    if (event->type() == QEvent::ShortcutOverride && yieldOwnsKeyboard()) {
+        event->accept();
+        return true;
+    }
+    return QMainWindow::event(event);
+}
+
 // 占位符几何跟随 + 视频区单击/双击分流（N3）。
 // 右键与 Release 不处理：右键无任何行为变化。
 // N66：本过滤器只服务本类对象级安装（视频区 / 占位符 / 滑条 / 浮窗 / 热区条）；
 // app 级的弹层关闭观察由独立的 PopupCloseWatch 承载，不经此函数（§三-4）
 bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
-    // N87：让位期截走 Tab / Backtab——这两个键在窗口层就被 QWidgetWindow 的过滤器拿去当
-    // 焦点导航，到不了 keyPressEvent。本过滤器后装在同一个 QWindow 上（后装者先回调），
-    // 故赶在窗口层之前接手；非让位期不装，Tab 照旧归焦点导航
+    // N90：让位期的窗口级拦截。Qt6 的 shortcut 匹配先于键事件投递，否决它的唯一先手是接受
+    // 平台的 ShortcutOverride 征询（接受即跳过匹配、键照常按普通键投递）——实测两平台这条
+    // 征询都走到本过滤器，故外层一并收下并 return true；KeyPress 截断分支承接被否决后投递
+    // 的键与匹配幸存键（Tab 仍须拦在焦点导航之前）。焦点落在子控件时两分支都放行，键盘归属
+    // 交回插件快捷键与控件的常规派发——预期行为，复位手段是任一路清焦（N5 / N85 等）
     if (watched == windowHandle()) {
-        if (m_inputYielded && event->type() == QEvent::KeyPress) {
-            auto *ke = static_cast<QKeyEvent *>(event);
-            // 只截窗口层会当焦点导航的那一族：裸 Tab 与 Shift+Tab（Qt 归成 Backtab）；
-            // 带 Ctrl / Alt / Meta 的组合不属焦点导航，放行给 Qt
-            const bool tabFamily = ke->key() == Qt::Key_Tab || ke->key() == Qt::Key_Backtab;
-            const bool noCtrlAltMeta =
-                !(ke->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier));
-            if (tabFamily && noCtrlAltMeta) {
-                const QString keyName = MpvKey::nameFromEvent(ke);
-                if (!keyName.isEmpty())
-                    m_controller->commandAsync({QStringLiteral("keypress"), keyName});
-                return true; // 吞掉，不让窗口层再拿去当焦点转移
+        if (yieldOwnsKeyboard()) {
+            if (event->type() == QEvent::ShortcutOverride) {
+                event->accept();
+                return true;
+            }
+            if (event->type() == QEvent::KeyPress) {
+                // 全键截断：取到名即转发；取名落空者（纯修饰键按下、IME 组合期、
+                // 不可映射键）同样吞掉——否则 Alt 单独按下会激活菜单栏、空名键继续
+                // 走后续派发，截断不彻底
+                forwardKeyToMpv(static_cast<QKeyEvent *>(event));
+                return true;
             }
         }
         return false;
@@ -2949,12 +2963,31 @@ void MainWindow::mousePressEvent(QMouseEvent *event) {
 
 // N87：未被认领按键的回落出口——Qt 的 shortcut 匹配先于事件投递，焦点链上控件又各取
 // 所需，故冒泡到此的键必然插件没要（原本在事件链尽头直接蒸发）。按 mpv 键名注入
-// keypress 交给 mpv 默认键位与用户 input.conf；只转按下，延时步进靠 autorepeat 连打
+// keypress 交给 mpv 默认键位与用户 input.conf；只转按下，延时步进靠 autorepeat 连打。
+// N90：让位常态下键已被窗口级过滤器截走、不到此处；它承接的是过滤器缺位的瞬间
+// （平台窗口重建后到补装之前）——那时否决仍由 event() 覆写达成，键按普通投递落到顶级窗
 void MainWindow::keyPressEvent(QKeyEvent *event) {
+    forwardKeyToMpv(event);
+    QMainWindow::keyPressEvent(event);
+}
+
+// N90：让位期键盘归属判据（合取式，单点）——让位生效 ∧ 焦点不属于主窗内任何子控件。
+// 实测落点是 focusWidget() 归空（Windows 与 X11 一致）：主窗从未设焦点策略（QMainWindow 默认
+// NoFocus），clearFocus 与点视频画面 / 点空白都不会把主窗本体设成焦点控件；"等于主窗本体"一条
+// 只在将来给主窗开了焦点策略时成立，留作余量。eventFilter 的 windowHandle 分支与 event() 的
+// ShortcutOverride 覆写共用；焦点在子控件时判据不成立，键盘交回常规派发
+bool MainWindow::yieldOwnsKeyboard() const {
+    QWidget *fw = QApplication::focusWidget();
+    return m_inputYielded && (fw == nullptr || fw == this);
+}
+
+// N90：让位转发的单点——取名非空即异步注入 keypress，eventFilter 的截断分支与
+// keyPressEvent 的兜底出口共用（全仓只允许这一种转发形态）。取名落空即静默返回，
+// 吞还是放由调用方决定（截断分支吞、兜底出口放）；只转按下，KeyRelease 不经此
+void MainWindow::forwardKeyToMpv(const QKeyEvent *event) {
     const QString keyName = MpvKey::nameFromEvent(event);
     if (!keyName.isEmpty())
         m_controller->commandAsync({QStringLiteral("keypress"), keyName});
-    QMainWindow::keyPressEvent(event);
 }
 
 void MainWindow::onPlayRequested(const PlaylistEntity::List &entities, int tab, int index,
@@ -3084,8 +3117,8 @@ void MainWindow::ensureSettingsDialog() {
 }
 
 // 键位收口：逐 Id 应用归一键位（归一单点在 ActionManager::effectiveKeys）。
-// 幂等——按 ini 现状重算，调用方不负责"当前处于什么态"；三条路径同码：启动装配 /
-// Apply 即时生效 / N87 让位恢复
+// 幂等——按 ini 现状重算，调用方不负责"当前处于什么态"；两条路径同码：启动装配 /
+// 对话框 Apply 即时生效
 void MainWindow::applyShortcutOverrides() {
     if (!m_actions || m_configFile.isEmpty())
         return;
@@ -3097,58 +3130,40 @@ void MainWindow::applyShortcutOverrides() {
     }
 }
 
-// 即时生效入口：非让位期从 ini 重载键位；让位期直接返回——对话框照常落盘、运行期保持
-// 空绑定，待 console 关闭时由同一条重载补回
-void MainWindow::applyShortcutsLive() {
-    if (m_inputYielded)
-        return;
-    applyShortcutOverrides();
-}
+// N86：落盘成功后的即时生效——从 ini 重载键位（幂等）。N90：让位分支已删，运行期
+// 键位全程与 ini 一致，console 让位不再有"只落盘、关闭后才生效"的运行期中间态
+void MainWindow::applyShortcutsLive() { applyShortcutOverrides(); }
 
-// N87：console 开 → 让出全部键盘（清空按键绑定），关 → 从 ini 重载收回。不碰 enabled
-// （它有多处活体更新源，快照写回会把让位期内发生的合法状态拉回陈旧值），也不做键位
-// 暂存表——ini 是唯一真相源，effectiveKeys 对缺项回落 defaultKey。代价：让位期菜单项
-// 与工具栏按钮照常可点、不变灰
+// N87：console 开 → 让出全部键盘；关 → 收回。N90 改判：让位期键盘归属由焦点位置决定，
+// 键位表全程不动——开时只做一次性焦点收口（console 一开即可打字，已定案 6）并装上
+// 窗口级过滤器；关时拆掉即完，无任何恢复动作
 void MainWindow::onConsoleOpenChanged(bool open) {
     if (open == m_inputYielded)
         return;
     m_inputYielded = open;
     if (open) {
-        yieldKeyBindings();
-        // 焦点收口：焦点留在播放列表时方向键会被列表的 ShortcutOverride 认领（N5），
-        // console 的历史导航与移光标就失效。绑定已全空，清焦后按键一律冒泡到主窗，
-        // 让位结束不抢回焦点
+        // 一次性焦点收口：焦点留在播放列表时方向键会被列表的 ShortcutOverride 认领
+        // （N5），console 的历史导航与移光标就失效；清焦后主窗内再无焦点控件
+        // （focusWidget() 归空，判据的 nullptr 臂），正入 eventFilter 的截断分支。
+        // 期内不维持焦点、不做二次收口——焦点落回子控件即归属交回（设计 2 / 设计 3）
         if (auto *fw = QApplication::focusWidget())
             fw->clearFocus();
-        // Tab / Backtab 走的是窗口层，清焦拦不住它——挂 QWindow 过滤器接手（见 eventFilter）
-        attachTabFilter();
+        attachYieldFilter();
     } else {
-        detachTabFilter();
-        // 顺序钉死：先复位 m_inputYielded 再调入口，反序则被入口自己的让位分支挡成
-        // 空操作——键位永久停在空绑定上且不报错
-        applyShortcutsLive();
+        detachYieldFilter();
     }
 }
 
-// 让位用的清空：逐 Id 走 applyKey 单点（QAction 形态落到 setShortcut、QShortcut 形态
-// 落到 setKey，后者根本没有 setShortcut 可用）。空序列不卸载挂载——恢复由重载统一补回
-void MainWindow::yieldKeyBindings() {
-    if (!m_actions)
-        return;
-    for (ActionManager::Id id : m_actions->orderedIds())
-        m_actions->applyKey(id, QKeySequence());
-}
-
-// 把主窗装成平台窗口自己的事件过滤器，以赶在窗口层之前接手 Tab（判据见 eventFilter）。
+// 把主窗装成平台窗口自己的事件过滤器，让位期在窗口层截断全部按键（判据见 eventFilter）。
 // 装的对象是 windowHandle() 那一个 QWindow，而它会被 setWindowFlags 重建（全屏与小窗进出
 // 都走那条路），旧句柄连同过滤器一起没掉——故本函数幂等（同对象重复安装只回调一次），
 // showEvent 里按让位态补装一次
-void MainWindow::attachTabFilter() {
+void MainWindow::attachYieldFilter() {
     if (auto *w = windowHandle())
         w->installEventFilter(this);
 }
 
-void MainWindow::detachTabFilter() {
+void MainWindow::detachYieldFilter() {
     if (auto *w = windowHandle())
         w->removeEventFilter(this);
 }

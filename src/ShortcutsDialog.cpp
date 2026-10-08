@@ -326,7 +326,7 @@ bool ShortcutsDialog::apply() {
         return false;
     }
 
-    // 落盘成功即生效：主窗口经 applied() 从 ini 重载（让位分支收在主窗侧）
+    // 落盘成功即生效：主窗口经 applied() 从 ini 重载键位
     m_snapshot = m_pending;
     refreshRowVisuals();
     updateApplyButton();
