@@ -28,6 +28,8 @@ enum ObservedProperty {
     // N87：console 开关状态。新 token 一律加在末尾——token 就是下发给 mpv 的
     // reply_userdata，插到中间会移位既有观察项的取值
     PropConsoleOpen,
+    // N88：fullscreen 镜像（仍居末尾纪律之内）
+    PropFullscreen,
     // B18：metadata / file-format / track-list / chapter-list 四项文件级
     // 属性不再 observe，改由 FILE_LOADED 主动读（见 handleFileLoaded）
 };
@@ -313,6 +315,9 @@ MpvController::MpvController(mpv_handle *mpv, QObject *parent) : QObject(parent)
     // N87：console 脚本的开关位。属性在 console.lua 首次写入前不存在，观察注册成功但无
     // 初值可推（NONE 不发射），故插件侧按"未收到推送即 false"处理
     mpv_observe_property(m_mpv, PropConsoleOpen, "user-data/mpv/console/open", MPV_FORMAT_FLAG);
+    // N88：fullscreen 镜像。普通属性，注册即推初值（client.h "You always get an
+    // initial change notification"），与 console 位"无初值可推"的口径相反
+    mpv_observe_property(m_mpv, PropFullscreen, "fullscreen", MPV_FORMAT_FLAG);
     // B18：metadata / file-format / track-list / chapter-list 改 FILE_LOADED
     // 主动读（见 handleFileLoaded），不再 observe
 }
@@ -741,6 +746,12 @@ void MpvController::handlePropertyChange(const mpv_event *event) {
         // NONE 是"属性尚未诞生"的常态，不发射——接收侧初值本就是 false，无须第二条兜底
         if (prop->format == MPV_FORMAT_FLAG && prop->data)
             emit consoleOpenChanged(*static_cast<int *>(prop->data) != 0);
+        break;
+    case PropFullscreen:
+        // N88：镜像推送（含注册即推的首值）。只认 FLAG 且有载荷；NONE（属性暂不可用）
+        // 不发射。初值到不到、何时到由接收侧按启动时序消化，本类不读该属性判初值
+        if (prop->format == MPV_FORMAT_FLAG && prop->data)
+            emit fullscreenChanged(*static_cast<int *>(prop->data) != 0);
         break;
     case PropPlaylistPos:
         // 停止后 playlist-pos 不可用（MPV_FORMAT_NONE），以 -1 表示无当前项

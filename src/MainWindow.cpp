@@ -980,6 +980,20 @@ void MainWindow::connectController() {
     // N87：console 开关 → 键盘让位（控制器观察 user-data/mpv/console/open）
     connect(m_controller, &MpvController::consoleOpenChanged, this,
             &MainWindow::onConsoleOpenChanged);
+    // N88：fullscreen 属性镜像分派——外部写入（终端 / IPC / 默认键 f）与注册初值
+    // （mpv.conf 写 fullscreen=yes 即启动全屏，期望行为）同走此路。与 Qt 侧真相
+    // 比对：相等即不动（Qt 自身写入的回灌被守卫吸收，不新增标志）；不符时小窗态
+    // 只按真相回正（N68 互斥即忽略，回写对象从 QAction 扩到 mpv 属性，不切换），
+    // 普通态驱动 toggleFullscreen() 切换。镜像值按窗口真实状态定义（铁律）：
+    // 全屏 true、普通与小窗 false——小窗态绝不映射成 true
+    connect(m_controller, &MpvController::fullscreenChanged, this, [this](bool fs) {
+        if (fs == m_fullscreen)
+            return;
+        if (m_mini)
+            m_controller->setProperty(QStringLiteral("fullscreen"), m_fullscreen);
+        else
+            toggleFullscreen();
+    });
 }
 
 // N56：注册表维护（自 PlaylistWidget 上移装配顶点）。读 ini 两项构建 HttpClient
@@ -2198,6 +2212,11 @@ void MainWindow::toggleFullscreen() {
         QSignalBlocker blocker(m_fullscreenAction); // 防循环触发 toggleFullscreen
         m_fullscreenAction->setChecked(m_fullscreen);
     }
+    // N88：镜像 mpv 的 fullscreen 属性。写入时序铁律——m_fullscreen 已在两分支
+    // 落定后才写，回灌回来时与真相必等、被分派守卫吸收（顺序反了会被判成外部
+    // 变更二次驱动本函数，递归只从这一处来）。wid 嵌入下该属性在 mpv 侧是惰性
+    // 的（值变而无窗口动作），写值安全
+    m_controller->setProperty(QStringLiteral("fullscreen"), m_fullscreen);
 }
 
 // N68：小窗态等比缩放与边缘吸附（Windows 主路径）。两项增强在原生缩放/拖动
@@ -2572,6 +2591,11 @@ void MainWindow::toggleMini() {
         QSignalBlocker blocker(m_miniAction); // 防循环触发 toggleMini（全屏同款）
         m_miniAction->setChecked(m_mini);     // 两分支走完后按真相统一回写
     }
+    // N88：镜像 mpv 的 fullscreen 属性。进入与退出两分支的镜像值恒为 false——
+    // 铁律按窗口真实状态取值，小窗态也不是全屏（不按"处在哪个模式"顺手映射成
+    // true）；互斥早退分支（全屏态）不经过这里，彼时属性已由 toggleFullscreen
+    // 写成 true，无需重写。m_mini 已先落定，回灌由分派守卫吸收
+    m_controller->setProperty(QStringLiteral("fullscreen"), false);
     // 同一收口喂给光标行为机：进小窗即解除布防并恢复已藏的指针，退出重新计时长
     m_cursorHider->setMini(m_mini);
 }

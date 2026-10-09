@@ -158,6 +158,10 @@ class MpvController : public QObject {
     // 主窗让出全部键盘。该属性在 console 首次写入前不存在，观察注册成功但不推初值，故
     // 初值判据是"未收到推送即 false"，装配期不得读它
     void consoleOpenChanged(bool open);
+    // N88：mpv fullscreen 属性的镜像推送（FLAG，注册即推初值）。初值（含 mpv.conf
+    // 写 fullscreen=yes 的启动即全屏）与外部写入（终端 / IPC / 默认键 f）同走本信号，
+    // MainWindow 按 Qt 侧窗口真相比对分派——相等不动（回灌守卫），不符即驱动切换或回正
+    void fullscreenChanged(bool fullscreen);
     void mpvShutdown();
 
   public:
