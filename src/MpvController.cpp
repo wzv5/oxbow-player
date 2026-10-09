@@ -448,6 +448,73 @@ void MpvController::commandAsync(const QStringList &args) {
     mpv_command_async(m_mpv, 0, argv.data());
 }
 
+// N92：同步命令带回返回串（口径见声明处）。参数走节点数组而非 command-string，不赌其解析；
+// QByteArray 与节点向量的生命期必须覆盖整次调用（mpv_command_node 返回前不析构、不复制）
+QString MpvController::commandResultString(const QStringList &args) const {
+    if (args.isEmpty())
+        return QString();
+    std::vector<QByteArray> utf8;
+    utf8.reserve(size_t(args.size()));
+    for (const QString &arg : args)
+        utf8.push_back(arg.toUtf8());
+    std::vector<mpv_node> argNodes;
+    argNodes.reserve(utf8.size());
+    for (const QByteArray &arg : utf8) {
+        mpv_node node;
+        node.format = MPV_FORMAT_STRING;
+        node.u.string = const_cast<char *>(arg.constData());
+        argNodes.push_back(node);
+    }
+    mpv_node_list argList;
+    argList.num = int(argNodes.size());
+    argList.keys = nullptr; // 顶层是数组无键（与 loadFile / screenshotRaw 节点通道同口径）
+    argList.values = argNodes.data();
+    mpv_node argRoot;
+    argRoot.format = MPV_FORMAT_NODE_ARRAY;
+    argRoot.u.list = &argList;
+
+    mpv_node result;
+    const int err = mpv_command_node(m_mpv, &argRoot, &result);
+    if (err != 0) {
+        qDebug() << "[oxbow] commandResultString failed:" << err;
+        return QString();
+    }
+    QString out;
+    if (result.format == MPV_FORMAT_STRING && result.u.string)
+        out = QString::fromUtf8(result.u.string);
+    mpv_free_node_contents(&result);
+    return out;
+}
+
+// N92 §2：配置目录取值的唯一收口，三道校验的清单与安全顺序见声明处。这里只留最不吃眼的
+// 一条——判空必须落在目录上而非文件路径上：--no-config 下 ~~home/ 是空串，而
+// expand-path ~~/input.conf 交回的是非空裸串 "input.conf"，对它判空等于没判
+QString MpvController::configDir() const {
+    const QString raw =
+        commandResultString({QStringLiteral("expand-path"), QStringLiteral("~~home/")});
+    if (raw.isEmpty())
+        return QString();
+    const QString absolute = commandResultString({QStringLiteral("normalize-path"), raw});
+    if (absolute.isEmpty() || !QDir::isAbsolutePath(absolute))
+        return QString();
+    if (!QFileInfo(absolute).isDir())
+        return QString();
+    return absolute;
+}
+
+// 两个文件出口共用这一次目录取值，文件名词法拼接（toNativeSeparators 是纯串加工，
+// 不碰文件系统——目录已由 normalize-path 交回反斜杠形态，这里只是让拼接符与之一致）
+QString MpvController::mpvConfPath() const {
+    const QString dir = configDir();
+    return dir.isEmpty() ? QString() : QDir::toNativeSeparators(dir + QStringLiteral("/mpv.conf"));
+}
+
+QString MpvController::inputConfPath() const {
+    const QString dir = configDir();
+    return dir.isEmpty() ? QString()
+                         : QDir::toNativeSeparators(dir + QStringLiteral("/input.conf"));
+}
+
 QImage MpvController::screenshotRaw() {
     // N78：screenshot-raw 经节点通道取内存原始图像（仅 client API 可用）。
     // 命令不带参数：flags 省略 = subtitles（原始视频分辨率、带字幕），

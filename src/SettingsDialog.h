@@ -76,7 +76,8 @@ class SettingsDialog : public QDialog {
 
     MpvController *m_controller = nullptr;
     QString m_pluginIniPath;            // oxbow.ini 完整路径
-    QString m_mpvConfPath;              // mpv.conf 路径（resolveMpvConfPath 解析后）
+    QString m_mpvConfPath;              // mpv.conf 路径（N92：expand-path 取目录再拼；
+                                        // 空 = 配置目录不可用，仅运行期分支）
     std::optional<MpvConf> m_confCache; // 构造期 open 一次，写盘时直接 commit
 
     QListWidget *m_categoryList = nullptr;

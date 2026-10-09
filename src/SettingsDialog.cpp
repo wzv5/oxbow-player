@@ -6,7 +6,6 @@
 #include "FilterListWidget.h"
 #include "MpvConf.h"
 #include "MpvController.h"
-#include "Util.h"
 
 // ===================== 设置目录数据模型（R4 §4.1） =====================
 // 数据模型类型定义在全局作用域而非匿名命名空间：SettingsDialog.h 以全局前置
@@ -616,9 +615,14 @@ void validateCatalog() {
 SettingsDialog::SettingsDialog(QWidget *parent, MpvController *controller,
                                const QString &pluginIniPath)
     : QDialog(parent), m_controller(controller), m_pluginIniPath(pluginIniPath) {
-    // mpv.conf 路径（resolveMpvConfPath 上溯两级即 portable_config，必存在目录）
-    m_mpvConfPath = Util::resolveMpvConfPath(QFileInfo(pluginIniPath).absolutePath());
-    m_confCache = MpvConf::open(m_mpvConfPath);
+    // mpv.conf 路径：一切位置问 mpv 自己（N92：expand-path ~~home/ 取目录再拼文件名，
+    // 见 MpvController::configDir），插件不再自行推导。取不到有效路径（空串）就根本不
+    // open——m_confCache 保持无值，mpv 侧各项照常可改照常下发（写点本就有
+    // if (m_confCache) 守卫），只是不落盘；回填读的是实时属性不经 conf 缓存，初值不受
+    // 影响。绝不把空串喂给 open：那会读成空配置，Apply 时可能拿一份空配置去覆盖真配置
+    m_mpvConfPath = m_controller->mpvConfPath();
+    if (!m_mpvConfPath.isEmpty())
+        m_confCache = MpvConf::open(m_mpvConfPath);
 
     setWindowTitle(tr("Settings"));
     resize(760, 520); // 默认窗口尺寸（内容较小时避免对话框过小）
@@ -1092,6 +1096,9 @@ void SettingsDialog::updateApplyButtonState() {
 bool SettingsDialog::applyAll() {
     bool ok = true;
     bool mpvConfDirty = false;
+    // N92：仅运行期——mpv 侧改动没进 conf 缓存（m_confCache 无值：配置目录不可用，或
+    // mpv.conf 打不开），本轮发生过这类改动即置位，Apply 尾部如实告知不落盘
+    bool mpvRuntimeOnly = false;
     QStringList changedIniKeys; // N35：本轮实际写入的 ini 键（应用成功后随信号发出）
     QStringList failedMpvKeys;  // N42：String 下发失败的 key（合并为一条提示）
     for (auto it = m_pending.begin(); it != m_pending.end(); ++it) {
@@ -1133,6 +1140,8 @@ bool SettingsDialog::applyAll() {
                 if (m_confCache) {
                     m_confCache->setGlobal(a.key(), a.value());
                     mpvConfDirty = true;
+                } else {
+                    mpvRuntimeOnly = true;
                 }
             }
         } else if (!item->mpvKeys.isEmpty() && item->widget == WidgetKind::CheckBox &&
@@ -1149,6 +1158,8 @@ bool SettingsDialog::applyAll() {
                     if (m_confCache) {
                         m_confCache->setGlobal(a.key(), a.value());
                         mpvConfDirty = true;
+                    } else {
+                        mpvRuntimeOnly = true;
                     }
                 }
                 break;
@@ -1187,6 +1198,8 @@ bool SettingsDialog::applyAll() {
             if (m_confCache) {
                 m_confCache->setGlobal(k, confValue);
                 mpvConfDirty = true;
+            } else {
+                mpvRuntimeOnly = true;
             }
         }
     }
@@ -1195,8 +1208,15 @@ bool SettingsDialog::applyAll() {
                              tr("Failed to apply the following mpv options: %1\n"
                                 "These values were not written to mpv.conf.")
                                  .arg(failedMpvKeys.join(QStringLiteral(", "))));
-    if (mpvConfDirty && m_confCache)
+    if (mpvConfDirty && m_confCache) {
         ok &= m_confCache->commit();
+    } else if (mpvRuntimeOnly) {
+        // N92：仅运行期——改动已照常下发，只是这一轮存不进 mpv.conf，如实告知
+        // （文案不指认成因：目录不可用与文件打不开都落到这里）
+        QMessageBox::information(this, tr("Settings"),
+                                 tr("The mpv configuration directory is not writable, so these "
+                                    "changes apply to this session only and are not saved."));
+    }
     // 应用完成：更新快照为当前已应用值；Apply 按钮随之禁用
     if (ok) {
         m_appliedSnapshot = m_pending;

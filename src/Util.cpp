@@ -581,43 +581,4 @@ QDateTime parseReleaseDate(const QString &s) {
     return {};
 }
 
-QString resolveMpvConfPath(const QString &pluginDir) {
-    // 第一候选（全平台同构）：<pluginDir>/../.. 下 mpv.conf——Windows 为
-    // portable_config（mpv 启动时若不存在会自动创建，必存在目录）；Linux 惯例
-    // 落位 ~/.config/mpv/scripts/oxbow/ 时上溯恰为 ~/.config/mpv，天然命中用户
-    // mpv.conf
-    const QString portableConf =
-        QDir::cleanPath(pluginDir + QStringLiteral("/../..")) + QStringLiteral("/mpv.conf");
-    if (QFileInfo::exists(portableConf))
-        return portableConf;
-#ifdef Q_OS_WIN
-    // 第二候选（Windows）：%APPDATA%/mpv/mpv.conf
-    const QString appdata = qEnvironmentVariable("APPDATA");
-    if (!appdata.isEmpty()) {
-        const QString userConf = appdata + QStringLiteral("/mpv/mpv.conf");
-        if (QFileInfo::exists(userConf))
-            return userConf;
-    }
-    // 都不存在：返回创建目标（目录必存在，由 commit() 创建文件）
-    return portableConf;
-#else
-    // N83：第二候选（POSIX）为 XDG mpv 用户配置目录（$XDG_CONFIG_HOME/mpv，缺省
-    // ~/.config/mpv）。XDG 约定：XDG_CONFIG_HOME 非绝对路径时忽略
-    QString configHome = qEnvironmentVariable("XDG_CONFIG_HOME");
-    if (configHome.isEmpty() || !QDir::isAbsolutePath(configHome))
-        configHome = QDir::homePath() + QStringLiteral("/.config");
-    const QString userConf = configHome + QStringLiteral("/mpv/mpv.conf");
-    if (QFileInfo::exists(userConf))
-        return userConf;
-    // 都不存在：创建目标。上溯目录在系统目录安装等场景可能不存在（QSaveFile
-    // 不创建目录），此时兜底落 XDG mpv 目录并先建目录（commit() 只负责创建文件）；
-    // 上溯目录存在时仍按 portable 口径原样返回
-    const QString baseDir = QDir::cleanPath(pluginDir + QStringLiteral("/../.."));
-    if (QFileInfo::exists(baseDir))
-        return portableConf;
-    QDir().mkpath(configHome + QStringLiteral("/mpv"));
-    return userConf;
-#endif
-}
-
 } // namespace Util

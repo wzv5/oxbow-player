@@ -29,6 +29,14 @@ class MpvController : public QObject {
     // 都可能被一个键拉起来），GUI 线程不等它。reply_userdata 恒 0、回执一律不读
     void commandAsync(const QStringList &args);
 
+    // N92：同步命令并取回返回串（expand-path / normalize-path 等仅 client API 可用的
+    // 纯计算命令）。经 mpv_command_node 下发（参数一律包成字符串节点），result 出参
+    // 只认 MPV_FORMAT_STRING；命令失败或返回值非字符串交空串，节点内存取完即还
+    // （失败路径不触碰 result，无须释放）。同步语义是必须的：取值就是为了定位文件，
+    // 本就得在下发前拿到。expand-path 一族无 I/O、不触碰视频/音频链路，GUI 线程直调
+    // 不会挂住；与 propertyString 同口径（不改本对象状态，纯读，故 const）
+    QString commandResultString(const QStringList &args) const;
+
     // N78：screenshot-raw 取内存原始图像——命令不带参数，flags 省略即默认
     // subtitles（原始视频分辨率、带字幕），format 省略即默认 bgr0（小端下与
     // QImage::Format_RGB32 同布局）。返回深拷贝出的独立 QImage（mpv 侧数据随
@@ -88,6 +96,21 @@ class MpvController : public QObject {
     // 规则见 FilterListWidget::quoteParamValue）；不可读 / 失败返回空列表。GUI 线程直读
     // （与 propertyString 同一线程口径，client API 除 wait_event 外线程安全）
     QList<FilterEntry> filterEntries(const QString &name);
+
+    // N92（含变更记录 1）：mpv 配置路径的两个取值出口——一切位置问 mpv 自己，插件不再
+    // 从任何目录自行推导。**取值以目录为单位**：expand-path ~~home/ 交配置目录，两个文件名
+    // 由该目录词法拼接（两文件同处一目录，只问一次）。校验顺序即安全顺序，任一不过交空串，
+    // 调用方据空串报错，绝不猜目录、绝不 mkpath、绝不降级：
+    //   目录非空——~~home/ 为空 ⇔ mpv 确实没有配置目录（--no-config，或显式 --config-dir=）；
+    //     判空必须落在目录上而非文件路径上：--no-config 下 expand-path ~~/input.conf 交回的是
+    //     非空的裸串 "input.conf"，对它判空等于没判；
+    //   能绝对化——相对 --config-dir 是合法用法（实测 mpv 按进程 cwd 正常加载），故不拒绝
+    //     相对串，改交 normalize-path 按同一基准词法展开（它不解符号链接，与 Qt 的
+    //     canonicalFilePath 不是一类东西）；展开后仍非绝对只作断言级兜底；
+    //   目录存在——mpv 不校验目录存在性，QSaveFile 又不建目录，留到写盘炸成一坨系统错误
+    //     不如在这里说清。只查不创建，"写到别处等于配置无效"（T10）不变
+    QString mpvConfPath() const;
+    QString inputConfPath() const;
 
     // N13：轨道信息（track-list 解析产物）
     struct TrackInfo {
@@ -189,6 +212,9 @@ class MpvController : public QObject {
     // N40：视频尺寸取值与发布（均在事件线程执行；videoSize() 复用同一取值路径）
     QSize readVideoSize() const; // 取值收口：out 优先、width/height 回退、皆不可读判无视频
     void publishVideoSize();     // 去重收口：与上次已发布值比对，不同才写入并 emit
+
+    // N92：配置目录取值的唯一收口，两个文件路径出口共用（校验与安全顺序见其声明处）
+    QString configDir() const;
 
     mpv_handle *m_mpv; // 由 mpv 拥有，插件不销毁
     // N40：上次已发布的视频尺寸——去重收口的比对基准（不再是从前"width/height
