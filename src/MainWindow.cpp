@@ -9,6 +9,7 @@
 #include "Constants.h"
 #include "FilterListWidget.h"
 #include "HttpClient.h"
+#include "MpvBindingDialog.h" // N89：mpv 键位编辑（input.conf）
 #include "MpvController.h"
 #include "MpvKeyName.h" // N87：未认领按键的 mpv 键名翻译
 #include "NavigatorPanel.h"
@@ -586,6 +587,11 @@ void MainWindow::createMenus() {
     connect(act(AM::Id::Settings), &QAction::triggered, this, &MainWindow::ensureSettingsDialog);
     fileMenu->addAction(act(AM::Id::Shortcuts));
     connect(act(AM::Id::Shortcuts), &QAction::triggered, this, &MainWindow::ensureShortcutsDialog);
+    // N89：mpv 键位编辑器与 N86 并列相邻但完全独立——一个管 mpv 侧（input.conf），
+    // 一个管插件侧（[shortcuts] 节）。不经 ActionManager 出生登记：本项无快捷键、
+    // 无 [shortcuts] 持久化语义，收进键位表反而会被 N86 编辑器当成可改绑条目
+    QAction *mpvBindingsAct = fileMenu->addAction(tr("&Key Bindings…"));
+    connect(mpvBindingsAct, &QAction::triggered, this, &MainWindow::ensureMpvBindingDialog);
     // N78：截图组——与 Settings 间加分隔符独立成组，其后原有「分隔符 + Quit」不动
     fileMenu->addSeparator();
     fileMenu->addAction(act(AM::Id::ScreenshotCopy));
@@ -3209,6 +3215,23 @@ void MainWindow::ensureShortcutsDialog() {
     connect(m_shortcutsDialog, &ShortcutsDialog::applied, this, &MainWindow::applyShortcutsLive);
     connect(m_shortcutsDialog, &QObject::destroyed, this, [this] { m_shortcutsDialog = nullptr; });
     m_shortcutsDialog->show();
+}
+
+// 按需创建/唤起 mpv 键位编辑对话框（N89，生命周期同 ensureShortcutsDialog）：
+// 非模态、复用不重建，重开时对话框自行重读 input.conf 与 input-bindings。
+// 注入 MpvController 与 ActionManager 两个只读指针：前者供 input-bindings 读取与
+// inputConfPath 取值，后者供 Apply 前的键位冲突提示（只读查键位表）
+void MainWindow::ensureMpvBindingDialog() {
+    if (m_bindingDialog) {
+        m_bindingDialog->show();
+        m_bindingDialog->raise();
+        m_bindingDialog->activateWindow();
+        return;
+    }
+    m_bindingDialog = new MpvBindingDialog(m_controller, m_actions, this);
+    m_bindingDialog->setAttribute(Qt::WA_DeleteOnClose, true);
+    connect(m_bindingDialog, &QObject::destroyed, this, [this] { m_bindingDialog = nullptr; });
+    m_bindingDialog->show();
 }
 
 // R3：MpvController::volumeMaxChanged 回调——同步 m_volumeMax 与滑条量程。

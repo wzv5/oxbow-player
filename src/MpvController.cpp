@@ -509,7 +509,33 @@ QString MpvController::mpvConfPath() const {
     return dir.isEmpty() ? QString() : QDir::toNativeSeparators(dir + QStringLiteral("/mpv.conf"));
 }
 
+// N89：在 N92 的 ~~home/ 链之前加 --input-conf 判读——重启口径下这份文件是改动
+// 生效的唯一途径，判读必须严格同构 mpv（四步表见规格 §6）：
+//   1. input-conf 含 "://"（memory:// 等流式形态）→ 不是可编辑的文件，空串；
+//   2. 非空普通路径 → expand-path + normalize-path 绝对化（允许相对路径），再探
+//      读（不存在 / 打不开 / 读失败同属 mpv 侧的"读不到"这一种失败）→ 读到才用；
+//   3. 读不到 → 回落 ~~home/ 链（mpv 随即去扫配置目录，写到 --input-conf 指定的
+//      位置永远不会被读）；
+//   4. input-conf 未设（空）→ ~~home/ 链（configDir() 内含判空 / 绝对化 / 判目录
+//      存在三道校验），拼 input.conf（文件本身不必存在）。
+// 全部答案都来自 mpv 原语与探读，无一处目录推导；空串即报错，不猜、不 mkpath、
+// 不降级。configDir() 与 mpvConfPath() 不动（对已归档 N92 的范围扩展仅此一处）。
 QString MpvController::inputConfPath() const {
+    const QString conf = propertyString(QStringLiteral("input-conf"));
+    if (conf.contains(QStringLiteral("://")))
+        return QString();
+    if (!conf.isEmpty()) {
+        const QString raw = commandResultString({QStringLiteral("expand-path"), conf});
+        if (!raw.isEmpty()) {
+            const QString absolute = commandResultString({QStringLiteral("normalize-path"), raw});
+            if (!absolute.isEmpty() && QDir::isAbsolutePath(absolute)) {
+                // 探读代替存在性检查：不存在 / 打不开 / 读失败同走回落链
+                QFile probe(absolute);
+                if (probe.open(QIODevice::ReadOnly))
+                    return QDir::toNativeSeparators(absolute);
+            }
+        }
+    }
     const QString dir = configDir();
     return dir.isEmpty() ? QString()
                          : QDir::toNativeSeparators(dir + QStringLiteral("/input.conf"));
@@ -713,6 +739,56 @@ QList<FilterEntry> MpvController::filterEntries(const QString &name) {
     result = parseFilterNode(&node);
     mpv_free_node_contents(&node);
     return result;
+}
+
+// N89：input-bindings 的 NODE 逐项解析（数组套 map；key / cmd / section / owner /
+// comment 为字符串，is_weak 为 flag，owner / comment 可缺）。形状异常的条目跳过。
+QList<MpvController::InputBinding> parseBindingNode(const mpv_node *node) {
+    QList<MpvController::InputBinding> result;
+    if (!node || node->format != MPV_FORMAT_NODE_ARRAY)
+        return result;
+    for (int i = 0; i < node->u.list->num; ++i) {
+        const mpv_node &entry = node->u.list->values[i];
+        if (entry.format != MPV_FORMAT_NODE_MAP)
+            continue;
+        MpvController::InputBinding b;
+        for (int j = 0; j < entry.u.list->num; ++j) {
+            const char *key = entry.u.list->keys[j];
+            const mpv_node &v = entry.u.list->values[j];
+            if (qstrcmp(key, "key") == 0 && v.format == MPV_FORMAT_STRING)
+                b.key = QString::fromUtf8(v.u.string);
+            else if (qstrcmp(key, "cmd") == 0 && v.format == MPV_FORMAT_STRING)
+                b.cmd = QString::fromUtf8(v.u.string);
+            else if (qstrcmp(key, "is_weak") == 0 && v.format == MPV_FORMAT_FLAG)
+                b.isWeak = v.u.flag != 0;
+            else if (qstrcmp(key, "owner") == 0 && v.format == MPV_FORMAT_STRING)
+                b.owner = QString::fromUtf8(v.u.string);
+            else if (qstrcmp(key, "section") == 0 && v.format == MPV_FORMAT_STRING)
+                b.section = QString::fromUtf8(v.u.string);
+            else if (qstrcmp(key, "comment") == 0 && v.format == MPV_FORMAT_STRING)
+                b.comment = QString::fromUtf8(v.u.string);
+        }
+        result.append(b);
+    }
+    return result;
+}
+
+MpvController::InputBindingTiers MpvController::inputBindings() const {
+    InputBindingTiers tiers;
+    mpv_node node;
+    if (mpv_get_property(m_mpv, "input-bindings", MPV_FORMAT_NODE, &node) != 0)
+        return tiers; // 失败 / 不可读 → 空档
+    const QList<InputBinding> all = parseBindingNode(&node);
+    mpv_free_node_contents(&node);
+    // 两档筛选三判据（规格 §2）：内置集 = is_weak 且 section == "default" 且无 owner；
+    // 脚本集 = owner 非空者。owner 判据在前：weak 且带 owner 的条目属脚本档
+    for (const InputBinding &b : all) {
+        if (!b.owner.isEmpty())
+            tiers.scripts.append(b);
+        else if (b.isWeak && b.section == QLatin1String("default"))
+            tiers.builtins.append(b);
+    }
+    return tiers;
 }
 
 double MpvController::propertyDouble(const QString &name, double fallback) const {

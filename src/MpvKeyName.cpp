@@ -6,131 +6,83 @@ namespace {
 
 // 特殊键表：只收非文本键——字母数字符号一律另有取名路径，不进本表（否则物理键位会截走
 // 布局翻译的结果，德语 QWERTZ 的 z 就成了 y）。拼写即 mpv key_names[] 的第二列；注意
-// Qt 的 Key_Enter 是小键盘回车（主回车为 Key_Return），故映 KP_ENTER 而非 ENTER
-QString specialName(int key) {
-    switch (key) {
-    case Qt::Key_Escape:
-        return QStringLiteral("ESC");
-    case Qt::Key_Return:
-        return QStringLiteral("ENTER");
-    case Qt::Key_Enter:
-        return QStringLiteral("KP_ENTER");
-    case Qt::Key_Space:
-        return QStringLiteral("SPACE");
-    case Qt::Key_Tab:
-        return QStringLiteral("TAB");
-    case Qt::Key_Backtab:
-        return QStringLiteral("TAB"); // mpv 无 BACKTAB，反向靠 Shift 位（调用方补）
-    case Qt::Key_Backspace:
-        return QStringLiteral("BS");
-    case Qt::Key_Delete:
-        return QStringLiteral("DEL");
-    case Qt::Key_Insert:
-        return QStringLiteral("INS");
-    case Qt::Key_PageUp:
-        return QStringLiteral("PGUP");
-    case Qt::Key_PageDown:
-        return QStringLiteral("PGDWN");
-    case Qt::Key_Home:
-        return QStringLiteral("HOME");
-    case Qt::Key_End:
-        return QStringLiteral("END");
-    case Qt::Key_Left:
-        return QStringLiteral("LEFT");
-    case Qt::Key_Right:
-        return QStringLiteral("RIGHT");
-    case Qt::Key_Up:
-        return QStringLiteral("UP");
-    case Qt::Key_Down:
-        return QStringLiteral("DOWN");
-    case Qt::Key_Print:
-        return QStringLiteral("PRINT");
-    case Qt::Key_Pause:
-        return QStringLiteral("PAUSE");
-    case Qt::Key_Menu:
-        return QStringLiteral("MENU");
+// Qt 的 Key_Enter 是小键盘回车（主回车为 Key_Return），故映 KP_ENTER 而非 ENTER。
+// N89 起数据化并服务正反两个方向：正向（键值 → 名）服务取名，反向服务反解与归一化
+struct NamedKey {
+    int key;
+    const char *name;
+};
+
+constexpr NamedKey kSpecialKeys[] = {
+    {Qt::Key_Escape, "ESC"},
+    {Qt::Key_Return, "ENTER"},
+    {Qt::Key_Enter, "KP_ENTER"},
+    {Qt::Key_Space, "SPACE"},
+    {Qt::Key_Tab, "TAB"},
+    {Qt::Key_Backtab, "TAB"}, // mpv 无 BACKTAB，反向靠 Shift 位（调用方补）
+    {Qt::Key_Backspace, "BS"},
+    {Qt::Key_Delete, "DEL"},
+    {Qt::Key_Insert, "INS"},
+    {Qt::Key_PageUp, "PGUP"},
+    {Qt::Key_PageDown, "PGDWN"},
+    {Qt::Key_Home, "HOME"},
+    {Qt::Key_End, "END"},
+    {Qt::Key_Left, "LEFT"},
+    {Qt::Key_Right, "RIGHT"},
+    {Qt::Key_Up, "UP"},
+    {Qt::Key_Down, "DOWN"},
+    {Qt::Key_Print, "PRINT"},
+    {Qt::Key_Pause, "PAUSE"},
+    {Qt::Key_Menu, "MENU"},
     // 媒体键。名字按 mpv 的媒体段（MM_BASE 偏移表）逐字对应；`PLAY` 与 `PLAYPAUSE`
     // 是两个键，Qt 的 MediaPause 单列，故 MediaTogglePlayPause 才映 PLAYPAUSE
-    case Qt::Key_MediaPlay:
-        return QStringLiteral("PLAY");
-    case Qt::Key_MediaPause:
-        return QStringLiteral("PAUSE");
-    case Qt::Key_MediaTogglePlayPause:
-        return QStringLiteral("PLAYPAUSE");
-    case Qt::Key_MediaStop:
-        return QStringLiteral("STOP");
-    case Qt::Key_MediaNext:
-        return QStringLiteral("NEXT");
-    case Qt::Key_MediaPrevious:
-        return QStringLiteral("PREV");
-    case Qt::Key_MediaRecord:
-        return QStringLiteral("RECORD");
-    case Qt::Key_AudioRewind:
-        return QStringLiteral("REWIND");
-    case Qt::Key_AudioForward:
-        return QStringLiteral("FORWARD");
-    case Qt::Key_VolumeUp:
-        return QStringLiteral("VOLUME_UP");
-    case Qt::Key_VolumeDown:
-        return QStringLiteral("VOLUME_DOWN");
-    case Qt::Key_VolumeMute:
-        return QStringLiteral("MUTE");
-    case Qt::Key_LaunchMail:
-        return QStringLiteral("MAIL");
+    {Qt::Key_MediaPlay, "PLAY"},
+    {Qt::Key_MediaPause, "PAUSE"},
+    {Qt::Key_MediaTogglePlayPause, "PLAYPAUSE"},
+    {Qt::Key_MediaStop, "STOP"},
+    {Qt::Key_MediaNext, "NEXT"},
+    {Qt::Key_MediaPrevious, "PREV"},
+    {Qt::Key_MediaRecord, "RECORD"},
+    {Qt::Key_AudioRewind, "REWIND"},
+    {Qt::Key_AudioForward, "FORWARD"},
+    {Qt::Key_VolumeUp, "VOLUME_UP"},
+    {Qt::Key_VolumeDown, "VOLUME_DOWN"},
+    {Qt::Key_VolumeMute, "MUTE"},
+    {Qt::Key_LaunchMail, "MAIL"},
     // `#` 无需在此列：mpv 的 SHARP 就是 { '#', "SHARP" } 那个码点项的别名，而 Qt 的
     // '#' 键值是 Key_NumberSign = 0x23，落在码点取名路径上直接交出 '#'（解析同值）
-    default:
-        break;
-    }
+};
+
+// 小键盘段：Qt 的小键盘 key() 与主键盘同值（数字就是 Key_0–Key_9、句点是 Key_Period），
+// 唯一区别是 KeypadModifier——故本道判定必须排在所有取名路径之前，晚一步 KP5 就被压成
+// 字符 '5'。KP_DEC（小数点）与 KP_DEL（102 键盘的逗号）在 mpv 侧是两个键，不可互换
+constexpr NamedKey kKeypadKeys[] = {
+    {Qt::Key_Period, "KP_DEC"},     {Qt::Key_Comma, "KP_DEL"},
+    {Qt::Key_Plus, "KP_ADD"},       {Qt::Key_Minus, "KP_SUBTRACT"},
+    {Qt::Key_Slash, "KP_DIVIDE"},   {Qt::Key_Asterisk, "KP_MULTIPLY"},
+    {Qt::Key_Enter, "KP_ENTER"},    {Qt::Key_Home, "KP_HOME"},
+    {Qt::Key_End, "KP_END"},        {Qt::Key_PageUp, "KP_PGUP"},
+    {Qt::Key_PageDown, "KP_PGDWN"}, {Qt::Key_Insert, "KP_INS"},
+    {Qt::Key_Delete, "KP_DEL"},     {Qt::Key_Left, "KP_LEFT"},
+    {Qt::Key_Right, "KP_RIGHT"},    {Qt::Key_Up, "KP_UP"},
+    {Qt::Key_Down, "KP_DOWN"},
+    // numlock 关时的 KP5（mpv 侧名 KP_BEGIN）不映：Qt 无 Key_Begin 枚举，实际报
+    // Key_Clear / Key_Select 一族且两平台不一——发错键名比不发更糟，故不接
+};
+
+QString specialName(int key) {
+    for (const NamedKey &e : kSpecialKeys)
+        if (e.key == key)
+            return QString::fromLatin1(e.name);
     if (key >= Qt::Key_F1 && key <= Qt::Key_F24)
         return QStringLiteral("F%1").arg(key - Qt::Key_F1 + 1);
     return QString();
 }
 
-// 小键盘段：Qt 的小键盘 key() 与主键盘同值（数字就是 Key_0–Key_9、句点是 Key_Period），
-// 唯一区别是 KeypadModifier——故本道判定必须排在所有取名路径之前，晚一步 KP5 就被压成
-// 字符 '5'。KP_DEC（小数点）与 KP_DEL（102 键盘的逗号）在 mpv 侧是两个键，不可互换
 QString keypadName(int key) {
-    switch (key) {
-    case Qt::Key_Period:
-        return QStringLiteral("KP_DEC");
-    case Qt::Key_Comma:
-        return QStringLiteral("KP_DEL");
-    case Qt::Key_Plus:
-        return QStringLiteral("KP_ADD");
-    case Qt::Key_Minus:
-        return QStringLiteral("KP_SUBTRACT");
-    case Qt::Key_Slash:
-        return QStringLiteral("KP_DIVIDE");
-    case Qt::Key_Asterisk:
-        return QStringLiteral("KP_MULTIPLY");
-    case Qt::Key_Enter:
-        return QStringLiteral("KP_ENTER");
-    case Qt::Key_Home:
-        return QStringLiteral("KP_HOME");
-    case Qt::Key_End:
-        return QStringLiteral("KP_END");
-    case Qt::Key_PageUp:
-        return QStringLiteral("KP_PGUP");
-    case Qt::Key_PageDown:
-        return QStringLiteral("KP_PGDWN");
-    case Qt::Key_Insert:
-        return QStringLiteral("KP_INS");
-    case Qt::Key_Delete:
-        return QStringLiteral("KP_DEL");
-    // numlock 关时的 KP5（mpv 侧名 KP_BEGIN）不映：Qt 无 Key_Begin 枚举，实际报
-    // Key_Clear / Key_Select 一族且两平台不一——发错键名比不发更糟，故不接
-    case Qt::Key_Left:
-        return QStringLiteral("KP_LEFT");
-    case Qt::Key_Right:
-        return QStringLiteral("KP_RIGHT");
-    case Qt::Key_Up:
-        return QStringLiteral("KP_UP");
-    case Qt::Key_Down:
-        return QStringLiteral("KP_DOWN");
-    default:
-        break;
-    }
+    for (const NamedKey &e : kKeypadKeys)
+        if (e.key == key)
+            return QString::fromLatin1(e.name);
     if (key >= Qt::Key_0 && key <= Qt::Key_9)
         return QStringLiteral("KP%1").arg(key - Qt::Key_0);
     return QString();
@@ -147,6 +99,165 @@ QString charName(int key, bool shifted) {
     return QString(QChar(char16_t(c)));
 }
 
+// 主键名（无修饰前缀）→ 键码，可携带 KeypadModifier / ShiftModifier 位：
+// 小写字母 → 字母键无 Shift（mpv 侧小写字符），大写字母 → 字母键带 Shift
+// （mpv 侧大写字符，见 mpv mp_normalize_keycode 的 Shift 折进）。
+// 符号键名大小写不敏感（手册：Symbolic key names are case-insensitive）。
+// 豁免面（N89 §3.2）：0x<hex> 写法与非 ASCII 裸字符不作反解。解不出交 nullopt。
+std::optional<int> keyFromBaseName(const QString &name) {
+    if (name.isEmpty())
+        return std::nullopt;
+    if ((name.front() == QLatin1Char('F') || name.front() == QLatin1Char('f')) &&
+        name.size() >= 2) {
+        bool ok = false;
+        const int n = name.mid(1).toInt(&ok);
+        if (ok && n >= 1 && n <= 24)
+            return int(Qt::Key_F1) + n - 1;
+    }
+    for (const NamedKey &e : kSpecialKeys)
+        if (name.compare(QLatin1String(e.name), Qt::CaseInsensitive) == 0)
+            return e.key;
+    for (const NamedKey &e : kKeypadKeys)
+        if (name.compare(QLatin1String(e.name), Qt::CaseInsensitive) == 0)
+            return e.key | int(Qt::KeypadModifier);
+    // 小键盘数字与 F 族都是生成式名（keypadName 交 KP%1），未逐项登记在表里
+    if (name.size() == 3 &&
+        (name.front() == QLatin1Char('K') || name.front() == QLatin1Char('k')) &&
+        (name.at(1) == QLatin1Char('P') || name.at(1) == QLatin1Char('p'))) {
+        const int d = int(name.at(2).unicode()) - int(u'0');
+        if (d >= 0 && d <= 9)
+            return (int(Qt::Key_0) + d) | int(Qt::KeypadModifier);
+    }
+    // 字符别名里只有 SHARP 不走码点反向（"#" 的表名；SPACE 等其余别名已在 kSpecialKeys）
+    if (name.compare(QLatin1String("SHARP"), Qt::CaseInsensitive) == 0)
+        return int(Qt::Key_NumberSign);
+    if (name.size() == 1) {
+        const char16_t c = name.front().unicode();
+        if (c >= 0x20 && c <= 0x7E) {
+            if (c >= 'a' && c <= 'z')
+                return int(Qt::Key_A) + (c - 'a');
+            if (c >= 'A' && c <= 'Z')
+                return (int(Qt::Key_A) + (c - 'A')) | int(Qt::ShiftModifier);
+            return int(c);
+        }
+    }
+    return std::nullopt;
+}
+
+// 单段（一个组合键内的一个按键名）→ Qt 键组合（键值 | 修饰位）。修饰名与主键名
+// 均大小写不敏感，修饰先按 '+' 逐个剥离（与 mpv mp_input_get_key_from_name 同构）；
+// "+" 字面量特例（"Ctrl++" → Ctrl + '+' 键）。任一步解不出交 nullopt。
+std::optional<int> codeFromSegment(const QString &seg) {
+    int mods = 0;
+    QString s = seg;
+    while (true) {
+        const qsizetype p = s.indexOf(QLatin1Char('+'));
+        if (p < 0)
+            break;
+        const QString prefix = s.left(p);
+        if (prefix.compare(QLatin1String("Shift"), Qt::CaseInsensitive) == 0) {
+            mods |= int(Qt::ShiftModifier);
+        } else if (prefix.compare(QLatin1String("Ctrl"), Qt::CaseInsensitive) == 0) {
+            mods |= int(Qt::ControlModifier);
+        } else if (prefix.compare(QLatin1String("Alt"), Qt::CaseInsensitive) == 0) {
+            mods |= int(Qt::AltModifier);
+        } else if (prefix.compare(QLatin1String("Meta"), Qt::CaseInsensitive) == 0) {
+            mods |= int(Qt::MetaModifier);
+        } else if (s == QLatin1String("+")) {
+            return int(Qt::Key_Plus) | mods; // 字面 '+' 的特例
+        } else {
+            return std::nullopt; // 非修饰名的 '+' → 非法
+        }
+        s = s.mid(p + 1);
+    }
+    const std::optional<int> base = keyFromBaseName(s);
+    if (!base)
+        return std::nullopt;
+    return *base | mods;
+}
+
+// 组合键切分：mpv 以 '-' 分隔多键序列，'-' 键自身写作 "--"（切分成对识别）。
+// 孤立的段首 '-'（畸形）并入下段、交由段解析判失败，不产空段。
+QStringList splitCombo(const QString &name) {
+    QStringList segs;
+    qsizetype start = 0;
+    qsizetype i = 0;
+    while (i < name.size()) {
+        if (name.at(i) != QLatin1Char('-')) {
+            ++i;
+            continue;
+        }
+        if (i == start) {
+            if (i + 1 < name.size() && name.at(i + 1) == QLatin1Char('-')) {
+                segs.append(QStringLiteral("-")); // "--" → 一个 '-' 键
+                i += 2;
+                if (i < name.size() && name.at(i) == QLatin1Char('-'))
+                    ++i; // 后随的分隔符
+                start = i;
+            } else {
+                ++i;
+            }
+            continue;
+        }
+        segs.append(name.mid(start, i - start));
+        ++i;
+        start = i;
+    }
+    if (start < name.size())
+        segs.append(name.mid(start));
+    return segs;
+}
+
+// 修饰前缀组装：按 mpv 回吐的固定顺序（modifier_names：Shift、Ctrl、Alt、Meta）。
+// Shift 只在表键在场时拼——文本键的 Shift 位会被 mpv 归一化丢弃（折进大小写），
+// 拼上只是混淆语义。
+QString assembleName(const QString &base, bool fromTable, Qt::KeyboardModifiers mods) {
+    QString name;
+    if (fromTable && mods.testFlag(Qt::ShiftModifier))
+        name += QStringLiteral("Shift+");
+    if (mods.testFlag(Qt::ControlModifier))
+        name += QStringLiteral("Ctrl+");
+    if (mods.testFlag(Qt::AltModifier))
+        name += QStringLiteral("Alt+");
+    if (mods.testFlag(Qt::MetaModifier))
+        name += QStringLiteral("Meta+");
+    name += base;
+    return name;
+}
+
+// 键值 + 修饰位 → 主键名（无修饰前缀）。KeypadModifier 优先判表（晚一步 KP5 就被
+// 压成字符 '5'）；表键交 fromTable=true（决定 Shift 是否拼前缀）。取不到交空串。
+QString baseNameFromCode(int key, Qt::KeyboardModifiers mods, bool *fromTable) {
+    if (mods.testFlag(Qt::KeypadModifier)) {
+        const QString n = keypadName(key);
+        if (n.isEmpty())
+            return QString(); // 表外的小键盘键值（NumLock / ScrollLock 等）在 mpv 侧没有名字
+        if (fromTable)
+            *fromTable = true;
+        return n;
+    }
+    const QString n = specialName(key);
+    if (!n.isEmpty()) {
+        if (fromTable)
+            *fromTable = true;
+        return n;
+    }
+    if (fromTable)
+        *fromTable = false;
+    return charName(key, mods.testFlag(Qt::ShiftModifier));
+}
+
+// N89 序列化 / 归一化共用的主键名出口：'#' 键按 mpv key_names 的表名交 SHARP——
+// 键位写 "#" 会被 input.conf 整行当注释（§3.2），而 mpv 回吐 0x23 时同样命中表名
+// SHARP，归一与跨源比对必须同形。事件转发路径（nameFromEvent）保持码点 '#'：
+// keypress 注入走命令参数不落行首，解析同值，两处口径不同是有意的
+QString canonicalBaseName(int key, Qt::KeyboardModifiers mods, bool *fromTable) {
+    QString base = baseNameFromCode(key, mods, fromTable);
+    if (base == QLatin1String("#"))
+        return QStringLiteral("SHARP");
+    return base;
+}
+
 } // namespace
 
 QString MpvKey::nameFromEvent(const QKeyEvent *event) {
@@ -157,18 +268,17 @@ QString MpvKey::nameFromEvent(const QKeyEvent *event) {
     const int key = int(event->key()) & ~int(Qt::KeyboardModifierMask);
     const bool shifted = mods.testFlag(Qt::ShiftModifier);
 
-    QString base;
-    // 名字来自特殊键表才拼 Shift：文本键的 Shift 位会被 mpv 归一化丢弃，拼上只是混淆语义
     bool fromTable = false;
-
+    QString base;
+    // 事件路径刻意不复用 baseNameFromCode：布局翻译后的字符（含 Shift / Caps Lock 结果）
+    // 必须先看，物理位取名只作兜底。次序颠倒会把 Caps Lock 的大写字母交成小写、把
+    // Shift+2 交成 "2"，而 mpv 认的是按键实际产出的字符（手册：Shift+2 应写作 @）。
     if (mods.testFlag(Qt::KeypadModifier)) {
-        base = keypadName(key);
+        base = keypadName(key); // 表外的小键盘键值（NumLock / ScrollLock 等）不回落
         fromTable = !base.isEmpty();
-        if (base.isEmpty())
-            return QString(); // 表外的小键盘键值（NumLock / ScrollLock 等）在 mpv 侧没有名字
     } else if (mods & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier)) {
         // Ctrl / Alt / Meta 在场时 text() 不可依赖（Ctrl+字母给的是控制字符，
-        // Ctrl+符号两平台形态不一），故一律由键值取名。
+        // Ctrl+符号两平台形态不一），故一律由键值取名
         base = specialName(key);
         fromTable = !base.isEmpty();
         if (base.isEmpty())
@@ -177,7 +287,7 @@ QString MpvKey::nameFromEvent(const QKeyEvent *event) {
         base = specialName(key);
         fromTable = !base.isEmpty();
         if (base.isEmpty()) {
-            const QString typed = event->text(); // 布局翻译后的字符，含 Shift / Caps Lock 结果
+            const QString typed = event->text();
             if (typed.size() == 1) {
                 const char16_t c = typed.at(0).unicode();
                 if (c >= 0x20 && c != 0x7F)
@@ -185,21 +295,78 @@ QString MpvKey::nameFromEvent(const QKeyEvent *event) {
             }
         }
         if (base.isEmpty())
-            base = charName(key, shifted); // 兜底：text() 万一不出值，按物理位交名而不任其蒸发
+            base = charName(key, shifted); // 兜底：text() 不出值时按物理位交名，不任其蒸发
     }
 
     if (base.isEmpty())
         return QString();
+    return assembleName(base, fromTable, mods);
+}
 
-    QString name;
-    if (mods & Qt::ControlModifier)
-        name += QStringLiteral("Ctrl+");
-    if (mods & Qt::AltModifier)
-        name += QStringLiteral("Alt+");
-    if (mods & Qt::MetaModifier)
-        name += QStringLiteral("Meta+");
-    if (fromTable && shifted)
-        name += QStringLiteral("Shift+");
-    name += base;
-    return name;
+QString MpvKey::nameFromSequence(const QKeySequence &sequence) {
+    if (sequence.isEmpty())
+        return QString();
+    QStringList segs;
+    for (int i = 0; i < sequence.count(); ++i) {
+        // 逐段 count() / operator[] 取值（QKeyCombination 接口取键值与修饰位）
+        const QKeyCombination combo = sequence[i];
+        const int key = int(combo.key());
+        const Qt::KeyboardModifiers mods = combo.keyboardModifiers();
+        bool fromTable = false;
+        const QString base = canonicalBaseName(key, mods, &fromTable);
+        if (base.isEmpty())
+            return QString(); // 任一段取不到名 → 整串作废
+        segs.append(assembleName(base, fromTable, mods));
+    }
+    return segs.join(QLatin1Char('-'));
+}
+
+QKeySequence MpvKey::sequenceFromName(const QString &name) {
+    const QStringList segs = splitCombo(name);
+    if (segs.isEmpty() || segs.size() > 4)
+        return QKeySequence(); // Qt 侧至多 4 段（mpv 上限 MP_MAX_KEY_DOWN=16）
+    int codes[4] = {0, 0, 0, 0};
+    for (int i = 0; i < segs.size(); ++i) {
+        const std::optional<int> code = codeFromSegment(segs.at(i));
+        if (!code)
+            return QKeySequence(); // 任一段无效 → 整串作废（mpv 同语义）
+        codes[i] = *code;
+    }
+    switch (segs.size()) {
+    case 1:
+        return QKeySequence(codes[0]);
+    case 2:
+        return QKeySequence(codes[0], codes[1]);
+    case 3:
+        return QKeySequence(codes[0], codes[1], codes[2]);
+    default:
+        return QKeySequence(codes[0], codes[1], codes[2], codes[3]);
+    }
+}
+
+QString MpvKey::normalizedKeyName(const QString &name) {
+    if (name.isEmpty())
+        return name;
+    const QStringList segs = splitCombo(name);
+    QStringList canon;
+    for (const QString &seg : segs) {
+        const std::optional<int> code = codeFromSegment(seg);
+        if (!code)
+            return name; // 任一段解不出 → 原串（自成一组，永不与内置集匹配）
+        const auto mods = Qt::KeyboardModifiers(*code & int(Qt::KeyboardModifierMask));
+        const int key = *code & ~int(Qt::KeyboardModifierMask);
+        // mpv mp_normalize_keycode：ASCII 区间（< MP_KEY_BASE = 0x1000000）Shift 一律
+        // 丢弃、字母折进大小写。字母的大小写映射已由码点路径天然完成（小写 → 无 Shift
+        // 位、大写 → Shift 位，见 keyFromBaseName），此处只需把非字母文本键的 Shift
+        // 丢掉（Shift+2 ≡ 2、Shift+SPACE ≡ SPACE）；特殊键（方向键等）Shift 保留
+        Qt::KeyboardModifiers emitMods = mods;
+        if (key < 0x1000000 && !(key >= Qt::Key_A && key <= Qt::Key_Z))
+            emitMods &= ~Qt::ShiftModifier;
+        bool fromTable = false;
+        const QString base = canonicalBaseName(key, emitMods, &fromTable);
+        if (base.isEmpty())
+            return name;
+        canon.append(assembleName(base, fromTable, emitMods));
+    }
+    return canon.join(QLatin1Char('-'));
 }

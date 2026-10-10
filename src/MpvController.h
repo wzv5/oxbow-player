@@ -97,6 +97,26 @@ class MpvController : public QObject {
     // （与 propertyString 同一线程口径，client API 除 wait_event 外线程安全）
     QList<FilterEntry> filterEntries(const QString &name);
 
+    // N89：input-bindings 条目（字段语义见规格附录 A；owner / comment 可缺）
+    struct InputBinding {
+        QString key;         // 归一化键名（多键序列以 '-' 连接）
+        QString cmd;         // 命令串（与源一致的原文）
+        bool isWeak = false; // 真 = 内置（is_builtin）
+        QString owner;       // 非空 = 脚本添加（取自区）
+        QString section;     // 所属输入区
+        QString comment;     // 出厂描述（可缺）
+    };
+    // N89：input-bindings 的一次性结构化读（MPV_FORMAT_NODE，形态照 filterEntries
+    // 先例；手册明写该属性不支持变更通知，故只在对话框打开时读一次，不观察）。
+    // 两档筛选在此收口：内置集 = is_weak 且 section == "default" 且无 owner；
+    // 脚本集 = owner 非空者。其余条目（脚本自建区 / 用户具名区里的 weak 条目等）
+    // 不进两档。读失败交空档。
+    struct InputBindingTiers {
+        QList<InputBinding> builtins;
+        QList<InputBinding> scripts;
+    };
+    InputBindingTiers inputBindings() const;
+
     // N92（含变更记录 1）：mpv 配置路径的两个取值出口——一切位置问 mpv 自己，插件不再
     // 从任何目录自行推导。**取值以目录为单位**：expand-path ~~home/ 交配置目录，两个文件名
     // 由该目录词法拼接（两文件同处一目录，只问一次）。校验顺序即安全顺序，任一不过交空串，
@@ -110,6 +130,8 @@ class MpvController : public QObject {
     //   目录存在——mpv 不校验目录存在性，QSaveFile 又不建目录，留到写盘炸成一坨系统错误
     //     不如在这里说清。只查不创建，"写到别处等于配置无效"（T10）不变
     QString mpvConfPath() const;
+    // N89：扩展 --input-conf 判读（判读四步表见规格 §6 与实现处注释）——~~home/
+    // 链的取值语义与校验顺序不变；--no-config 下仍交空串
     QString inputConfPath() const;
 
     // N13：轨道信息（track-list 解析产物）

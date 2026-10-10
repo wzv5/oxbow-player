@@ -64,9 +64,10 @@ class MainWindow : public QMainWindow {
     void seekReleased();
     void setPlaylistVisible(bool visible);
     void setNavigatorVisible(bool visible);
-    void ensureSettingsDialog();  // R3：按需创建/唤起设置对话框（非模态）
-    void ensureShortcutsDialog(); // N86：快捷键编辑对话框（非模态、按需创建）
-    void applyShortcutsLive();    // N86：落盘成功后的即时生效（从 ini 重载键位）
+    void ensureSettingsDialog();   // R3：按需创建/唤起设置对话框（非模态）
+    void ensureShortcutsDialog();  // N86：快捷键编辑对话框（非模态、按需创建）
+    void ensureMpvBindingDialog(); // N89：mpv 键位编辑对话框（非模态、按需创建）
+    void applyShortcutsLive();     // N86：落盘成功后的即时生效（从 ini 重载键位）
     // N90：console 开关驱动的键盘让位。开：一次性焦点收口到主窗并装窗口级过滤器；
     // 关：拆过滤器即完。键位表全程不动，让位期内键盘归属由焦点位置决定
     void onConsoleOpenChanged(bool open);
@@ -434,6 +435,7 @@ class MainWindow : public QMainWindow {
     class SettingsDialog *m_settingsDialog = nullptr;
     // N86：快捷键编辑对话框（非模态，按需创建）
     class ShortcutsDialog *m_shortcutsDialog = nullptr;
+    class MpvBindingDialog *m_bindingDialog = nullptr; // N89：mpv 键位编辑（input.conf）
     // N90：console 让位态（真 = 让位生效：窗口级过滤器已装且焦点判据生效）
     bool m_inputYielded = false;
     QActionGroup *m_chapterGroup = nullptr;

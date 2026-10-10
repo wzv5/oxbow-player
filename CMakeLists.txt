@@ -122,10 +122,14 @@ add_library(oxbowcore MODULE
     src/MediaInfoHelper.h
     src/MpvConf.cpp
     src/MpvConf.h
+    src/InputConf.cpp
+    src/InputConf.h
     src/SettingsDialog.cpp
     src/SettingsDialog.h
     src/ShortcutsDialog.cpp
     src/ShortcutsDialog.h
+    src/MpvBindingDialog.cpp
+    src/MpvBindingDialog.h
     src/FilterListWidget.cpp
     src/FilterListWidget.h
 )
@@ -316,6 +320,10 @@ if(OXBOW_BUILD_TESTS)
         src/StaticProvider.h
         src/MpvConf.cpp
         src/MpvConf.h
+        src/InputConf.cpp
+        src/InputConf.h
+        src/MpvKeyName.cpp
+        src/MpvKeyName.h
         src/BookmarkManager.cpp
         src/BookmarkManager.h
         src/PlaylistEntity.cpp
@@ -383,6 +391,7 @@ if(OXBOW_BUILD_TESTS)
     endfunction()
 
     oxbow_add_test(MpvConf)
+    oxbow_add_test(InputConf)
     oxbow_add_test(PlaylistEntity)
     oxbow_add_test(PlaylistFile)
     oxbow_add_test(HttpClient)
