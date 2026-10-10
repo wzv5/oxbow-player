@@ -195,7 +195,9 @@ class MpvController : public QObject {
     void mediaMetadataChanged(const QString &path, const QVariantMap &metadata);
     // N14：文件格式（file-format，文件属性单设）
     void fileFormatChanged(const QString &path, const QString &format);
-    // N13：轨道列表（track-list 全量推送）
+    // N13：轨道列表（track-list 全量推送）。N93：双通道——FILE_LOADED 主动读给装载
+    // 时刻的首值，观察推送补运行期增删与外部切换；path 是推送当刻的当前文件，
+    // 不承诺与载荷同代（observe 与 START_FILE 的先后无保证）
     void tracksChanged(const QString &path, const QList<TrackInfo> &tracks);
     // N15：章节列表
     void chaptersChanged(const QString &path, const QList<ChapterInfo> &chapters);

@@ -30,8 +30,11 @@ enum ObservedProperty {
     PropConsoleOpen,
     // N88：fullscreen 镜像（仍居末尾纪律之内）
     PropFullscreen,
-    // B18：metadata / file-format / track-list / chapter-list 四项文件级
-    // 属性不再 observe，改由 FILE_LOADED 主动读（见 handleFileLoaded）
+    // N93：track-list 重回观察（仍居末尾纪律之内）——运行期增删轨道只有 observe
+    // 覆盖得到，FILE_LOADED 主动读只管装载时刻
+    PropTrackList,
+    // B18：metadata / file-format / chapter-list 三项文件级属性不 observe，
+    // 改由 FILE_LOADED 主动读（见 handleFileLoaded）
 };
 
 QVariantList parsePlaylist(const mpv_node *node) {
@@ -318,8 +321,13 @@ MpvController::MpvController(mpv_handle *mpv, QObject *parent) : QObject(parent)
     // N88：fullscreen 镜像。普通属性，注册即推初值（client.h "You always get an
     // initial change notification"），与 console 位"无初值可推"的口径相反
     mpv_observe_property(m_mpv, PropFullscreen, "fullscreen", MPV_FORMAT_FLAG);
-    // B18：metadata / file-format / track-list / chapter-list 改 FILE_LOADED
-    // 主动读（见 handleFileLoaded），不再 observe
+    // N93：track-list 观察——双通道的 observe 半程（主动读半程在 handleFileLoaded）。
+    // 覆盖运行期轨道增删与外部切换（console 的 sub-add / audio-add / sub-remove、
+    // 改 sid 等）；手册未声明该属性不支持变更通知（反例是 input-bindings：明写
+    // not supported，故它只在对话框打开时读一次、不观察）
+    mpv_observe_property(m_mpv, PropTrackList, "track-list", MPV_FORMAT_NODE);
+    // B18：metadata / file-format / chapter-list 改 FILE_LOADED 主动读
+    // （见 handleFileLoaded），不 observe；track-list 见上
 }
 
 void MpvController::startEventThread() { m_eventThread->start(); }
@@ -934,10 +942,21 @@ void MpvController::handlePropertyChange(const mpv_event *event) {
         else if (prop->format == MPV_FORMAT_NONE)
             emit videoPanYChanged(0.0);
         break;
+    case PropTrackList:
+        // N93：运行期轨道变更（外部增删轨 / 切换选中）走本分支；装载时刻的首值仍由
+        // handleFileLoaded 主动读给出，两路都在事件线程、保序，重复发射对接收方幂等。
+        // 载荷为 NODE 即解析；NONE（无文件 / 属性不可用）交空列表——与 handleFileLoaded
+        // 读失败分支同形，不让停止态留下陈旧轨道。事件数据随 mpv_event 由 mpv 回收，
+        // 不 mpv_free_node_contents（与 PropPlaylist 同口径）
+        if (prop->format == MPV_FORMAT_NODE && prop->data)
+            emit tracksChanged(m_currentFile, parseTrackList(static_cast<mpv_node *>(prop->data)));
+        else
+            emit tracksChanged(m_currentFile, QList<TrackInfo>());
+        break;
     // N40：PropWidth / PropHeight 分支已随 observe 移除，视频尺寸改由
     // publishVideoSize 统一取值发布；B18：PropMetadata / PropFileFormat /
-    // PropTrackList / PropChapterList 分支已随 observe 移除，改由
-    // handleFileLoaded 主动读
+    // PropChapterList 分支已随 observe 移除，改由 handleFileLoaded 主动读
+    // （PropTrackList 自 N93 起重回观察，见上）
     default:
         break;
     }
