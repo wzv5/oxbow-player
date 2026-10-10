@@ -280,6 +280,12 @@ class PlaylistWidget : public QTabWidget {
     void onTabChanged(int index);
 
   private:
+    // 行分派的唯一入口（双击与回车共用）：上一级行返回、容器行进入该节点、实体行整层
+    // 入队。useResume 为真（回车一支）时，若该行正是本 tab 的续播记忆项，把记忆进度
+    // 一并递上去；双击不带进度（N45 §2.4.3 的整层入队语义照原样）
+    void activateItem(QListWidgetItem *item, bool useResume);
+    // 回车一支的入口：取当前 tab 视图的选中行（焦点在列表或在 tab 条都走这里）
+    void activateCurrentRow();
     // N57 §2.9：排序键 / 规则 / 元数据类别（`SortKey` / `SortRule` / `MetaCategory`
     // 与 `metaCategoryOf`）已搬到 `PlaylistEntity.h` 全局作用域——它们描述"按实体的
     // 哪个字段排"，属实体属性层面的概念；提供者持规则值，本类只执行排序。

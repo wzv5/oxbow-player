@@ -40,6 +40,22 @@ PlaylistWidget::PlaylistWidget(const QString &configFile, std::shared_ptr<Servic
     // N45：直写即层入缓存（层在缓存即"已加载"，§2.5）
     defTab->ensureLevel({}); // 直写路径的层入缓存（根层）
     connect(this, &QTabWidget::currentChanged, this, &PlaylistWidget::onTabChanged);
+    // 回车在 tab 条持焦时（键盘遍历到位）也归列表
+    tabBar()->installEventFilter(this);
+    // 点表头后把键盘归属交给该页的列表。tab 条不吃鼠标焦点（实测点完表头焦点仍游离在
+    // 面板之外），而焦点不在面板内时按键根本不经过本面板的过滤器，只落到主窗兜底转给
+    // mpv——表现为"切了 tab 按回车没反应，必须先点一次列表项"。延迟一轮再落焦点：此刻
+    // 页面切换未必完成，视图尚不可见时 setFocus 不生效；待办持身份、坐标现场换算（N62）
+    connect(tabBar(), &QTabBar::tabBarClicked, this, [this](int index) {
+        const Playlist *l = listOf(index);
+        const QUuid uuid = l ? l->uuid() : QUuid();
+        QTimer::singleShot(0, this, [this, uuid] {
+            if (uuid.isNull())
+                return;
+            if (PlaylistListView *v = viewAt(tabIndexOfList(uuid)))
+                v->setFocus();
+        });
+    });
     // ——N49 底部工具条：面板级常驻，全 tab 共享一行，不随 tab 切换重建——
     // 创建顺序：各列表之后、遮罩之前——工具条自然压在页面栈之上，遮罩仍最后创建并置顶
     m_stack =
@@ -156,6 +172,8 @@ Playlist *PlaylistWidget::listOfView(const PlaylistListView *view) const {
 // N5：列表持焦时认领全部导航键，抑制全局音量动作（↑/↓）；
 // 认领集合含 ←→/PgUp/PgDn/Home/End，为后续列表键盘功能预留。
 // accept 后按键作为普通键盘事件送达列表；过滤器须返回 false 放行事件本身
+// 回车另计：它由列表自己消费（播选中项），认领后不再交快捷键系统，避免用户在
+// oxbow.ini [shortcuts] 手写 Return 时把本功能顶掉（Qt6 的 shortcut 匹配先于键事件）
 bool PlaylistWidget::eventFilter(QObject *watched, QEvent *event) {
     // N90：列表认领的导航键集合——下方 ShortcutOverride 认领与 KeyPress 转投豁免共用
     constexpr auto isNavigationKey = [](int key) {
@@ -173,9 +191,16 @@ bool PlaylistWidget::eventFilter(QObject *watched, QEvent *event) {
             return false;
         }
     };
+    // 主回车与小键盘回车同语义（Qt 的 Key_Enter 即小键盘回车）
+    constexpr auto isActivateKey = [](int key) {
+        return key == Qt::Key_Return || key == Qt::Key_Enter;
+    };
     const bool onList = qobject_cast<QListWidget *>(watched) != nullptr;
-    if (onList && event->type() == QEvent::ShortcutOverride) {
-        if (isNavigationKey(static_cast<QKeyEvent *>(event)->key()))
+    const bool onTabBar = watched == tabBar();
+    if ((onList || onTabBar) && event->type() == QEvent::ShortcutOverride) {
+        const int key = static_cast<QKeyEvent *>(event)->key();
+        // tab 条只认领回车——导航键在那儿是切 tab 用的，必须交回原生行为
+        if (isActivateKey(key) || (onList && isNavigationKey(key)))
             event->accept();
     }
     // N49 §2.7：焦点在搜索框时认领无修饰键的按键——全局单键动作（空格暂停、
@@ -185,6 +210,17 @@ bool PlaylistWidget::eventFilter(QObject *watched, QEvent *event) {
     if (event->type() == QEvent::ShortcutOverride && watched == m_searchBox) {
         if (static_cast<QKeyEvent *>(event)->modifiers() == Qt::NoModifier)
             event->accept();
+    }
+    // 回车 = 播放选中项，若该行是本 tab 的续播记忆项则从记忆进度续播。此处显式消费：
+    // 视图默认的 activated / 尝试编辑都无需参与（实体行不可编辑、activated 无人连接），
+    // 更不得冒泡到主窗兜底——mpv 侧 ENTER 是 playlist-next，一并触发会既播本行又跳下一
+    if ((onList || onTabBar) && event->type() == QEvent::KeyPress) {
+        auto *ke = static_cast<QKeyEvent *>(event);
+        if (isActivateKey(ke->key()) && ke->modifiers() == Qt::NoModifier) {
+            activateCurrentRow();
+            event->accept();
+            return true;
+        }
     }
     // N90：QAbstractItemView 对有文本的可打印键走 keyboardSearch 并整键消费（不冒泡），
     // "未认领按键冒泡到主窗兜底转发 mpv"的两层契约在列表持焦时断链——console 的 `
@@ -1698,6 +1734,12 @@ void PlaylistWidget::markPlayingTab(int tabIndex) {
 }
 
 void PlaylistWidget::onItemDoubleClicked(QListWidgetItem *item) {
+    activateItem(item, false); // 双击保持 N45 §2.4.3 的整层入队语义：从该行起点播
+}
+
+// 行分派的唯一入口（双击与回车共用）。useResume 为真时带上本 tab 的续播进度——
+// 判据是"该行 = 记忆项"，不是"有记忆就跳"，否则同列表里播别的项会被拽回旧进度
+void PlaylistWidget::activateItem(QListWidgetItem *item, bool useResume) {
     if (!item)
         return;
     // 行必出自本类出生的页面（createView 是全仓唯一列表页诞生点），故 cast 恒命中
@@ -1705,7 +1747,7 @@ void PlaylistWidget::onItemDoubleClicked(QListWidgetItem *item) {
     const int tab = indexOf(list);
     if (!list || tab < 0)
         return;
-    // N45 §2.4.3：双击分派——上一级行导航返回、容器行进入该节点、实体行整层入队
+    // N45 §2.4.3：上一级行导航返回、容器行进入该节点、实体行整层入队
     if (isPlaceholderRow(item))
         return; // N19：失败占位行不可播放
     if (isParentLinkRow(item)) {
@@ -1717,11 +1759,24 @@ void PlaylistWidget::onItemDoubleClicked(QListWidgetItem *item) {
         return;
     }
     markPlayingTab(tab);
-    // N45 §2.8：双击入队是唯一"当前层"语义——入队单位即当前层（markPlayingTab
-    // 已把队列根锚定到该层）；index 由行序换算为实体序。
+    // N45 §2.8：入队单位即当前层（markPlayingTab 已把队列根锚定到该层）；index 由行序
+    // 换算为实体序。续播判据必须在 markPlayingTab 之后再问——resumeEntityIndexOf 定位
+    // 在队列根层，队列根刚被重锚到当前浏览层，先问则解在旧层上
+    const int target = rowToEntityIndex(list, list->row(item));
+    double seekTo = -1.0;
+    if (useResume && target == resumeEntityIndexOf(tab))
+        seekTo = lastTimePosOf(tab);
     // N56 §2.7：播放链路传实体表，下发形态由 MainWindow 在喂 mpv 前一刻映射
-    emit playRequested(currentLayerEntitiesOf(tab), tab, rowToEntityIndex(list, list->row(item)),
-                       -1.0); // 回显由 MainWindow 统一入口登记（N25）
+    emit playRequested(currentLayerEntitiesOf(tab), tab, target, seekTo); // 回显由 MainWindow
+    // 统一入口登记（N25）
+}
+
+// 回车的落点：焦点在列表时该视图即当前页，焦点在 tab 条时（切 tab 后焦点常留在那里）
+// 取当前 tab 的视图——两种情形同一条路，选中行由 setCurrentRow 落过，无需焦点在场
+void PlaylistWidget::activateCurrentRow() {
+    PlaylistListView *list = viewAt(currentIndex());
+    if (list)
+        activateItem(list->currentItem(), true);
 }
 
 // N19：程序化切 tab 统一入口。忙时目标非当前则排队（last-wins），空闲后补执行。
