@@ -110,6 +110,8 @@ QList<MpvController::TrackInfo> parseTrackList(const mpv_node *node) {
                 info.isDefault = v->u.flag != 0;
             else if (key == QLatin1String("selected") && v->format == MPV_FORMAT_FLAG)
                 info.selected = v->u.flag != 0;
+            else if (key == QLatin1String("main-selection") && v->format == MPV_FORMAT_INT64)
+                info.mainSelection = int(v->u.int64);
             else if (key == QLatin1String("demux-w") && v->format == MPV_FORMAT_INT64)
                 info.demuxW = int(v->u.int64);
             else if (key == QLatin1String("demux-h") && v->format == MPV_FORMAT_INT64)

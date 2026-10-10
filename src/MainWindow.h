@@ -216,12 +216,30 @@ class MainWindow : public QMainWindow {
     // N13：轨道文案与切换
     QString formatTrackText(const MpvController::TrackInfo &t) const;
     qint64 trackBitrate(const MpvController::TrackInfo &t) const;
+    // 按类型取轨道快照并按 id 升序——三组流子菜单与 ♪ 按钮的分组共用这一份取表
+    QList<MpvController::TrackInfo> tracksOfType(const QString &type) const;
     void rebuildTrackMenus();
     // B18：流按钮与流子菜单状态统一由 m_tracks 派生
     void updateStreamControls();
     void showStreamMenu();
+    // N13：按 type 把 vid / aid / sid 排出。N94：目标是第二字幕时先关第二字幕再设
+    // sid（mpv 不允许主 / 第二同为一条，切换即抢占）
     void switchToTrack(const MpvController::TrackInfo &t);
     void disableSubtitles();
+    // N94：第二字幕（secondary-sid）。与上面两个出口对称：切换同理抢占（目标已是
+    // 主字幕时先关 sid），关闭只动 secondary-sid、不碰 sid
+    void switchToSecondarySubtitle(const MpvController::TrackInfo &t);
+    void disableSecondarySubtitles();
+    // 往 menu 追加一组该类型轨道的选择条目（视频 / 音频：勾选按 selected）
+    void addTrackSelectionGroup(QMenu *menu, const QString &type);
+    // 往 menu 追加一组字幕选择条目：首项"None"，其后全量字幕轨（两组都列全量、
+    // 不排除已被对方占用的那条——"同一条只能落在一组"由点击时的抢占下发体现）。
+    // secondary 选槽位——勾选一律按 main-selection（主字幕 0、第二字幕 1）：
+    // selected 的语义是"在解码"，两条字幕同时解码时双双为真，判不出归属。
+    // 两个 add* 都不清空菜单、也不加标题与分隔线：播放菜单的子菜单日后要在字幕流下
+    // 追加"添加字幕"之类的动作，♪ 按钮的分组则只提供选择，两处形态各异，故外层一律
+    // 留给调用方
+    void addSubtitleSelectionGroup(QMenu *menu, bool secondary);
 
     // N43：播放菜单的滤镜子菜单（视频在前）——条目与启用态在播放菜单弹出时
     // 按 af / vf 属性实时重建；点击条目翻转其启用位并整串下发（运行期态，
@@ -421,7 +439,8 @@ class MainWindow : public QMainWindow {
     QMenu *m_videoStreamMenu = nullptr;
     QMenu *m_audioStreamMenu = nullptr;
     QMenu *m_subStreamMenu = nullptr;
-    QPushButton *m_streamButton = nullptr; // ♪ 流选择按钮
+    QMenu *m_secondarySubStreamMenu = nullptr; // N94：第二字幕流（播放菜单，位于字幕流之下）
+    QPushButton *m_streamButton = nullptr;     // ♪ 流选择按钮
 
     // ---- N43：滤镜子菜单（条目弹出时按属性实时重建，不作缓存）----
     QMenu *m_videoFilterMenu = nullptr;

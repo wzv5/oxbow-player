@@ -144,7 +144,13 @@ class MpvController : public QObject {
         bool external = false;
         QString externalFilename;
         bool isDefault = false;
+        // 语义是"正在解码"，**不是"是不是主轨"**——两条字幕可同时解码，故它不能
+        // 用来判"这条是不是 sid"（判据用 mainSelection，见下）
         bool selected = false;
+        // N94：同类型内的选择顺序（track-list/N/main-selection）。对字幕轨
+        // 0 = sid、1 = secondary-sid；未选中或由 lavfi-complex 选中时该键缺席，
+        // 取 -1。非字幕轨也可以有值，但本仓只在字幕上使用
+        int mainSelection = -1;
         int demuxW = 0;
         int demuxH = 0;
         double demuxFps = 0.0;

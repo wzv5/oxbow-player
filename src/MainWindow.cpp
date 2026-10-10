@@ -648,17 +648,21 @@ void MainWindow::createMenus() {
     m_videoFilterMenu->setEnabled(false);
     m_audioFilterMenu->setEnabled(false);
     connect(playMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildFilterMenus);
-    // N13：视频/音频/字幕流三子菜单（视频在前），无流时整菜单禁用
+    // N13：视频/音频/字幕流子菜单（视频在前），无流时整菜单禁用
+    // N94：追加第二字幕流，位于字幕流之下
     playMenu->addSeparator();
     m_videoStreamMenu = playMenu->addMenu(tr("Video"));
     m_audioStreamMenu = playMenu->addMenu(tr("Audio"));
     m_subStreamMenu = playMenu->addMenu(tr("Subtitle"));
+    m_secondarySubStreamMenu = playMenu->addMenu(tr("Secondary Subtitle"));
     m_videoStreamMenu->setEnabled(false);
     m_audioStreamMenu->setEnabled(false);
     m_subStreamMenu->setEnabled(false);
+    m_secondarySubStreamMenu->setEnabled(false);
     connect(m_videoStreamMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildTrackMenus);
     connect(m_audioStreamMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildTrackMenus);
     connect(m_subStreamMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildTrackMenus);
+    connect(m_secondarySubStreamMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildTrackMenus);
 
     m_chapterMenu = menuBar()->addMenu(tr("&Chapter"));
     m_chapterGroup = new QActionGroup(this);
@@ -3456,50 +3460,85 @@ QString MainWindow::formatTrackText(const MpvController::TrackInfo &t) const {
     return result;
 }
 
-void MainWindow::rebuildTrackMenus() {
-    auto rebuild = [this](QMenu *menu, const QString &type) {
-        if (!menu)
-            return;
-        menu->clear();
-        QList<MpvController::TrackInfo> filtered;
-        for (const auto &t : m_tracks)
-            if (t.type == type)
-                filtered.append(t);
-        std::sort(filtered.begin(), filtered.end(),
-                  [](const MpvController::TrackInfo &a, const MpvController::TrackInfo &b) {
-                      return a.id < b.id;
-                  });
+// 当前文件某类轨道的快照，按 id 升序——三组流子菜单与 ♪ 按钮的分组都从这份取表出生，
+// 故条目顺序全仓一致
+QList<MpvController::TrackInfo> MainWindow::tracksOfType(const QString &type) const {
+    QList<MpvController::TrackInfo> result;
+    for (const auto &t : m_tracks)
+        if (t.type == type)
+            result.append(t);
+    std::sort(result.begin(), result.end(),
+              [](const MpvController::TrackInfo &a, const MpvController::TrackInfo &b) {
+                  return a.id < b.id;
+              });
+    return result;
+}
 
-        if (type == QLatin1String("sub")) {
-            // 字幕首项"无"
-            bool noSub = true;
-            for (const auto &t : filtered)
-                if (t.selected)
-                    noSub = false;
-            QAction *none = menu->addAction(tr("None"));
-            none->setCheckable(true);
-            none->setChecked(noSub);
-            connect(none, &QAction::triggered, this, &MainWindow::disableSubtitles);
-            for (const auto &t : filtered) {
-                QAction *a = menu->addAction(formatTrackText(t));
-                a->setCheckable(true);
-                a->setChecked(t.selected);
-                MpvController::TrackInfo copy = t;
-                connect(a, &QAction::triggered, this, [this, copy] { switchToTrack(copy); });
-            }
-        } else {
-            for (const auto &t : filtered) {
-                QAction *a = menu->addAction(formatTrackText(t));
-                a->setCheckable(true);
-                a->setChecked(t.selected);
-                MpvController::TrackInfo copy = t;
-                connect(a, &QAction::triggered, this, [this, copy] { switchToTrack(copy); });
-            }
-        }
-    };
-    rebuild(m_videoStreamMenu, QStringLiteral("video"));
-    rebuild(m_audioStreamMenu, QStringLiteral("audio"));
-    rebuild(m_subStreamMenu, QStringLiteral("sub"));
+// 各子菜单的 aboutToShow 都挂本函数，故一次弹出把四组一起重建。清空 + 追加的形态留在
+// 调用点：播放菜单的字幕流子菜单日后要在这组条目之外追加"添加字幕"之类的动作，
+// 分组函数本身只管选择条目
+void MainWindow::rebuildTrackMenus() {
+    if (m_videoStreamMenu) {
+        m_videoStreamMenu->clear();
+        addTrackSelectionGroup(m_videoStreamMenu, QStringLiteral("video"));
+    }
+    if (m_audioStreamMenu) {
+        m_audioStreamMenu->clear();
+        addTrackSelectionGroup(m_audioStreamMenu, QStringLiteral("audio"));
+    }
+    if (m_subStreamMenu) {
+        m_subStreamMenu->clear();
+        addSubtitleSelectionGroup(m_subStreamMenu, false);
+    }
+    if (m_secondarySubStreamMenu) {
+        m_secondarySubStreamMenu->clear();
+        addSubtitleSelectionGroup(m_secondarySubStreamMenu, true);
+    }
+}
+
+// 单路组（视频 / 音频）：这类轨道没有"第二路"概念，selected 即当前轨，出口一律
+// switchToTrack
+void MainWindow::addTrackSelectionGroup(QMenu *menu, const QString &type) {
+    for (const auto &t : tracksOfType(type)) {
+        QAction *a = menu->addAction(formatTrackText(t));
+        a->setCheckable(true);
+        a->setChecked(t.selected);
+        MpvController::TrackInfo copy = t;
+        connect(a, &QAction::triggered, this, [this, copy] { switchToTrack(copy); });
+    }
+}
+
+// N94：字幕选择条目的唯一体——播放菜单的两组与 ♪ 按钮的两个分组都从这里出生，故判据
+// 全仓只此一份。两组都列全量字幕轨，不排除已被对方占用的那条——"同一条只能落在一组"
+// 由点击时的抢占下发体现（见 switchToTrack / switchToSecondarySubtitle）
+void MainWindow::addSubtitleSelectionGroup(QMenu *menu, bool secondary) {
+    const int mainSelection = secondary ? 1 : 0;
+    const QList<MpvController::TrackInfo> subs = tracksOfType(QStringLiteral("sub"));
+
+    bool noneSelected = true;
+    for (const auto &t : subs)
+        if (t.mainSelection == mainSelection)
+            noneSelected = false;
+
+    QAction *none = menu->addAction(tr("None"));
+    none->setCheckable(true);
+    none->setChecked(noneSelected);
+    if (secondary)
+        connect(none, &QAction::triggered, this, &MainWindow::disableSecondarySubtitles);
+    else
+        connect(none, &QAction::triggered, this, &MainWindow::disableSubtitles);
+
+    for (const auto &t : subs) {
+        QAction *a = menu->addAction(formatTrackText(t));
+        a->setCheckable(true);
+        a->setChecked(t.mainSelection == mainSelection);
+        MpvController::TrackInfo copy = t;
+        if (secondary)
+            connect(a, &QAction::triggered, this,
+                    [this, copy] { switchToSecondarySubtitle(copy); });
+        else
+            connect(a, &QAction::triggered, this, [this, copy] { switchToTrack(copy); });
+    }
 }
 
 // B18：流按钮与三个流子菜单的状态统一由 m_tracks 派生（tracksChanged 与
@@ -3525,43 +3564,21 @@ void MainWindow::updateStreamControls() {
         m_audioStreamMenu->setEnabled(a > 0);
     if (m_subStreamMenu)
         m_subStreamMenu->setEnabled(s > 0);
+    if (m_secondarySubStreamMenu)
+        m_secondarySubStreamMenu->setEnabled(s > 0); // N94：与主字幕同规则
 }
 
 void MainWindow::showStreamMenu() {
     QMenu menu(this);
-    QList<MpvController::TrackInfo> videos, audios, subs;
-    for (const auto &t : m_tracks) {
-        if (t.type == QLatin1String("video"))
-            videos.append(t);
-        else if (t.type == QLatin1String("audio"))
-            audios.append(t);
-        else if (t.type == QLatin1String("sub"))
-            subs.append(t);
-    }
-    std::sort(videos.begin(), videos.end(),
-              [](const MpvController::TrackInfo &a, const MpvController::TrackInfo &b) {
-                  return a.id < b.id;
-              });
-    std::sort(audios.begin(), audios.end(),
-              [](const MpvController::TrackInfo &a, const MpvController::TrackInfo &b) {
-                  return a.id < b.id;
-              });
-    std::sort(subs.begin(), subs.end(),
-              [](const MpvController::TrackInfo &a, const MpvController::TrackInfo &b) {
-                  return a.id < b.id;
-              });
+    const QList<MpvController::TrackInfo> videos = tracksOfType(QStringLiteral("video"));
+    const QList<MpvController::TrackInfo> audios = tracksOfType(QStringLiteral("audio"));
+    const QList<MpvController::TrackInfo> subs = tracksOfType(QStringLiteral("sub"));
 
     bool hasPrev = false;
     if (videos.size() > 1) {
         QAction *header = menu.addAction(tr("Video"));
         header->setEnabled(false);
-        for (const auto &t : videos) {
-            QAction *a = menu.addAction(formatTrackText(t));
-            a->setCheckable(true);
-            a->setChecked(t.selected);
-            MpvController::TrackInfo copy = t;
-            connect(a, &QAction::triggered, this, [this, copy] { switchToTrack(copy); });
-        }
+        addTrackSelectionGroup(&menu, QStringLiteral("video"));
         hasPrev = true;
     }
     if (audios.size() > 1) {
@@ -3569,13 +3586,7 @@ void MainWindow::showStreamMenu() {
             menu.addSeparator();
         QAction *header = menu.addAction(tr("Audio"));
         header->setEnabled(false);
-        for (const auto &t : audios) {
-            QAction *a = menu.addAction(formatTrackText(t));
-            a->setCheckable(true);
-            a->setChecked(t.selected);
-            MpvController::TrackInfo copy = t;
-            connect(a, &QAction::triggered, this, [this, copy] { switchToTrack(copy); });
-        }
+        addTrackSelectionGroup(&menu, QStringLiteral("audio"));
         hasPrev = true;
     }
     if (!subs.isEmpty()) {
@@ -3583,21 +3594,12 @@ void MainWindow::showStreamMenu() {
             menu.addSeparator();
         QAction *header = menu.addAction(tr("Subtitle"));
         header->setEnabled(false);
-        bool noSub = true;
-        for (const auto &t : subs)
-            if (t.selected)
-                noSub = false;
-        QAction *none = menu.addAction(tr("None"));
-        none->setCheckable(true);
-        none->setChecked(noSub);
-        connect(none, &QAction::triggered, this, &MainWindow::disableSubtitles);
-        for (const auto &t : subs) {
-            QAction *a = menu.addAction(formatTrackText(t));
-            a->setCheckable(true);
-            a->setChecked(t.selected);
-            MpvController::TrackInfo copy = t;
-            connect(a, &QAction::triggered, this, [this, copy] { switchToTrack(copy); });
-        }
+        addSubtitleSelectionGroup(&menu, false);
+
+        menu.addSeparator();
+        QAction *secHeader = menu.addAction(tr("Secondary Subtitle"));
+        secHeader->setEnabled(false);
+        addSubtitleSelectionGroup(&menu, true);
     }
     if (menu.isEmpty())
         return;
@@ -3622,6 +3624,10 @@ void MainWindow::switchToTrack(const MpvController::TrackInfo &t) {
     } else {
         return;
     }
+    // N94：抢占——mpv 不允许主 / 第二字幕同为一条，目标是第二字幕时先把它关掉。
+    // 两条都同步下发，调用次序即 mpv 侧执行次序
+    if (t.type == QLatin1String("sub") && t.mainSelection == 1)
+        m_controller->setProperty(QStringLiteral("secondary-sid"), QStringLiteral("no"));
     m_controller->setProperty(prop, int(t.id));
     showOsd(prefix + formatTrackText(t));
 }
@@ -3629,6 +3635,20 @@ void MainWindow::switchToTrack(const MpvController::TrackInfo &t) {
 void MainWindow::disableSubtitles() {
     m_controller->setProperty(QStringLiteral("sid"), QStringLiteral("no"));
     showOsd(tr("Subtitle: None"));
+}
+
+// N94：第二字幕。与 switchToTrack 的 sub 分支对称——抢占方向反过来（目标是主字幕
+// 时先关 sid），关闭只动 secondary-sid、不碰 sid
+void MainWindow::switchToSecondarySubtitle(const MpvController::TrackInfo &t) {
+    if (t.mainSelection == 0)
+        m_controller->setProperty(QStringLiteral("sid"), QStringLiteral("no"));
+    m_controller->setProperty(QStringLiteral("secondary-sid"), int(t.id));
+    showOsd(tr("Secondary Subtitle: ") + formatTrackText(t));
+}
+
+void MainWindow::disableSecondarySubtitles() {
+    m_controller->setProperty(QStringLiteral("secondary-sid"), QStringLiteral("no"));
+    showOsd(tr("Secondary Subtitle: None"));
 }
 
 // ---- N43：播放菜单的滤镜子菜单 ----
