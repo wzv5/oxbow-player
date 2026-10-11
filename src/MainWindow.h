@@ -49,6 +49,12 @@ class MainWindow : public QMainWindow {
     void mousePressEvent(QMouseEvent *event) override;
     // N87：插件未认领按键的兜底出口（翻译得出 mpv 键名即异步注入 keypress）
     void keyPressEvent(QKeyEvent *event) override;
+    // N95：让位期输入法承接——组字串维护守卫标志、提交串逐码点转发。事件只到达
+    // focusObject（让位期焦点归空即主窗本体），插件自己的输入框不受影响
+    void inputMethodEvent(QInputMethodEvent *event) override;
+    // N95：候选窗 / 组字窗位置单一应答点（视频区左上角，按当前变换折回逆变）与启用态
+    // 应答，其余查询回落基类
+    QVariant inputMethodQuery(Qt::InputMethodQuery query) const override;
     // N68：小窗态等比缩放（WM_SIZING）与边缘吸附（WM_MOVING）——函数体整体经
     // Windows 且未定义 OXBOW_PUREQT 门禁。降级形态两项都不做（循环外改窗位会被原生
     // 模态循环覆写，实测乱跳；§一 原裁决），只留定态保比（scheduleMiniRefit →
@@ -206,6 +212,8 @@ class MainWindow : public QMainWindow {
     // N90：让位转发单点——按 mpv 键名异步注入 keypress，eventFilter 的截断分支与
     // keyPressEvent 兜底共用；全仓只允许这一种转发形态
     void forwardKeyToMpv(const QKeyEvent *event);
+    // N95：文本转发单点——提交串按 UCS-4 码点逐个注入 keypress，仅让位期生效
+    void forwardTextToMpv(const QString &text);
     // N90：让位期把主窗装成 QWindow 过滤器（幂等，窗口重建后须补装）
     void attachYieldFilter();
     void detachYieldFilter();
@@ -471,6 +479,8 @@ class MainWindow : public QMainWindow {
     class MpvBindingDialog *m_bindingDialog = nullptr; // N89：mpv 键位编辑（input.conf）
     // N90：console 让位态（真 = 让位生效：窗口级过滤器已装且焦点判据生效）
     bool m_inputYielded = false;
+    // N95：组字中标志（由 inputMethodEvent 按 preeditString 维护；非空时键名转发只吞不转）
+    bool m_imeComposing = false;
     QActionGroup *m_chapterGroup = nullptr;
     // 章节+书签标记聚合器（MainWindow.cpp 内实现）：合并规则 + 缓存
     // 收口于此，主窗口不再持有抽象成员；进程生命周期随主窗口

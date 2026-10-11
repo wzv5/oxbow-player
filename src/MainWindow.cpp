@@ -3023,9 +3023,65 @@ bool MainWindow::yieldOwnsKeyboard() const {
 // keyPressEvent 的兜底出口共用（全仓只允许这一种转发形态）。取名落空即静默返回，
 // 吞还是放由调用方决定（截断分支吞、兜底出口放）；只转按下，KeyRelease 不经此
 void MainWindow::forwardKeyToMpv(const QKeyEvent *event) {
+    // N95：组字期间静默——组字串由 IME 消费，转发会把无关键名夹带进 mpv。Windows
+    // 上组字期本无键事件（QWindowsInputContext 不发），此守卫兜底 Esc / Enter 一类
+    // 仍以键事件到达者
+    if (m_imeComposing)
+        return;
     const QString keyName = MpvKey::nameFromEvent(event);
     if (!keyName.isEmpty())
         m_controller->commandAsync({QStringLiteral("keypress"), keyName});
+}
+
+// N95：文本转发单点——提交串按 UCS-4 码点拆开逐个注入 keypress（多字符串会被当
+// 键名解析失败报 "is not a valid input name"；按码点不按 UTF-16 迭代，代理对拆成
+// 孤立 code unit 会各自变成非法字符）。码点 < 32 不发：mpv 的 MP_KEY_IS_UNICODE
+// 不认，且这些本就有键名（Tab / ENTER）。仅让位期生效——console 已关时迟到的提交
+// 字符不下发，否则字符落成全局键名误触 mpv 绑定
+void MainWindow::forwardTextToMpv(const QString &text) {
+    if (!m_inputYielded)
+        return;
+    const auto codePoints = text.toUcs4();
+    for (char32_t cp : codePoints) {
+        if (cp < 32)
+            continue;
+        m_controller->commandAsync({QStringLiteral("keypress"), QString::fromUcs4(&cp, 1)});
+    }
+}
+
+// N95：让位期输入法承接——组字串维护守卫标志，提交串经文本转发单点逐码点下发。
+// console 开启期间主窗置 WA_InputMethodEnabled（onConsoleOpenChanged），事件经
+// focusObject（焦点归空即主窗本体）到达此处。标志只在让位期置真：非让位期收到
+// 输入法事件（主窗焦点策略将来若有）不得让它卡住键名转发
+void MainWindow::inputMethodEvent(QInputMethodEvent *event) {
+    m_imeComposing = m_inputYielded && !event->preeditString().isEmpty();
+    forwardTextToMpv(event->commitString());
+}
+
+// N95：候选窗 / 组字窗位置的单一应答点——写死视频区左上角，跟随 mpv（其 IME 弹出
+// 窗总是窗口左上角），不做几何推导、不猜 console 输入行位置。查询矩形语义是 focus
+// object 自身局部坐标：落点主窗即主窗局部坐标，m_videoWidget 是主窗直接子件、
+// geometry() 即主窗坐标，直接可用（视频区将来挪进容器层须改 mapTo 主窗）。
+// 平台侧拿到矩形后还要按 inputItemTransform 映射到窗口坐标，而控件层只在 FocusIn /
+// Move / Resize 维护该变换：让位期焦点落回子控件再归空，它仍停在最后一个焦点控件的
+// 偏移上，候选窗随之偏到"视频区左上角 + 旧偏移"（实测偶发跑到窗口右上）。故先按逆
+// 变换折一次，平台映射回来即恒等于视频区左上角——与变换当下漂在哪一值无关。
+// 除这两项外一律回落基类
+QVariant MainWindow::inputMethodQuery(Qt::InputMethodQuery query) const {
+    switch (query) {
+    case Qt::ImCursorRectangle: {
+        const QTransform tf = QGuiApplication::inputMethod()->inputItemTransform();
+        const QPoint wanted = m_videoWidget->geometry().topLeft();
+        const QPointF p = tf.isInvertible() ? tf.inverted().map(wanted) : QPointF(wanted);
+        return QRect(p.toPoint(), QSize(1, fontMetrics().height()));
+    }
+    // 实测：属性已置真时基类这一项仍答成 false，而 §3 的口径是这一项决定平台侧是否
+    // 关联输入法——按属性如实答，开关时机才由本方案说了算
+    case Qt::ImEnabled:
+        return testAttribute(Qt::WA_InputMethodEnabled);
+    default:
+        return QMainWindow::inputMethodQuery(query);
+    }
 }
 
 void MainWindow::onPlayRequested(const PlaylistEntity::List &entities, int tab, int index,
@@ -3187,8 +3243,27 @@ void MainWindow::onConsoleOpenChanged(bool open) {
         if (auto *fw = QApplication::focusWidget())
             fw->clearFocus();
         attachYieldFilter();
+        // N95：让位期启用输入法（mpv console 打开时置 input-ime 的插件侧对形）。
+        // 运行期翻转属性平台侧不自动感知，须 update(ImEnabled) 触发重新关联——
+        // 不通知要等下一次焦点变动才生效
+        setAttribute(Qt::WA_InputMethodEnabled, true);
+        QGuiApplication::inputMethod()->update(Qt::ImEnabled);
+        // N95 偏离：候选窗 / 组字窗落在哪儿由 inputItemTransform（输入项局部坐标 →
+        // 窗口坐标的变换）与本方案答的固定矩形共同决定，控件层只在 FocusIn / Move /
+        // Resize 维护该变换。让位期只有 clearFocus、无 FocusIn，它可能停在让位前焦点
+        // 控件的偏移上；而此刻 focusObject 即主窗本体，窗口坐标就是主窗局部坐标，
+        // 恒等才是正确变换——启用时主动复位，变换有变化即触发 cursorRectangleChanged，
+        // 令平台侧按新矩形重摆
+        QGuiApplication::inputMethod()->setInputItemTransform(QTransform());
     } else {
         detachYieldFilter();
+        // N95：解除输入法。update(ImEnabled) 与开臂对称（缺了要等下一次焦点变动才
+        // 解除）；reset() 撤掉未提交的组字，对应 mpv 关闭时恢复 input-ime 原值——
+        // 迟到的提交字符另由文本出口的让位门挡住；组字标志一并清零
+        setAttribute(Qt::WA_InputMethodEnabled, false);
+        QGuiApplication::inputMethod()->update(Qt::ImEnabled);
+        QGuiApplication::inputMethod()->reset();
+        m_imeComposing = false;
     }
 }
 

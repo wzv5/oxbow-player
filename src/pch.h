@@ -50,6 +50,8 @@
 #include <QImage>
 #include <QImageWriter>
 #include <QInputDialog>
+#include <QInputMethod>
+#include <QInputMethodEvent>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -116,6 +118,7 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QToolTip>
+#include <QTransform>
 #include <QTranslator>
 #include <QTreeWidget>
 #include <QUrl>
