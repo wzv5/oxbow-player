@@ -421,13 +421,13 @@ void MpvController::publishVideoSize() {
     emit videoSizeChanged(m_videoW, m_videoH);
 }
 
-void MpvController::command(const QString &cmd) {
-    mpv_command_string(m_mpv, cmd.toUtf8().constData());
+// N96：返回 mpv_command_string 的错误码（0 成功）；空串不特判，mpv 自报参数错误
+int MpvController::command(const QString &cmd) {
+    return mpv_command_string(m_mpv, cmd.toUtf8().constData());
 }
 
-void MpvController::command(const QStringList &args) {
-    if (args.isEmpty())
-        return;
+// N96：返回 mpv_command 的错误码（0 成功）；空表不特判，只剩终结符的 argv 同样自报参数错误
+int MpvController::command(const QStringList &args) {
     QList<QByteArray> utf8;
     utf8.reserve(args.size());
     for (const QString &arg : args)
@@ -437,8 +437,12 @@ void MpvController::command(const QStringList &args) {
     for (const QByteArray &arg : utf8)
         argv.append(arg.constData());
     argv.append(nullptr);
-    mpv_command(m_mpv, argv.data());
+    return mpv_command(m_mpv, argv.data());
 }
+
+// 错误码转可读文本。新用的 mpv API 必须同批进 plugin.cpp 的符号解析清单——清单外的指针
+// 恒为 NULL，编译链接都不报错，失效一律推迟到首次调用才显影
+QString MpvController::errorString(int code) { return QString::fromUtf8(mpv_error_string(code)); }
 
 // N87：与同步通道的差别只在下发方式——argv 构造逐字相同，因为 mpv 在 mpv_command_async
 // 调用内就用 mp_input_parse_cmd_strv 解析并复制参数，局部缓冲区不跨调用，无须堆上保命；

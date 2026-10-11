@@ -23,6 +23,14 @@ QString formatFileSize(qint64 bytes) {
     return QString::number(mb / 1024.0, 'f', 2) + QStringLiteral(" GB");
 }
 
+QStringList extensionPatterns(const QStringList &extensions) {
+    QStringList patterns;
+    patterns.reserve(extensions.size());
+    for (const QString &ext : extensions)
+        patterns << QStringLiteral("*.") + ext;
+    return patterns;
+}
+
 namespace {
 // 数字段解析：十进制累加并做溢出检测；成功产出数值段（前导零随解析抹平），
 // 溢出则返回 false，调用方将该段降级为普通文本段

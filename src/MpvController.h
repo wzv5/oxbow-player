@@ -21,8 +21,13 @@ class MpvController : public QObject {
     // setProperty / loadFile 一样走 mpv_command*，命令返回即已在 core 执行完毕
     // ——推送会话的屏障读正是据这一点成立（发读请求时本批已是终态）。若把任一
     // 喂入点改走 *_async，该不变式即失效，须改成"等本批 reply 全到齐再发屏障读"
-    void command(const QString &cmd);
-    void command(const QStringList &args);
+    // N96：返回 mpv_command 的错误码（0 为成功），调用方可判成败；忽略返回值的
+    // 既有调用点行为不变
+    int command(const QString &cmd);
+    int command(const QStringList &args);
+
+    // N96：mpv 错误码转可读文本（转调 mpv_error_string），供调用方拼错误提示
+    static QString errorString(int code);
 
     // N87：异步命令通道，供按键回落 mpv 的 keypress 注入。同步的 command() 会占住调用线程
     // 直到 core 执行完，而注入进去的是用户自己绑的任意命令（截图落盘 / loadfile / Lua 回调

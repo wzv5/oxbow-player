@@ -15,14 +15,31 @@ inline QString name() { return QStringLiteral("Oxbow"); }
 // 配置文件名：小写基名（oxbow.ini），与翻译基名（oxbow_<locale>.qm）同族
 inline QString iniFileName() { return QStringLiteral("oxbow.ini"); }
 
-// 媒体扩展名默认清单（无点、小写）：文件对话框过滤器与 DirProvider 枚举的共用默认值。
-// 动态列表的扩展名是每 tab 可编辑参数，此处仅为初始预填来源（N9）
+// ——扩展名默认清单（无点、小写，三张）——
+// 一律以逗号紧拼书写再 split：split 不去空白，逗号后加空格会产出坏过滤器。清单只出
+// 扩展名表，对话框过滤器与 QDir 名称过滤器要的 *.ext 形态由 Util::extensionPatterns 加工
+
+// 媒体扩展名：文件对话框过滤器与 DirProvider 枚举的共用默认值。动态列表的扩展名是每
+// tab 可编辑参数，此处仅为初始预填来源（N9）
 inline QStringList defaultMediaExtensions() {
-    return {QStringLiteral("mp4"),  QStringLiteral("mkv"), QStringLiteral("avi"),
-            QStringLiteral("mov"),  QStringLiteral("wmv"), QStringLiteral("flv"),
-            QStringLiteral("webm"), QStringLiteral("ts"),  QStringLiteral("mp3"),
-            QStringLiteral("flac"), QStringLiteral("aac"), QStringLiteral("ogg"),
-            QStringLiteral("wav"),  QStringLiteral("m4a")};
+    return QStringLiteral("mp4,mkv,avi,mov,wmv,flv,webm,ts,"
+                          "mp3,flac,aac,ogg,wav,m4a")
+        .split(u',');
+}
+
+// 音频与字幕的回退两张（N96 手动添加流）：正路是每次添加时现读 mpv 的 --sub-auto-exts /
+// --audio-exts（跟用户 mpv.conf 的自定义走），这两份只在属性读失败或读到空时兜底。
+// 取值照抄 mpv 的默认表（手册不载具体项，改动前经 --help=<选项> 核对一次）
+inline QStringList defaultSubtitleExtensions() {
+    return QStringLiteral("ass,idx,lrc,mks,pgs,rt,sbv,scc,smi,srt,ssa,sub,"
+                          "sup,utf,utf-8,utf8,vtt")
+        .split(u',');
+}
+
+inline QStringList defaultAudioExtensions() {
+    return QStringLiteral("aac,ac3,aiff,ape,au,dts,eac3,flac,m4a,mka,mp3,"
+                          "oga,ogg,ogm,opus,thd,wav,wma,wv")
+        .split(u',');
 }
 
 // ——N49 图标包——

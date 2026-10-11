@@ -9,6 +9,12 @@ namespace Util {
 // 文件大小自适应单位显示（B/KB/MB/GB，按量级就近选择）
 QString formatFileSize(qint64 bytes);
 
+// 扩展名清单（无点、小写）→ 名称过滤器模式串（*.ext，保持入参次序）。对话框过滤器
+// （空格拼串）与 QDir 名称过滤器（QStringList）要的是同一形态，故收这一处；它不加工
+// 任何路径串，与身份形态一族无关。只出模式表不出整串：各家译文模板不同，收成整串
+// 等于把 tr 吞掉（分工同 nextSequenceNumber）
+QStringList extensionPatterns(const QStringList &extensions);
+
 // 数字化文件名的分段序列（N4）：文本段或数值段。
 // 拆分依据仅为 ASCII 0-9；数值段按十进制解析（前导零不敏感，01 与 1 相等），
 // 解析失败（超出 qlonglong 的超长数字串）时该段降级为普通文本段，

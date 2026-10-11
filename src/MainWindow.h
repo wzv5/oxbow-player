@@ -232,7 +232,8 @@ class MainWindow : public QMainWindow {
     void disableSecondarySubtitles();
     // 往 menu 追加一组该类型轨道的选择条目（视频 / 音频：勾选按 selected）
     void addTrackSelectionGroup(QMenu *menu, const QString &type);
-    // 往 menu 追加一组字幕选择条目：首项"None"，其后全量字幕轨（两组都列全量、
+    // 往 menu 追加一组字幕选择条目：有轨时首项"None"（N96：0 轨时 None 无所指不添加），
+    // 其后全量字幕轨（两组都列全量、
     // 不排除已被对方占用的那条——"同一条只能落在一组"由点击时的抢占下发体现）。
     // secondary 选槽位——勾选一律按 main-selection（主字幕 0、第二字幕 1）：
     // selected 的语义是"在解码"，两条字幕同时解码时双双为真，判不出归属。
@@ -240,6 +241,19 @@ class MainWindow : public QMainWindow {
     // 追加"添加字幕"之类的动作，♪ 按钮的分组则只提供选择，两处形态各异，故外层一律
     // 留给调用方
     void addSubtitleSelectionGroup(QMenu *menu, bool secondary);
+
+    // ——N96 手动添加音频流 / 字幕流——
+    // "添加"项对话框过滤器：扩展名现读 mpv 的 --sub-auto-exts / --audio-exts（跟随用户
+    // mpv.conf 自定义），读失败或读空才回退 Constants.h 的内置清单。主字幕与第二字幕同表
+    QString trackFileFilter(bool subtitle) const;
+    // 流子菜单"添加"项装配单点：条件分隔线（菜单非空才加，0 轨时添加项顶格）+ 动作。
+    // 动作不进任何分组函数，与"选择条目"分属两件事。音频档只看 subtitle，
+    // secondary 取其默认值即可（传出的第二档只给字幕菜单用）
+    void appendTrackAddAction(QMenu *menu, bool subtitle, bool secondary = false);
+    // 选文件 → audio-add / sub-add 下发（同步，返回码判成败）→ 成败 OSD。
+    // 第二字幕只加进来不选中（sub-add auto），选中由用户点条目走 switchToSecondarySubtitle
+    void addAudioTrack();
+    void addSubtitleTrack(bool secondary);
 
     // N43：播放菜单的滤镜子菜单（视频在前）——条目与启用态在播放菜单弹出时
     // 按 af / vf 属性实时重建；点击条目翻转其启用位并整串下发（运行期态，

@@ -22,14 +22,6 @@ constexpr char kBrowseFilesOnly[] = QT_TRANSLATE_NOOP("DirProvider", "Files Only
 constexpr char kBrowseFilesRecursive[] =
     QT_TRANSLATE_NOOP("DirProvider", "Files Only (Include Subdirectories)");
 
-// 扩展名 → QDir 名称过滤器（*.mp4 形态）
-QStringList toNameFilters(const QStringList &extensions) {
-    QStringList filters;
-    filters.reserve(extensions.size());
-    for (const QString &ext : extensions)
-        filters << QStringLiteral("*.") + ext;
-    return filters;
-}
 // junction 链解析上限：病态链 / 自指链不至于把枚举拖死
 constexpr int kJunctionChainGuard = 32;
 
@@ -327,9 +319,8 @@ DirProvider::enumerate(const QStringList &parent) const {
         return std::unexpected(
             trText(QT_TRANSLATE_NOOP("DirProvider", "Directory is not readable: %1"))
                 .arg(layerPath));
-    // 扩展名空表＝不过滤；过滤器一次构造逐层复用
-    const QStringList filters =
-        m_extensions.isEmpty() ? QStringList() : toNameFilters(m_extensions);
+    // 扩展名空表＝不过滤（空清单出空过滤器）；过滤器一次构造逐层复用
+    const QStringList filters = Util::extensionPatterns(m_extensions);
 
     Enumeration out;
     if (m_browseMode == BrowseMode::Layered) {

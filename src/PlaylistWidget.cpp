@@ -4430,12 +4430,9 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
         return;
 
     if (chosen == addAction) {
-        QStringList patterns;
-        for (const QString &ext : App::defaultMediaExtensions())
-            patterns << QStringLiteral("*.") + ext;
+        const QString patterns = Util::extensionPatterns(App::defaultMediaExtensions()).join(u' ');
         QStringList files = QFileDialog::getOpenFileNames(
-            this, tr("Add Files"), QString(),
-            tr("Media files (%1);;All files (*)").arg(patterns.join(QLatin1Char(' '))));
+            this, tr("Add Files"), QString(), tr("Media files (%1);;All files (*)").arg(patterns));
         // 入口定形（N56 §2.6）：对话框返回正斜杠绝对路径，转原生分隔符——与
         // MainWindow::onOpenFile / 拖放同款；工厂不再代做定形
         for (QString &f : files)

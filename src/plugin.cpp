@@ -66,6 +66,7 @@ static bool resolveMpvSymbols() {
     RESOLVE(mpv_stream_cb_add_ro);   // N52：oxbow:// 转接协议注册
     RESOLVE(mpv_get_property_async); // N60：推送会话的屏障读（playlist 终值自带终点）
     RESOLVE(mpv_command_async); // N87：未认领按键的 keypress 注入（异步，GUI 线程不等用户命令）
+    RESOLVE(mpv_error_string);  // 命令错误码转可读文本（流添加失败反馈用）
 #undef RESOLVE
 
     if (missing) {

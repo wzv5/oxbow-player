@@ -800,6 +800,10 @@ void MainWindow::connectController() {
         const bool switchedItem = pos != m_playlistPos; // B9：实际换条目（值不变 mpv 不推送）
         m_playlistPos = pos;
         updateNavigationActions(); // 播放/停止态切换与位置变化（A16）
+        // 流子菜单启用态派生自正播实体（N96），而实体正是随本信号落定的：控件状态必须
+        // 随其派生输入一起刷新。只靠 endFile 那次调用会停在"实体尚未更新"的瞬间，
+        // 停止态能否复位就全押在 mpv 各属性推送的先后上（无依据）
+        updateStreamControls();
         // N8 Part5：停止态禁用进度条并归位 0；播放态恢复可用
         m_progressSlider->setEnabled(pos >= 0);
         if (pos < 0) {
@@ -1056,12 +1060,9 @@ void MainWindow::onPluginIniKeysChanged(const QStringList &keys) {
 
 void MainWindow::openFiles() {
     // N9：过滤器模式由全局媒体扩展名清单生成（与 DirProvider 默认值同源）
-    QStringList patterns;
-    for (const QString &ext : App::defaultMediaExtensions())
-        patterns << QStringLiteral("*.") + ext;
+    const QString patterns = Util::extensionPatterns(App::defaultMediaExtensions()).join(u' ');
     QStringList files = QFileDialog::getOpenFileNames(
-        this, tr("Open File"), QString(),
-        tr("Media files (%1);;All files (*)").arg(patterns.join(QLatin1Char(' '))));
+        this, tr("Open File"), QString(), tr("Media files (%1);;All files (*)").arg(patterns));
     if (files.isEmpty())
         return;
     // Qt 来源：拿到即转原生分隔符（B15），逐文件加工
@@ -3485,15 +3486,32 @@ void MainWindow::rebuildTrackMenus() {
     if (m_audioStreamMenu) {
         m_audioStreamMenu->clear();
         addTrackSelectionGroup(m_audioStreamMenu, QStringLiteral("audio"));
+        appendTrackAddAction(m_audioStreamMenu, false);
     }
     if (m_subStreamMenu) {
         m_subStreamMenu->clear();
         addSubtitleSelectionGroup(m_subStreamMenu, false);
+        appendTrackAddAction(m_subStreamMenu, true);
     }
     if (m_secondarySubStreamMenu) {
         m_secondarySubStreamMenu->clear();
         addSubtitleSelectionGroup(m_secondarySubStreamMenu, true);
+        appendTrackAddAction(m_secondarySubStreamMenu, true, true);
     }
+}
+
+// N96：流子菜单"添加"项装配单点——条件分隔线（菜单非空才加，0 轨时添加项顶格、不留
+// 悬空分隔线）+ 动作。动作不可勾选、不进 tracksOfType 的任何分组函数，与"选择条目"
+// 分属两件事。整菜单每次 aboutToShow 重建，动作连同其连接一起随 clear() 销毁，
+// 无累积连接之虞
+void MainWindow::appendTrackAddAction(QMenu *menu, bool subtitle, bool secondary) {
+    if (!menu->isEmpty())
+        menu->addSeparator();
+    QAction *add = menu->addAction(subtitle ? tr("Add Subtitle…") : tr("Add Audio…"));
+    if (subtitle)
+        connect(add, &QAction::triggered, this, [this, secondary] { addSubtitleTrack(secondary); });
+    else
+        connect(add, &QAction::triggered, this, &MainWindow::addAudioTrack);
 }
 
 // 单路组（视频 / 音频）：这类轨道没有"第二路"概念，selected 即当前轨，出口一律
@@ -3515,18 +3533,21 @@ void MainWindow::addSubtitleSelectionGroup(QMenu *menu, bool secondary) {
     const int mainSelection = secondary ? 1 : 0;
     const QList<MpvController::TrackInfo> subs = tracksOfType(QStringLiteral("sub"));
 
-    bool noneSelected = true;
-    for (const auto &t : subs)
-        if (t.mainSelection == mainSelection)
-            noneSelected = false;
+    // N96：0 轨时 None 无所指（没有轨可关），不添加——字幕组与音频组一样可只剩"添加"项
+    if (!subs.isEmpty()) {
+        bool noneSelected = true;
+        for (const auto &t : subs)
+            if (t.mainSelection == mainSelection)
+                noneSelected = false;
 
-    QAction *none = menu->addAction(tr("None"));
-    none->setCheckable(true);
-    none->setChecked(noneSelected);
-    if (secondary)
-        connect(none, &QAction::triggered, this, &MainWindow::disableSecondarySubtitles);
-    else
-        connect(none, &QAction::triggered, this, &MainWindow::disableSubtitles);
+        QAction *none = menu->addAction(tr("None"));
+        none->setCheckable(true);
+        none->setChecked(noneSelected);
+        if (secondary)
+            connect(none, &QAction::triggered, this, &MainWindow::disableSecondarySubtitles);
+        else
+            connect(none, &QAction::triggered, this, &MainWindow::disableSubtitles);
+    }
 
     for (const auto &t : subs) {
         QAction *a = menu->addAction(formatTrackText(t));
@@ -3541,8 +3562,10 @@ void MainWindow::addSubtitleSelectionGroup(QMenu *menu, bool secondary) {
     }
 }
 
-// B18：流按钮与三个流子菜单的状态统一由 m_tracks 派生（tracksChanged 与
-// END_FILE 会话态重置共用；后者清空 m_tracks 即按钮隐藏、菜单全禁用）
+// B18：流按钮与流子菜单的状态由两份输入派生——轨道计数取 m_tracks，音频 / 字幕三个子菜单
+// 的启用态取正播实体（N96：0 轨恰是"添加"的用武之地，故不再按轨道数判禁用）。刷新点随
+// 输入走：tracksChanged（轨道表）/ playlistPosChanged（正播实体）/ END_FILE 会话态重置
+// （清空 m_tracks 即按钮隐藏）
 void MainWindow::updateStreamControls() {
     int v = 0, a = 0, s = 0;
     for (const auto &t : m_tracks) {
@@ -3560,12 +3583,15 @@ void MainWindow::updateStreamControls() {
     }
     if (m_videoStreamMenu)
         m_videoStreamMenu->setEnabled(v > 0);
+    // 判据取正播实体唯一出口。残留时序窗口：切集间隙与播完收尾瞬间实体仍指旧条目、
+    // 菜单短暂可用，随即被下一轮推送纠正（已裁决接受，不为此加判据）
+    const bool hasPlaying = playingEntity() != nullptr;
     if (m_audioStreamMenu)
-        m_audioStreamMenu->setEnabled(a > 0);
+        m_audioStreamMenu->setEnabled(hasPlaying);
     if (m_subStreamMenu)
-        m_subStreamMenu->setEnabled(s > 0);
+        m_subStreamMenu->setEnabled(hasPlaying);
     if (m_secondarySubStreamMenu)
-        m_secondarySubStreamMenu->setEnabled(s > 0); // N94：与主字幕同规则
+        m_secondarySubStreamMenu->setEnabled(hasPlaying); // N94：与主字幕同规则
 }
 
 void MainWindow::showStreamMenu() {
@@ -3649,6 +3675,64 @@ void MainWindow::switchToSecondarySubtitle(const MpvController::TrackInfo &t) {
 void MainWindow::disableSecondarySubtitles() {
     m_controller->setProperty(QStringLiteral("secondary-sid"), QStringLiteral("no"));
     showOsd(tr("Secondary Subtitle: None"));
+}
+
+// ——N96 手动添加音频流 / 字幕流——
+
+// "添加"项对话框过滤器：扩展名现读 mpv 的 --sub-auto-exts / --audio-exts（运行期可读，
+// 值形如逗号紧拼，维护者实测确认），跟随用户 mpv.conf 的自定义走，比写死更准；读失败或
+// 读到空才回退 Constants.h 的内置清单（读空回退的分歧已裁决接受）。值按 mpv 的形态原样
+// 采信——mpv 自己也不裁空格，插件替它裁只会比 mpv 更宽容。主字幕与第二字幕同一张表
+QString MainWindow::trackFileFilter(bool subtitle) const {
+    QStringList exts = m_controller
+                           ->propertyString(subtitle ? QStringLiteral("sub-auto-exts")
+                                                     : QStringLiteral("audio-exts"))
+                           .split(u',', Qt::SkipEmptyParts);
+    if (exts.isEmpty())
+        exts = subtitle ? App::defaultSubtitleExtensions() : App::defaultAudioExtensions();
+    const QString patterns = Util::extensionPatterns(exts).join(u' ');
+    return subtitle ? tr("Subtitle files (%1);;All files (*)").arg(patterns)
+                    : tr("Audio files (%1);;All files (*)").arg(patterns);
+}
+
+// 选文件 → 下发 → 成败 OSD（同步 command 的返回码即成败）。取消对话框静默、无任何下发；
+// 成功播文件名（B12：不带路径防 OSD 长文本越界），失败播 mpv 错误文本。
+// Qt 来源的路径拿到即转原生分隔符（B15）
+void MainWindow::addAudioTrack() {
+    const QString path =
+        QFileDialog::getOpenFileName(this, tr("Add Audio"), QString(), trackFileFilter(false));
+    if (path.isEmpty())
+        return;
+    // audio-add 默认 <select>，加完即成当前音频流——"添加并设为选中"由 mpv 的默认行为
+    // 兑现，插件不额外下发；不传 title：mpv 自行解析文件、用媒体元数据作轨道名，
+    // 插件拿不到更准的
+    const int err = m_controller->command({QStringLiteral("audio-add"), Util::Url::toNative(path)});
+    if (err != 0) {
+        showOsd(tr("Failed to add audio: %1").arg(MpvController::errorString(err)));
+        return;
+    }
+    showOsd(tr("Audio: ") + QFileInfo(path).fileName());
+}
+
+void MainWindow::addSubtitleTrack(bool secondary) {
+    const QString path =
+        QFileDialog::getOpenFileName(this, tr("Add Subtitle"), QString(), trackFileFilter(true));
+    if (path.isEmpty())
+        return;
+    // 主字幕走默认 <select>，加完即成当前字幕；第二字幕传 auto 止于"加进来"——sub-add
+    // 没有"加为第二字幕"的形态，而用默认 select 会先抢主字幕，随后转第二字幕时撞上 N94
+    // 的"同一条不可兼具"。选中由用户随后点条目走 switchToSecondarySubtitle 的既有出口
+    QStringList cmd{QStringLiteral("sub-add"), Util::Url::toNative(path)};
+    if (secondary)
+        cmd << QStringLiteral("auto");
+    const int err = m_controller->command(cmd);
+    if (err != 0) {
+        showOsd(tr("Failed to add subtitle: %1").arg(MpvController::errorString(err)));
+        return;
+    }
+    // 第二字幕此刻还只是条尚未归属槽位的字幕轨，播"字幕"而非"第二字幕"（要等用户点选、
+    // 真占上 secondary-sid 时由那条路径播轨道名）
+    showOsd(tr("Subtitle: ") + QFileInfo(path).fileName());
 }
 
 // ---- N43：播放菜单的滤镜子菜单 ----
