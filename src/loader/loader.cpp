@@ -61,7 +61,7 @@ static bool LoadCore() {
     if (pluginDir.empty())
         return false;
 
-#ifndef OXBOW_STATICQT
+#ifndef OXBOW_STATIC
     // 让 Qt 在运行时能定位到共置的插件（平台插件/样式/图像格式等）。
     // windeployqt 默认把这些插件类型目录直接部署在插件目录下
     // （platforms/qwindows.dll、styles/、imageformats/ …），因此：

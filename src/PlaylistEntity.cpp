@@ -5,6 +5,9 @@
 #include "HttpEntity.h"
 #include "JellyfinEntity.h"
 #include "LocalFileEntity.h"
+#if defined(OXBOW_WITH_RCLONE_CRYPT)
+#include "RcloneCryptEntity.h"
+#endif
 // N55：playUrl() 出口经归属提供者现算——实体侧唯一 include 提供者头之处
 // （实体头只前置声明，无环）
 #include "PlaylistProvider.h"
@@ -75,6 +78,14 @@ PlaylistEntity::Ptr PlaylistEntity::fromPath(const QString &path,
         // 串由提供者铸造、形态恒小写，前缀判定精确匹配 kJellyfinScheme）
         if (path.startsWith(QLatin1String(kJellyfinScheme)))
             return std::make_shared<JellyfinEntity>(path, registry);
+        // N98：rclonecrypt:// → RcloneCryptEntity（URN 身份，编码相对路径；
+        // scheme 常量唯一持有者是 RcloneCryptEntity.h，提供者铸造与这里共用）。
+        // 特性关掉的构建里没有这条分派：rclonecrypt:// 走下面的网络/流兜底落
+        // UnknownEntity（含 "://" 恒非本地形态，不判存在性、不炸断言）
+#if defined(OXBOW_WITH_RCLONE_CRYPT)
+        if (path.startsWith(QLatin1String(kRcloneCryptScheme)))
+            return std::make_shared<RcloneCryptEntity>(path, registry);
+#endif
         if (!Util::Url::isHttp(path))
             return std::make_shared<UnknownEntity>(path, registry);
         if (!registry) {

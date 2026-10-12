@@ -6,21 +6,75 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
 option(OXBOW_BUILD_TESTS "Build Qt Test unit tests for oxbow" OFF)
-option(OXBOW_STATICQT "Link Qt statically (skip windeployqt at deploy time)" OFF)
+option(OXBOW_STATIC "Link Qt and crypto dependencies statically (skip windeployqt at deploy time)" OFF)
 # N68：强行令 Windows 也走小窗的纯 Qt 降级路径（无等比缩放/边缘吸附），便于本机验证降级形态
 option(OXBOW_PUREQT "Use the pure-Qt implementation path for the mini window" OFF)
+# N98：rclone crypt 只读后端（rclone crypt 加密的本地目录）整条特性可关。关掉即不找
+# libsodium / OpenSSL、不链 bcrypt、src/rclonecrypt 与解密流与提供者一概不入列；
+# 存量 rclonecrypt:// 列表在关掉的构建里按"键未知"回落登记表第 0 项（静态表）
+option(OXBOW_WITH_RCLONE_CRYPT "Build the rclone crypt backend (read-only encrypted local folder)" ON)
 
 # N83：静态 Qt 依赖 MSVC 运行库口径与 windeployqt 部署语义，限 Windows（Linux 用系统
-# Qt 动态链接），非 Windows 在 configure 期拦截。运行库收紧只看 OXBOW_STATICQT：
+# Qt 动态链接），非 Windows 在 configure 期拦截。运行库收紧只看 OXBOW_STATIC：
 # clang（MSVC ABI、GNU 前端）下 CMake 的 MSVC 判定为假，若限定 MSVC，静态 Qt 的
 # Release 插件对象（_ITERATOR_DEBUG_LEVEL=0）会与 Debug 对象（=2）在链接期 failifmismatch
 # ——实测教训，不得加回 MSVC 限定
-if(OXBOW_STATICQT AND NOT WIN32)
-    message(FATAL_ERROR "OXBOW_STATICQT is Windows-only (Linux links the system Qt)")
+if(OXBOW_STATIC AND NOT WIN32)
+    message(FATAL_ERROR "OXBOW_STATIC is Windows-only (Linux links the system Qt)")
 endif()
 
-if(OXBOW_STATICQT)
+if(OXBOW_STATIC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreaded)
+endif()
+
+# ---------------------------------------------------------------------------
+# N98 §8.3 §1：rclone crypt 后端的整条接线，受 OXBOW_WITH_RCLONE_CRYPT 单点门禁。
+# libsodium 的查找收进 cmake/FindSodium.cmake（形态由 OXBOW_STATIC 单旋钮驱动：
+# ON→static、OFF→dynamic，Linux 恒 dynamic），主配置只做接线；头路径与
+# SODIUM_STATIC 宏都在 Sodium::Sodium 的 INTERFACE 面上，调用侧既不拼路径也不手工
+# 定义宏。关掉本特性则 Sodium / OpenSSL 都不 find_package，Windows 也不再需要
+# -DLIBSODIUM_ROOT=<预编译包根目录>
+# ---------------------------------------------------------------------------
+set(OXBOW_RCLONE_CRYPT_DEPLOY_DLL OFF)
+if(OXBOW_WITH_RCLONE_CRYPT)
+    list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+    if(OXBOW_STATIC)
+        set(SODIUM_LINKAGE "static" CACHE STRING "" FORCE)
+    else()
+        set(SODIUM_LINKAGE "dynamic" CACHE STRING "" FORCE)
+    endif()
+    find_package(Sodium REQUIRED)
+
+    # 纯算法层（不依赖 Qt / mpv）单独住 src/rclonecrypt/：目录内互相 include 用裸文件
+    # 名，跨目录的消费者写 "rclonecrypt/xxx.h"（与 <mpv/client.h> 同一路径写法），
+    # 不为此另加一条包含路径。源清单只在这里写一遍，oxbowcore 与 oxbow_testlib 两个
+    # 消费点共用（AGENTS 八"两处源列表"即这两个 target）
+    set(OXBOW_RCLONE_CRYPT_SOURCES
+        src/rclonecrypt/RcloneCryptAes.cpp
+        src/rclonecrypt/RcloneCryptAes.h
+        src/rclonecrypt/RcloneCrypt.cpp
+        src/rclonecrypt/RcloneCrypt.h
+        src/RcloneCryptByteStream.cpp
+        src/RcloneCryptByteStream.h
+        src/RcloneCryptProvider.cpp
+        src/RcloneCryptProvider.h
+        src/RcloneCryptEntity.h
+    )
+    # AES 后端按平台分文件，以构建条件为唯一权威（X11Util 纪律）：错平台编进去就在
+    # 缺 CNG / OpenSSL 处编译失败，源内叠二次守卫反而把编译错降级成链接期未定义符号
+    if(WIN32)
+        set(OXBOW_RCLONE_CRYPT_PLATFORM_SOURCES src/rclonecrypt/rclonecrypt_aes_cng.cpp)
+        set(OXBOW_RCLONE_CRYPT_PLATFORM_LIBS bcrypt)
+    else()
+        find_package(OpenSSL REQUIRED)
+        set(OXBOW_RCLONE_CRYPT_PLATFORM_SOURCES src/rclonecrypt/rclonecrypt_aes_openssl.cpp)
+        set(OXBOW_RCLONE_CRYPT_PLATFORM_LIBS OpenSSL::Crypto)
+    endif()
+    # 动态形态才随产物分发 libsodium.dll：判读用 FindSodium 回报的实际形态
+    # （Sodium_LINKAGE），不在部署段二次反推 OXBOW_STATIC——单旋钮的下游结果只有一个出处
+    if(WIN32 AND Sodium_LINKAGE STREQUAL "dynamic")
+        set(OXBOW_RCLONE_CRYPT_DEPLOY_DLL ON)
+    endif()
 endif()
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets LinguistTools Concurrent Network)
@@ -53,6 +107,8 @@ add_library(oxbowcore MODULE
     src/StreamEndpoint.h
     src/HttpByteStream.cpp
     src/HttpByteStream.h
+    src/FileByteStream.cpp
+    src/FileByteStream.h
     src/StreamRelay.cpp
     src/StreamRelay.h
     src/ActionManager.cpp
@@ -187,14 +243,24 @@ target_compile_definitions(oxbowcore PRIVATE UNICODE _UNICODE)
 if(MSVC)
     target_compile_options(oxbowcore PRIVATE /utf-8)
 endif()
-if(OXBOW_STATICQT)
-    target_compile_definitions(oxbowcore PRIVATE OXBOW_STATICQT)
+if(OXBOW_STATIC)
+    target_compile_definitions(oxbowcore PRIVATE OXBOW_STATIC)
 endif()
 if(OXBOW_PUREQT)
     target_compile_definitions(oxbowcore PRIVATE OXBOW_PUREQT)
 endif()
 
 target_link_libraries(oxbowcore PRIVATE Qt6::Widgets Qt6::Concurrent Qt6::Network)
+# N98：rclone crypt 后端整块受 OXBOW_WITH_RCLONE_CRYPT 门禁——scrypt 与 secretbox 交
+# libsodium（形态与 SODIUM_STATIC 宏随 Sodium::Sodium 的导入面决定，OXBOW_STATIC 单
+# 旋钮），AES 后端按平台取 bcrypt / OpenSSL::Crypto；宏同时是 ProviderCatalog 与
+# PlaylistEntity 两处接入点的 #if 判据（关掉的构建里那两处一并不编）
+if(OXBOW_WITH_RCLONE_CRYPT)
+    target_link_libraries(oxbowcore PRIVATE Sodium::Sodium ${OXBOW_RCLONE_CRYPT_PLATFORM_LIBS})
+    target_sources(oxbowcore PRIVATE ${OXBOW_RCLONE_CRYPT_SOURCES}
+                                 ${OXBOW_RCLONE_CRYPT_PLATFORM_SOURCES})
+    target_compile_definitions(oxbowcore PRIVATE OXBOW_WITH_RCLONE_CRYPT)
+endif()
 # A19：全屏期 DWM 圆角裁切抑制（仅 Windows；dwmapi 为 Vista 起系统组件）
 if(WIN32)
     target_link_libraries(oxbowcore PRIVATE dwmapi)
@@ -255,26 +321,36 @@ qt_add_translations(oxbowcore MERGE_QT_TRANSLATIONS
 #   portable_config/scripts/oxbow/oxbowcore.dll    （真插件）
 #   portable_config/scripts/oxbow/*.dll + plugins/ （Qt 运行库，随插件目录分发）
 # Qt 运行库用 windeployqt 部署到插件所在目录，而不是 mpv 主程序目录。
-# OXBOW_STATICQT=ON 时 Qt 已静态链接进 oxbowcore.dll，跳过 windeployqt；
+# OXBOW_STATIC=ON 时 Qt 已静态链接进 oxbowcore.dll，跳过 windeployqt；
 # 加载壳 main.dll 仍照常部署——MediaInfo.dll 依赖壳预加载才能被解析。
 # ---------------------------------------------------------------------------
 # N83：部署为 Windows 专属（windeployqt 与 DLL 语义；Linux 不自动部署，只编译产物）
 set(MPV_BIN_DIR "" CACHE PATH "mpv.exe 所在目录（仅 Windows）；设置后构建完毕自动部署")
+# windeployqt 发现提到部署段之外：测试目标的部署守卫同样引用它，不能依赖
+# MPV_BIN_DIR 段的副作用（无部署目录的构建此前会拿到空命令串而链失败）
+if(WIN32 AND NOT OXBOW_STATIC)
+    find_program(WINDEPLOYQT_EXE windeployqt HINTS "${Qt6_DIR}/../../../bin")
+endif()
 if(WIN32 AND MPV_BIN_DIR)
-    if(NOT OXBOW_STATICQT)
-        find_program(WINDEPLOYQT_EXE windeployqt HINTS "${Qt6_DIR}/../../../bin")
-        if(NOT WINDEPLOYQT_EXE)
-            message(FATAL_ERROR "windeployqt 未找到：请确认 CMAKE_PREFIX_PATH 指向 Qt 安装目录（其 bin 下含 windeployqt）")
-        endif()
+    if(NOT OXBOW_STATIC AND NOT WINDEPLOYQT_EXE)
+        message(FATAL_ERROR "windeployqt 未找到：请确认 CMAKE_PREFIX_PATH 指向 Qt 安装目录（其 bin 下含 windeployqt）")
     endif()
     set(OXBOW_SCRIPT_DIR "${MPV_BIN_DIR}/portable_config/scripts/oxbow")
     add_custom_command(TARGET oxbowcore POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory "${OXBOW_SCRIPT_DIR}"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:oxbow_loader> "${OXBOW_SCRIPT_DIR}/main.dll"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:oxbowcore> "${OXBOW_SCRIPT_DIR}/oxbowcore.dll")
-    if(NOT OXBOW_STATICQT)
+    if(NOT OXBOW_STATIC)
         add_custom_command(TARGET oxbowcore POST_BUILD
             COMMAND ${WINDEPLOYQT_EXE} --no-translations --compiler-runtime "${OXBOW_SCRIPT_DIR}/oxbowcore.dll")
+    endif()
+    # N98：动态形态随插件目录分发 libsodium.dll（$<TARGET_FILE:> 对导入目标给出
+    # DLL 本体，按当次构建配置解析）；静态形态无额外文件。形态判读走 FindSodium
+    # 回报的 Sodium_LINKAGE（见顶部 OXBOW_RCLONE_CRYPT_DEPLOY_DLL），不在这里反推 OXBOW_STATIC
+    if(OXBOW_RCLONE_CRYPT_DEPLOY_DLL)
+        add_custom_command(TARGET oxbowcore POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:Sodium::Sodium>" "${OXBOW_SCRIPT_DIR}")
     endif()
 endif()
 
@@ -353,6 +429,8 @@ if(OXBOW_BUILD_TESTS)
         src/StreamEndpoint.h
         src/HttpByteStream.cpp
         src/HttpByteStream.h
+        src/FileByteStream.cpp
+        src/FileByteStream.h
         src/Util.cpp
         src/Util.h
         src/HttpClient.cpp
@@ -360,6 +438,15 @@ if(OXBOW_BUILD_TESTS)
     )
     target_include_directories(oxbow_testlib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(oxbow_testlib PUBLIC Qt6::Widgets Qt6::Concurrent Qt6::Network)
+    # N98：rclone crypt 一族同 oxbowcore 口径受同一门禁。链接必须 PUBLIC——
+    # SODIUM_STATIC 与本特性的 INTERFACE 宏都要传到本库自己的编译单元与各测试 exe
+    # （PRIVATE 只传链接不传宏）；平台库同理（bcrypt / OpenSSL::Crypto 随链接传播）
+    if(OXBOW_WITH_RCLONE_CRYPT)
+        target_link_libraries(oxbow_testlib PUBLIC Sodium::Sodium ${OXBOW_RCLONE_CRYPT_PLATFORM_LIBS})
+        target_sources(oxbow_testlib PRIVATE ${OXBOW_RCLONE_CRYPT_SOURCES}
+                                             ${OXBOW_RCLONE_CRYPT_PLATFORM_SOURCES})
+        target_compile_definitions(oxbow_testlib PUBLIC OXBOW_WITH_RCLONE_CRYPT)
+    endif()
     # N83：同 oxbowcore——测试库也编 MediaInfoHelper，宽字符口径显式定义。PUBLIC：
     # 随链接传播到各测试 exe——测试 exe 以 REUSE_FROM 复用 oxbow_testlib 的 PCH，
     # 宏状态必须一致，PRIVATE 时宏不传播，gch 因 _UNICODE 未定义被弃用
@@ -383,10 +470,17 @@ if(OXBOW_BUILD_TESTS)
         add_test(NAME ${name} COMMAND oxbow_tests_${name})
         # 各 exe 落同一输出目录，windeployqt 只需跑一遍：首个注册者挂载即全覆盖
         # N83：windeployqt 为 Windows 专属，非 Windows 测试直调 exe 无需部署
-        if(WIN32 AND NOT OXBOW_STATICQT AND NOT _oxbow_test_deployed)
+        if(WIN32 AND NOT OXBOW_STATIC AND NOT _oxbow_test_deployed)
             add_custom_command(TARGET oxbow_tests_${name} POST_BUILD
                 COMMAND ${WINDEPLOYQT_EXE} --no-translations --compiler-runtime $<TARGET_FILE:oxbow_tests_${name}>)
             set(_oxbow_test_deployed TRUE PARENT_SCOPE)
+        endif()
+        # N98：动态形态下测试 exe 也需要 libsodium.dll（照 Qt 的测试部署同款，
+        # 每 exe 挂一次 copy_if_different，输出目录同址故幂等）
+        if(OXBOW_RCLONE_CRYPT_DEPLOY_DLL)
+            add_custom_command(TARGET oxbow_tests_${name} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "$<TARGET_FILE:Sodium::Sodium>" "$<TARGET_FILE_DIR:oxbow_tests_${name}>")
         endif()
     endfunction()
 
@@ -403,5 +497,12 @@ if(OXBOW_BUILD_TESTS)
     oxbow_add_test(StreamTransit)
     oxbow_add_test(PlaylistRegistry)
     oxbow_add_test(HttpByteStream)
+    oxbow_add_test(FileByteStream)
     oxbow_add_test(FilterList)
+    # rclone crypt 的两套件与特性同进退（关掉就没有被测对象）；FileByteStream 是通用
+    # L3 传输，不受本门禁影响
+    if(OXBOW_WITH_RCLONE_CRYPT)
+        oxbow_add_test(RcloneCrypt)
+        oxbow_add_test(RcloneCryptProvider)
+    endif()
 endif()

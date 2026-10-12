@@ -9,6 +9,9 @@
 #include "ExternalProvider.h"
 #include "JellyfinProvider.h"
 #include "ProviderSettingsPage.h"
+#if defined(OXBOW_WITH_RCLONE_CRYPT)
+#include "RcloneCryptProvider.h"
+#endif
 #include "StaticProvider.h"
 #include "WebDavProvider.h"
 
@@ -28,6 +31,12 @@ QList<ProviderEntry> buildCatalog() {
          &ExternalProvider::load, nullptr},
         {kJellyfinProviderKey, &JellyfinProvider::displayName, &createJellyfinSettingsPage,
          &JellyfinProvider::load, nullptr},
+#if defined(OXBOW_WITH_RCLONE_CRYPT)
+        // rclone crypt 只读后端整条特性可关（CMake 的 OXBOW_WITH_RCLONE_CRYPT）：
+        // 关掉的构建里本行连同提供者与算法层都不存在，登记表按剩余条目照常工作
+        {kRcloneCryptProviderKey, &RcloneCryptProvider::displayName, &createRcloneCryptSettingsPage,
+         &RcloneCryptProvider::load, nullptr},
+#endif
     };
     QSet<QString> seen;
     for (int i = 0; i < table.size(); ++i) {

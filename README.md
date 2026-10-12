@@ -20,6 +20,7 @@ Oxbow's philosophy is simple: **when watching a video, any extra interface is a 
   - WebDAV (browse directories on a server);
   - External (m3u / txt live sources);
   - Jellyfin (browse media libraries);
+  - Rclone Crypt (browse and play a folder encrypted by rclone's `crypt` backend — names and content are decrypted on the fly, read-only);
 - **Resume memory**: each tab remembers the last played item and playback position, so you pick up where you left off next time;
 - **Bookmarks & chapters**: bookmarks are one click away and, together with chapters, marked right on the seek bar — visible at a glance, click to jump;
 - **Mini window mode**: an always-on-top mini window with aspect-locked resizing and automatic edge snapping;
@@ -70,6 +71,8 @@ Start mpv — the Oxbow window opens automatically.
 - CMake
 - Ninja
 - Qt 6.x
+- libsodium — the Rclone Crypt backend's scrypt and secretbox. On Windows, unpack the official prebuilt package and pass its root directory as `-DLIBSODIUM_ROOT` (configuration fails early if it is missing or incomplete); on Linux, install the development package (`libsodium-dev` on Debian/Ubuntu, `libsodium-devel` on Fedora). Skipped entirely with `-DOXBOW_WITH_RCLONE_CRYPT=OFF`
+- Linux only: OpenSSL development headers (`libssl-dev` on Debian/Ubuntu, `openssl-devel` on Fedora) — the AES block primitive for the Rclone Crypt name layer. Also skipped with `-DOXBOW_WITH_RCLONE_CRYPT=OFF`
 - No mpv dev package needed — the repo bundles `mpv/client.h`
 - Linux only: X11 development headers (`libx11-dev` on Debian/Ubuntu, `libX11-devel` on Fedora) and the Qt 6 development packages (Widgets, Concurrent, Network, LinguistTools)
 
@@ -79,11 +82,12 @@ Windows:
 
 ```bash
 cd public
-cmake -B build -G "Ninja Multi-Config" -DQt6_ROOT="D:/Qt/6.11.2/msvc2022_64" -DMPV_BIN_DIR="D:/path/to/mpv"
+cmake -B build -G "Ninja Multi-Config" -DQt6_ROOT="D:/Qt/6.11.2/msvc2022_64" -DMPV_BIN_DIR="D:/path/to/mpv" -DLIBSODIUM_ROOT="D:/path/to/libsodium"
 cmake --build build --config Release
 ```
 
 - `Qt6_ROOT` points at your Qt installation.
+- `LIBSODIUM_ROOT` (required on Windows while the Rclone Crypt backend is enabled) points at the root of the unpacked libsodium prebuilt package — it must contain `include/sodium.h` and `x64/<Debug|Release>/<v143>/<static|dynamic>/libsodium.lib`. Configuration stops with a fatal error listing whatever is missing; nothing silently degrades into "Rclone Crypt unavailable". With `-DOXBOW_WITH_RCLONE_CRYPT=OFF` this variable is not read at all.
 - `MPV_BIN_DIR` (optional, Windows only) points at the directory containing `mpv.exe`. When set, every build automatically deploys the plugin into `portable_config/scripts/oxbow/` next to mpv — ready to run right after building.
 - Without `MPV_BIN_DIR`, the artifacts land in `build/Release/` and must be copied manually (see [Installation](#installation)).
 
@@ -95,7 +99,7 @@ cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
 
-No `Qt6_ROOT` is needed — `find_package` picks up the system Qt. The artifact is a single `build/main.so`; copy it to `~/.config/mpv/scripts/oxbow/main.so` (see [Installation](#installation)).
+No `Qt6_ROOT` or `LIBSODIUM_ROOT` is needed — `find_package` picks up the system Qt, and system libsodium (via pkg-config) and OpenSSL cover the crypto side. The artifact is a single `build/main.so`; copy it to `~/.config/mpv/scripts/oxbow/main.so` (see [Installation](#installation)).
 
 Release discipline: the version lives solely in `project(oxbow-player VERSION …)` at the top of `CMakeLists.txt` — bump it by hand before each release and re-configure before building, so the version baked into the plugin (About dialog / startup diagnostic) matches the release. The commit hash and build time are recomputed on every build automatically.
 
@@ -103,7 +107,8 @@ Release discipline: the version lives solely in `project(oxbow-player VERSION �
 
 | Option | Default | Description |
 | --- | --- | --- |
-| `OXBOW_STATICQT` | `OFF` | Link Qt statically. Smaller footprint, faster startup; recommended — requires a static Qt build. **Windows only.** |
+| `OXBOW_STATIC` | `OFF` | Link Qt and crypto dependencies (libsodium) statically. Smaller footprint, faster startup; recommended — requires a static Qt build and the static libsodium library. **Windows only.** |
+| `OXBOW_WITH_RCLONE_CRYPT` | `ON` | Build the Rclone Crypt backend (the rclone `crypt` read-only folder provider). Set to `OFF` to drop it entirely: libsodium and OpenSSL are then not looked for at all and `LIBSODIUM_ROOT` is not needed. Lists already saved with that provider fall back to the default (static) provider on load — the stored `rclonecrypt://` identities themselves are untouched, so they work again as soon as the feature is enabled. |
 | `OXBOW_BUILD_TESTS` | `OFF` | Build the unit-test executables; run with `ctest --test-dir build -C <config>`. |
 | `OXBOW_PUREQT` | `OFF` | Force some features (e.g. the mini window) onto the pure-Qt fallback path (development aid). |
 | `MPV_BIN_DIR` | *(empty)* | Directory containing `mpv.exe`; enables automatic post-build deployment. **Windows only** — Linux builds artifacts only. |

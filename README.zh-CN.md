@@ -20,6 +20,7 @@ Oxbow 的理念很朴素：**看视频时，任何多余的界面都是干扰**�
   - WebDAV（浏览服务器上的目录）；
   - 外部（m3u / txt 直播源）；
   - Jellyfin（浏览媒体库）；
+  - Rclone Crypt（播放由 rclone `crypt` 后端加密的本地目录——文件名与内容边读边解密，只读）；
 - **续播记忆**：各标签页记住最后播放的条目与进度，下次打开接着看；
 - **书签与章节**：书签一键添加，和章节一起标注在进度条上——一眼可见，点击即跳；
 - **小窗模式**：全局置顶小窗，等比缩放，屏幕边缘自动吸附；
@@ -70,6 +71,8 @@ Linux 上媒体元数据补全使用系统 `libmediainfo`（Debian/Ubuntu 装 `l
 - CMake
 - Ninja
 - Qt 6.x
+- libsodium——Rclone Crypt 后端的 scrypt 与 secretbox 来源。Windows 取官方预编译包解压，把根目录经 `-DLIBSODIUM_ROOT` 传入（缺失或组合不齐会在 configure 期显式报错）；Linux 装开发包（Debian/Ubuntu 装 `libsodium-dev`，Fedora 装 `libsodium-devel`）。配 `-DOXBOW_WITH_RCLONE_CRYPT=OFF` 关掉该后端时，这条依赖整个不再被查找
+- 仅 Linux：OpenSSL 开发头文件（Debian/Ubuntu 装 `libssl-dev`，Fedora 装 `openssl-devel`）——Rclone Crypt 名字层的 AES 单块原理由它承担。关掉该后端时同样不需要
 - 无需 mpv 开发包——仓库内已内置 `mpv/client.h`
 - 仅 Linux：X11 开发头文件（Debian/Ubuntu 装 `libx11-dev`，Fedora 装 `libX11-devel`）与 Qt 6 开发包（Widgets、Concurrent、Network、LinguistTools）
 
@@ -79,11 +82,12 @@ Windows：
 
 ```bash
 cd public
-cmake -B build -G "Ninja Multi-Config" -DQt6_ROOT="D:/Qt/6.11.2/msvc2022_64" -DMPV_BIN_DIR="D:/path/to/mpv"
+cmake -B build -G "Ninja Multi-Config" -DQt6_ROOT="D:/Qt/6.11.2/msvc2022_64" -DMPV_BIN_DIR="D:/path/to/mpv" -DLIBSODIUM_ROOT="D:/path/to/libsodium"
 cmake --build build --config Release
 ```
 
 - `Qt6_ROOT` 指向本机 Qt 安装目录。
+- `LIBSODIUM_ROOT`（开启 Rclone Crypt 后端时 Windows 必填）指向解压后的 libsodium 预编译包根目录：其下须有 `include/sodium.h` 与 `x64/<Debug|Release>/<v143>/<static|dynamic>/libsodium.lib`。缺项会在 configure 期带具体路径报错，绝不静默退成"crypt 功能不可用"。配 `-DOXBOW_WITH_RCLONE_CRYPT=OFF` 时这个变量根本不会被读取。
 - `MPV_BIN_DIR`（选填，仅 Windows）指向 mpv.exe 所在目录。设置后每次构建会自动把插件部署到 mpv 旁的 `portable_config/scripts/oxbow/`——构建完即可直接运行。
 - 不设 `MPV_BIN_DIR` 时，产物落在 `build/Release/`，需手动拷贝（见[安装](#安装)）。
 
@@ -95,7 +99,7 @@ cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
 
-无需 `Qt6_ROOT`——`find_package` 直接命中系统 Qt。产物是单个 `build/main.so`，拷到 `~/.config/mpv/scripts/oxbow/main.so` 即可（见[安装](#安装)）。
+无需 `Qt6_ROOT` 与 `LIBSODIUM_ROOT`——`find_package` 直接命中系统 Qt，加密侧走系统的 libsodium（经 pkg-config）与 OpenSSL。产物是单个 `build/main.so`，拷到 `~/.config/mpv/scripts/oxbow/main.so` 即可（见[安装](#安装)）。
 
 发版纪律：版本号单源于 `CMakeLists.txt` 顶部的 `project(oxbow-player VERSION …)`——每次发布前手工 +1 并保证重新 configure，插件内嵌的版本（关于对话框 / 启动诊断行）才与发布对应。commit hash 与构建时刻每次构建自动重算，无需人工干预。
 
@@ -103,7 +107,8 @@ cmake --build build
 
 | 选项 | 默认 | 说明 |
 | --- | --- | --- |
-| `OXBOW_STATICQT` | `OFF` | 静态链接 Qt。减体积、加快启动，建议开启——需要静态版 Qt。**仅 Windows。** |
+| `OXBOW_STATIC` | `OFF` | 静态链接 Qt 与加密依赖（libsodium）。减体积、加快启动，建议开启——需要静态版 Qt 与预编译包里的静态 libsodium。**仅 Windows。** |
+| `OXBOW_WITH_RCLONE_CRYPT` | `ON` | 是否构建 Rclone Crypt 后端（rclone `crypt` 加密目录的只读提供者）。置 `OFF` 整条撤掉：不再查找 libsodium 与 OpenSSL，也不需要 `LIBSODIUM_ROOT`。已存的两类数据不受损——原 `rclonecrypt://` 身份串原样留着，存量该类型列表在重载时按"键未知"回落默认（静态）提供者，重新开启即恢复。 |
 | `OXBOW_BUILD_TESTS` | `OFF` | 构建单元测试可执行文件；运行方式 `ctest --test-dir build -C <配置>`。 |
 | `OXBOW_PUREQT` | `OFF` | 强制部分功能（如小窗）走纯 Qt 降级路径（开发辅助）。 |
 | `MPV_BIN_DIR` | *（空）* | mpv.exe 所在目录；设置后启用构建后自动部署。**仅 Windows**——Linux 只编译产物。 |
