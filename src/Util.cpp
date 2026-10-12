@@ -31,6 +31,11 @@ QStringList extensionPatterns(const QStringList &extensions) {
     return patterns;
 }
 
+QFileInfoList listFiles(const QString &dirPath, const QStringList &extensions) {
+    return QDir(dirPath).entryInfoList(extensionPatterns(extensions), QDir::Files | QDir::Readable,
+                                       QDir::NoSort);
+}
+
 namespace {
 // 数字段解析：十进制累加并做溢出检测；成功产出数值段（前导零随解析抹平），
 // 溢出则返回 false，调用方将该段降级为普通文本段

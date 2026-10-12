@@ -15,6 +15,14 @@ QString formatFileSize(qint64 bytes);
 // 等于把 tr 吞掉（分工同 nextSequenceNumber）
 QStringList extensionPatterns(const QStringList &extensions);
 
+// 目录**直属一层**内的文件，按枚举原序返回。扩展名清单（无点、小写）经
+// extensionPatterns 加工，空清单即不过滤；只读位沿用 QDir::Readable（Windows 下它
+// 不反映 NTFS ACL，见 pitfalls）。
+// 只枚举一层——子目录不进表、也不下探。递归枚举不并入本函数：`DirProvider::collect`
+// 另有符号链接环剪枝与"不可读子目录记 warnings 后跳过"的部分成功语义（N36 / N45），
+// 塞进来既改语义又让通用层背上那个提供者的翻译。要递归就用那一支，别在此加参数
+QFileInfoList listFiles(const QString &dirPath, const QStringList &extensions);
+
 // 数字化文件名的分段序列（N4）：文本段或数值段。
 // 拆分依据仅为 ASCII 0-9；数值段按十进制解析（前导零不敏感，01 与 1 相等），
 // 解析失败（超出 qlonglong 的超长数字串）时该段降级为普通文本段，

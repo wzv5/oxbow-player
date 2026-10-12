@@ -254,6 +254,9 @@ class MainWindow : public QMainWindow {
     // "添加"项对话框过滤器：扩展名现读 mpv 的 --sub-auto-exts / --audio-exts（跟随用户
     // mpv.conf 自定义），读失败或读空才回退 Constants.h 的内置清单。主字幕与第二字幕同表
     QString trackFileFilter(bool subtitle) const;
+    // 清单取值单点（N97）：过滤器拼接与视频区拖放的字幕判据共用——读取形态一字不动
+    // （每次现读 mpv 属性，读空回退内置表），故两处的判据永不漂移
+    QStringList trackExtensions(bool subtitle) const;
     // 流子菜单"添加"项装配单点：条件分隔线（菜单非空才加，0 轨时添加项顶格）+ 动作。
     // 动作不进任何分组函数，与"选择条目"分属两件事。音频档只看 subtitle，
     // secondary 取其默认值即可（传出的第二档只给字幕菜单用）
@@ -262,6 +265,17 @@ class MainWindow : public QMainWindow {
     // 第二字幕只加进来不选中（sub-add auto），选中由用户点条目走 switchToSecondarySubtitle
     void addAudioTrack();
     void addSubtitleTrack(bool secondary);
+    // 下发 + 成败 OSD 收口（N97）：对话框入口与视频区拖放共用，命令与文案一字不变
+    void applySubtitleFile(const QString &path, bool secondary);
+
+    // ——N97 视频区文件拖放——
+    // "打开文件"的尾部四步收口（对话框入口与拖放共用）：整表替换默认列表并从头开播。
+    // 集合为空即一步都不进——四步里切 tab 的两步排在 onPlayRequested 之前，不先判空
+    // 会"什么都没播"却把前台 tab 切走
+    void playFilesFromPaths(const QStringList &files);
+    // 视频区拖放三类事件（DragEnter / DragMove / Drop）的统一处理：一律消费（返回
+    // true）；受理与否体现在事件对象上，判据与执行只在 Drop 做一次
+    bool handleVideoDropEvent(QDropEvent *event);
 
     // N43：播放菜单的滤镜子菜单（视频在前）——条目与启用态在播放菜单弹出时
     // 按 af / vf 属性实时重建；点击条目翻转其启用位并整串下发（运行期态，

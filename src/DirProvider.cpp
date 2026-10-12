@@ -319,9 +319,6 @@ DirProvider::enumerate(const QStringList &parent) const {
         return std::unexpected(
             trText(QT_TRANSLATE_NOOP("DirProvider", "Directory is not readable: %1"))
                 .arg(layerPath));
-    // 扩展名空表＝不过滤（空清单出空过滤器）；过滤器一次构造逐层复用
-    const QStringList filters = Util::extensionPatterns(m_extensions);
-
     Enumeration out;
     if (m_browseMode == BrowseMode::Layered) {
         // 目录层 → 容器（视图侧模型不变式：容器组恒在实体组之前，两数组天然有序）
@@ -354,10 +351,11 @@ DirProvider::enumerate(const QStringList &parent) const {
         // 多条路径可达的剪枝依据，根先入集
         QSet<QString> visited;
         visited.insert(canonicalDirPath(layerPath));
-        collect(layerDir, filters, true, 0, maxDepth, visited, infos, out.warnings);
+        collect(layerPath, m_extensions, true, 0, maxDepth, visited, infos, out.warnings);
     } else {
         // Layered 与 FilesOnly 的文件层同款：只收本层命中扩展名的条目
-        infos = layerDir.entryInfoList(filters, QDir::Files | QDir::Readable, QDir::NoSort);
+        // （扩展名空表＝不过滤，N97 起与递归支共用 Util::listFiles 这一份实现）
+        infos = Util::listFiles(layerPath, m_extensions);
     }
     out.entities.reserve(infos.size());
     for (const QFileInfo &fi : infos) {
@@ -405,17 +403,18 @@ DirProvider::load(QSettings &settings, const std::shared_ptr<ServiceRegistry> &r
     return provider;
 }
 
-void DirProvider::collect(const QDir &dir, const QStringList &filters, bool recursive, int depth,
-                          int maxDepth, QSet<QString> &visited, QFileInfoList &out,
+void DirProvider::collect(const QString &dirPath, const QStringList &extensions, bool recursive,
+                          int depth, int maxDepth, QSet<QString> &visited, QFileInfoList &out,
                           QStringList &warnings) {
     // 文件层：命中扩展名的条目信息追加（N29：整个 QFileInfo 留给注入；
-    // N56 §2.6：路径定形由 enumerate 的造实体点自行 toNative，工厂不再代做）
-    const QFileInfoList files =
-        dir.entryInfoList(filters, QDir::Files | QDir::Readable, QDir::NoSort);
+    // N56 §2.6：路径定形由 enumerate 的造实体点自行 toNative，工厂不再代做）；
+    // N97：与枚举的文件层共用 Util::listFiles（只一层，模式加工在它内部）
+    const QFileInfoList files = Util::listFiles(dirPath, extensions);
     for (const QFileInfo &fi : files)
         out << fi;
     if (!recursive)
         return;
+    const QDir dir(dirPath);
     // 目录层：先序深入子目录（平铺语义，收集次序只由 DFS 决定——返回前的
     // 提供者初始排序统一收敛为文件名数字化序，N45 §2.7）；
     // 不可读子目录记 warning 后跳过（部分成功语义）
@@ -438,7 +437,7 @@ void DirProvider::collect(const QDir &dir, const QStringList &filters, bool recu
             continue;
         }
         visited.insert(key);
-        collect(fi.absoluteFilePath(), filters, recursive, depth + 1, maxDepth, visited, out,
+        collect(fi.absoluteFilePath(), extensions, recursive, depth + 1, maxDepth, visited, out,
                 warnings);
     }
 }

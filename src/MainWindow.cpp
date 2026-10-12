@@ -338,6 +338,8 @@ MainWindow::MainWindow(MpvController *controller, const QString &configFile,
     videoPal.setColor(QPalette::Window, Qt::black);
     m_videoWidget->setPalette(videoPal);
     m_videoWidget->installEventFilter(this); // 单击/双击分流
+    // N97：视频区接受本地文件拖放（三类事件在同一 eventFilter 分支内受理与分派）
+    m_videoWidget->setAcceptDrops(true);
     // N66 §三-4：唤起固定走 QWindow 层——WA_NativeWindow 置位即有 QWindow，平台
     // 投递给原生 HWND 的每条 move 由 Qt 无条件转发到该 QWindow，早于 widget 层的
     // 鼠标追踪门闸，无须开追踪、无回退分支。指针落成员：安装与 eventFilter 比对
@@ -1064,10 +1066,19 @@ void MainWindow::openFiles() {
     QStringList files = QFileDialog::getOpenFileNames(
         this, tr("Open File"), QString(), tr("Media files (%1);;All files (*)").arg(patterns));
     if (files.isEmpty())
-        return;
+        return; // 对话框取消
     // Qt 来源：拿到即转原生分隔符（B15），逐文件加工
     for (QString &f : files)
         f = Util::Url::toNative(f);
+    playFilesFromPaths(files);
+}
+
+// N97：对话框入口与视频区拖放共用的播放收口（原 openFiles 尾部四步）。
+// 集合为空一步都不进：切 tab 的两步排在 onPlayRequested 之前，不先判空会"什么都没播"
+// 却把前台 tab 切到默认列表
+void MainWindow::playFilesFromPaths(const QStringList &files) {
+    if (files.isEmpty())
+        return;
     // N11：主菜单打开文件固定落点默认播放列表——清旧内容与续播记忆后重灌，
     // 随即整表开播（他 tab 播放中被抢占切换）；多选按对话框原始返回顺序从首项播起。
     // 有意不走 addFiles：绕开落点漂移与播放中 append 语义，拖放/右键添加不受影响。
@@ -2740,6 +2751,12 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
             syncVideoGeometry();
     } else if (watched == m_videoWidget) {
         switch (event->type()) {
+        // N97：视频区拖放三类。一律消费（return true）——Qt 的父链传播看的是
+        // isAccepted()，不受理又不消费，事件就沿控件链上溯到主窗
+        case QEvent::DragEnter:
+        case QEvent::DragMove:
+        case QEvent::Drop:
+            return handleVideoDropEvent(static_cast<QDropEvent *>(event));
         case QEvent::Wheel:
             // N5：播放区滚轮调音量（上滚增大）
             changeVolume(static_cast<QWheelEvent *>(event)->angleDelta().y() > 0
@@ -2861,6 +2878,67 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
         }
     }
     return QMainWindow::eventFilter(watched, event);
+}
+
+// N97：视频区拖放。受理判据只有一条——`mimeData()->hasUrls()` 为真即受理（与播放列表
+// 既有拖放同形）：不看后缀、不看有无正播、不枚举目录，"这批放下会发生什么"一律推迟到
+// 落下那一刻算一次。三类事件一律消费（Qt 的父链传播以 `isAccepted()` 为准，不受理又不
+// 消费，事件会沿控件链上溯到主窗）。`DragLeave` 不属本函数处理面：它携的是
+// `QDragLeaveEvent`，不属 `QDropEvent` 家族，取 `position()` / `mimeData()` 即读非法偏移
+bool MainWindow::handleVideoDropEvent(QDropEvent *event) {
+    const QMimeData *mime = event->mimeData();
+    if (!mime->hasUrls())
+        return true; // 不受理，也照常消费
+    if (event->type() != QEvent::Drop) {
+        // 拖动经过（DragEnter / DragMove）：只受理让光标显示可放，不触碰文件系统、
+        // 不往返 mpv
+        event->acceptProposedAction();
+        return true;
+    }
+    // 落下：清洗出定形路径集合（只收本地文件；目录条目保留在其中，不在此步展开）
+    QStringList paths;
+    for (const QUrl &url : mime->urls()) {
+        if (url.isLocalFile())
+            paths << Util::Url::toNative(url.toLocalFile());
+    }
+    const QStringList mediaExts = App::defaultMediaExtensions();
+    // 分派门：单文件才试字幕，其余一切形态（含"只拖一个目录"）走播放
+    if (paths.size() == 1) {
+        const QFileInfo fi(paths.first());
+        if (fi.isFile()) {
+            const QString suffix = fi.suffix().toLower();
+            // 字幕判据与"添加字幕"对话框同一张表（每次现读 mpv），且有正播才成立；
+            // 不区分在播的是本地文件还是远程流。先判正播，停止态不付那次属性往返
+            if (playingEntity() && trackExtensions(true).contains(suffix)) {
+                applySubtitleFile(paths.first(), false);
+                event->acceptProposedAction(); // 确实执行了动作才受理
+                return true;
+            }
+            if (mediaExts.contains(suffix)) {
+                playFilesFromPaths(paths);
+                event->acceptProposedAction();
+                return true;
+            }
+            return true; // 两者都不是 → 静默忽略（落下后无事发生，不预示不报错）
+        }
+    }
+    // 播放集合：按 urls() 原序逐条处理，目录在其原位展开一层
+    QStringList files;
+    for (const QString &path : paths) {
+        const QFileInfo fi(path);
+        if (fi.isFile()) {
+            if (mediaExts.contains(fi.suffix().toLower()))
+                files << path;
+        } else if (fi.isDir()) {
+            for (const QFileInfo &entry : Util::listFiles(path, mediaExts))
+                files << Util::Url::toNative(entry.absoluteFilePath()); // 入口定形（B15）
+        }
+    }
+    if (files.isEmpty())
+        return true; // 集合空 → 落下后无事发生（列表、正播、前台 tab 都不动）
+    playFilesFromPaths(files);
+    event->acceptProposedAction();
+    return true;
 }
 
 // B14：用户音量动作统一收口——钳制、下发 mpv 并直显音量 OSD。
@@ -3754,18 +3832,24 @@ void MainWindow::disableSecondarySubtitles() {
 
 // ——N96 手动添加音频流 / 字幕流——
 
-// "添加"项对话框过滤器：扩展名现读 mpv 的 --sub-auto-exts / --audio-exts（运行期可读，
-// 值形如逗号紧拼，维护者实测确认），跟随用户 mpv.conf 的自定义走，比写死更准；读失败或
-// 读到空才回退 Constants.h 的内置清单（读空回退的分歧已裁决接受）。值按 mpv 的形态原样
-// 采信——mpv 自己也不裁空格，插件替它裁只会比 mpv 更宽容。主字幕与第二字幕同一张表
-QString MainWindow::trackFileFilter(bool subtitle) const {
+// N97：清单取值单点——对话框过滤器与视频区拖放的字幕判据共用，读取形态一字不动
+QStringList MainWindow::trackExtensions(bool subtitle) const {
+    // 扩展名现读 mpv 的 --sub-auto-exts / --audio-exts（运行期可读，值形如逗号紧拼，
+    // 维护者实测确认），跟随用户 mpv.conf 的自定义走，比写死更准；读失败或读到空才回退
+    // Constants.h 的内置清单（读空回退的分歧已裁决接受）。值按 mpv 的形态原样采信——
+    // mpv 自己也不裁空格，插件替它裁只会比 mpv 更宽容。主字幕与第二字幕同一张表
     QStringList exts = m_controller
                            ->propertyString(subtitle ? QStringLiteral("sub-auto-exts")
                                                      : QStringLiteral("audio-exts"))
                            .split(u',', Qt::SkipEmptyParts);
     if (exts.isEmpty())
         exts = subtitle ? App::defaultSubtitleExtensions() : App::defaultAudioExtensions();
-    const QString patterns = Util::extensionPatterns(exts).join(u' ');
+    return exts;
+}
+
+// "添加"项对话框过滤器（N96）
+QString MainWindow::trackFileFilter(bool subtitle) const {
+    const QString patterns = Util::extensionPatterns(trackExtensions(subtitle)).join(u' ');
     return subtitle ? tr("Subtitle files (%1);;All files (*)").arg(patterns)
                     : tr("Audio files (%1);;All files (*)").arg(patterns);
 }
@@ -3793,7 +3877,13 @@ void MainWindow::addSubtitleTrack(bool secondary) {
     const QString path =
         QFileDialog::getOpenFileName(this, tr("Add Subtitle"), QString(), trackFileFilter(true));
     if (path.isEmpty())
-        return;
+        return; // 对话框取消
+    applySubtitleFile(path, secondary);
+}
+
+// N97：对话框入口与视频区拖放共用的下发收口（拖放传 secondary = false，即替换主字幕）。
+// 成功播文件名（B12：不带路径防 OSD 长文本越界），失败播 mpv 错误文本
+void MainWindow::applySubtitleFile(const QString &path, bool secondary) {
     // 主字幕走默认 <select>，加完即成当前字幕；第二字幕传 auto 止于"加进来"——sub-add
     // 没有"加为第二字幕"的形态，而用默认 select 会先抢主字幕，随后转第二字幕时撞上 N94
     // 的"同一条不可兼具"。选中由用户随后点条目走 switchToSecondarySubtitle 的既有出口

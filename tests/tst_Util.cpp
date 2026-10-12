@@ -81,6 +81,14 @@ class TestUtil : public QObject {
     // 未定形者补形态：产出自满足工厂断言谓词；补不出形态者按实测产物钉住（由工厂的
     // 回显入口落占位实体，见 tst_PlaylistEntity）
     void mpvEchoShapesUndefinedItems();
+    // ——N97：Util::listFiles（目录一层的枚举，DirProvider 与视频区拖放共用）——
+    // 命中清单者被收、子目录与其内部文件不进表、空清单不过滤、不存在的目录得空；
+    // 判据钉在与"同 flags + NoSort 的 entryInfoList"逐项一致上（过滤位与排序位都未变）
+    void listFilesEnumeratesOneLevel();
+    // 扩展名大小写不敏感（守门用例）：目录展开走 QDir 名称过滤器，而拖放的单文件判据
+    // 是 suffix().toLower() 比对小写清单——两支口径必须一致，否则"目录里的 1.MKV
+    // 漏掉、单文件 1.MKV 却能播"。钉住大写后缀照样被收
+    void listFilesIgnoresSuffixCase();
 };
 
 void TestUtil::emptyInputYieldsNoSegments() {
@@ -587,6 +595,83 @@ void TestUtil::mpvEchoShapesUndefinedItems() {
     QCOMPARE(Util::Url::identityFromMpvEcho(QStringLiteral("file:")), QString());
     QVERIFY(QFileInfo(QString()).absoluteFilePath().isEmpty());
     QVERIFY(!Util::Url::isDefiniteForm(Util::Url::identityFromMpvEcho(QStringLiteral("file:"))));
+}
+
+void TestUtil::listFilesEnumeratesOneLevel() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QString dir = root.path();
+    // 根内两个命中（mkv / mp3）+ 一个不命中（txt）+ 一个子目录（内含命中文件）
+    QVERIFY(QDir(dir).mkdir(QStringLiteral("sub")));
+    const auto touch = [](const QString &path) {
+        QFile f(path);
+        return f.open(QIODevice::WriteOnly) && f.write("x") == 1;
+    };
+    QVERIFY(touch(dir + QStringLiteral("/b.mkv")));
+    QVERIFY(touch(dir + QStringLiteral("/a.mp3")));
+    QVERIFY(touch(dir + QStringLiteral("/c.txt")));
+    QVERIFY(touch(dir + QStringLiteral("/sub/d.mkv")));
+
+    const QStringList exts{QStringLiteral("mkv"), QStringLiteral("mp3")};
+    // 与"直接按同 flags / NoSort 调 entryInfoList"逐项一致：过滤位、排序位都没变
+    const QFileInfoList expect = QDir(dir).entryInfoList(
+        Util::extensionPatterns(exts), QDir::Files | QDir::Readable, QDir::NoSort);
+    const QFileInfoList got = Util::listFiles(dir, exts);
+    QCOMPARE(got.size(), expect.size());
+    for (qsizetype i = 0; i < got.size(); ++i)
+        QCOMPARE(got[i].absoluteFilePath(), expect[i].absoluteFilePath());
+
+    // 命中集合：根内两个命中文件，子目录与其内部文件都不进表（只一层）
+    QStringList names;
+    for (const QFileInfo &fi : got)
+        names << fi.fileName();
+    QCOMPARE(names.size(), 2);
+    QVERIFY(names.contains(QStringLiteral("b.mkv")));
+    QVERIFY(names.contains(QStringLiteral("a.mp3")));
+    QVERIFY(!names.contains(QStringLiteral("c.txt")));
+    QVERIFY(!names.contains(QStringLiteral("d.mkv")));
+    QVERIFY(!names.contains(QStringLiteral("sub")));
+
+    // 空清单即不过滤：根内三个文件全收，子目录仍不进表
+    QStringList all;
+    for (const QFileInfo &fi : Util::listFiles(dir, {}))
+        all << fi.fileName();
+    QCOMPARE(all.size(), 3);
+    QVERIFY(all.contains(QStringLiteral("c.txt")));
+
+    // 返回的是 QFileInfo：路径为绝对路径，供调用方 toNative 定形后造实体
+    const QFileInfoList one = Util::listFiles(dir, {QStringLiteral("mkv")});
+    QCOMPARE(one.size(), 1);
+    QVERIFY(QFileInfo(one.first().absoluteFilePath()).isAbsolute());
+
+    // 不存在的目录 → 空表（不抛、不崩）
+    QVERIFY(Util::listFiles(dir + QStringLiteral("/nonexistent"), exts).isEmpty());
+}
+
+void TestUtil::listFilesIgnoresSuffixCase() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QString dir = root.path();
+    const auto touch = [](const QString &path) {
+        QFile f(path);
+        return f.open(QIODevice::WriteOnly) && f.write("x") == 1;
+    };
+    // 后缀全大写与混合大小写各一（Windows 上文件名保留书写形态，不归小写）
+    QVERIFY(touch(dir + QStringLiteral("/UPPER.MKV")));
+    QVERIFY(touch(dir + QStringLiteral("/Mixed.Mkv")));
+    QVERIFY(touch(dir + QStringLiteral("/plain.mkv")));
+
+    QStringList names;
+    for (const QFileInfo &fi : Util::listFiles(dir, {QStringLiteral("mkv")}))
+        names << fi.fileName();
+    QCOMPARE(names.size(), 3);
+    QVERIFY(names.contains(QStringLiteral("UPPER.MKV")));
+    QVERIFY(names.contains(QStringLiteral("Mixed.Mkv")));
+
+    // 清单侧恒小写由 DirProvider::parseExtensions 转小写保证；此处顺带钉住过滤器
+    // 本身不敏感——大小写反过来的组合同样命中
+    QCOMPARE(Util::listFiles(dir, {QStringLiteral("MKV")}).size(), 3);
+    QCOMPARE(Util::listFiles(dir, {QStringLiteral("Mkv")}).size(), 3);
 }
 
 // 一类一可执行（R5）：自带 main（QTEST_GUILESS_MAIN）

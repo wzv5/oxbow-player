@@ -225,6 +225,10 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle) {
     // pseudo-gui 模式默认 force-window=yes，空闲/停止时会绘制 mpv logo 提示图；
     // 关掉后空闲时视频输出销毁，露出视频区 widget 的黑色背景
     mpv_set_property_string(handle, "force-window", "no");
+    // N97：拖放归插件——mpv 前端的 --drag-and-drop 默认 auto（拖入即整表替换），而 wid
+    // 嵌入下它的 vo 窗口是视频区 HWND 的子窗口、照样收得到 WM_DROPFILES；不关掉就会
+    // 和插件在视频区做的分派叠成两份动作
+    mpv_set_property_string(handle, "drag-and-drop", "no");
 
 #ifndef Q_OS_WIN
     // N83：X11 嵌入的输入接管——**事件层**关到底（实测 mpv 嵌入窗口的事件掩码截走

@@ -76,15 +76,17 @@ class DirProvider : public PlaylistProvider {
                                                   const std::shared_ptr<ServiceRegistry> &registry);
 
   private:
-    // 递归收集辅助（仅"仅文件（含子目录）"模式使用）：dir 内命中过滤器的条目信息
-    // 追加至 out；不可读子目录记入 warnings 后跳过。
+    // 递归收集辅助（仅"仅文件（含子目录）"模式使用）：dirPath 一层内命中扩展名的条目
+    // 信息追加至 out；不可读子目录记入 warnings 后跳过。
+    // extensions 是**未加工**的扩展名清单（空表不过滤）——模式加工由 Util::listFiles
+    // 内部完成，本函数不再自行加工（N97）
     // N36：depth 为 dir 自身深度（根为 0）。子目录深度超过 maxDepth 不再深入，
     // 静默截断不记 warning；maxDepth == 0 为不递归（只收根内文件），
     // n 为最多深入 n 层子目录（N36 修订 2）
     // N36 修订 3：visited 为已访问目录的 canonical 路径集，环与重复访问在此剪枝
     // （静默跳过）；由 enumerate 建立并先入根
-    static void collect(const QDir &dir, const QStringList &filters, bool recursive, int depth,
-                        int maxDepth, QSet<QString> &visited, QFileInfoList &out,
+    static void collect(const QString &dirPath, const QStringList &extensions, bool recursive,
+                        int depth, int maxDepth, QSet<QString> &visited, QFileInfoList &out,
                         QStringList &warnings);
 
     // ——提供者初始排序（N45 §2.7）——文件名数字化（Util::segmentName +

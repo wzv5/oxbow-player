@@ -15,15 +15,15 @@ inline QString name() { return QStringLiteral("Oxbow"); }
 // 配置文件名：小写基名（oxbow.ini），与翻译基名（oxbow_<locale>.qm）同族
 inline QString iniFileName() { return QStringLiteral("oxbow.ini"); }
 
-// ——扩展名默认清单（无点、小写，三张）——
+// ——扩展名默认清单（无点、小写；三张表 + 一份合并表）——
 // 一律以逗号紧拼书写再 split：split 不去空白，逗号后加空格会产出坏过滤器。清单只出
 // 扩展名表，对话框过滤器与 QDir 名称过滤器要的 *.ext 形态由 Util::extensionPatterns 加工
 
-// 媒体扩展名：文件对话框过滤器与 DirProvider 枚举的共用默认值。动态列表的扩展名是每
-// tab 可编辑参数，此处仅为初始预填来源（N9）
-inline QStringList defaultMediaExtensions() {
-    return QStringLiteral("mp4,mkv,avi,mov,wmv,flv,webm,ts,"
-                          "mp3,flac,aac,ogg,wav,m4a")
+// 视频表：照抄 mpv `--video-exts` 的默认表（手册不载具体项，改动前经
+// `--help=video-exts` 核对一次），与音频表无交集
+inline QStringList defaultVideoExtensions() {
+    return QStringLiteral("3g2,3gp,avi,flv,ivf,m2ts,m4v,mj2,mkv,mov,mp4,"
+                          "mpeg,mpg,mxf,ogv,rmvb,ts,webm,wmv,y4m")
         .split(u',');
 }
 
@@ -40,6 +40,18 @@ inline QStringList defaultAudioExtensions() {
     return QStringLiteral("aac,ac3,aiff,ape,au,dts,eac3,flac,m4a,mka,mp3,"
                           "oga,ogg,ogm,opus,thd,wav,wma,wv")
         .split(u',');
+}
+
+// 媒体表 = 视频 ∪ 音频：文件对话框过滤器、DirProvider 枚举与视频区拖放判据（N97）的
+// 共用默认值。动态列表的扩展名是每 tab 可编辑参数，此处仅为初始预填来源（N9）。
+// 两张表当前无交集，仍按拼接后去重保序落——防将来清单重叠产出重复过滤器
+inline QStringList defaultMediaExtensions() {
+    QStringList all = defaultVideoExtensions();
+    for (const QString &ext : defaultAudioExtensions()) {
+        if (!all.contains(ext))
+            all << ext;
+    }
+    return all;
 }
 
 // ——N49 图标包——
