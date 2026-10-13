@@ -5,8 +5,6 @@
 #include "MpvController.h"
 #include "StreamTransit.h"
 
-#include <mpv/client.h>
-
 namespace {
 // 采样节拍（规格 N74 §3：驱动器常量；将来 SMTC 一类要 5s 只改这个数）。1s 是下界
 // 不是精确间隔——一轮实长 = 每报告者现读四项 + Σ 各报告者的阻塞，被拖长的轮次不补发
@@ -207,8 +205,8 @@ void PlaybackReportDriver::shutdownFlush() {
     m_gate.store(Gate::Dead, std::memory_order_release); // 单向不可回
     if (m_timer)
         m_timer->stop(); // stopSession 已停，防御双停
-    m_thread->quit(); // 正对本线程循环栈顶生效（见头文件注；quit 非本线程调用不兑现的场景是
-                      // QCoreApplication::quit()）
+    m_thread->quit();    // 正对本线程循环栈顶生效（见头文件注；quit 非本线程调用不兑现的场景是
+                         // QCoreApplication::quit()）
 }
 
 void PlaybackReportDriver::softStopFromGui() {

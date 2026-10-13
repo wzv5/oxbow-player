@@ -4,8 +4,6 @@
 
 #include "PlaybackReporterRegistry.h"
 
-#include <atomic>
-
 class MpvController;
 class QTimer;
 
