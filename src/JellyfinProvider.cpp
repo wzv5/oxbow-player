@@ -5,6 +5,7 @@
 #include "Constants.h"
 #include "HttpByteStream.h"
 #include "JellyfinEntity.h"
+#include "PlaybackReporter.h"
 #include "ProviderSettingsPage.h"
 #include "ServiceRegistry.h"
 #include "StreamEndpoint.h"
@@ -203,6 +204,22 @@ bool sleepCancelable(int ms, const std::atomic_bool &cancel) {
 // 无转码会话参数，token 经 Authorization 头携带。Range / 206 / seek 映射由
 // HttpByteStream 承担。
 // 契约（N52 §2.3）：构造后不可变、不含 QObject、任意线程可析构、不持实体 / 视图指针
+
+// N74：URN 拆段单点——reporter 的认领判据与 JellyfinStreamEndpoint::openStream
+// 共用，两份判据不得各写一遍。identity 形态 jellyfin://<serverId>/<type>/<itemId>；
+// serverId 供归属校验（第 0 段须一致）。返回 <type, itemId>；形态不对 / 归属
+// 不符交 unexpected（英文可读文案）
+std::expected<std::pair<QString, QString>, QString> parseJellyfinUrn(const QString &identity,
+                                                                     const QString &serverId) {
+    const QString scheme = QString::fromLatin1(kJellyfinScheme);
+    if (!identity.startsWith(scheme))
+        return std::unexpected(QStringLiteral("identity is not a Jellyfin URN"));
+    const QStringList segs = identity.mid(scheme.size()).split(QLatin1Char('/'));
+    if (segs.size() != 3 || segs.at(0) != serverId || segs.at(1).isEmpty() || segs.at(2).isEmpty())
+        return std::unexpected(QStringLiteral("malformed Jellyfin identity"));
+    return std::make_pair(segs.at(1), segs.at(2));
+}
+
 class JellyfinStreamEndpoint final : public StreamEndpoint {
   public:
     JellyfinStreamEndpoint(QString serverUrl, QString serverId, QString token,
@@ -212,15 +229,12 @@ class JellyfinStreamEndpoint final : public StreamEndpoint {
 
     std::expected<std::shared_ptr<ByteStream>, QString>
     openStream(const QString &identity) const override {
-        // 拆身份：serverId 须与本端点绑定的服务器一致（身份由本提供者铸造，
-        // 不一致属编程错误——防御性失败，不静默错播另一台服务器的内容）
-        const QString scheme = QString::fromLatin1(kJellyfinScheme);
-        if (!identity.startsWith(scheme))
-            return std::unexpected(QStringLiteral("identity is not a Jellyfin URN"));
-        const QStringList segs = identity.mid(scheme.size()).split(QLatin1Char('/'));
-        if (segs.size() != 3 || segs.at(0) != m_serverId || segs.at(1).isEmpty() ||
-            segs.at(2).isEmpty())
-            return std::unexpected(QStringLiteral("malformed Jellyfin identity"));
+        // 拆身份（N74 收成 parseJellyfinUrn 单点）：serverId 须与本端点绑定的服务器
+        // 一致（身份由本提供者铸造，不一致属编程错误——防御性失败，不静默错播另一台
+        // 服务器的内容）
+        const auto urn = parseJellyfinUrn(identity, m_serverId);
+        if (!urn)
+            return std::unexpected(urn.error());
 
         // 现取 client（resolve 的副本随流存活，N35 既有线程契约）；缺注册表 / 缺
         // client 属装配错误，起流失败并记因，不静默
@@ -229,7 +243,7 @@ class JellyfinStreamEndpoint final : public StreamEndpoint {
             return std::unexpected(QStringLiteral("http client unavailable"));
 
         HttpStreamTarget target;
-        target.url = m_serverUrl + QStringLiteral("/Items/%1/Download").arg(segs.at(2));
+        target.url = m_serverUrl + QStringLiteral("/Items/%1/Download").arg(urn->second);
         // Authorization 头与枚举请求同一形态（token 不进 URL）；Accept 头对
         // 原始文件流无意义，不加。HttpStreamTarget::headers 是 QString 对，
         // 装配点出口（authorizationHeaderValue）恒 ASCII，fromUtf8 无损
@@ -248,6 +262,111 @@ class JellyfinStreamEndpoint final : public StreamEndpoint {
     QString m_token;                             // 取流凭据（只进请求头）
     std::shared_ptr<ServiceRegistry> m_registry; // 现取 HttpClient 的唯一通道
 };
+
+// N74：Jellyfin 上报报告者——独立对象（不与提供者多继承），寿命归提供者（基类成
+// 员），由列表绑定点（Playlist 构造与换源）按所属列表身份注册进表，注册表只持
+// weak。只拷构造期快照与 ServiceRegistry 的 shared_ptr，不回指提供者、无环。
+// 构造后不可变之外的私有状态仅节流三件（会话 token / 上次已报位置 / 上次暂停态），
+// 随 Start 与新 sessionToken 复位。
+// 认领判据（自过滤，契约 5）：身份为 URN 形态且 serverId 段与本实例一致
+// （parseJellyfinUrn 单点），token 空不认领——这是**服务器级**认领；同一台服务器上
+// 多条列表之间的归属由驱动器按来源列表选桶（不在此判，报告者不认识列表身份）。
+// 静默失败：401 / 网络失败丢弃，不重试不弹 UI，token 失效后经重新授权自然恢复
+class JellyfinReporter final : public PlaybackReporter {
+  public:
+    JellyfinReporter(QString serverUrl, QString serverId, QString token,
+                     std::shared_ptr<ServiceRegistry> registry)
+        : m_serverUrl(std::move(serverUrl)), m_serverId(std::move(serverId)),
+          m_token(std::move(token)), m_registry(std::move(registry)) {}
+
+    void playbackEvent(const PlaybackEvent &ev) override {
+        if (m_token.isEmpty())
+            return; // token 空 = 未登录，不认领任何事件
+        const auto urn = parseJellyfinUrn(ev.identity, m_serverId);
+        if (!urn)
+            return; // 非 Jellyfin URN 或归属另一台服务器
+
+        // 会话关联：token 变化即新段，节流状态复位。非 Start 的换段事件属陈旧
+        // 会话尾巴（驱动器已保证 Stop 后不再有同 token 事件），防御性忽略
+        if (ev.sessionToken != m_sessionToken) {
+            if (ev.phase != PlaybackEvent::Phase::Start)
+                return;
+            m_sessionToken = ev.sessionToken;
+            m_lastReported = ev.positionSeconds;
+            m_lastPaused = ev.paused;
+            postPlaying(QStringLiteral("/Sessions/Playing"), ev, urn->second);
+            return;
+        }
+
+        switch (ev.phase) {
+        case PlaybackEvent::Phase::Start: // 同 token 重复 Start：重发幂等，基线照刷
+            m_lastReported = ev.positionSeconds;
+            m_lastPaused = ev.paused;
+            postPlaying(QStringLiteral("/Sessions/Playing"), ev, urn->second);
+            break;
+        case PlaybackEvent::Phase::Progress: {
+            // 节流按位置差不数采样次数（计数会随服务器快慢一起漂）：前进 ≥10s 或
+            // 回跳 ≥5s 才报（前者覆盖拖动与大跨度跳，后者覆盖往回 seek）；暂停切换
+            // 即时报（IsPaused 翻转），暂停期位置不动 ⇒ 差值恒不命中，自然停发，
+            // 服务器据此不再计时，不需要 keep-alive
+            const bool pauseSwitched = m_lastPaused != ev.paused;
+            const double diff = ev.positionSeconds - m_lastReported;
+            if (!pauseSwitched && diff < 10.0 && diff > -5.0)
+                return;
+            m_lastReported = ev.positionSeconds;
+            m_lastPaused = ev.paused;
+            postPlaying(QStringLiteral("/Sessions/Playing/Progress"), ev, urn->second);
+            break;
+        }
+        case PlaybackEvent::Phase::Stop:
+            m_sessionToken.clear(); // 会话闭：此后同 token 事件不再认领
+            postPlaying(QStringLiteral("/Sessions/Playing/Stopped"), ev, urn->second);
+            break;
+        }
+    }
+
+  private:
+    // 三端点共用装配：最小字段集（ItemId / PositionTicks / IsPaused /
+    // PlaySessionId / PlayMethod）。PositionTicks = 秒 ×1e7，负值钳零；Stopped
+    // 的取值判据（EOF 用 duration、其余用最后已知位置）全在驱动器侧，本报告者
+    // 只搬运不另算——服务器按"位置 ≈ duration"自行判已看，客户端不判完播。
+    // 最小集不足以建会话时按规格实测备注补齐（SessionId / CanSeek /
+    // MediaSourceId 一类字段装配，不动接口）
+    void postPlaying(const QString &path, const PlaybackEvent &ev, const QString &itemId) {
+        // 现取 client（设置变更经注册表覆盖即生效，不另建实例；HttpClient 只是
+        // 不可变缺省值持有者，传输层进程内共享）。取不到属装配错误，上报面
+        // 静默（枚举 / 取流那两处装配失败才需要显影）
+        const auto client = m_registry ? m_registry->resolve<HttpClient>() : nullptr;
+        if (!client)
+            return;
+        QJsonObject body;
+        body.insert(QLatin1String("ItemId"), itemId);
+        body.insert(QLatin1String("PositionTicks"),
+                    static_cast<qint64>(qMax(0.0, ev.positionSeconds) * 1e7));
+        body.insert(QLatin1String("IsPaused"), ev.paused);
+        body.insert(QLatin1String("PlaySessionId"), ev.sessionToken);
+        body.insert(QLatin1String("PlayMethod"), QStringLiteral("DirectPlay"));
+        const HttpClient::Request req =
+            assembleApiRequest(m_serverUrl, m_token, path, QByteArrayLiteral("POST"),
+                               QJsonDocument(body).toJson(QJsonDocument::Compact));
+        // 阻塞上界切片：恒至多一条在途，wait(1000) 未结束即 abort——单条占用
+        // ≤1000ms，Progress 按位置差节流 ⇒ 稳态约 0.1 槽（同 host 共享池的占用账
+        // 见规格 §6；改动节流 / 切片须重算）
+        const auto id = client->submit(req);
+        if (!HttpClient::wait(id, 1000))
+            HttpClient::abort(id);
+        (void)HttpClient::take(id); // 结果整体丢弃：canceled / 非 2xx 一律静默
+    }
+
+    QString m_serverUrl;                         // 构造期快照
+    QString m_serverId;                          // 认领判据：归属一致
+    QString m_token;                             // 上报凭据；空 = 不认领
+    std::shared_ptr<ServiceRegistry> m_registry; // 现取 HttpClient 的唯一通道
+    // ——节流私有状态（随 Start 与新 sessionToken 复位）——
+    QString m_sessionToken;
+    double m_lastReported = 0;
+    bool m_lastPaused = false;
+};
 } // namespace
 
 JellyfinProvider::JellyfinProvider(const QString &serverUrl, const QString &serverId,
@@ -255,7 +374,12 @@ JellyfinProvider::JellyfinProvider(const QString &serverUrl, const QString &serv
                                    const QStringList &extensions,
                                    const std::shared_ptr<ServiceRegistry> &registry)
     : PlaylistProvider(registry), m_serverUrl(serverUrl), m_serverId(serverId), m_token(token),
-      m_userId(userId), m_extensions(extensions) {}
+      m_userId(userId), m_extensions(extensions) {
+    // N74：只造报告者实例，不在本处注册——注册点在列表绑定点（Playlist 构造与
+    // 换源），因为投递路由要列表身份，而 N57 §2.4 定过提供者不认识也不镜像它。
+    // 实例寿命仍归本提供者（基类成员），列表析构或换源令其无人引用即失效
+    setReporter(std::make_shared<JellyfinReporter>(serverUrl, serverId, token, registry));
+}
 
 QString JellyfinProvider::typeKey() const { return QLatin1String(kJellyfinProviderKey); }
 

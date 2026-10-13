@@ -410,6 +410,21 @@ const QList<SettingCategory> &settingCatalog() {
                   .fallback = true,
                   .mpvType = MpvType::Flag},
              }},
+        // ⑥ 播放上报 —— N74：报告者开关组（粒度 = 报告者种类，ini 键与注册表的键
+        // 一一对应；分类不设总开关）。全部写 oxbow.ini，应用成功经既有
+        // pluginIniKeysChanged 通知主窗改驱动器启用表并切闸门，实时生效、无需重启
+        {.title = QT_TRANSLATE_NOOP("SettingsDialog", "Playback Reporting"),
+         .items =
+             {
+                 {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Report playback to Jellyfin"),
+                  .widget = WidgetKind::CheckBox,
+                  .iniKey = "reportJellyfin",
+                  .fallback = App::reportJellyfinDefault(), // 默认开（Constants.h 单点）
+                  .note = QT_TRANSLATE_NOOP(
+                      "SettingsDialog",
+                      "Sends watch position to the signed-in Jellyfin server so resume "
+                      "points and watched marks stay up to date")},
+             }},
     };
     return catalog;
 }

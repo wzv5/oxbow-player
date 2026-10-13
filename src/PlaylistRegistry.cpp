@@ -6,10 +6,12 @@ QString defaultListDisplayName() {
     return QCoreApplication::translate("PlaylistRegistry", kDefaultListNameSrc);
 }
 
-PlaylistRegistry::PlaylistRegistry(std::shared_ptr<PlaylistProvider> defaultProvider) {
+PlaylistRegistry::PlaylistRegistry(std::shared_ptr<PlaylistProvider> defaultProvider,
+                                   std::shared_ptr<PlaybackReporterRegistry> reporters)
+    : m_reporters(std::move(reporters)) {
     Q_ASSERT(defaultProvider != nullptr); // 装配顶点交成品，本类不调提供者工厂
     m_default = std::make_unique<Playlist>(kDefaultListUuid, defaultListDisplayName(),
-                                           std::move(defaultProvider));
+                                           std::move(defaultProvider), m_reporters);
 }
 
 Playlist *PlaylistRegistry::find(const QUuid &uuid) const {
@@ -65,7 +67,8 @@ Playlist *PlaylistRegistry::append(QString name, std::shared_ptr<PlaylistProvide
     // 接回或新铸：存量值为 nil（缺键）或已在册即另铸，否则接回（撞车语义与旧会话
     // 占用表同形；保留身份 kDefaultListUuid 本就恒在册，故任何接回它的请求都判撞车）
     const QUuid uuid = (storedUuid.isNull() || find(storedUuid)) ? mintUuid() : storedUuid;
-    m_persistent.push_back(std::make_unique<Playlist>(uuid, std::move(name), std::move(provider)));
+    m_persistent.push_back(
+        std::make_unique<Playlist>(uuid, std::move(name), std::move(provider), m_reporters));
     return m_persistent.back().get();
 }
 

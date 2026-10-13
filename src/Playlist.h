@@ -5,6 +5,8 @@
 #include "PlaylistEntity.h"
 #include "PlaylistProvider.h"
 
+class PlaybackReporterRegistry; // N74：报告者注册表（本类是注册点，只 add 不读）
+
 // 播放列表（N57 §2.2）：会话级一等对象——身份、名字与提供者三件套齐备才诞生，
 // 唯一所有者是 PlaylistRegistry（对外只出裸指针、不透明所有权）。无视图依赖、
 // 不可拷贝；默认列表是其中的真实一员，只是不落盘、不可改名换源摘除。
@@ -13,7 +15,8 @@ class Playlist {
   public:
     // 一次成型：不存在"无提供者的中间态"，uuid 断言非 nil、provider 断言非空。
     // 本类不自铸身份也不反问注册表：新建与加载均由调用方交值
-    Playlist(const QUuid &uuid, QString name, std::shared_ptr<PlaylistProvider> provider);
+    Playlist(const QUuid &uuid, QString name, std::shared_ptr<PlaylistProvider> provider,
+             std::shared_ptr<PlaybackReporterRegistry> reporters);
     Playlist(const Playlist &) = delete;
     Playlist &operator=(const Playlist &) = delete;
 
@@ -48,7 +51,14 @@ class Playlist {
     void save(QSettings &settings) const;
 
   private:
+    // N74：把当前提供者的报告者按**本列表身份**注册进表（种类键取 provider 的
+    // typeKey，与设置目录的开关键同源）。构造与换源两处各调一次；注册表为空
+    // （测试 / 未装配）或提供者不出报告者即静默不注册——上报面永不反压装配。
+    // 旧实例不需注销：注册表只持 weak，提供者随换源或列表析构失去引用即失效
+    void registerReporter();
+
     QUuid m_uuid;
     QString m_name;
-    std::shared_ptr<PlaylistProvider> m_provider; // 恒非空
+    std::shared_ptr<PlaylistProvider> m_provider;          // 恒非空
+    std::shared_ptr<PlaybackReporterRegistry> m_reporters; // 可空（测试 / 未装配）
 };

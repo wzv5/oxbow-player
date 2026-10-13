@@ -2,13 +2,29 @@
 
 #include "Playlist.h"
 
-#include "PlaylistRegistry.h" // kDefaultListUuid（保留身份的唯一出处）
-#include "StreamTransit.h"    // N65：仅 Debug 断言"转接项必带 cache=yes"（头注释
-                              // 允许依赖方已列明本类，L1 叶子地位不变）
+#include "PlaybackReporterRegistry.h" // N74：报告者注册点在本类（列表身份在此）
+#include "PlaylistRegistry.h"         // kDefaultListUuid（保留身份的唯一出处）
+#include "StreamTransit.h"            // N65：仅 Debug 断言"转接项必带 cache=yes"（头注释
+                                      // 允许依赖方已列明本类，L1 叶子地位不变）
 
-Playlist::Playlist(const QUuid &uuid, QString name, std::shared_ptr<PlaylistProvider> provider)
-    : m_uuid(uuid), m_name(std::move(name)), m_provider(std::move(provider)) {
+Playlist::Playlist(const QUuid &uuid, QString name, std::shared_ptr<PlaylistProvider> provider,
+                   std::shared_ptr<PlaybackReporterRegistry> reporters)
+    : m_uuid(uuid), m_name(std::move(name)), m_provider(std::move(provider)),
+      m_reporters(std::move(reporters)) {
     Q_ASSERT(!m_uuid.isNull() && m_provider != nullptr);
+    registerReporter();
+}
+
+// N74：投递路由需要列表身份，而提供者按 N57 §2.4 不认识它——注册因此落在 (身份,
+// 提供者) 相遇的本类：构造一次、换源一次。键用 typeKey()（与设置目录的开关键、
+// 登记表条目同源），报告者实例的寿命仍归提供者
+void Playlist::registerReporter() {
+    if (!m_reporters)
+        return;
+    const auto reporter = m_provider->reporter();
+    if (!reporter)
+        return; // 该提供者不出报告者（静态 / 目录 / WebDAV / rclone crypt 一族）
+    m_reporters->add(m_provider->typeKey(), m_uuid, reporter);
 }
 
 bool Playlist::isDefault() const { return m_uuid == kDefaultListUuid; }
@@ -22,6 +38,7 @@ void Playlist::setProvider(std::shared_ptr<PlaylistProvider> provider) {
     Q_ASSERT(!isDefault()); // 默认列表不可换源（§2.5）
     Q_ASSERT(provider != nullptr);
     m_provider = std::move(provider); // 身份与名字不动
+    registerReporter();               // N74：新实例的报告者按同一身份在册（旧的随其析构失效）
 }
 
 QVector<PlayTarget> Playlist::playTargets(const PlaylistEntity::List &entities) const {

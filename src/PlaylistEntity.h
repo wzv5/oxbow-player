@@ -139,6 +139,12 @@ class PlaylistEntity {
 
     // ——身份与显示——
     const QString &path() const { return m_path; } // 身份：喂 mpv / 持久化 / 回刷比对
+    // N74：归属**列表**身份的公开读出口——"加工这条播放形态的是哪个列表"，与写侧
+    // setOwnership 同源（收编进默认 tab 的项仍交原列表身份，那才是凭据与报告者所在
+    // 那一册）。语义与书签那种"承诺的归属"（正播 tab 的列表，N55 变更记录 2 钉定）
+    // 不同物，别混用。未盖章（命令行 / 手工构造 / 外部串）返回 nil，调用方按
+    // "来源不明"处理
+    QUuid ownerUuid() const { return m_ownerUuid; }
     // 默认 Util::Url::key(path())（构造期缓存）；远端可重写为服务端 id
     virtual QString key() const;
     // N56 §2.4：显示出口——path() 剥除凭据后的形态（构造期缓存，非虚）。

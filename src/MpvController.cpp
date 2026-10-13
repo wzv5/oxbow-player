@@ -378,6 +378,10 @@ void MpvController::handleFileLoaded() {
     } else {
         emit chaptersChanged(path, QList<ChapterInfo>());
     }
+
+    // N74：装载完成——恒排在本函数末位，mediaMetadataChanged 的发射序先于它
+    // （规格 N74 §4 的一行契约：接收方按"标签先到、装载后到"折叠快照）
+    emit fileLoaded(path);
 }
 
 // 安全约定：mpv_get_property 的接收缓冲必须与 MPV_FORMAT_* 的基本类型同宽

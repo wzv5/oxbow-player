@@ -143,6 +143,11 @@ add_library(oxbowcore MODULE
     src/JellyfinEntity.cpp
     src/JellyfinEntity.h
     src/ServiceRegistry.h
+    src/PlaybackReporter.h
+    src/PlaybackReporterRegistry.cpp
+    src/PlaybackReporterRegistry.h
+    src/PlaybackReportDriver.cpp
+    src/PlaybackReportDriver.h
     src/TraversalPolicy.h
     src/PlaylistProvider.cpp
     src/PlaylistProvider.h
@@ -418,6 +423,9 @@ if(OXBOW_BUILD_TESTS)
         src/JellyfinEntity.cpp
         src/JellyfinEntity.h
         src/ServiceRegistry.h
+        src/PlaybackReporter.h
+        src/PlaybackReporterRegistry.cpp
+        src/PlaybackReporterRegistry.h
         src/TraversalPolicy.h
         src/MediaInfoHelper.cpp
         src/MediaInfoHelper.h
@@ -499,6 +507,7 @@ if(OXBOW_BUILD_TESTS)
     oxbow_add_test(HttpByteStream)
     oxbow_add_test(FileByteStream)
     oxbow_add_test(FilterList)
+    oxbow_add_test(PlaybackReporterRegistry)
     # rclone crypt 的两套件与特性同进退（关掉就没有被测对象）；FileByteStream 是通用
     # L3 传输，不受本门禁影响
     if(OXBOW_WITH_RCLONE_CRYPT)

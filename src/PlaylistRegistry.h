@@ -4,6 +4,8 @@
 
 #include "Playlist.h"
 
+class PlaybackReporterRegistry; // N74：下传给每个 Playlist 作报告者注册点（可空）
+
 // 默认列表的保留身份（N57 §2.5）：max UUID 全 F。version 位使合法铸造永不产出它，
 // 持久列表也碰不上它（它本身恒在注册表内，任何接回该值的请求即判撞车而改用新铸）；
 // 全零另有含义——QUuid::fromString 对空串与非法串返回全零，故全零即"无身份"
@@ -26,9 +28,12 @@ QString defaultListDisplayName();
 // 的线程契约不符）。
 class PlaylistRegistry {
   public:
-    // 收成品提供者、不自调提供者工厂；默认列表在此以保留身份与默认名直接建成，
-    // 不经过 append（append 是持久列表的登记入口）
-    explicit PlaylistRegistry(std::shared_ptr<PlaylistProvider> defaultProvider);
+    // 收成品提供者，不自调提供者工厂；默认列表在此以保留身份与默认名直接建成，
+    // 不经过 append（append 是持久列表的登记入口）。
+    // N74：报告者注册表句柄只是过一道手——真正的注册点在 Playlist 一侧（列表身份
+    // 归它持有）。缺省空即不注册（测试自建的表、或装配顶点没给）
+    explicit PlaylistRegistry(std::shared_ptr<PlaylistProvider> defaultProvider,
+                              std::shared_ptr<PlaybackReporterRegistry> reporters = nullptr);
     PlaylistRegistry(const PlaylistRegistry &) = delete;
     PlaylistRegistry &operator=(const PlaylistRegistry &) = delete;
 
@@ -80,4 +85,5 @@ class PlaylistRegistry {
 
     std::unique_ptr<Playlist> m_default;
     std::vector<std::unique_ptr<Playlist>> m_persistent;
+    std::shared_ptr<PlaybackReporterRegistry> m_reporters; // N74：过一道手，可空
 };

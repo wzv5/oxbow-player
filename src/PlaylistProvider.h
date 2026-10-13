@@ -5,8 +5,9 @@
 #include "PlaylistEntity.h"
 
 class QSettings;
-class StreamEndpoint; // N52 L2：来源解析点（纯头接口，实现文件使用）
-class StreamRelayIf;  // N52 L4：转接发布接缝（StreamRelay.h 的抽象基，纯头无实现体）
+class StreamEndpoint;   // N52 L2：来源解析点（纯头接口，实现文件使用）
+class StreamRelayIf;    // N52 L4：转接发布接缝（StreamRelay.h 的抽象基，纯头无实现体）
+class PlaybackReporter; // N74：播放上报报告者（寿命归本提供者，注册点在列表侧）
 
 // 播放列表提供者抽象接口（N9）：条目来源策略与列表视图解耦。
 // N26 起以播放项实体为交换媒介：enumerate 返回实体有序表（所有权一次性移交视图，
@@ -163,6 +164,12 @@ class PlaylistProvider {
     // 偏好写入（对话框 accept 期调用；形态约束由能力表承载，写值本身不设防）
     void setTransitPreference(bool preferred);
 
+    // ——N74 播放上报：报告者实例（可空）——
+    // 提供者造它、但不注册：投递路由需要列表身份，而按 N57 §2.4 提供者不认识也
+    // 不镜像列表身份，注册点因此落在列表绑定点（Playlist 构造与换源两处）。
+    // 空即该提供者不出报告者（静态 / 目录 / WebDAV / rclone crypt 一族）
+    const std::shared_ptr<PlaybackReporter> &reporter() const { return m_reporter; }
+
     // ——INI 序列化：完全委托实现——写 provider 类型键、自身参数与排序键
     virtual void saveSettings(QSettings &settings) const = 0;
 
@@ -192,6 +199,8 @@ class PlaylistProvider {
   private:
     SortRule m_sortRule;                         // N57 §2.9：规则值（键 + 方向）
     std::shared_ptr<ServiceRegistry> m_registry; // N35：服务注册表（基类统一持有）
+    // N74：播放上报报告者（可空，基类统一持有——列表侧注册时要按同一份交出）
+    std::shared_ptr<PlaybackReporter> m_reporter;
     // N57 §2.4：列表身份不再镜像于此（归 Playlist / PlaylistRegistry 持有）。
     // 转接偏好与端点：端点惰性建一次并缓存（参数不可变故无需重建；playUrl 仅
     // GUI 线程调用，缓存无需加锁）
@@ -221,6 +230,12 @@ class PlaylistProvider {
 
     // 子类经此取构造期注入的注册表（enumerate 造实体时转交 fromPath）
     const std::shared_ptr<ServiceRegistry> &registry() const { return m_registry; }
+
+    // N74：子类构造期交出报告者实例（寿命随本提供者；注册表只持 weak，注册由
+    // 列表侧完成，见 reporter()）
+    void setReporter(std::shared_ptr<PlaybackReporter> reporter) {
+        m_reporter = std::move(reporter);
+    }
 
     // ——N29 元数据注入口（唯一授权通道）——
     // 实体的 setFileMeta / setMediaMeta 为 protected 且仅友元（本类）可及；

@@ -195,6 +195,14 @@ class MpvController : public QObject {
     // 语义判定由消费者负责——B9 续播清除仅认 MPV_END_FILE_REASON_EOF；
     // 会话态重置对所有 reason 生效（见 MainWindow）
     void endFile(int reason);
+    // N74：装载完成推送——载荷即归属键 m_currentFile（START_FILE 时缓存的 N61
+    // 唯一出口产物），归属键语义与 durationChanged 一致。**回显整形不折返转接包装**：
+    // oxbow:// 含 "://" 属已定形、逐字节原样返回，要条目身份的消费方须自经
+    // StreamTransit::unwrap（幂等，非转接形态原样通过）——Jellyfin 恒转接，不折回
+    // 则报告者按 URN 的认领判据一律丢弃（规格 N74 变更记录·实测驱动）
+    // 发射排在 mediaMetadataChanged 之后（handleFileLoaded 内顺序发射，一行契约：
+    // 接收方按"标签先到、装载后到"折叠快照），与 mediaMetadataChanged 同源同序
+    void fileLoaded(const QString &path);
     // 导航器面板（N1）：video-zoom / video-pan-x / video-pan-y / 视频尺寸
     void videoZoomChanged(double zoom);
     void videoPanXChanged(double panX);
