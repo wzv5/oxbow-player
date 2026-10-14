@@ -6,6 +6,7 @@
 #include "FilterListWidget.h"
 #include "MpvConf.h"
 #include "MpvController.h"
+#include "playbackreport/ReporterSwitchCatalog.h" // N99：上报开关目录项同引账目行（键名与缺省单点）
 
 // ===================== 设置目录数据模型（R4 §4.1） =====================
 // 数据模型类型定义在全局作用域而非匿名命名空间：SettingsDialog.h 以全局前置
@@ -418,8 +419,8 @@ const QList<SettingCategory> &settingCatalog() {
              {
                  {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Report playback to Jellyfin"),
                   .widget = WidgetKind::CheckBox,
-                  .iniKey = "reportJellyfin",
-                  .fallback = App::reportJellyfinDefault(), // 默认开（Constants.h 单点）
+                  .iniKey = jellyfinSwitch().iniKey, // 键名与缺省同引上报账目行（N99 单点）
+                  .fallback = jellyfinSwitch().defaultValue,
                   .note = QT_TRANSLATE_NOOP(
                       "SettingsDialog",
                       "Sends watch position to the signed-in Jellyfin server so resume "

@@ -3,6 +3,7 @@
 #include "pch.h"
 
 #include "PlaybackReporter.h"
+#include "PlaylistEntity.h"
 
 // N74：报告者注册表——"字符串键 → 多实例、按注册顺序、弱持有、过期自清理"，
 // 每条表项另带**归属列表身份**（投递路由键，非认领判据）。
@@ -54,6 +55,17 @@ class PlaybackReporterRegistry {
     // 归属为 nil（不经列表绑定点的注册）→ 一律投；来源为 nil（正播条目解析不出
     // 归属）→ 有归属者一律**不投**，宁漏不串；否则相等才投。
     static bool claimsSource(const QUuid &ownerUuid, const QUuid &sourceUuid);
+
+    // 归属解析（同族纯谓词）：来源列表身份的**来源侧**判定，与 `claimsSource` 的
+    // 表项侧判定合成"宁漏不串"的完整路由规则——两半必须同住一处，判据住主窗转发
+    // 槽即零覆盖。入参：正播实体（可空——越界 / 层不在缓存 / 异步推进中）、已
+    // unwrap 折回的条目身份、正播 tab 的列表身份（可空）。实体在位 → `matches`
+    // 键级判等相符才交 `ownerUuid()`，不符交 nil（载荷与现读行号不原子的错配防线，
+    // 故意宽松的 matches 仍认得出形态漂移）；实体缺位 → 正播列表非 nil 且非默认
+    // 列表才回落该列表身份（真列表根层项的归属恒等于它自己，回落不引入错配），
+    // 默认 tab 混得进收编项（归属是别家列表），歧义区不猜——三种落空全交 nil。
+    static QUuid resolveSourceUuid(const PlaylistEntity::Ptr &entity, const QString &identity,
+                                   const QUuid &playingListUuid);
 
   private:
     struct Row {

@@ -2,7 +2,11 @@
 
 #include <QtTest/QtTest>
 
-#include "PlaybackReporterRegistry.h"
+#include "playbackreport/PlaybackReporterRegistry.h"
+
+#include "PlaylistProvider.h" // 归属注入口的形参类型
+#include "PlaylistRegistry.h" // kDefaultListUuid：回落判据的"默认 tab 不猜"档
+#include "ServiceRegistry.h"
 
 // N74 §2：报告者注册表的纯数据契约——注册顺序即取快照顺序（同键多实例并存、按
 // 各自注册位次留下，归属列表身份随表项交回）、lock 失败即过期并在取快照时剔掉且
@@ -10,9 +14,11 @@
 // 在册布尔由 add 置位且不因过期回拨。投递路由（谁认领哪条来源）的判据就住在表上
 // （`claimsSource`）：它是"表项归属 ↔ 事件来源"这对值的纯谓词，与表项形状同族；
 // 驱动器链接 mpv 侧、需要 handle 才实例化，判据住那儿即这条安全属性零覆盖，故本
-// 套件既验表的形状与归属列的忠实搬运，也验该谓词的五种组合。add 的空指针断言在
-// Debug 构建里先 qAbort，与返回值档不可共存于同一用例，故本套件不构造该入参（与
-// tst_PlaylistRegistry 对断言分支的处置同口径）。
+// 套件既验表的形状与归属列的忠实搬运，也验两支路由谓词的组合——`claimsSource`
+// 的五种组合（N74）与 `resolveSourceUuid` 的五档边界（N99：来源侧判定，与表项侧
+// 合成"宁漏不串"的完整规则）。add 的空指针断言在 Debug 构建里先 qAbort，与返回
+// 值档不可共存于同一用例，故本套件不构造该入参（与 tst_PlaylistRegistry 对断言
+// 分支的处置同口径）。
 namespace {
 using Entry = PlaybackReporterRegistry::Entry;
 
@@ -41,6 +47,29 @@ class RecordingReporter final : public PlaybackReporter {
     QString m_tag;
     QVector<PlaybackEvent> m_events;
 };
+
+// 归属解析用例的最小实体桩：经子类公开转发盖章（与 tst_PlaylistEntity 的
+// TestEntity 同一条授权通道，不放宽可见性）；判据只吃 path / matches / ownerUuid
+class StampableEntity final : public PlaylistEntity {
+  public:
+    StampableEntity(QString path, const std::shared_ptr<ServiceRegistry> &registry)
+        : PlaylistEntity(std::move(path), registry) {}
+
+    Ptr clone() const override { return std::make_shared<StampableEntity>(*this); }
+    bool isLocalFile() const override { return true; }
+    bool exists() const override { return true; }
+    bool supportsFileMeta() const override { return false; }
+    bool supportsMediaMeta() const override { return false; }
+
+    void applyOwnership(QUuid uuid, std::weak_ptr<const PlaylistProvider> provider) {
+        setOwnership(std::move(uuid), std::move(provider));
+    }
+
+  protected:
+    FileMeta computeFileMeta() const override { return {}; }
+    MediaMeta computeMediaMeta() const override { return {}; }
+    QIcon computeIcon() const override { return {}; } // GUILESS 环境不触碰像素后端
+};
 } // namespace
 
 class TestPlaybackReporterRegistry : public QObject {
@@ -55,6 +84,11 @@ class TestPlaybackReporterRegistry : public QObject {
     void snapshotLifetimeEndsWithTheSnapshot();
     void hasEntryNeverResets();
     void routingPredicatePrefersMissingOverWrong();
+    void sourceResolutionEntityMatched();
+    void sourceResolutionMismatchYieldsNil();
+    void sourceResolutionFallbackForNonDefault();
+    void sourceResolutionDefaultTabStaysSilent();
+    void sourceResolutionNoFallbackYieldsNil();
 };
 
 void TestPlaybackReporterRegistry::emptyTableYieldsNothing() {
@@ -168,6 +202,48 @@ void TestPlaybackReporterRegistry::routingPredicatePrefersMissingOverWrong() {
     QVERIFY(!PlaybackReporterRegistry::claimsSource(owner, QUuid()));  // 有归属 + 无来源
     QVERIFY(PlaybackReporterRegistry::claimsSource(owner, owner));     // 同源
     QVERIFY(!PlaybackReporterRegistry::claimsSource(owner, other));    // 别册
+}
+
+// 归属解析（N99）：来源侧判定的五档边界。构造用同一身份串喂实体与 identity，
+// matches 的键级判等恒命中/恒不命中两态可造
+void TestPlaybackReporterRegistry::sourceResolutionEntityMatched() {
+    auto registry = std::make_shared<ServiceRegistry>();
+    const QUuid owner = QUuid::createUuid();
+    auto entity = std::make_shared<StampableEntity>(QStringLiteral("D:/media/a.mp4"), registry);
+    entity->applyOwnership(owner, {});
+    QVERIFY(PlaybackReporterRegistry::resolveSourceUuid(entity, QStringLiteral("D:/media/a.mp4"),
+                                                        QUuid()) == owner);
+}
+
+void TestPlaybackReporterRegistry::sourceResolutionMismatchYieldsNil() {
+    auto registry = std::make_shared<ServiceRegistry>();
+    auto entity = std::make_shared<StampableEntity>(QStringLiteral("D:/media/a.mp4"), registry);
+    entity->applyOwnership(QUuid::createUuid(), {});
+    // 载荷与现读行号不原子（GUI 被占住期间 mpv 换过行）：判等不符一律交 nil，宁漏不串
+    QVERIFY(PlaybackReporterRegistry::resolveSourceUuid(entity, QStringLiteral("D:/media/b.mp4"),
+                                                        QUuid::createUuid())
+                .isNull());
+}
+
+void TestPlaybackReporterRegistry::sourceResolutionFallbackForNonDefault() {
+    // 实体解析不到（越界 / 层不在缓存 / 异步推进中）：非默认 tab 回落该列表身份
+    const QUuid listUuid = QUuid::createUuid();
+    QVERIFY(PlaybackReporterRegistry::resolveSourceUuid(
+                PlaylistEntity::Ptr{}, QStringLiteral("D:/media/a.mp4"), listUuid) == listUuid);
+}
+
+void TestPlaybackReporterRegistry::sourceResolutionDefaultTabStaysSilent() {
+    // 默认 tab 里混得进收编项（归属是别家列表），歧义区不猜：交 nil
+    QVERIFY(PlaybackReporterRegistry::resolveSourceUuid(
+                PlaylistEntity::Ptr{}, QStringLiteral("D:/media/a.mp4"), kDefaultListUuid)
+                .isNull());
+}
+
+void TestPlaybackReporterRegistry::sourceResolutionNoFallbackYieldsNil() {
+    // 正播列表身份本身取不到（listOf 为空）：无兜底可落，交 nil
+    QVERIFY(PlaybackReporterRegistry::resolveSourceUuid(PlaylistEntity::Ptr{},
+                                                        QStringLiteral("D:/media/a.mp4"), QUuid())
+                .isNull());
 }
 
 QTEST_GUILESS_MAIN(TestPlaybackReporterRegistry)

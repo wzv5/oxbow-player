@@ -46,9 +46,9 @@ if(OXBOW_WITH_RCLONE_CRYPT)
     find_package(Sodium REQUIRED)
 
     # 纯算法层（不依赖 Qt / mpv）单独住 src/rclonecrypt/：目录内互相 include 用裸文件
-    # 名，跨目录的消费者写 "rclonecrypt/xxx.h"（与 <mpv/client.h> 同一路径写法），
-    # 不为此另加一条包含路径。源清单只在这里写一遍，oxbowcore 与 oxbow_testlib 两个
-    # 消费点共用（AGENTS 八"两处源列表"即这两个 target）
+    # 名，跨目录的消费者写 "rclonecrypt/xxx.h"（与 <mpv/client.h> 同一路径写法；N99 起
+    # 两个 target 另有 src 包含目录，本族的拼写不跟着放宽）。源清单只在这里写一遍，
+    # oxbowcore 与 oxbow_testlib 两个消费点共用（AGENTS 八"两处源列表"即这两个 target）
     set(OXBOW_RCLONE_CRYPT_SOURCES
         src/rclonecrypt/RcloneCryptAes.cpp
         src/rclonecrypt/RcloneCryptAes.h
@@ -143,11 +143,15 @@ add_library(oxbowcore MODULE
     src/JellyfinEntity.cpp
     src/JellyfinEntity.h
     src/ServiceRegistry.h
-    src/PlaybackReporter.h
-    src/PlaybackReporterRegistry.cpp
-    src/PlaybackReporterRegistry.h
-    src/PlaybackReportDriver.cpp
-    src/PlaybackReportDriver.h
+    src/playbackreport/PlaybackReporter.h
+    src/playbackreport/PlaybackReporterRegistry.cpp
+    src/playbackreport/PlaybackReporterRegistry.h
+    src/playbackreport/PlaybackReportDriver.cpp
+    src/playbackreport/PlaybackReportDriver.h
+    src/playbackreport/PlaybackSnapshot.cpp
+    src/playbackreport/PlaybackSnapshot.h
+    src/playbackreport/ReporterSwitchCatalog.cpp
+    src/playbackreport/ReporterSwitchCatalog.h
     src/TraversalPolicy.h
     src/PlaylistProvider.cpp
     src/PlaylistProvider.h
@@ -195,8 +199,11 @@ add_library(oxbowcore MODULE
     src/FilterListWidget.h
 )
 
-# mpv/client.h 已内置在仓库根目录的 mpv/ 下
-target_include_directories(oxbowcore PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# mpv/client.h 已内置在仓库根目录的 mpv/ 下；src 一并入包含路径只为子目录源单元解析
+# pch.h 与它依赖的根头，跨目录 include 的拼写约定不因此放宽——
+# 照旧写 "playbackreport/xxx.h"、"rclonecrypt/xxx.h"
+target_include_directories(oxbowcore PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                                              ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 # ---------------------------------------------------------------------------
 # N84：构建期计算版本身份（短 hash[-dirty] + UTC 构建时刻），写生成头 revision.h。
@@ -423,9 +430,15 @@ if(OXBOW_BUILD_TESTS)
         src/JellyfinEntity.cpp
         src/JellyfinEntity.h
         src/ServiceRegistry.h
-        src/PlaybackReporter.h
-        src/PlaybackReporterRegistry.cpp
-        src/PlaybackReporterRegistry.h
+        # 上报框架四源单元（驱动器不在此列：其现读四项引用 MpvController，进测试库
+        # 链接不可能成立）
+        src/playbackreport/PlaybackReporter.h
+        src/playbackreport/PlaybackReporterRegistry.cpp
+        src/playbackreport/PlaybackReporterRegistry.h
+        src/playbackreport/PlaybackSnapshot.cpp
+        src/playbackreport/PlaybackSnapshot.h
+        src/playbackreport/ReporterSwitchCatalog.cpp
+        src/playbackreport/ReporterSwitchCatalog.h
         src/TraversalPolicy.h
         src/MediaInfoHelper.cpp
         src/MediaInfoHelper.h
@@ -444,7 +457,8 @@ if(OXBOW_BUILD_TESTS)
         src/HttpClient.cpp
         src/HttpClient.h
     )
-    target_include_directories(oxbow_testlib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+    target_include_directories(oxbow_testlib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
+                                                    ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_link_libraries(oxbow_testlib PUBLIC Qt6::Widgets Qt6::Concurrent Qt6::Network)
     # N98：rclone crypt 一族同 oxbowcore 口径受同一门禁。链接必须 PUBLIC——
     # SODIUM_STATIC 与本特性的 INTERFACE 宏都要传到本库自己的编译单元与各测试 exe
@@ -508,6 +522,8 @@ if(OXBOW_BUILD_TESTS)
     oxbow_add_test(FileByteStream)
     oxbow_add_test(FilterList)
     oxbow_add_test(PlaybackReporterRegistry)
+    oxbow_add_test(ReporterSwitchCatalog)
+    oxbow_add_test(PlaybackSnapshot)
     # rclone crypt 的两套件与特性同进退（关掉就没有被测对象）；FileByteStream 是通用
     # L3 传输，不受本门禁影响
     if(OXBOW_WITH_RCLONE_CRYPT)

@@ -2,7 +2,6 @@
 
 #include "pch.h"
 
-#include "Constants.h" // N74：reportJellyfin 缺省值单点（App::reportJellyfinDefault）
 #include "MpvController.h"
 
 // N54：两处接线要用到嵌套类型（PlaylistWidget::LevelJump / JumpFailure、
@@ -132,19 +131,21 @@ class MainWindow : public QMainWindow {
     // N56：注册表维护的设置变更入口（自 PlaylistWidget 上移）——命中相关键时
     // 重读 ini 覆盖注册表内部实例，下一次求值即生效
     void onPluginIniKeysChanged(const QStringList &keys);
-    // N74：reportJellyfin 变更通路与启动期初值共用——读 ini 刷新成员并 queued 改
-    // 驱动器启用表、切闸门。这条通路一律不判断据、不起线程——判据只在起播那一处
-    // 重查；线程未起时这次调用只是把表改掉（queued 事件堆在 beginCollecting 之前
-    // 处理），启动后按新表运作
-    void syncReportKeyEnabled();
+    // N99：上报开关的变更通路与启动期初值共用——遍历 ReporterSwitchCatalog，命中
+    // changedKeys 的行（空表即全读，启动期那一路）后 queued 改驱动器启用表、切闸门；
+    // 行的当前值一律经 readReporterSwitchValues 取（读法不住本类）。这条通路一律不
+    // 判断据、不起线程——判据只在起播那一处重查；线程未起时这次调用只是把表改掉
+    // （queued 事件堆在 beginCollecting 之前处理），启动后按新表运作
+    void syncReporterSwitches(const QStringList &changedKeys = {});
     // N74：起播段的转发——本类是"在播哪一册"的唯一知情者（模型侧现算正播实体的
     // 归属），故由这里把 (播放串, 归属列表身份) 一次性投给驱动器，而不是让驱动器
     // 从播放串反推（直发形态的串里没有列表身份）。连在 fileLoaded 上、须早于
     // maybeBootReportDriver 的 connect（保证 beginSegment 先于 beginCollecting 入队）
     void forwardReportSegment(const QString &path);
-    // N74：线程启动判据的唯一重查点（fileLoaded 到达即查）——有任一启用键（本类
-    // 手上的 ini 值）且注册表里有在册报告者，且线程从未起过，则起线程并投一次
-    // beginCollecting。启动一次即不再销毁：开关切换走驱动器内闸门，不走这里
+    // N74：线程启动判据的唯一重查点（fileLoaded 到达即查）——注册表里有在册报告者
+    // 且账目聚合判"有任一启用"（ReporterSwitchCatalog::anyEnabled，与驱动器同口径），
+    // 且线程从未起过，则起线程并投一次 beginCollecting。启动一次即不再销毁：开关
+    // 切换走驱动器内闸门，不走这里
     void maybeBootReportDriver();
     void createMenus();
     QWidget *createLeftArea();
@@ -335,9 +336,6 @@ class MainWindow : public QMainWindow {
     // N74：上报驱动器（构造期创建并连好全部信号，不启动线程；进程生命周期存活，
     // 不 delete——退出序靠闸门与事件循环收线，见 PlaybackReportDriver 注释）
     PlaybackReportDriver *m_reportDriver = nullptr;
-    // N74：reportJellyfin 的 ini 现值（启动期读、设置变更通路刷新）——线程启动
-    // 判据的第一条件，缺省与 ini 读值同源（App::reportJellyfinDefault）
-    bool m_reportJellyfinEnabled = App::reportJellyfinDefault();
     QSplitter *m_splitter = nullptr;
     // N66：左 pane 容器（createLeftArea 产物）。重挂收口 restoreOriginalParent
     // 据此把 m_bottomBar 挂回布局末项——左 pane 的布局指针不另存，经此取回

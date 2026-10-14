@@ -5,11 +5,11 @@
 #include "Constants.h"
 #include "HttpByteStream.h"
 #include "JellyfinEntity.h"
-#include "PlaybackReporter.h"
 #include "ProviderSettingsPage.h"
 #include "ServiceRegistry.h"
 #include "StreamEndpoint.h"
 #include "Util.h"
+#include "playbackreport/PlaybackReporter.h"
 
 namespace {
 // 翻译取值（上下文归属本提供者，与 WebDavProvider::trText 同款）
@@ -271,7 +271,9 @@ class JellyfinStreamEndpoint final : public StreamEndpoint {
 // 认领判据（自过滤，契约 5）：身份为 URN 形态且 serverId 段与本实例一致
 // （parseJellyfinUrn 单点），token 空不认领——这是**服务器级**认领；同一台服务器上
 // 多条列表之间的归属由驱动器按来源列表选桶（不在此判，报告者不认识列表身份）。
-// 静默失败：401 / 网络失败丢弃，不重试不弹 UI，token 失效后经重新授权自然恢复
+// 静默失败：不重试不弹 UI（定案不变），认证类（401 / 403）连续 3 次后本实例永久
+// 停手——"少发"不是"重试"（N99 缺口 3），其余失败不计入也不清零；停手的解除 =
+// 重新授权（新实例计数天然复位，不需要定时器与外部解除信号）
 class JellyfinReporter final : public PlaybackReporter {
   public:
     JellyfinReporter(QString serverUrl, QString serverId, QString token,
@@ -280,6 +282,8 @@ class JellyfinReporter final : public PlaybackReporter {
           m_token(std::move(token)), m_registry(std::move(registry)) {}
 
     void playbackEvent(const PlaybackEvent &ev) override {
+        if (m_fused)
+            return; // 认证类连续失败已停手：本实例再不提交任何事件（含换段的 Start/Stop）
         if (m_token.isEmpty())
             return; // token 空 = 未登录，不认领任何事件
         const auto urn = parseJellyfinUrn(ev.identity, m_serverId);
@@ -355,7 +359,22 @@ class JellyfinReporter final : public PlaybackReporter {
         const auto id = client->submit(req);
         if (!HttpClient::wait(id, 1000))
             HttpClient::abort(id);
-        (void)HttpClient::take(id); // 结果整体丢弃：canceled / 非 2xx 一律静默
+        const HttpClient::Response res = HttpClient::take(id);
+        // 认证退避（N99 缺口 3，偏离 N74 §6"结果整体丢弃"）：任一次 2xx 清零——
+        // 偶发认证抖动不累积。引信只认认证类（401 / 403，Jellyfin 凭据失效两态都出），
+        // 连续 3 次 ⇒ 本实例停手。其余一律不计入也不清零：400 是自家字段装配错
+        // （永久引信会把可查的 bug 变成不可见）、404 是条目级事实（播已删条目 /
+        // 库重扫中）、5xx 与 status 0（连接失败 / 服务器未起 / NAS 休眠；wait 超时
+        // 经 abort 后 take 得 canceled、status 0 同档）是瞬态，10s 一条正是自愈形态，
+        // 撞上就永久停手比现状更坏
+        if (res.status >= 200 && res.status < 300) {
+            m_authFailures = 0;
+            return;
+        }
+        if (res.status == 401 || res.status == 403) {
+            if (++m_authFailures >= 3)
+                m_fused = true; // 停手是永久的、插件侧不留日志、设置界面仍显示已登录
+        }
     }
 
     QString m_serverUrl;                         // 构造期快照
@@ -366,6 +385,10 @@ class JellyfinReporter final : public PlaybackReporter {
     QString m_sessionToken;
     double m_lastReported = 0;
     bool m_lastPaused = false;
+    // ——认证退避私有状态（不随会话复位：token 失效是常驻形态，重新授权换实例
+    // 才是唯一解除）——
+    int m_authFailures = 0; // 认证类（401/403）连续计数，任一次 2xx 清零
+    bool m_fused = false;   // 停手引信：置位后 playbackEvent 一律早退
 };
 } // namespace
 

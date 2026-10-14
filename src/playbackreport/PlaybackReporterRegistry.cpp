@@ -2,6 +2,8 @@
 
 #include "PlaybackReporterRegistry.h"
 
+#include "PlaylistRegistry.h" // kDefaultListUuid：回落判据的语义组成部分
+
 std::vector<PlaybackReporterRegistry::Entry> PlaybackReporterRegistry::snapshot() {
     const std::lock_guard<std::mutex> lock(m_mutex);
     std::vector<Entry> out;
@@ -42,4 +44,19 @@ bool PlaybackReporterRegistry::claimsSource(const QUuid &ownerUuid, const QUuid 
     if (sourceUuid.isNull())
         return false; // 来源不明（正播实体取不到或错配）——宁漏不串
     return ownerUuid == sourceUuid;
+}
+
+QUuid PlaybackReporterRegistry::resolveSourceUuid(const PlaylistEntity::Ptr &entity,
+                                                  const QString &identity,
+                                                  const QUuid &playingListUuid) {
+    if (entity) {
+        if (entity->matches(identity))
+            return entity->ownerUuid();
+        return QUuid(); // 载荷与现读行号不原子（GUI 被占住期间 mpv 换过行）：宁漏不串
+    }
+    // 实体解析不到：非默认 tab 回落该 tab 身份——真列表根层项的归属恒等于它自己，
+    // 回落不引入错配；默认 tab 里混得进收编项（归属是别家列表），歧义区不猜
+    if (!playingListUuid.isNull() && playingListUuid != kDefaultListUuid)
+        return playingListUuid;
+    return QUuid();
 }

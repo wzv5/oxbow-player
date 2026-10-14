@@ -9,15 +9,12 @@
 #include "Constants.h"
 #include "FilterListWidget.h"
 #include "HttpClient.h"
-#include "JellyfinProvider.h" // N74：kJellyfinProviderKey（启用表键与注册表键同源）
 #include "MpvBindingDialog.h" // N89：mpv 键位编辑（input.conf）
 #include "MpvController.h"
 #include "MpvKeyName.h" // N87：未认领按键的 mpv 键名翻译
 #include "NavigatorPanel.h"
-#include "PlaybackReportDriver.h"     // N74：上报驱动器装配与退出序
-#include "PlaybackReporterRegistry.h" // N74：报告者注册表 provide 与判据现查
-#include "Playlist.h"                 // N57 §2.6：经 PlaylistWidget::listOf 取身份，需完整类型
-#include "PlaylistRegistry.h"         // N57 §2.3：装配顶点创建列表注册表（默认名与保留身份的出处）
+#include "Playlist.h"         // N57 §2.6：经 PlaylistWidget::listOf 取身份，需完整类型
+#include "PlaylistRegistry.h" // N57 §2.3：装配顶点创建列表注册表（默认名与保留身份的出处）
 #include "PlaylistWidget.h"
 #include "ProviderCatalog.h" // N57 §2.3：后备提供者经登记表第 0 项出生，只此一处调用
 #include "ServiceRegistry.h"
@@ -28,6 +25,9 @@
 #include "TraversalPolicy.h"
 #include "Util.h"
 #include "Version.h" // N84：About 三行版本身份（本文件只许 include 此口，不得 include revision.h）
+#include "playbackreport/PlaybackReportDriver.h"     // N74：上报驱动器装配与退出序
+#include "playbackreport/PlaybackReporterRegistry.h" // N74：报告者注册表 provide 与判据现查
+#include "playbackreport/ReporterSwitchCatalog.h"    // N99：上报开关账目（登记与聚合单点）
 #ifndef Q_OS_WIN
 #include "X11Util.h" // N83：小窗置顶 EWMH 直发（仅非 Windows 编译，见 CMakeLists）
 #endif
@@ -353,7 +353,7 @@ MainWindow::MainWindow(MpvController *controller, const QString &configFile,
     connect(m_controller, &MpvController::fileLoaded, this, &MainWindow::maybeBootReportDriver);
     // 启动期 ini 初值经同一变更通路落表（queued；事件堆在 beginCollecting 之前，
     // 启动后按新表运作——陈旧表不得覆盖启动前的变更）
-    syncReportKeyEnabled();
+    syncReporterSwitches();
     // N57 §2.3：列表注册表同由装配顶点创建并持有——后备提供者在此经登记表第 0 项
     // 造好交入（"谁调提供者工厂"只此一处），注册表只收成品、不认识服务注册表。
     // N74：另把报告者注册表过一道手给每个列表（注册点在 Playlist 一侧，那里有
@@ -1096,79 +1096,82 @@ void MainWindow::onPluginIniKeysChanged(const QStringList &keys) {
         provideHttpServices();
     if (keys.contains(QStringLiteral("recursiveDepthLimit")))
         provideTraversalPolicy();
-    if (keys.contains(QStringLiteral("reportJellyfin")))
-        syncReportKeyEnabled();
+    // 上报开关不再逐键枚举（N99）：账目行命中的键在同步通路内过滤，新增行零改动
+    syncReporterSwitches(keys);
 }
 
-// N74：reportJellyfin 变更通路（启动期初值与设置应用共用）——读 ini 刷新成员并
-// queued 改驱动器启用表、切闸门（Running ↔ Gated 实时生效）。这条通路一律不判断据、
-// 不起线程——判据只在起播那一处重查；线程未起时这次调用只是把表改掉，启动后按
-// 新表运作
-void MainWindow::syncReportKeyEnabled() {
-    bool enabled = App::reportJellyfinDefault(); // 键缺省即启用（Constants.h 单点）
-    if (!m_configFile.isEmpty()) {
-        QSettings s(m_configFile, QSettings::IniFormat);
-        enabled = s.value(QStringLiteral("reportJellyfin"), enabled).toBool();
+// N99：上报开关的变更通路与启动期初值共用——遍历 ReporterSwitchCatalog（登记、读值与
+// 聚合的单点），命中 changedKeys 的行（空表即全读，启动期那一路）后 queued 改驱动器
+// 启用表、切闸门。这条通路一律不判断据、不起线程——判据只在起播那一处重查
+// （maybeBootReportDriver）；线程未起时这次调用只是把表改掉，启动后按新表运作。
+// queued 投递走 functor 形态：改名 / 改签名交给编译器，不落字符串查找
+void MainWindow::syncReporterSwitches(const QStringList &changedKeys) {
+    const bool filter = !changedKeys.isEmpty();
+    const QHash<QString, bool> values = readReporterSwitchValues(m_configFile);
+    for (const ReporterSwitch &row : reporterSwitches()) {
+        if (filter && !changedKeys.contains(QLatin1String(row.iniKey)))
+            continue; // 本次变更未命中该行：表值不变，不重投
+        const QString key = QLatin1String(row.reporterKey);
+        const bool enabled = values.value(key);
+        QMetaObject::invokeMethod(
+            m_reportDriver, [d = m_reportDriver, key, enabled] { d->setKeyEnabled(key, enabled); },
+            Qt::QueuedConnection);
     }
-    m_reportJellyfinEnabled = enabled;
-    // 键与注册表的键同源（kJellyfinProviderKey）；queued 投给驱动器（工作线程执行）
-    QMetaObject::invokeMethod(m_reportDriver, "setKeyEnabled", Qt::QueuedConnection,
-                              Q_ARG(QString, QLatin1String(kJellyfinProviderKey)),
-                              Q_ARG(bool, enabled));
 }
 
-// N74：起播段的转发。投递路由要的"在播哪一册"是模型知识——取正播实体的归属
-// （收编进默认 tab 的项交**原列表**身份，那才是加工这条播放形态、持凭据、在册
-// 报告者所在的那一册；与书签那种"承诺归属 = 正播 tab"不同物）。不从播放串反推：
-// 直发形态（不经转接）的串里没有列表身份，靠串就等于只对转接条目成立。
-// 行号取 playlist-pos **现读**而非缓存的 m_playlistPos——后者随 playlistPosChanged
-// 的 queued 推送更新，与该信号同源的 FILE_LOADED 先后无文档保证，取晚了会认错条目
-// 归属（认错即串账，正是本路由要防的）。两个残留分支在此收口：
-// ① 载荷是上一条的缓存、pos 是此刻现读，两者不原子——GUI 被占住期间 mpv 换过行就会
-//   配错，故拿实体自答的键级判等核对（`matches` 故意宽松：形态漂移仍认得出同一内容），
-//   不符一律交 nil；② 实体解析不到（越界 / 层不在缓存 / 异步推进中）时，非默认 tab
-//   可回落该 tab 身份——真列表根层项的归属恒等于它自己，回落不引入错配；默认 tab 里
-//   混得进收编项（归属是别家列表），歧义区不猜。两者都落进驱动器"宁漏不串"的口径：
-//   漏一段比错投一册便宜
+// N74：起播段的转发。投递路由要的"在播哪一册"是模型知识——正播实体的归属（收编
+// 进默认 tab 的项交**原列表**身份，那才是加工这条播放形态、持凭据、在册报告者所在的
+// 一册；与书签那种"承诺归属 = 正播 tab"不同物）。不从播放串反推：直发形态（不经转接）
+// 的串里没有列表身份，靠串就等于只对转接条目成立。行号取 playlist-pos **现读**而非
+// 缓存的 m_playlistPos——后者随 playlistPosChanged 的 queued 推送更新，与该信号同源
+// 的 FILE_LOADED 先后无文档保证，取晚了会认错条目归属（认错即串账，正是本路由要防的）。
+// 归属解析的判据（实体键级判等防"缓存载荷 + 现读行号"错配、非默认 tab 回落、默认 tab
+// 不猜）收在 PlaybackReporterRegistry::resolveSourceUuid——与 claimsSource 同族的纯
+// 谓词，随注册表进测试库（N99），本函数只剩取数与投递
 void MainWindow::forwardReportSegment(const QString &path) {
     const QString identity = StreamTransit::unwrap(path);
     const int pos = int(m_controller->propertyInt64(QStringLiteral("playlist-pos"), -1));
     const int tab = m_playlist->playingTabIndex();
     const PlaylistEntity::Ptr entity = pos >= 0 ? m_playlist->playingEntityOf(tab, pos) : nullptr;
-    QUuid listUuid;
-    if (entity) {
-        if (entity->matches(identity))
-            listUuid = entity->ownerUuid();
-    } else if (const Playlist *playing = m_playlist->listOf(tab)) {
-        if (playing->uuid() != kDefaultListUuid)
-            listUuid = playing->uuid();
-    }
-    QMetaObject::invokeMethod(m_reportDriver, "beginSegment", Qt::QueuedConnection,
-                              Q_ARG(QString, path), Q_ARG(QUuid, listUuid));
+    const Playlist *playing = m_playlist->listOf(tab);
+    const QUuid listUuid = PlaybackReporterRegistry::resolveSourceUuid(
+        entity, identity, playing ? playing->uuid() : QUuid());
+    // functor 形态投递（N99）：改名 / 改签名交给编译器，不落字符串查找；队列语义
+    // 与入队次序不变
+    QMetaObject::invokeMethod(
+        m_reportDriver, [d = m_reportDriver, path, listUuid] { d->beginSegment(path, listUuid); },
+        Qt::QueuedConnection);
 }
 
-// N74：线程启动判据的唯一重查点。判据 = 有任一启用键（本类手上的 ini 现值）且
-// 注册表里有在册报告者；两条件齐且闸门仍是 Unbooted 才起线程——只看键会在人人
-// 常驻一条线程（绝大多数用户没配任何 Jellyfin 列表），只看注册表则配置被关的
-// 用户也白常驻。起线程后 queued 投一次 beginCollecting，折叠快照当场收敛成
-// "此刻在播的这一条"，Start 即刻发出。
+// N74：线程启动判据的唯一重查点。判据 = 注册表里有在册报告者 且 账目聚合判"有任一
+// 启用"（ReporterSwitchCatalog::anyEnabled，与驱动器 keyEnabled 同口径——未登记的
+// 键按启用处理，"判据判全关而驱动器按启用投"的分裂从规则单点消除）；两条件齐且闸门
+// 仍是 Unbooted 才起线程——只看键会在人人常驻一条线程（绝大多数用户没配任何 Jellyfin
+// 列表），只看注册表则配置被关的用户也白常驻。起线程后 queued 投一次 beginCollecting，
+// 折叠快照当场收敛成"此刻在播的这一条"，Start 即刻发出。
 // 两条已知且刻意保留的形状：
 // ① 判据读的是工作线程置位的闸门，beginCollecting 又是 queued 的——工作线程还没
 //    处理第一条时连续两次起播，两次都读到 Unbooted、各调一次 start()。不另设本类
 //    私有的"已起旗"：Qt 对 QThread::start() 明写"线程已在运行即无操作"，重复的
 //    beginCollecting 亦自带闸门守卫，两处都落在无害；加一枚旗只是把一个已被文档
 //    担保的幂等再担保一遍。
-// ② 第一条件只覆盖**已登记进设置目录**的键（现仅 reportJellyfin），未沿驱动器
-//    setKeyEnabled 那条"注册表里存在未登记的键也算开"的同口径。本期无第二家；不进
-//    设置目录的报告者落地时，别家键会因这一条件不成立而永不起线程（静默不报），
-//    届时与开关的表驱动登记一并收（N99）。
+// ② hasEntry 廉价（无 I/O）排在 ini 现读之前：为假的多数用户连 ini 都不读。判据
+//    现读 ini、不设缓存成员（只在起播前执行几次，少一份状态少一处漂移）；读法经
+//    readReporterSwitchValues 与变更通路同源（ini 不可用即整表落各行 defaultValue）
 void MainWindow::maybeBootReportDriver() {
     if (m_reportDriver->gate() != PlaybackReportDriver::Gate::Unbooted)
         return; // 已启动（Running / Gated / Dead）：启动一次即不再销毁
-    if (!m_reportJellyfinEnabled || !m_reporters->hasEntry())
-        return; // 判据不成立：无损失可谈（服务器续播点靠 Progress 与超时收尾）
-    m_reportDriver->thread()->start();
-    QMetaObject::invokeMethod(m_reportDriver, "beginCollecting", Qt::QueuedConnection);
+    if (!m_reporters->hasEntry())
+        return; // 无在册报告者：无损失可谈（服务器续播点靠 Progress 与超时收尾）
+    const QHash<QString, bool> values = readReporterSwitchValues(m_configFile);
+    std::vector<QString> registeredKeys; // 未经任何过滤的全部在册键（anyEnabled 的契约）
+    for (const auto &entry : m_reporters->snapshot())
+        registeredKeys.push_back(entry.key);
+    if (!anyEnabled(values, registeredKeys))
+        return;
+    // 启动协议（start + queued 投 beginCollecting）收进驱动器（N99）：两步必须同在，
+    // 如今同一个方法保证；m_thread 自此不出本类
+    m_reportDriver->boot();
 }
 
 void MainWindow::openFiles() {
@@ -3531,19 +3534,12 @@ void MainWindow::onMpvShutdown() {
     // mpv 侧发起退出（终端按 q、其他脚本发 quit）时 closeEvent 不会触发，
     // 在此补保存会话；窗口关闭路径随后到来的重复保存写同值幂等无害
     saveSettings();
-    // N74 退出序（规格 §8）：闸门 Unbooted（线程从未起过——无在册报告者，或起播
-    // 时判据不成立）则收口三段整体跳过，直接 exit(0)——对未启动的 QThread 调
-    // wait() 属编程错误；判据只看闸门这一枚状态、不看指针（驱动器对象恒存在）。
-    // 以下三段必须排在 exit(0) 之前：aboutToQuit 的传输闸门（g_appQuitting）一旦
-    // 落位，最后那条 Stop 会被 HttpClient 静默吞掉且无任何日志
-    if (m_reportDriver->gate() != PlaybackReportDriver::Gate::Unbooted) {
-        QMetaObject::invokeMethod(m_reportDriver, "shutdownFlush", Qt::QueuedConnection);
-        // flush 正常即提前返回（局域网几十毫秒）；超时即软停——置 Dead 并退出线程
-        // 事件循环（不发 Stop：当轮扇出阻塞正说明服务器已不应答，见规格 §8 排队账）。
-        // 在途请求跑在网络线程上、不触碰 mpv handle，收口后 run() 自然结束
-        if (!m_reportDriver->thread()->wait(200))
-            m_reportDriver->softStopFromGui();
-    }
+    // N74 退出序（规格 §8）：queued 收口（最后一条 Stop）→ 有界 join（200ms）→
+    // 超时软停。协议收进驱动器（N99 flushAndJoin）：Unbooted 整体短路在驱动器内判
+    // （判据只看闸门、不看指针），线程对象不再出本类。以下必须排在 exit(0) 之前：
+    // aboutToQuit 的传输闸门（g_appQuitting）一旦落位，最后那条 Stop 会被 HttpClient
+    // 静默吞掉且无任何日志
+    m_reportDriver->flushAndJoin(200);
     // 收口用 exit() 而非 quit()：本插件的 Qt 循环跑在 mpv 的 cplugin 线程（非进程主线程），
     // quit() 在这种布局下只往 qApp 投递一个 Quit 事件、实测永不兑现；exit() 当场同步退出
     // 本线程循环栈上的全部循环（模态对话框还开着时一并收掉）

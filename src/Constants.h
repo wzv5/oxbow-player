@@ -97,11 +97,6 @@ inline int recursiveDepthLimitDefault() { return 3; }
 // 是语义本身而非配置值，故不抽常量、直接写死
 inline int recursiveDepthLimitMax() { return 20; }
 
-// ——N74 播放上报开关——
-// iniKey: reportJellyfin（bool，默认开）；设置目录 fallback 与主窗读值同源。
-// 默认开只对主动配了 Jellyfin 服务器的用户成立（无在册报告者即零请求）
-inline bool reportJellyfinDefault() { return true; }
-
 // ——N66 全屏浮窗——
 // 右缘唤出播放列表浮窗的触发带宽（客户区像素）：底区与右区以此为界互斥，
 // 右下角 (W−t, H−h) 以下为死区，两个浮窗都不触发
