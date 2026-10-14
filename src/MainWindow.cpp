@@ -3515,13 +3515,16 @@ void MainWindow::applyVolumeMax(int v) {
 }
 
 void MainWindow::showAboutDialog() {
-    // N84：正文后空一行接三行版本身份。标签为可翻译名词短语源串（写死）：
-    // Version / Qt version / Build time；Qt 版本取运行期（qVersion()），构建时刻
-    // 为 UTC 形态（偏移恒可推），三行取值与启动诊断行同源
+    // N84：正文后空一行接版本身份，块内再空一行分两组——上组是插件自身的身份
+    // （Version / Build time，Version 行与启动诊断行同源），下组是宿主与运行库
+    // （mpv version 现读 mpv-version 属性、Qt version 取运行期 qVersion()，取运行库
+    // 而非头文件版本那条理由见 Version.h）。标签为可翻译名词短语源串（写死）
+    const QString mpvVersion = m_controller->propertyString(QStringLiteral("mpv-version"));
     const QString versionBlock = tr("Version") + QStringLiteral(": ") + App::versionInfo() +
-                                 QLatin1Char('\n') + tr("Qt version") + QStringLiteral(": ") +
-                                 App::qtVersion() + QLatin1Char('\n') + tr("Build time") +
-                                 QStringLiteral(": ") + App::buildDateTime();
+                                 QLatin1Char('\n') + tr("Build time") + QStringLiteral(": ") +
+                                 App::buildDateTime() + QStringLiteral("\n\n") + tr("mpv version") +
+                                 QStringLiteral(": ") + mpvVersion + QLatin1Char('\n') +
+                                 tr("Qt version") + QStringLiteral(": ") + App::qtVersion();
     QMessageBox::about(this, tr("About %1").arg(App::name()),
                        tr("%1: a Qt-based player GUI loaded as an mpv C plugin.\n"
                           "Video rendering is performed by mpv; this plugin only provides the "
