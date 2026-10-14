@@ -31,7 +31,7 @@ ShortcutsDialog::ShortcutsDialog(ActionManager *actions, const QString &iniPath,
 
     m_table = new QTableWidget(this);
     m_table->setColumnCount(2); // 只有两列：状态走行级视觉，操作走右键菜单
-    m_table->setHorizontalHeaderLabels({tr("Action"), tr("Key Sequence")});
+    m_table->setHorizontalHeaderLabels({tr("Action"), tr("Key")});
     m_table->verticalHeader()->setVisible(false);
     m_table->setIconSize(QSize(0, 0));
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);

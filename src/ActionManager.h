@@ -4,7 +4,12 @@
 
 // A15：全部 UI 动作的出生与登记处——集中声明使键位清单一眼可见；
 // 带键动作创建即双挂载主窗口（快捷键不随菜单栏隐藏失活）；零信号连接，
-// 业务逻辑归主窗口。容器侧禁止自行创建 QAction，一律引用此处的主实例。
+// 业务逻辑归主窗口。
+//
+// 容器侧禁止自行创建 QAction，一律引用此处的主实例。判据是"要不要给人改绑"，不是
+// "有没有默认键"：默认无键而入口本身值得改绑的照常登记（设置 / 快捷键 / mpv 键位
+// 编辑器）；既不配默认键、也不会有人想自定义绑定的才由容器自建（关于对话框）——
+// 登记它只会在快捷键编辑器里多占一行可改绑的空键行。
 //
 // N86：运行期改键原语（defaultKey / key / applyKey）与键位归一读取单点
 // （effectiveKeys）；改键的生效收口在 MainWindow。
@@ -18,6 +23,7 @@ class ActionManager : public QObject {
         Open,
         Settings,
         Shortcuts,      // 快捷键编辑器入口（默认无键）
+        MpvKeyBindings, // N89：mpv 侧键位编辑器入口（默认无键，管 input.conf）
         ScreenshotCopy, // N78：复制截图到剪贴板（Ctrl+C）
         ScreenshotSave, // N78：截图另存为（Ctrl+E）
         Quit,

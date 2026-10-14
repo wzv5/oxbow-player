@@ -632,10 +632,11 @@ void MainWindow::createMenus() {
     fileMenu->addAction(act(AM::Id::Shortcuts));
     connect(act(AM::Id::Shortcuts), &QAction::triggered, this, &MainWindow::ensureShortcutsDialog);
     // N89：mpv 键位编辑器与 N86 并列相邻但完全独立——一个管 mpv 侧（input.conf），
-    // 一个管插件侧（[shortcuts] 节）。不经 ActionManager 出生登记：本项无快捷键、
-    // 无 [shortcuts] 持久化语义，收进键位表反而会被 N86 编辑器当成可改绑条目
-    QAction *mpvBindingsAct = fileMenu->addAction(tr("Key &Bindings…"));
-    connect(mpvBindingsAct, &QAction::triggered, this, &MainWindow::ensureMpvBindingDialog);
+    // 一个管插件侧（[shortcuts] 节）。登记在表里只为与其他菜单入口同处一处（默认不
+    // 绑键、可改绑、禁用态处处生效），配置与键位仍互不共享
+    fileMenu->addAction(act(AM::Id::MpvKeyBindings));
+    connect(act(AM::Id::MpvKeyBindings), &QAction::triggered, this,
+            &MainWindow::ensureMpvBindingDialog);
     // N78：截图组——与 Settings 间加分隔符独立成组，其后原有「分隔符 + Quit」不动
     fileMenu->addSeparator();
     fileMenu->addAction(act(AM::Id::ScreenshotCopy));
@@ -761,7 +762,8 @@ void MainWindow::createMenus() {
             [this] { seekRelative(-5); });
 
     QMenu *helpMenu = menuBar()->addMenu(tr("&Help"));
-    // N102：About 动作退出 ActionManager 登记表（无键位语义），由主窗自建并持有
+    // N102：About 由主窗自建、不经登记表——判据见 ActionManager.h 头注释（无改绑
+    // 需求的入口不进键位表，免得在快捷键编辑器里白占一行）
     QAction *aboutAction = helpMenu->addAction(tr("&About"));
     connect(aboutAction, &QAction::triggered, this, [this] { AboutDialog(this).exec(); });
 }
