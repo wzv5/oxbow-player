@@ -192,6 +192,8 @@ add_library(oxbowcore MODULE
     src/mpvbridge/InputConf.h
     src/ui/SettingsDialog.cpp
     src/ui/SettingsDialog.h
+    src/ui/AboutDialog.cpp
+    src/ui/AboutDialog.h
     src/ui/ShortcutsDialog.cpp
     src/ui/ShortcutsDialog.h
     src/ui/MpvBindingDialog.cpp

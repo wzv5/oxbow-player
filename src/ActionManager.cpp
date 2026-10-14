@@ -41,7 +41,6 @@ ActionManager::ActionManager(QWidget *host) : m_host(host) {
     // 无状态开关：显隐真相由 mpv 的 stats 脚本持有，插件侧不跟踪勾选态
     declareAction(Id::ToggleStats, QStringLiteral("ToggleStats"), tr("Toggle &Status Info"),
                   Qt::Key_T);
-    declareAction(Id::About, QStringLiteral("About"), tr("&About"));
     // N6：Esc 闭环与 ±5 秒相对 seek，隐绑定无菜单实体（显示名可翻译，对话框用）。
     // Escape 不可改绑：改绑可能封死全屏 / 小窗 / 视频区的退出路径
     declareShortcut(Id::Escape, QStringLiteral("Escape"), tr("Escape"), Qt::Key_Escape, false);

@@ -81,7 +81,6 @@ class MainWindow : public QMainWindow {
     void onConsoleOpenChanged(bool open);
     void copyScreenshotToClipboard(); // N78：截图 → 剪贴板（Ctrl+C 与文件菜单共用）
     void saveScreenshotToFile();      // N78：截图另存为（Ctrl+E 与文件菜单共用）
-    void showAboutDialog();
     // N6：速度控制（读改写 speed 属性，钳制 0.25~8）
     void changeSpeed(double delta);
     void resetSpeed();

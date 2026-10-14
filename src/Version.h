@@ -2,7 +2,7 @@
 
 #include "pch.h"
 
-// 版本身份访问口（N84）：三个取值函数的数据全部来自构建期生成头 revision.h 的
+// 版本身份访问口（N84）：取值函数的数据全部来自构建期生成头 revision.h 的
 // 对应宏（OXBOW_VERSION_STRING / OXBOW_REVISION_STRING / OXBOW_BUILD_TIME）。
 // 本头是其他翻译单元的唯一入口——全仓只有 Version.cpp 允许 include revision.h
 // （构建时刻每次构建都变，第二个直接消费者就等于把"每次构建必重编"扩散出去），
@@ -15,12 +15,19 @@ namespace App {
 // revision 落 unknown，串形不变
 QString versionInfo();
 
-// 构建时刻，UTC 形态 2026-10-06T14:30:00Z（Z 即 UTC 指定制，偏移恒可推）。
-// 实现即返回生成头宏，无运行期计算、无格式化与时区换算
-QString buildDateTime();
+// 构建时刻，UTC 指定的 QDateTime（宏形如 2026-10-06T14:30:00Z，Z 即 UTC 指定制）。
+// 运行期只是把宏串解析成 QDateTime；本地时区换算与格式化是展示关切，归消费者
+QDateTime buildDateTime();
 
 // Qt 运行库版本，运行期经 qVersion() 取（有意不取编译期）：Linux 用户跑的是
 // 发行版打包的 Qt，与开发机头文件版本本就不是同一份，报运行库版本才对得上诊断
 QString qtVersion();
+
+// 宿主 mpv 版本串（N102）：主窗口初始化阶段经 MpvController 读 mpv-version 属性
+// 后 set 一次（属性形如 "mpv v0.41.0-…"，入库即剥 "mpv " 前缀与版本 tag 的 `v`
+// 引导），此后消费者（AboutDialog）只经 get 取值、不再认识 MpvController。未填充
+// 即为空串。全程 GUI 线程读写，无并发问题
+void setMpvVersion(const QString &v);
+QString mpvVersion();
 
 } // namespace App

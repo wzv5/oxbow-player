@@ -9,7 +9,7 @@
 #include "ServiceRegistry.h"
 #include "TraversalPolicy.h"
 #include "Util.h"
-#include "Version.h" // N84：About 三行版本身份（本文件只许 include 此口，不得 include revision.h）
+#include "Version.h" // N84：版本身份口（构造期填 App::setMpvVersion；本文件只许 include 此口，不得 include revision.h）
 #include "mpvbridge/MpvController.h"
 #include "mpvbridge/MpvKeyName.h"                    // N87：未认领按键的 mpv 键名翻译
 #include "playbackreport/PlaybackReportDriver.h"     // N74：上报驱动器装配与退出序
@@ -21,6 +21,7 @@
 #include "providers/ProviderCatalog.h" // N57 §2.3：后备提供者经登记表第 0 项出生，只此一处调用
 #include "streams/StreamRelay.h"
 #include "streams/StreamTransit.h" // N55 §2.7：书签存储串的转接形态分岔（判据与 §3.6 同一条）
+#include "ui/AboutDialog.h"
 #include "ui/BookmarkEditorDialog.h"
 #include "ui/ChapterSlider.h"
 #include "ui/FilterListWidget.h"
@@ -309,6 +310,9 @@ MainWindow::MainWindow(MpvController *controller, const QString &configFile,
     : QMainWindow(parent), m_controller(controller), m_configFile(configFile),
       m_relay(std::move(relay)) {
     setWindowTitle(App::name());
+
+    // N102：mpv 版本一次性填充，About 对话框等消费者此后不依赖 MpvController
+    App::setMpvVersion(m_controller->propertyString(QStringLiteral("mpv-version")));
 
     m_actions = new ActionManager(this); // A15：先于任何容器构建
     // 启动装配期收口：菜单创建前把 ini 覆盖应用到键位
@@ -757,8 +761,9 @@ void MainWindow::createMenus() {
             [this] { seekRelative(-5); });
 
     QMenu *helpMenu = menuBar()->addMenu(tr("&Help"));
-    helpMenu->addAction(act(AM::Id::About));
-    connect(act(AM::Id::About), &QAction::triggered, this, &MainWindow::showAboutDialog);
+    // N102：About 动作退出 ActionManager 登记表（无键位语义），由主窗自建并持有
+    QAction *aboutAction = helpMenu->addAction(tr("&About"));
+    connect(aboutAction, &QAction::triggered, this, [this] { AboutDialog(this).exec(); });
 }
 
 void MainWindow::connectController() {
@@ -3512,25 +3517,6 @@ void MainWindow::applyVolumeMax(int v) {
     m_volumeMax = v;
     if (m_volumeSlider)
         m_volumeSlider->setRange(0, m_volumeMax);
-}
-
-void MainWindow::showAboutDialog() {
-    // N84：正文后空一行接版本身份，块内再空一行分两组——上组是插件自身的身份
-    // （Version / Build time，Version 行与启动诊断行同源），下组是宿主与运行库
-    // （mpv version 现读 mpv-version 属性、Qt version 取运行期 qVersion()，取运行库
-    // 而非头文件版本那条理由见 Version.h）。标签为可翻译名词短语源串（写死）
-    const QString mpvVersion = m_controller->propertyString(QStringLiteral("mpv-version"));
-    const QString versionBlock = tr("Version") + QStringLiteral(": ") + App::versionInfo() +
-                                 QLatin1Char('\n') + tr("Build time") + QStringLiteral(": ") +
-                                 App::buildDateTime() + QStringLiteral("\n\n") + tr("mpv version") +
-                                 QStringLiteral(": ") + mpvVersion + QLatin1Char('\n') +
-                                 tr("Qt version") + QStringLiteral(": ") + App::qtVersion();
-    QMessageBox::about(this, tr("About %1").arg(App::name()),
-                       tr("%1: a Qt-based player GUI loaded as an mpv C plugin.\n"
-                          "Video rendering is performed by mpv; this plugin only provides the "
-                          "graphical interface.")
-                               .arg(App::name()) +
-                           QStringLiteral("\n\n") + versionBlock);
 }
 
 void MainWindow::onMpvShutdown() {
