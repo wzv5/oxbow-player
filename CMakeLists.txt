@@ -456,9 +456,15 @@ if(OXBOW_BUILD_TESTS)
         src/Util.h
         src/HttpClient.cpp
         src/HttpClient.h
+        src/Version.cpp
+        src/Version.h
     )
     target_include_directories(oxbow_testlib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
                                                     ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    # N100：JellyfinProvider 引 App::versionInfo 后测试库同编 Version.cpp，生成头
+    # 包含路径与生成目标依赖随行（口径与 oxbowcore 的 N84 接线一致）
+    add_dependencies(oxbow_testlib oxbow_revision)
+    target_include_directories(oxbow_testlib PRIVATE "${OXBOW_GENERATED_DIR}")
     target_link_libraries(oxbow_testlib PUBLIC Qt6::Widgets Qt6::Concurrent Qt6::Network)
     # N98：rclone crypt 一族同 oxbowcore 口径受同一门禁。链接必须 PUBLIC——
     # SODIUM_STATIC 与本特性的 INTERFACE 宏都要传到本库自己的编译单元与各测试 exe

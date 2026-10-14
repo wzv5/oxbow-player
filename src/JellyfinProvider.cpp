@@ -9,6 +9,7 @@
 #include "ServiceRegistry.h"
 #include "StreamEndpoint.h"
 #include "Util.h"
+#include "Version.h"
 #include "playbackreport/PlaybackReporter.h"
 
 namespace {
@@ -17,9 +18,24 @@ QString trText(const char *source) {
     return QCoreApplication::translate("JellyfinProvider", source);
 }
 
-// 授权头与 UA 用的固定客户端标识（协议取值，非 UI 文案，不翻译）
-constexpr char kClientName[] = "oxbow";
-constexpr char kClientVersion[] = "1.0";
+// 设备名取值链（N100）：主机名 → OS 展示名 → 显示名兜底。Authorization 头值是
+// 带引号的逗号分隔键值，主机名属不可信输入——为空 / 含引号 / 含反斜杠 / 含非
+// ASCII 码点即整串回退（prettyProductName 恒 ASCII），不做就地剔字符；Device
+// 与 DeviceId 同值同链。进程内只取一次（函数内静态），不逐请求重取
+QString deviceName() {
+    static const QString name = [] {
+        const QString host = QSysInfo::machineHostName();
+        const bool clean =
+            !host.isEmpty() && !host.contains(QLatin1Char('"')) &&
+            !host.contains(QLatin1Char('\\')) &&
+            std::all_of(host.cbegin(), host.cend(), [](QChar c) { return c.unicode() < 0x80; });
+        if (clean)
+            return host;
+        const QString os = QSysInfo::prettyProductName();
+        return os.isEmpty() ? App::name() : os;
+    }();
+    return name;
+}
 
 // 枚举请求显式元数据字段（N69 背景：默认不返回，须逐请求声明）。Path 为原始
 // 文件路径——原始文件名与原始后缀的唯一可靠来源（N69 变更记录 5：扩展名过滤；
@@ -130,9 +146,9 @@ QString apiRequestError(const HttpClient::Response &resp) {
 // X-Emby-Authorization 已被忽略，实测口径）。token 只进请求头，不进 URL、
 // 不进实体、不落盘
 QByteArray authorizationHeaderValue(const QString &token) {
-    QString auth = QStringLiteral("MediaBrowser Client=\"%1\", Device=\"%1\", DeviceId=\"%1\", "
-                                  "Version=\"%2\"")
-                       .arg(QLatin1String(kClientName), QLatin1String(kClientVersion));
+    QString auth = QStringLiteral("MediaBrowser Client=\"%1\", Device=\"%2\", DeviceId=\"%2\", "
+                                  "Version=\"%3\"")
+                       .arg(App::name(), deviceName(), App::versionInfo());
     if (!token.isEmpty())
         auth += QStringLiteral(", Token=\"%1\"").arg(token);
     return auth.toUtf8();
