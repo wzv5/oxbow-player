@@ -630,7 +630,7 @@ void MainWindow::createMenus() {
     // N89：mpv 键位编辑器与 N86 并列相邻但完全独立——一个管 mpv 侧（input.conf），
     // 一个管插件侧（[shortcuts] 节）。不经 ActionManager 出生登记：本项无快捷键、
     // 无 [shortcuts] 持久化语义，收进键位表反而会被 N86 编辑器当成可改绑条目
-    QAction *mpvBindingsAct = fileMenu->addAction(tr("&Key Bindings…"));
+    QAction *mpvBindingsAct = fileMenu->addAction(tr("Key &Bindings…"));
     connect(mpvBindingsAct, &QAction::triggered, this, &MainWindow::ensureMpvBindingDialog);
     // N78：截图组——与 Settings 间加分隔符独立成组，其后原有「分隔符 + Quit」不动
     fileMenu->addSeparator();

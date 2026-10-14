@@ -395,11 +395,17 @@ class RcloneCryptSettingsPage : public ProviderSettingsPage {
         m_encodingCombo->addItem(tr("base64"));
         form->addRow(tr("Filename Encoding"), m_encodingCombo);
 
-        m_dirNamesCheck = new QCheckBox(tr("Encrypt directory names"));
+        m_dirNamesCheck =
+            new QCheckBox(tr("Encrypt directory names (only when filename encryption is on)"));
         form->addRow(QString(), m_dirNamesCheck);
 
         m_suffixEdit = new QLineEdit;
-        form->addRow(tr("Suffix (Off mode only)"), m_suffixEdit);
+        auto *suffixNote = new QLabel(tr("Only used when filename encryption is off"));
+        suffixNote->setEnabled(false);
+        auto *suffixField = new QVBoxLayout;
+        suffixField->addWidget(m_suffixEdit);
+        suffixField->addWidget(suffixNote);
+        form->addRow(tr("Suffix"), suffixField);
 
         m_strictCheck = new QCheckBox(tr("Fail on undecryptable names (strict names)"));
         form->addRow(QString(), m_strictCheck);
@@ -648,8 +654,7 @@ RcloneCryptProvider::load(QSettings &settings, const std::shared_ptr<ServiceRegi
     if (!encoding) {
         provider->setEncodingRaw(rawEncoding);
         provider->m_configError =
-            trText(QT_TRANSLATE_NOOP("RcloneCryptProvider",
-                                     "Unsupported filename encoding in provider configuration: %1"))
+            trText(QT_TRANSLATE_NOOP("RcloneCryptProvider", "Unsupported filename encoding: %1"))
                 .arg(rawEncoding);
     }
     const SortRule rule{static_cast<SortKey>(settings.value(QStringLiteral("sortKey"), 0).toInt()),
