@@ -3,14 +3,14 @@
 #include "JellyfinProvider.h"
 
 #include "Constants.h"
-#include "HttpByteStream.h"
 #include "JellyfinEntity.h"
 #include "ProviderSettingsPage.h"
 #include "ServiceRegistry.h"
-#include "StreamEndpoint.h"
 #include "Util.h"
 #include "Version.h"
 #include "playbackreport/PlaybackReporter.h"
+#include "streams/HttpByteStream.h"
+#include "streams/StreamEndpoint.h"
 
 namespace {
 // 翻译取值（上下文归属本提供者，与 WebDavProvider::trText 同款）

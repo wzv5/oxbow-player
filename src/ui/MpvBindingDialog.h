@@ -3,8 +3,8 @@
 #include "pch.h"
 
 #include "ActionManager.h"
-#include "InputConf.h"
-#include "MpvController.h"
+#include "mpvbridge/InputConf.h"
+#include "mpvbridge/MpvController.h"
 
 // N89：mpv 键位编辑器——可视化维护 input.conf。四列表格（来源 / 命令 / 键 / 注释），
 // 内置档与脚本档来自 input-bindings（打开时读一次、只读呈现），自定义档来自

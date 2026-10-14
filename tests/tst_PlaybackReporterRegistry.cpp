@@ -4,9 +4,9 @@
 
 #include "playbackreport/PlaybackReporterRegistry.h"
 
-#include "PlaylistProvider.h" // 归属注入口的形参类型
-#include "PlaylistRegistry.h" // kDefaultListUuid：回落判据的"默认 tab 不猜"档
 #include "ServiceRegistry.h"
+#include "playlist/PlaylistRegistry.h"  // kDefaultListUuid：回落判据的"默认 tab 不猜"档
+#include "providers/PlaylistProvider.h" // 归属注入口的形参类型
 
 // N74 §2：报告者注册表的纯数据契约——注册顺序即取快照顺序（同键多实例并存、按
 // 各自注册位次留下，归属列表身份随表项交回）、lock 失败即过期并在取快照时剔掉且

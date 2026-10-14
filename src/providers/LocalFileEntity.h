@@ -2,7 +2,7 @@
 
 #include "pch.h"
 
-#include "PlaylistEntity.h"
+#include "playlist/PlaylistEntity.h"
 
 // 本地文件实体（N26）：元数据全部就地求值——QFileInfo 一次 stat 取文件级字段，
 // MediaInfoHelper 同步解析媒体属性，QFileIconProvider 取系统图标。

@@ -46,19 +46,20 @@ if(OXBOW_WITH_RCLONE_CRYPT)
     find_package(Sodium REQUIRED)
 
     # 纯算法层（不依赖 Qt / mpv）单独住 src/rclonecrypt/：目录内互相 include 用裸文件
-    # 名，跨目录的消费者写 "rclonecrypt/xxx.h"（与 <mpv/client.h> 同一路径写法；N99 起
-    # 两个 target 另有 src 包含目录，本族的拼写不跟着放宽）。源清单只在这里写一遍，
-    # oxbowcore 与 oxbow_testlib 两个消费点共用（AGENTS 八"两处源列表"即这两个 target）
+    # 名，跨目录的消费者写 "rclonecrypt/xxx.h"（全仓口径：跨目录一律写相对 src/ 的路径
+    # 限定名；本族之上的接入层分住 providers/ 与 streams/，见 N101 §1）。源清单只在
+    # 这里写一遍，oxbowcore 与 oxbow_testlib 两个消费点共用（AGENTS 八"两处源列表"即
+    # 这两个 target）
     set(OXBOW_RCLONE_CRYPT_SOURCES
         src/rclonecrypt/RcloneCryptAes.cpp
         src/rclonecrypt/RcloneCryptAes.h
         src/rclonecrypt/RcloneCrypt.cpp
         src/rclonecrypt/RcloneCrypt.h
-        src/RcloneCryptByteStream.cpp
-        src/RcloneCryptByteStream.h
-        src/RcloneCryptProvider.cpp
-        src/RcloneCryptProvider.h
-        src/RcloneCryptEntity.h
+        src/streams/RcloneCryptByteStream.cpp
+        src/streams/RcloneCryptByteStream.h
+        src/providers/RcloneCryptProvider.cpp
+        src/providers/RcloneCryptProvider.h
+        src/providers/RcloneCryptEntity.h
     )
     # AES 后端按平台分文件，以构建条件为唯一权威（X11Util 纪律）：错平台编进去就在
     # 缺 CNG / OpenSSL 处编译失败，源内叠二次守卫反而把编译错降级成链接期未定义符号
@@ -101,47 +102,47 @@ add_library(oxbowcore MODULE
     src/Constants.h
     src/Version.cpp
     src/Version.h
-    src/StreamTransit.cpp
-    src/StreamTransit.h
-    src/ByteStream.h
-    src/StreamEndpoint.h
-    src/HttpByteStream.cpp
-    src/HttpByteStream.h
-    src/FileByteStream.cpp
-    src/FileByteStream.h
-    src/StreamRelay.cpp
-    src/StreamRelay.h
+    src/streams/StreamTransit.cpp
+    src/streams/StreamTransit.h
+    src/streams/ByteStream.h
+    src/streams/StreamEndpoint.h
+    src/streams/HttpByteStream.cpp
+    src/streams/HttpByteStream.h
+    src/streams/FileByteStream.cpp
+    src/streams/FileByteStream.h
+    src/streams/StreamRelay.cpp
+    src/streams/StreamRelay.h
     src/ActionManager.cpp
     src/ActionManager.h
     src/MainWindow.cpp
     src/MainWindow.h
-    src/MpvController.cpp
-    src/MpvController.h
-    src/MpvKeyName.cpp
-    src/MpvKeyName.h
+    src/mpvbridge/MpvController.cpp
+    src/mpvbridge/MpvController.h
+    src/mpvbridge/MpvKeyName.cpp
+    src/mpvbridge/MpvKeyName.h
     src/HttpClient.cpp
     src/HttpClient.h
-    src/NavigatorPanel.cpp
-    src/NavigatorPanel.h
-    src/PlaylistDelegate.cpp
-    src/PlaylistDelegate.h
-    src/PlaylistEntity.cpp
-    src/PlaylistEntity.h
-    src/Playlist.cpp
-    src/Playlist.h
-    src/PlaylistRegistry.cpp
-    src/PlaylistRegistry.h
-    src/PlaylistListView.cpp
-    src/PlaylistListView.h
-    src/PlaylistFile.cpp
-    src/PlaylistFile.h
-    src/LocalFileEntity.cpp
-    src/LocalFileEntity.h
-    src/HttpEntity.cpp
-    src/HttpEntity.h
-    src/WebDavEntity.h
-    src/JellyfinEntity.cpp
-    src/JellyfinEntity.h
+    src/ui/NavigatorPanel.cpp
+    src/ui/NavigatorPanel.h
+    src/playlist/PlaylistDelegate.cpp
+    src/playlist/PlaylistDelegate.h
+    src/playlist/PlaylistEntity.cpp
+    src/playlist/PlaylistEntity.h
+    src/playlist/Playlist.cpp
+    src/playlist/Playlist.h
+    src/playlist/PlaylistRegistry.cpp
+    src/playlist/PlaylistRegistry.h
+    src/playlist/PlaylistListView.cpp
+    src/playlist/PlaylistListView.h
+    src/playlist/PlaylistFile.cpp
+    src/playlist/PlaylistFile.h
+    src/providers/LocalFileEntity.cpp
+    src/providers/LocalFileEntity.h
+    src/providers/HttpEntity.cpp
+    src/providers/HttpEntity.h
+    src/providers/WebDavEntity.h
+    src/providers/JellyfinEntity.cpp
+    src/providers/JellyfinEntity.h
     src/ServiceRegistry.h
     src/playbackreport/PlaybackReporter.h
     src/playbackreport/PlaybackReporterRegistry.cpp
@@ -153,55 +154,55 @@ add_library(oxbowcore MODULE
     src/playbackreport/ReporterSwitchCatalog.cpp
     src/playbackreport/ReporterSwitchCatalog.h
     src/TraversalPolicy.h
-    src/PlaylistProvider.cpp
-    src/PlaylistProvider.h
-    src/ProviderCatalog.cpp
-    src/ProviderCatalog.h
-    src/ProviderSettingsPage.cpp
-    src/ProviderSettingsPage.h
-    src/ListSettingsDialog.cpp
-    src/ListSettingsDialog.h
-    src/StaticProvider.cpp
-    src/StaticProvider.h
-    src/DirProvider.cpp
-    src/DirProvider.h
-    src/WebDavProvider.cpp
-    src/WebDavProvider.h
-    src/JellyfinProvider.cpp
-    src/JellyfinProvider.h
-    src/ExternalProvider.cpp
-    src/ExternalProvider.h
-    src/LoadingOverlay.cpp
-    src/LoadingOverlay.h
-    src/PlaylistWidget.cpp
-    src/PlaylistWidget.h
+    src/providers/PlaylistProvider.cpp
+    src/providers/PlaylistProvider.h
+    src/providers/ProviderCatalog.cpp
+    src/providers/ProviderCatalog.h
+    src/providers/ProviderSettingsPage.cpp
+    src/providers/ProviderSettingsPage.h
+    src/ui/ListSettingsDialog.cpp
+    src/ui/ListSettingsDialog.h
+    src/providers/StaticProvider.cpp
+    src/providers/StaticProvider.h
+    src/providers/DirProvider.cpp
+    src/providers/DirProvider.h
+    src/providers/WebDavProvider.cpp
+    src/providers/WebDavProvider.h
+    src/providers/JellyfinProvider.cpp
+    src/providers/JellyfinProvider.h
+    src/providers/ExternalProvider.cpp
+    src/providers/ExternalProvider.h
+    src/ui/LoadingOverlay.cpp
+    src/ui/LoadingOverlay.h
+    src/playlist/PlaylistWidget.cpp
+    src/playlist/PlaylistWidget.h
     src/BookmarkManager.cpp
     src/BookmarkManager.h
-    src/ChapterSlider.cpp
-    src/ChapterSlider.h
-    src/BookmarkEditorDialog.cpp
-    src/BookmarkEditorDialog.h
+    src/ui/ChapterSlider.cpp
+    src/ui/ChapterSlider.h
+    src/ui/BookmarkEditorDialog.cpp
+    src/ui/BookmarkEditorDialog.h
     src/Util.cpp
     src/Util.h
     src/MediaInfoHelper.cpp
     src/MediaInfoHelper.h
-    src/MpvConf.cpp
-    src/MpvConf.h
-    src/InputConf.cpp
-    src/InputConf.h
-    src/SettingsDialog.cpp
-    src/SettingsDialog.h
-    src/ShortcutsDialog.cpp
-    src/ShortcutsDialog.h
-    src/MpvBindingDialog.cpp
-    src/MpvBindingDialog.h
-    src/FilterListWidget.cpp
-    src/FilterListWidget.h
+    src/mpvbridge/MpvConf.cpp
+    src/mpvbridge/MpvConf.h
+    src/mpvbridge/InputConf.cpp
+    src/mpvbridge/InputConf.h
+    src/ui/SettingsDialog.cpp
+    src/ui/SettingsDialog.h
+    src/ui/ShortcutsDialog.cpp
+    src/ui/ShortcutsDialog.h
+    src/ui/MpvBindingDialog.cpp
+    src/ui/MpvBindingDialog.h
+    src/ui/FilterListWidget.cpp
+    src/ui/FilterListWidget.h
 )
 
 # mpv/client.h 已内置在仓库根目录的 mpv/ 下；src 一并入包含路径只为子目录源单元解析
-# pch.h 与它依赖的根头，跨目录 include 的拼写约定不因此放宽——
-# 照旧写 "playbackreport/xxx.h"、"rclonecrypt/xxx.h"
+# pch.h 与它依赖的根头，跨目录 include 的拼写口径：一律写相对 src/ 的路径限定名
+# （如 "playbackreport/xxx.h"、"rclonecrypt/xxx.h"、"providers/xxx.h"），同目录保持裸名
 target_include_directories(oxbowcore PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                                               ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
@@ -281,7 +282,7 @@ endif()
 # N83：X11 专用小工具集（X11Util）——EWMH 直发置顶（小窗置顶，
 # 见 toggleMini）。Xlib 自建连接。Linux 本就依赖 X11（xcb 平台 + mpv X11 路径），
 # 此处为编译期硬依赖；X11Util 仅非 Windows 参与构建，Windows 完全不出现该翻译单元
-# （源文件不入主列表）。源内不再叠平台守卫：本段的构建条件是唯一权威——错误平台把
+# （源文件不入主列表，住 src/platform/——平台专属助手的既定去处，N101 §1）。源内不再叠平台守卫：本段的构建条件是唯一权威——错误平台把
 # 它编进去会因缺 X11 头 / 库直接失败（要的显影），源内守卫反而把实现静默掏空、
 # 把编译错降级成链接期未定义符号。守卫用 NOT WIN32 而非 UNIX：UNIX 还含非目标的
 # macOS，而 NOT WIN32 与代码侧调用点（MainWindow.cpp）的 Q_OS_WIN 守卫同指
@@ -290,8 +291,8 @@ if(NOT WIN32)
     find_package(X11 REQUIRED)
     target_link_libraries(oxbowcore PRIVATE X11::X11)
     target_sources(oxbowcore PRIVATE
-        src/X11Util.cpp
-        src/X11Util.h
+        src/platform/X11Util.cpp
+        src/platform/X11Util.h
     )
 endif()
 
@@ -390,45 +391,45 @@ if(OXBOW_BUILD_TESTS)
 
     # 被测源码进测试静态库，各测试 exe 链接复用（静态归档只拉被引用 object）
     add_library(oxbow_testlib STATIC
-        src/DirProvider.cpp
-        src/DirProvider.h
-        src/WebDavProvider.cpp
-        src/WebDavProvider.h
-        src/JellyfinProvider.cpp
-        src/JellyfinProvider.h
-        src/ExternalProvider.cpp
-        src/ExternalProvider.h
-        src/PlaylistProvider.cpp
-        src/PlaylistProvider.h
-        src/ProviderCatalog.cpp
-        src/ProviderCatalog.h
-        src/ProviderSettingsPage.cpp
-        src/ProviderSettingsPage.h
-        src/StaticProvider.cpp
-        src/StaticProvider.h
-        src/MpvConf.cpp
-        src/MpvConf.h
-        src/InputConf.cpp
-        src/InputConf.h
-        src/MpvKeyName.cpp
-        src/MpvKeyName.h
+        src/providers/DirProvider.cpp
+        src/providers/DirProvider.h
+        src/providers/WebDavProvider.cpp
+        src/providers/WebDavProvider.h
+        src/providers/JellyfinProvider.cpp
+        src/providers/JellyfinProvider.h
+        src/providers/ExternalProvider.cpp
+        src/providers/ExternalProvider.h
+        src/providers/PlaylistProvider.cpp
+        src/providers/PlaylistProvider.h
+        src/providers/ProviderCatalog.cpp
+        src/providers/ProviderCatalog.h
+        src/providers/ProviderSettingsPage.cpp
+        src/providers/ProviderSettingsPage.h
+        src/providers/StaticProvider.cpp
+        src/providers/StaticProvider.h
+        src/mpvbridge/MpvConf.cpp
+        src/mpvbridge/MpvConf.h
+        src/mpvbridge/InputConf.cpp
+        src/mpvbridge/InputConf.h
+        src/mpvbridge/MpvKeyName.cpp
+        src/mpvbridge/MpvKeyName.h
         src/BookmarkManager.cpp
         src/BookmarkManager.h
-        src/PlaylistEntity.cpp
-        src/PlaylistEntity.h
-        src/Playlist.cpp
-        src/Playlist.h
-        src/PlaylistRegistry.cpp
-        src/PlaylistRegistry.h
-        src/PlaylistFile.cpp
-        src/PlaylistFile.h
-        src/LocalFileEntity.cpp
-        src/LocalFileEntity.h
-        src/HttpEntity.cpp
-        src/HttpEntity.h
-        src/WebDavEntity.h
-        src/JellyfinEntity.cpp
-        src/JellyfinEntity.h
+        src/playlist/PlaylistEntity.cpp
+        src/playlist/PlaylistEntity.h
+        src/playlist/Playlist.cpp
+        src/playlist/Playlist.h
+        src/playlist/PlaylistRegistry.cpp
+        src/playlist/PlaylistRegistry.h
+        src/playlist/PlaylistFile.cpp
+        src/playlist/PlaylistFile.h
+        src/providers/LocalFileEntity.cpp
+        src/providers/LocalFileEntity.h
+        src/providers/HttpEntity.cpp
+        src/providers/HttpEntity.h
+        src/providers/WebDavEntity.h
+        src/providers/JellyfinEntity.cpp
+        src/providers/JellyfinEntity.h
         src/ServiceRegistry.h
         # 上报框架四源单元（驱动器不在此列：其现读四项引用 MpvController，进测试库
         # 链接不可能成立）
@@ -442,16 +443,16 @@ if(OXBOW_BUILD_TESTS)
         src/TraversalPolicy.h
         src/MediaInfoHelper.cpp
         src/MediaInfoHelper.h
-        src/FilterListWidget.cpp
-        src/FilterListWidget.h
-        src/StreamTransit.cpp
-        src/StreamTransit.h
-        src/ByteStream.h
-        src/StreamEndpoint.h
-        src/HttpByteStream.cpp
-        src/HttpByteStream.h
-        src/FileByteStream.cpp
-        src/FileByteStream.h
+        src/ui/FilterListWidget.cpp
+        src/ui/FilterListWidget.h
+        src/streams/StreamTransit.cpp
+        src/streams/StreamTransit.h
+        src/streams/ByteStream.h
+        src/streams/StreamEndpoint.h
+        src/streams/HttpByteStream.cpp
+        src/streams/HttpByteStream.h
+        src/streams/FileByteStream.cpp
+        src/streams/FileByteStream.h
         src/Util.cpp
         src/Util.h
         src/HttpClient.cpp
@@ -461,10 +462,11 @@ if(OXBOW_BUILD_TESTS)
     )
     target_include_directories(oxbow_testlib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
                                                     ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    # N100：JellyfinProvider 引 App::versionInfo 后测试库同编 Version.cpp，生成头
-    # 包含路径与生成目标依赖随行（口径与 oxbowcore 的 N84 接线一致）
-    add_dependencies(oxbow_testlib oxbow_revision)
-    target_include_directories(oxbow_testlib PRIVATE "${OXBOW_GENERATED_DIR}")
+    # N100：JellyfinProvider 引 App::versionInfo 后测试库同编 Version.cpp——但以
+    # OXBOW_BUILDING_TESTS 形态编：不吃每轮必变的 revision.h（否则测试库逐轮重编、
+    # 全部测试 exe 逐轮重链），三宏回落内置值，因此无需生成头包含路径与
+    # oxbow_revision 依赖（口径与 oxbowcore 的 N84 接线有意分岔）
+    target_compile_definitions(oxbow_testlib PRIVATE OXBOW_BUILDING_TESTS)
     target_link_libraries(oxbow_testlib PUBLIC Qt6::Widgets Qt6::Concurrent Qt6::Network)
     # N98：rclone crypt 一族同 oxbowcore 口径受同一门禁。链接必须 PUBLIC——
     # SODIUM_STATIC 与本特性的 INTERFACE 宏都要传到本库自己的编译单元与各测试 exe

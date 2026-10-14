@@ -2,10 +2,10 @@
 
 #include "Playlist.h"
 
-#include "PlaylistRegistry.h" // kDefaultListUuid（保留身份的唯一出处）
-#include "StreamTransit.h"    // N65：仅 Debug 断言"转接项必带 cache=yes"（头注释
+#include "PlaylistRegistry.h"                        // kDefaultListUuid（保留身份的唯一出处）
 #include "playbackreport/PlaybackReporterRegistry.h" // N74：报告者注册点在本类（列表身份在此）
-                                                     // 允许依赖方已列明本类，L1 叶子地位不变）
+#include "streams/StreamTransit.h" // N65：仅 Debug 断言"转接项必带 cache=yes"（头注释
+                                   // 允许依赖方已列明本类，L1 叶子地位不变）
 
 Playlist::Playlist(const QUuid &uuid, QString name, std::shared_ptr<PlaylistProvider> provider,
                    std::shared_ptr<PlaybackReporterRegistry> reporters)

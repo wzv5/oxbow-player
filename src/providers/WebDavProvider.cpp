@@ -3,13 +3,13 @@
 #include "WebDavProvider.h"
 
 #include "Constants.h"
-#include "HttpByteStream.h"
 #include "ProviderSettingsPage.h"
 #include "ServiceRegistry.h"
-#include "StreamEndpoint.h"
 #include "TraversalPolicy.h"
 #include "Util.h"
 #include "WebDavEntity.h"
+#include "streams/HttpByteStream.h"
+#include "streams/StreamEndpoint.h"
 
 namespace {
 // PROPFIND 请求体：只取本篇解释的四个属性（RFC 4918 子集）；前缀用 d: 惯例，

@@ -13,8 +13,8 @@
 #include <QtTest/QtTest>
 
 #include "BookmarkManager.h"
-#include "PlaylistRegistry.h" // kDefaultListUuid：过户目标组的保留身份
 #include "Util.h"
+#include "playlist/PlaylistRegistry.h" // kDefaultListUuid：过户目标组的保留身份
 
 using Origin = BookmarkManager::Origin;
 using Group = BookmarkManager::Group;

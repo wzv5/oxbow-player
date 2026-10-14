@@ -2,7 +2,7 @@
 
 #include "MpvBindingDialog.h"
 
-#include "MpvKeyName.h" // N89：键名归一 / 反解 / 序列化（同键分组与键列共用）
+#include "mpvbridge/MpvKeyName.h" // N89：键名归一 / 反解 / 序列化（同键分组与键列共用）
 
 namespace {
 

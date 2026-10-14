@@ -3,33 +3,33 @@
 #include "MainWindow.h"
 
 #include "ActionManager.h"
-#include "BookmarkEditorDialog.h"
 #include "BookmarkManager.h"
-#include "ChapterSlider.h"
 #include "Constants.h"
-#include "FilterListWidget.h"
 #include "HttpClient.h"
-#include "MpvBindingDialog.h" // N89：mpv 键位编辑（input.conf）
-#include "MpvController.h"
-#include "MpvKeyName.h" // N87：未认领按键的 mpv 键名翻译
-#include "NavigatorPanel.h"
-#include "Playlist.h"         // N57 §2.6：经 PlaylistWidget::listOf 取身份，需完整类型
-#include "PlaylistRegistry.h" // N57 §2.3：装配顶点创建列表注册表（默认名与保留身份的出处）
-#include "PlaylistWidget.h"
-#include "ProviderCatalog.h" // N57 §2.3：后备提供者经登记表第 0 项出生，只此一处调用
 #include "ServiceRegistry.h"
-#include "SettingsDialog.h"
-#include "ShortcutsDialog.h" // N86
-#include "StreamRelay.h"
-#include "StreamTransit.h" // N55 §2.7：书签存储串的转接形态分岔（判据与 §3.6 同一条）
 #include "TraversalPolicy.h"
 #include "Util.h"
 #include "Version.h" // N84：About 三行版本身份（本文件只许 include 此口，不得 include revision.h）
+#include "mpvbridge/MpvController.h"
+#include "mpvbridge/MpvKeyName.h"                    // N87：未认领按键的 mpv 键名翻译
 #include "playbackreport/PlaybackReportDriver.h"     // N74：上报驱动器装配与退出序
 #include "playbackreport/PlaybackReporterRegistry.h" // N74：报告者注册表 provide 与判据现查
 #include "playbackreport/ReporterSwitchCatalog.h"    // N99：上报开关账目（登记与聚合单点）
+#include "playlist/Playlist.h"         // N57 §2.6：经 PlaylistWidget::listOf 取身份，需完整类型
+#include "playlist/PlaylistRegistry.h" // N57 §2.3：装配顶点创建列表注册表（默认名与保留身份的出处）
+#include "playlist/PlaylistWidget.h"
+#include "providers/ProviderCatalog.h" // N57 §2.3：后备提供者经登记表第 0 项出生，只此一处调用
+#include "streams/StreamRelay.h"
+#include "streams/StreamTransit.h" // N55 §2.7：书签存储串的转接形态分岔（判据与 §3.6 同一条）
+#include "ui/BookmarkEditorDialog.h"
+#include "ui/ChapterSlider.h"
+#include "ui/FilterListWidget.h"
+#include "ui/MpvBindingDialog.h" // N89：mpv 键位编辑（input.conf）
+#include "ui/NavigatorPanel.h"
+#include "ui/SettingsDialog.h"
+#include "ui/ShortcutsDialog.h" // N86
 #ifndef Q_OS_WIN
-#include "X11Util.h" // N83：小窗置顶 EWMH 直发（仅非 Windows 编译，见 CMakeLists）
+#include "platform/X11Util.h" // N83：小窗置顶 EWMH 直发（仅非 Windows 编译，见 CMakeLists）
 #endif
 
 // N15：章节+书签数据与合并规则的唯一持有者（MainWindow.cpp 文件内实现，

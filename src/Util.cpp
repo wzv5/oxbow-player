@@ -4,7 +4,7 @@
 
 // N52：依赖方向 Util → StreamTransit 单向（StreamTransit 是叶子，不认识 Util）。
 // 全仓 unwrap 只在此一处——"来源路径 → 内部形态"的唯一还原折叠点。
-#include "StreamTransit.h"
+#include "streams/StreamTransit.h"
 
 namespace Util {
 

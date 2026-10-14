@@ -2,7 +2,7 @@
 
 #include "PlaybackReporterRegistry.h"
 
-#include "PlaylistRegistry.h" // kDefaultListUuid：回落判据的语义组成部分
+#include "playlist/PlaylistRegistry.h" // kDefaultListUuid：回落判据的语义组成部分
 
 std::vector<PlaybackReporterRegistry::Entry> PlaybackReporterRegistry::snapshot() {
     const std::lock_guard<std::mutex> lock(m_mutex);

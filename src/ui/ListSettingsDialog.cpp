@@ -1,8 +1,8 @@
 #include "ListSettingsDialog.h"
 #include "pch.h"
 
-#include "ProviderCatalog.h"
-#include "ProviderSettingsPage.h"
+#include "providers/ProviderCatalog.h"
+#include "providers/ProviderSettingsPage.h"
 
 ListSettingsDialog::ListSettingsDialog(QWidget *parent, const QString &currentName,
                                        const PlaylistProvider *current,

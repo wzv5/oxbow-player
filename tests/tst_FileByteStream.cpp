@@ -9,7 +9,7 @@
 
 #include <QtTest/QtTest>
 
-#include "FileByteStream.h"
+#include "streams/FileByteStream.h"
 
 namespace {
 

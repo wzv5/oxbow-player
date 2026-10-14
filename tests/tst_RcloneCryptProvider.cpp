@@ -11,13 +11,13 @@
 
 #include <QtTest/QtTest>
 
-#include "PlaylistEntity.h"
-#include "RcloneCryptEntity.h"
 #include "RcloneCryptFixture.h"
-#include "RcloneCryptProvider.h"
 #include "ServiceRegistry.h"
-#include "StreamEndpoint.h"
+#include "playlist/PlaylistEntity.h"
+#include "providers/RcloneCryptEntity.h"
+#include "providers/RcloneCryptProvider.h"
 #include "rclonecrypt/RcloneCrypt.h"
+#include "streams/StreamEndpoint.h"
 
 using Bytes = RcloneCrypt::Bytes;
 

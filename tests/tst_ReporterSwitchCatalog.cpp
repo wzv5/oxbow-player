@@ -5,7 +5,7 @@
 
 #include "playbackreport/ReporterSwitchCatalog.h"
 
-#include "JellyfinProvider.h" // kJellyfinProviderKey：账目行与注册表键同源的旁证
+#include "providers/JellyfinProvider.h" // kJellyfinProviderKey：账目行与注册表键同源的旁证
 
 // N99：上报开关账目——静态聚合表 + 读值 + 启用聚合规则。登记自检（键空 / 键重复）在表
 // 首次构建时执行（qWarning 显影 + Debug 期断言表非空），本套件以"行内容断言"从旁守住

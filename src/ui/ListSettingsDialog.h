@@ -2,7 +2,7 @@
 
 #include "pch.h"
 
-#include "PlaylistProvider.h"
+#include "providers/PlaylistProvider.h"
 
 class ProviderSettingsPage;
 

@@ -2,7 +2,7 @@
 
 #include "pch.h"
 
-#include "PlaylistEntity.h"
+#include "playlist/PlaylistEntity.h"
 
 // 身份 scheme 常量唯一持有者：工厂分派（PlaylistEntity::fromPath）与提供者铸造
 // （JellyfinProvider）共用同一点定义，杜绝"键写错导致分派落空"的静默失败

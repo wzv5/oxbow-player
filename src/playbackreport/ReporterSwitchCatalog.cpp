@@ -2,7 +2,7 @@
 
 #include "ReporterSwitchCatalog.h"
 
-#include "JellyfinProvider.h" // kJellyfinProviderKey：本文件是取具体种类键常量的唯一聚合点
+#include "providers/JellyfinProvider.h" // kJellyfinProviderKey：本文件是取具体种类键常量的唯一聚合点
 
 namespace {
 // 账目行的定义处：行以命名常量出生、由 buildSwitches 组装成表，具名单行出口认常量不认

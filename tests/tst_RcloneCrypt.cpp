@@ -19,9 +19,9 @@
 
 #include <QtTest/QtTest>
 
-#include "RcloneCryptByteStream.h"
 #include "RcloneCryptFixture.h"
 #include "rclonecrypt/RcloneCrypt.h"
+#include "streams/RcloneCryptByteStream.h"
 
 using Bytes = RcloneCrypt::Bytes;
 

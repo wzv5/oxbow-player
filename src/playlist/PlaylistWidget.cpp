@@ -3,17 +3,17 @@
 #include "PlaylistWidget.h"
 
 #include "Constants.h"
-#include "ListSettingsDialog.h"
-#include "LoadingOverlay.h"
 #include "MediaInfoHelper.h"
-#include "MpvController.h"
 #include "PlaylistDelegate.h"
 #include "PlaylistListView.h" // N57 §2.2：视图即状态载体，本页所有列表页由 createView 出生
 #include "PlaylistRegistry.h" // N57 §2.3：默认 tab 的列表与默认名出口
 #include "ServiceRegistry.h"
-#include "StaticProvider.h" // N79：新表提供者经 createDefault 出生
-#include "StreamTransit.h"
 #include "Util.h"
+#include "mpvbridge/MpvController.h"
+#include "providers/StaticProvider.h" // N79：新表提供者经 createDefault 出生
+#include "streams/StreamTransit.h"
+#include "ui/ListSettingsDialog.h"
+#include "ui/LoadingOverlay.h"
 
 PlaylistWidget::PlaylistWidget(const QString &configFile, std::shared_ptr<ServiceRegistry> registry,
                                std::shared_ptr<PlaylistRegistry> lists, QWidget *parent)

@@ -2,7 +2,7 @@
 
 #include "pch.h"
 
-#include "MpvConf.h"
+#include "mpvbridge/MpvConf.h"
 
 class MpvController;
 class QListWidget;

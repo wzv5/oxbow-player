@@ -9,8 +9,8 @@
 
 #include <QtTest/QtTest>
 
-#include "InputConf.h"
-#include "MpvKeyName.h"
+#include "mpvbridge/InputConf.h"
+#include "mpvbridge/MpvKeyName.h"
 
 class TestInputConf : public QObject {
     Q_OBJECT

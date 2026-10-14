@@ -2,7 +2,7 @@
 
 #include "NavigatorPanel.h"
 
-#include "MpvController.h"
+#include "mpvbridge/MpvController.h"
 
 namespace {
 // 配色：画布底用窗口默认背景（跟随主题）；画面框内部固定深色模拟视频黑幕。

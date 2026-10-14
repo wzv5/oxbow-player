@@ -2,12 +2,12 @@
 
 #include "pch.h"
 
-#include "MpvController.h"
+#include "mpvbridge/MpvController.h"
 
 // N54：两处接线要用到嵌套类型（PlaylistWidget::LevelJump / JumpFailure、
 // BookmarkManager::Origin），嵌套类型必须有完整类型可见
 #include "BookmarkManager.h"
-#include "PlaylistWidget.h"
+#include "playlist/PlaylistWidget.h"
 
 class NavigatorPanel;
 class ActionManager;

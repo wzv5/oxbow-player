@@ -2,16 +2,16 @@
 
 #include "PlaylistEntity.h"
 
-#include "HttpEntity.h"
-#include "JellyfinEntity.h"
-#include "LocalFileEntity.h"
+#include "providers/HttpEntity.h"
+#include "providers/JellyfinEntity.h"
+#include "providers/LocalFileEntity.h"
 #if defined(OXBOW_WITH_RCLONE_CRYPT)
-#include "RcloneCryptEntity.h"
+#include "providers/RcloneCryptEntity.h"
 #endif
 // N55：playUrl() 出口经归属提供者现算——实体侧唯一 include 提供者头之处
 // （实体头只前置声明，无环）
-#include "PlaylistProvider.h"
 #include "Util.h"
+#include "providers/PlaylistProvider.h"
 
 // N57 §2.9：排序键取值冻结（对 N58 的契约③）——既有取值不得重编，新键只准追加末尾
 static_assert(int(SortKey::ReleaseDate) == 8);

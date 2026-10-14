@@ -4,7 +4,7 @@
 
 #include "Util.h" // N61 §2.3：回显整形（playlist 条目 filename 进判据前唯一一道加工）
 
-#include "FilterListWidget.h"
+#include "ui/FilterListWidget.h"
 
 namespace {
 

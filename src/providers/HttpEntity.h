@@ -2,7 +2,7 @@
 
 #include "pch.h"
 
-#include "PlaylistEntity.h"
+#include "playlist/PlaylistEntity.h"
 
 // ServiceRegistry 前向声明见 PlaylistEntity.h（本头仅以引用形态使用，无需包含）
 

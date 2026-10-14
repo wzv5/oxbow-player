@@ -2,9 +2,9 @@
 
 #include <QtTest/QtTest>
 
-#include "PlaylistRegistry.h"
-#include "ProviderCatalog.h" // createDefaultProvider：提供者成品来源
 #include "ServiceRegistry.h"
+#include "playlist/PlaylistRegistry.h"
+#include "providers/ProviderCatalog.h" // createDefaultProvider：提供者成品来源
 
 // N57 §2.2 / §2.4 / §2.5：列表注册表的纯模型层契约——铸造构造性不撞车、存量身份
 // 接回与撞车退新、保留身份不可被夺走、按身份直查对 nil / 非法 / 已摘除恒不命中、

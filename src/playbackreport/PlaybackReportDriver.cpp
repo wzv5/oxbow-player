@@ -2,9 +2,9 @@
 
 #include "PlaybackReportDriver.h"
 
-#include "MpvController.h"
 #include "ReporterSwitchCatalog.h"
-#include "StreamTransit.h"
+#include "mpvbridge/MpvController.h"
+#include "streams/StreamTransit.h"
 
 namespace {
 // 采样节拍（规格 N74 §3：驱动器常量；将来 SMTC 一类要 5s 只改这个数）。1s 是下界

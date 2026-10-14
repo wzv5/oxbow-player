@@ -8,7 +8,7 @@
 #include <QTextStream>
 #include <QtTest/QtTest>
 
-#include "MpvConf.h"
+#include "mpvbridge/MpvConf.h"
 
 class TestMpvConf : public QObject {
     Q_OBJECT

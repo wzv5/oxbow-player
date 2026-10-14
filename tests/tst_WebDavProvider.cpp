@@ -16,7 +16,7 @@
 
 #include "ServiceRegistry.h"
 #include "Util.h"
-#include "WebDavProvider.h"
+#include "providers/WebDavProvider.h"
 
 namespace {
 // 基 URL 与凭据（与断言中的期望身份串对应）

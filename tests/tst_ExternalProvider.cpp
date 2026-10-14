@@ -17,10 +17,10 @@
 
 #include <QTemporaryDir>
 
-#include "ExternalProvider.h"
 #include "HttpClient.h"
 #include "ServiceRegistry.h"
 #include "Util.h"
+#include "providers/ExternalProvider.h"
 
 namespace {
 

@@ -10,7 +10,7 @@
 
 #include <QtTest/QtTest>
 
-#include "FilterListWidget.h"
+#include "ui/FilterListWidget.h"
 
 static FilterEntry fe(bool enabled, const QString &text) {
     FilterEntry e;

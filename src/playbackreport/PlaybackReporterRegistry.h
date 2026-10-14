@@ -3,7 +3,7 @@
 #include "pch.h"
 
 #include "PlaybackReporter.h"
-#include "PlaylistEntity.h"
+#include "playlist/PlaylistEntity.h"
 
 // N74：报告者注册表——"字符串键 → 多实例、按注册顺序、弱持有、过期自清理"，
 // 每条表项另带**归属列表身份**（投递路由键，非认领判据）。

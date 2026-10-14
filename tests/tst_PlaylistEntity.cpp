@@ -9,15 +9,15 @@
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
-#include "HttpEntity.h"
-#include "LocalFileEntity.h"
-#include "PlaylistEntity.h"
-#include "PlaylistProvider.h" // N55：归属注入口的形参类型与转接能力枚举
 #include "ServiceRegistry.h"
-#include "StaticProvider.h" // N55 §九：恒等提供者验归属现算
-#include "StreamRelay.h"    // N55 §九：StreamRelayIf 取用接缝（纯头，测试桩实现）
-#include "StreamTransit.h"  // N61 变更记录第 1 条：回显入口的 mint / unwrap 对照
 #include "Util.h"
+#include "playlist/PlaylistEntity.h"
+#include "providers/HttpEntity.h"
+#include "providers/LocalFileEntity.h"
+#include "providers/PlaylistProvider.h" // N55：归属注入口的形参类型与转接能力枚举
+#include "providers/StaticProvider.h"   // N55 §九：恒等提供者验归属现算
+#include "streams/StreamRelay.h"        // N55 §九：StreamRelayIf 取用接缝（纯头，测试桩实现）
+#include "streams/StreamTransit.h"      // N61 变更记录第 1 条：回显入口的 mint / unwrap 对照
 
 // 测试桩实体：compute* 带调用计数，能力位可调，保护修正入口透出。
 // 计数器 mutable（compute* 为 const 惰性入口）；随拷贝复制，断言前按需归零

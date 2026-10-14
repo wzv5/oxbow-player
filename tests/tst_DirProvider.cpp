@@ -22,9 +22,9 @@
 #include <utility>
 
 #include "Constants.h"
-#include "DirProvider.h"
 #include "ServiceRegistry.h"
 #include "TraversalPolicy.h"
+#include "providers/DirProvider.h"
 
 namespace {
 // 建目录成功返回路径，失败返回空串（用例自行 QVERIFY）

@@ -3,14 +3,14 @@
 #include "RcloneCryptProvider.h"
 
 #include "Constants.h"
-#include "FileByteStream.h"
 #include "ProviderSettingsPage.h"
-#include "RcloneCryptByteStream.h"
 #include "RcloneCryptEntity.h"
 #include "ServiceRegistry.h"
-#include "StreamEndpoint.h"
 #include "TraversalPolicy.h"
 #include "Util.h"
+#include "streams/FileByteStream.h"
+#include "streams/RcloneCryptByteStream.h"
+#include "streams/StreamEndpoint.h"
 
 namespace {
 

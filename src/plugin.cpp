@@ -20,9 +20,9 @@
 
 #include "Constants.h"
 #include "MainWindow.h"
-#include "MpvController.h"
-#include "StreamRelay.h"
 #include "Version.h"
+#include "mpvbridge/MpvController.h"
+#include "streams/StreamRelay.h"
 
 // 本模块在 Windows 上通过 MPV_CPLUGIN_DYNAMIC_SYM 把 mpv_* 编译为指向 pfn_* 的
 // 指针：PE 加载器没有全局符号概念，本模块又是由壳动态加载的（mpv 不会填充这里的

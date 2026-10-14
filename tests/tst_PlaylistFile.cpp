@@ -9,7 +9,7 @@
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
-#include "PlaylistFile.h"
+#include "playlist/PlaylistFile.h"
 
 using PlaylistFile::Entry;
 

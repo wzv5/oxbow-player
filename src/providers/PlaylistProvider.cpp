@@ -7,10 +7,10 @@
 // N52：playUrl 的转接分支取用面——StreamRelayIf 为纯头抽象基（无实现体），
 // 测试链接不携带 L4；StreamTransit / Util 为 L1 与纯函数。依赖方向：
 // 提供者基类 → L1 + L4 取用接缝，不碰 HttpClient、不碰任何传输头
-#include "StreamEndpoint.h"
-#include "StreamRelay.h"
-#include "StreamTransit.h"
 #include "Util.h"
+#include "streams/StreamEndpoint.h"
+#include "streams/StreamRelay.h"
+#include "streams/StreamTransit.h"
 
 PlaylistProvider::PlaylistProvider(const std::shared_ptr<ServiceRegistry> &registry)
     : m_registry(registry) {}

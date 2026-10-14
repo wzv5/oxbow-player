@@ -4,8 +4,8 @@
 
 #include "Constants.h"
 #include "FilterListWidget.h"
-#include "MpvConf.h"
-#include "MpvController.h"
+#include "mpvbridge/MpvConf.h"
+#include "mpvbridge/MpvController.h"
 #include "playbackreport/ReporterSwitchCatalog.h" // N99：上报开关目录项同引账目行（键名与缺省单点）
 
 // ===================== 设置目录数据模型（R4 §4.1） =====================

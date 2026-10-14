@@ -13,6 +13,13 @@
 // 实例寿命由 shared_ptr 共享计数保证，resolve 到的副本在任务线程内恒有效。
 // 设置变更即整体 provide 覆盖：在途单请求不受影响（旧 client 副本随任务存活），
 // 条目粒度切换，下一次求值即用新实例。
+//
+// 当前注册的服务（注册点均在 MainWindow 装配段，设置变更行重 provide 的除外）：
+// - HttpClient（根，横切层）——共享 QNAM 传输；
+// - TraversalPolicy（根，横切层）——全局遍历参数的不可变快照；
+// - StreamRelayIf（streams/）——转接流接缝；
+// - PlaybackReporterRegistry（playbackreport/）——上报报告者注册表。
+// 归属判据：按类型自身的域归属，不按"是否被 provide 进注册表"归属（N101 §1）。
 class ServiceRegistry {
   public:
     // 注册 / 覆盖（同类型再次 provide 即替换实例）。GUI 线程调用。

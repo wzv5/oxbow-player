@@ -1,7 +1,7 @@
 #include "BookmarkManager.h"
-#include "PlaylistRegistry.h" // N77 §2.5：过户目标组的保留身份 kDefaultListUuid（纯身份常量，无行为耦合）
 #include "Util.h"
 #include "pch.h"
+#include "playlist/PlaylistRegistry.h" // N77 §2.5：过户目标组的保留身份 kDefaultListUuid（纯身份常量，无行为耦合）
 
 BookmarkManager::BookmarkManager(const QString &configFile, QObject *parent)
     : QObject(parent), m_configFile(configFile) {}

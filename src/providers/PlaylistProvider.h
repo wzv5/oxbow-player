@@ -2,7 +2,7 @@
 
 #include "pch.h"
 
-#include "PlaylistEntity.h"
+#include "playlist/PlaylistEntity.h"
 
 class QSettings;
 class StreamEndpoint;   // N52 L2：来源解析点（纯头接口，实现文件使用）

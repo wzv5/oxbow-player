@@ -2,7 +2,7 @@
 
 #include <QtTest/QtTest>
 
-#include "StreamTransit.h"
+#include "streams/StreamTransit.h"
 
 // N52 L1：oxbow:// 语法纯函数的契约测试——往返、幂等、形态不合恒等与前缀判定。
 // 全部为纯字符串断言，无 GUI，无网络。

@@ -2,7 +2,7 @@
 
 #include <QtTest/QtTest>
 
-#include "HttpByteStream.h"
+#include "streams/HttpByteStream.h"
 
 // N52 L3：HttpByteStream 策略状态机的 fake 测试——以脚本化 IHttpFeed 喂出
 // seek 分岔 / 位置守恒 / 206 校验三档 / 断连自愈 / 早断映射与排除项 / 收敛
