@@ -299,6 +299,48 @@ QVector<PlayTarget> PlaylistWidget::playTargets(int tabIndex,
     return list ? list->playTargets(entities) : QVector<PlayTarget>{};
 }
 
+// ——N104 播放失败显影：三条定位口——
+// 按串定位的共用写体：只扫正播 tab 此刻显示的行，串先过 unwrap 折返条目身份
+// （幂等，非转接形态原样通过）再问 matches()（键级宽松判等）；命中首行即止——
+// 同名重复行不联动，宁漏标不错标。写前判旧值不等，等值 setData 会白刷重绘
+void PlaylistWidget::setPlayFailedByKey(const QString &path, bool failed) {
+    PlaylistListView *list = viewAt(playingTabIndex());
+    if (!list)
+        return;
+    const QString identity = StreamTransit::unwrap(path);
+    for (int i = 0; i < list->count(); ++i) {
+        QListWidgetItem *item = list->item(i);
+        const auto *entity = entityFromItem(item);
+        if (!entity || !entity->matches(identity))
+            continue;
+        if (item->data(ErrorRole).toBool() != failed)
+            item->setData(ErrorRole, failed);
+        break;
+    }
+}
+
+void PlaylistWidget::markPlayFailed(const QString &path) { setPlayFailedByKey(path, true); }
+
+void PlaylistWidget::clearPlayFailed(const QString &path) { setPlayFailedByKey(path, false); }
+
+// 按指针定位：命令层被拒的条目没有 end-file，推送循环手里握着实体与 tab，裸指针
+// 比对即可、不经任何字符串。null 实体跳过（空槽位无行可标）
+void PlaylistWidget::markPlayRejected(int tabIndex, const PlaylistEntity *entity) {
+    if (!entity)
+        return;
+    PlaylistListView *list = viewAt(tabIndex);
+    if (!list)
+        return;
+    for (int i = 0; i < list->count(); ++i) {
+        QListWidgetItem *item = list->item(i);
+        if (entityFromItem(item) != entity)
+            continue;
+        if (!item->data(ErrorRole).toBool())
+            item->setData(ErrorRole, true);
+        break;
+    }
+}
+
 // ——N54 列表身份只读出口（书签按身份回跳的查询面）——
 // N57 §2.6：原 listUuidOf 删除——身份经 listOf(tab)->uuid() 直查；本出口只读，
 // 不得经它直写（改名换源走 openListSettings 等显式方法）
@@ -1979,6 +2021,10 @@ void PlaylistWidget::applyEntitiesToRows(PlaylistListView *list, PlaylistEntity:
     for (int i = 0; i < m; ++i) {
         PlaylistEntity::Ptr fresh = std::move(entities[i]);
         setItemEntity(list->item(i), fresh);
+        // N104：换绑即换新——ErrorRole 随旧实体失效，防红按位置幸存到新内容上
+        // （建行路径不写它、缺值即假，此处是唯一显式清）
+        if (list->item(i)->data(ErrorRole).toBool())
+            list->item(i)->setData(ErrorRole, false);
         owned[i].entity = std::move(fresh); // 旧实体在此销毁：行已指向新实体（序号沿用原位旧值）
     }
     for (int i = m; i < n; ++i)
@@ -2184,6 +2230,16 @@ void PlaylistWidget::runFourStep(PlaylistListView *list, int tab,
         m_mpv ? m_mpv->propertyFlag(QStringLiteral("pause"), false) : false; // stop 之前读
     emit stopRequested();
     clearPlayingMarks(list); // stop 即 mpv 列表清空，本地标记同步失效
+    // N104：失败标记同点随会话重置——整表重推即全员新一轮播放尝试，旧红的
+    // "上次尝试"语义已陈旧。不收进 clearPlayingMarks：该函数还服务于切 tab /
+    // 回刷后的播放标记恢复等场景，红须在那类场景幸存
+    if (list) {
+        for (int i = 0; i < list->count(); ++i) {
+            QListWidgetItem *item = list->item(i);
+            if (item->data(ErrorRole).toBool())
+                item->setData(ErrorRole, false);
+        }
+    }
     if (mutate)
         mutate();
     // N45 §2.8：重推的是 mpv 队列本身——entities 取队列根层出口，idx 为队列根层

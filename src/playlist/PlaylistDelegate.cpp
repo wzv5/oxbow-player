@@ -36,6 +36,7 @@ void PlaylistDelegate::paint(QPainter *painter, const QStyleOptionViewItem &opti
     const auto *entity =
         reinterpret_cast<const PlaylistEntity *>(index.data(Qt::UserRole).value<quintptr>());
     const bool playing = index.data(Qt::UserRole + 1).toBool();
+    const bool failed = index.data(Qt::UserRole + 5).toBool(); // N104：ErrorRole，裸数字同款口径
 
     painter->save();
 
@@ -53,8 +54,11 @@ void PlaylistDelegate::paint(QPainter *painter, const QStyleOptionViewItem &opti
     x += kIconSize + kItemPadding;
 
     QFontMetrics fm(option.font);
-    // 三色规则：正在播放降饱和蓝 / 选中黑 / 其余深灰；一律不用粗体
-    const QColor textColor = playing                                   ? QColor(0x19, 0x76, 0xD2)
+    // 四色规则：播放失败红 / 正在播放降饱和蓝 / 选中黑 / 其余深灰；一律不用粗体
+    // （N104：错误优先于正播——两真同帧是"这条刚报 error、PlayingRole 还没等回显
+    // 回落"，此刻 mpv 已跳走，红比蓝贴近事实）
+    const QColor textColor = failed                                    ? QColor(0xC6, 0x28, 0x28)
+                             : playing                                 ? QColor(0x19, 0x76, 0xD2)
                              : (option.state & QStyle::State_Selected) ? QColor(Qt::black)
                                                                        : QColor(0x60, 0x60, 0x60);
     painter->setFont(option.font);

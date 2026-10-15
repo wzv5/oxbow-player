@@ -945,6 +945,10 @@ void MainWindow::connectController() {
     connect(m_playlist, &PlaylistWidget::filesAdded, this, &MainWindow::onFilesAdded);
     connect(m_playlist, &PlaylistWidget::removeRequested, this, &MainWindow::onRemoveRequested);
     connect(m_playlist, &PlaylistWidget::clearRequested, this, &MainWindow::onClearRequested);
+    // N104：失败显影的标与清——按串口收在 PlaylistWidget（unwrap 在口内做），
+    // 发射方在事件线程，AutoConnection 落 queued 到 GUI 线程
+    connect(m_controller, &MpvController::playFailed, m_playlist, &PlaylistWidget::markPlayFailed);
+    connect(m_controller, &MpvController::fileLoaded, m_playlist, &PlaylistWidget::clearPlayFailed);
     // N4：四步式第一步——排序/清理播放中 tab 前下发停止
     connect(m_playlist, &PlaylistWidget::stopRequested, this,
             [this]() { m_controller->command({QStringLiteral("stop")}); });
@@ -3303,8 +3307,13 @@ void MainWindow::onPlayRequested(const PlaylistEntity::List &entities, int tab, 
     m_controller->command({QStringLiteral("playlist-clear")});
     // 全部按原顺序 append（不自动播），最后以 playlist-pos 启动目标条目：
     // 既避免 idle 下 append-play 瞬态播放 file[0]，也保持 mpv 列表顺序与界面一致
-    for (int i = 0; i < targets.size(); ++i)
-        m_controller->loadFile(targets[i].url, QStringLiteral("append"), targets[i].options);
+    for (int i = 0; i < targets.size(); ++i) {
+        // N104：命令被拒的条目不进 mpv 队列、没有它的 end-file，就地按指针对回
+        // 实体标红（targets 与 entities 同序同长；null 实体在口内跳过）
+        if (m_controller->loadFile(targets[i].url, QStringLiteral("append"), targets[i].options) !=
+            0)
+            m_playlist->markPlayRejected(tab, entities.at(i).get());
+    }
     if (seekTo > 0.0) {
         // 进度恢复走挂起 seek（与会话恢复同款）：playlist-pos 触发的加载是
         // 异步的，立即 seek 会因文件未就绪而失败；先挂起再启动杜绝竞态，
@@ -3357,13 +3366,18 @@ void MainWindow::onFilesAdded(const PlaylistEntity::List &entities) {
         return;
     // R（N56 §2.5）：下发取喂 mpv 前最后一刻映射的播放形态（与回显同形）；
     // N65：PlayTarget 整体——选项随串进 loadfile
-    const QVector<PlayTarget> targets =
-        m_playlist->playTargets(m_playlist->playingTabIndex(), entities);
+    // N104：标红定位的 tab 与 targets 同源一次取值，循环内不重取（其间无事件循环介入）
+    const int tab = m_playlist->playingTabIndex();
+    const QVector<PlayTarget> targets = m_playlist->playTargets(tab, entities);
     if (targets.isEmpty()) // N60 §2.4：空清单早退先于开批（不投屏障、不留空会话）
         return;
     const PlaylistWidget::PushSession session(m_playlist); // N60 §2.4：逐条 append-play 后关批
-    for (const PlayTarget &target : targets)
-        m_controller->loadFile(target.url, QStringLiteral("append-play"), target.options);
+    for (int i = 0; i < targets.size(); ++i) {
+        // N104：命令被拒就地标红（append-play 的被拒项同样没有 end-file）
+        if (m_controller->loadFile(targets[i].url, QStringLiteral("append-play"),
+                                   targets[i].options) != 0)
+            m_playlist->markPlayRejected(tab, entities.at(i).get());
+    }
 }
 
 void MainWindow::applyLoopMode(const QString &mode) {

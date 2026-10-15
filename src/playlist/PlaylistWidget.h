@@ -51,6 +51,7 @@ class PlaylistWidget : public QTabWidget {
     // N45 §2.4：容器行与"上一级"行标记（两类行由 buildSpecialRows 合成）
     static constexpr int ContainerRole = Qt::UserRole + 3;  // 容器行（存容器 id，QString）
     static constexpr int ParentLinkRole = Qt::UserRole + 4; // "上一级"行（bool）
+    static constexpr int ErrorRole = Qt::UserRole + 5;      // N104 播放失败标记（bool）
 
     // N56 §2.7：registry 由装配顶点（MainWindow）创建并注入，本类不再自造——
     // 造实体的层不止视图一个，装配顶点只留一处；每个造实体点都因此确保 registry
@@ -94,6 +95,17 @@ class PlaylistWidget : public QTabWidget {
     // N60：在途快照已随推送会话删除，不再有第三处同形者）。N65：交 PlayTarget
     // 整体（串 + 逐文件选项），Playlist::playTargets 是唯一合并点
     QVector<PlayTarget> playTargets(int tabIndex, const PlaylistEntity::List &entities) const;
+    // ——N104 播放失败显影：三条定位口（MainWindow 只做 connect，标 / 清收口在本类）——
+    // 定位域恒为"正在播放 tab 此刻显示的实体行"：载体是行，行不在视图上就无从显影。
+    // 写前判旧值不等——等值 setData 照样发 dataChanged，会白刷一次重绘
+    // 按串定位（end-file 失败标红与 fileLoaded 成功清除共用）：串先过
+    // StreamTransit::unwrap（幂等，非转接形态原样通过）折返条目身份，再问行实体
+    // matches()（键级宽松判等）；同串只落命中首行——同名重复行不联动，宁漏标不错标
+    void markPlayFailed(const QString &path);
+    void clearPlayFailed(const QString &path);
+    // 按指针定位（命令层被拒通道）：推送循环手里握着实体与 tab，比对行 EntityRole
+    // 的裸指针即可、不经任何字符串；行随层亡，不存在悬垂比较。null 实体跳过
+    void markPlayRejected(int tabIndex, const PlaylistEntity *entity);
     // N56 §2.7：正播实体——某 tab 队列根层第 entityIndex 项（mpv playlist-pos 语义）。
     // MainWindow 的"以当前内容为对象"取串点（书签 / 聚合器 / duration / OSD 取名）
     // 一律经此取实体，不再读 mpv 属性；越界 / 层不在缓存 / 空位返回空
@@ -677,6 +689,9 @@ class PlaylistWidget : public QTabWidget {
 
     // 正在播放条目所在行（PlayingRole 命中处），无则 -1
     int playingRowOf(const PlaylistListView *list) const;
+
+    // N104：按串定位的共用写体（failed 真 = 标红，假 = 清红），两个公共口的薄底座
+    void setPlayFailedByKey(const QString &path, bool failed);
 
     // N57 §2.8：五张"以控件指针为键的平行表"（层缓存 / 浏览路径 / 队列根 / 显示层 /
     // 记忆）已全部搬进 PlaylistListView 成为成员——对象即状态，外层键随之消失。

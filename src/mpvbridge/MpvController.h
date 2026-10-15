@@ -58,7 +58,10 @@ class MpvController : public QObject {
     // appendMode 由调用方原样传入 append / append-play。
     // N60 §2.1 硬约束：同步语义（经 command / mpv_command_node），不得改异步——
     // 它是最主要的列表喂入点
-    void loadFile(const QString &url, const QString &appendMode, const QVariantMap &options);
+    // N104：返回命令错误码（0 为成功）——loadfile 被拒（语法 / 参数非法）根本没
+    // 发起加载、不会有它的 end-file，调用方据返回值就地标红；忽略返回值的既有
+    // 调用点行为不变
+    int loadFile(const QString &url, const QString &appendMode, const QVariantMap &options);
 
     // N60 §2.2：推送会话的屏障读——异步读 playlist，reply 自带发出时刻的队列
     // 终值，gen 作 reply_userdata 与终点对账配对。返回 false 表示发射失败
@@ -203,6 +206,13 @@ class MpvController : public QObject {
     // 发射排在 mediaMetadataChanged 之后（handleFileLoaded 内顺序发射，一行契约：
     // 接收方按"标签先到、装载后到"折叠快照），与 mediaMetadataChanged 同源同序
     void fileLoaded(const QString &path);
+    // N104：播放失败推送——载荷即归属键 m_currentFile（与 fileLoaded 同源：START_FILE
+    // 时缓存的 N61 唯一出口产物），消费契约与 fileLoaded 逐字对称：回显整形不折返
+    // 转接包装，要条目身份的消费方自经 StreamTransit::unwrap（幂等）。发射判据：
+    // end-file 的 reason 为 error 且槽内 id 非零且 playlist_entry_id 与在飞槽配对
+    // 且归属键非空——id 不配对或槽内无归属键一律静默（宁漏标，不错标）；事件线程
+    // 发射，接收方经 queued 连接落 GUI 线程
+    void playFailed(const QString &path);
     // 导航器面板（N1）：video-zoom / video-pan-x / video-pan-y / 视频尺寸
     void videoZoomChanged(double zoom);
     void videoPanXChanged(double panX);
@@ -250,8 +260,9 @@ class MpvController : public QObject {
     // N60 §2.2：屏障读的 reply 分派（事件线程就地解析并释放 node 后发射）
     void handleBarrierReply(const mpv_event *event);
     // B18：生命周期事件分派（均在事件线程执行）
-    void handleStartFile();  // START_FILE：刷新当前文件缓存
-    void handleFileLoaded(); // FILE_LOADED：以缓存为归属键主动读 5 项属性并发射
+    void
+    handleStartFile(const mpv_event *event); // START_FILE：刷新当前文件缓存 + 在飞槽 id（N104）
+    void handleFileLoaded();                 // FILE_LOADED：以缓存为归属键主动读 5 项属性并发射
     // N40：视频尺寸取值与发布（均在事件线程执行；videoSize() 复用同一取值路径）
     QSize readVideoSize() const; // 取值收口：out 优先、width/height 回退、皆不可读判无视频
     void publishVideoSize();     // 去重收口：与上次已发布值比对，不同才写入并 emit
@@ -267,5 +278,11 @@ class MpvController : public QObject {
     // B18：当前文件路径缓存——START_FILE 时写入，FILE_LOADED / duration
     // observe 推送读取作为归属键；仅事件线程读写，无需加锁
     QString m_currentFile;
+    // N104：在飞槽的 id 半边——START_FILE 时与 m_currentFile 同刻写入，END_FILE
+    // 按 id 配对归属（mpv_event_end_file::playlist_entry_id，API 1.108 起；本仓
+    // 编译钉 2.5，"运行时不旧于编译头"是规格明示前提）。事件无载荷置 0，而配对一侧
+    // 另要求槽内 id 非零：0 不是真实条目 id，不参与配对，特性自然不显影。仅事件线程
+    // 读写，无需加锁
+    quint64 m_currentEntryId = 0;
     EventThread *m_eventThread = nullptr; // 随进程存活，不经 delete（与宿主同生命周期）
 };

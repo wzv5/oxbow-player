@@ -265,7 +265,7 @@ class MpvController::EventThread : public QThread {
                 m_ctrl->handleBarrierReply(e);
                 break;
             case MPV_EVENT_START_FILE:
-                m_ctrl->handleStartFile();
+                m_ctrl->handleStartFile(e);
                 break;
             case MPV_EVENT_FILE_LOADED:
                 m_ctrl->handleFileLoaded();
@@ -284,6 +284,15 @@ class MpvController::EventThread : public QThread {
                 // 重置由消费者各自处理
                 auto *ef = static_cast<mpv_event_end_file *>(e->data);
                 emit m_ctrl->endFile(ef ? int(ef->reason) : int(MPV_END_FILE_REASON_ERROR));
+                // N104：失败显影——reason==error、槽内 id 非零、id 与事件配对、槽内归属键
+                // 非空四判据齐才发射，归属键是 START_FILE 缓存的 m_currentFile；任一不满足
+                // 一律静默（宁漏标，不错标）。槽 id 为零即"START_FILE 无载荷"，0 不是真实
+                // 条目 id，不得与事件侧同零成对。事件字段直读，事件线程零属性读
+                if (ef && ef->reason == MPV_END_FILE_REASON_ERROR &&
+                    m_ctrl->m_currentEntryId != 0 &&
+                    quint64(ef->playlist_entry_id) == m_ctrl->m_currentEntryId &&
+                    !m_ctrl->m_currentFile.isEmpty())
+                    emit m_ctrl->playFailed(m_ctrl->m_currentFile);
                 break;
             }
             default:
@@ -339,7 +348,13 @@ void MpvController::startEventThread() { m_eventThread->start(); }
 // N61 §2.3：归属键的来源由 path 属性换成本出口（时序实测见该节——START_FILE 当场
 // playlist-pos 与 playlist/<pos>/filename 已指向本条，与随后 FILE_LOADED 同值）；
 // 信号签名不动，串参无人消费
-void MpvController::handleStartFile() { m_currentFile = currentPlayingPath(); }
+// N104：在飞槽补 id 半边——事件自带的 playlist_entry_id 与 m_currentFile 同刻写入，
+// END_FILE 按 id 配对归属。事件无载荷置 0（防御写法，不依赖版本）
+void MpvController::handleStartFile(const mpv_event *event) {
+    const auto *sf = event ? static_cast<const mpv_event_start_file *>(event->data) : nullptr;
+    m_currentEntryId = sf ? quint64(sf->playlist_entry_id) : 0;
+    m_currentFile = currentPlayingPath();
+}
 
 // B18：FILE_LOADED 时以缓存为归属键，当场主动读 5 项文件级属性并发射。
 // 与 observe 相比：首值即时（不等 flush）、规避"等值不重推"（连续两文件
@@ -637,13 +652,13 @@ QImage MpvController::screenshotRaw() {
     return out;
 }
 
-void MpvController::loadFile(const QString &url, const QString &appendMode,
-                             const QVariantMap &options) {
+int MpvController::loadFile(const QString &url, const QString &appendMode,
+                            const QVariantMap &options) {
     // N65：纯管道——选项调用方给什么发什么，不判 scheme、不补选项、不校验键名、
     // 不改值。空 map 走既有三参数字符串通道：本地项命令与原行为逐字相同
     if (options.isEmpty()) {
-        command({QStringLiteral("loadfile"), url, appendMode});
-        return;
+        // N104：透传命令错误码——被拒即没进队列、没有它的 end-file
+        return command({QStringLiteral("loadfile"), url, appendMode});
     }
 
     // 节点通道（走 mpv_command_node，不赌 command-string 的 JSON 自动识别）。
@@ -717,6 +732,7 @@ void MpvController::loadFile(const QString &url, const QString &appendMode,
         mpv_free_node_contents(&result); // 节点内存按既有用法规还
     else
         qDebug() << "[oxbow] loadfile(node) failed:" << err << url;
+    return err; // N104：错误码透传给调用方（就地标红）
 }
 
 bool MpvController::pushBarrier(quint64 gen) {
