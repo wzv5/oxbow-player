@@ -78,7 +78,8 @@ if(OXBOW_WITH_RCLONE_CRYPT)
     endif()
 endif()
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets LinguistTools Concurrent Network)
+# Svg：把 QtSvg 模块写进 oxbowcore 的导入表（用法见下面 oxbowcore 的链接处）
+find_package(Qt6 REQUIRED COMPONENTS Widgets LinguistTools Concurrent Network Svg)
 
 # ---------------------------------------------------------------------------
 # 目标 1：加载壳 main.dll（纯 Win32，无 Qt 依赖）
@@ -265,7 +266,11 @@ if(OXBOW_PUREQT)
     target_compile_definitions(oxbowcore PRIVATE OXBOW_PUREQT)
 endif()
 
-target_link_libraries(oxbowcore PRIVATE Qt6::Widgets Qt6::Concurrent Qt6::Network)
+# Svg：svg 图标的两个插件（iconengines / imageformats）静态导入 QtSvg，而插件自身的
+# 依赖由 OS 按标准搜索序解析、不含插件目录——模块不先常驻，那两个插件就加载不上、图标
+# 全空。让它进本模块的导入表，即可在壳载入本模块时一并按 DLL_LOAD_DIR 解析（plugin.cpp
+# 入口的那次 QSvgRenderer 构造是同一件事的另一半：只链接不引用留不下导入项）
+target_link_libraries(oxbowcore PRIVATE Qt6::Widgets Qt6::Concurrent Qt6::Network Qt6::Svg)
 # N98：rclone crypt 后端整块受 OXBOW_WITH_RCLONE_CRYPT 门禁——scrypt 与 secretbox 交
 # libsodium（形态与 SODIUM_STATIC 宏随 Sodium::Sodium 的导入面决定，OXBOW_STATIC 单
 # 旋钮），AES 后端按平台取 bcrypt / OpenSSL::Crypto；宏同时是 ProviderCatalog 与
@@ -500,13 +505,9 @@ if(OXBOW_BUILD_TESTS)
             target_compile_options(oxbow_tests_${name} PRIVATE /utf-8)
         endif()
         add_test(NAME ${name} COMMAND oxbow_tests_${name})
-        # 各 exe 落同一输出目录，windeployqt 只需跑一遍：首个注册者挂载即全覆盖
-        # N83：windeployqt 为 Windows 专属，非 Windows 测试直调 exe 无需部署
-        if(WIN32 AND NOT OXBOW_STATIC AND NOT _oxbow_test_deployed)
-            add_custom_command(TARGET oxbow_tests_${name} POST_BUILD
-                COMMAND ${WINDEPLOYQT_EXE} --no-translations --compiler-runtime $<TARGET_FILE:oxbow_tests_${name}>)
-            set(_oxbow_test_deployed TRUE PARENT_SCOPE)
-        endif()
+        # 记下 target 名：各 exe 的 Qt 导入集互不相同（测试静态归档只拉被引用的 object），
+        # 部署面要按它们的并集算，注册完毕后统一挂一次 windeployqt——见本节末尾
+        set(_oxbow_test_targets ${_oxbow_test_targets} oxbow_tests_${name} PARENT_SCOPE)
         # N98：动态形态下测试 exe 也需要 libsodium.dll（照 Qt 的测试部署同款，
         # 每 exe 挂一次 copy_if_different，输出目录同址故幂等）
         if(OXBOW_RCLONE_CRYPT_DEPLOY_DLL)
@@ -539,5 +540,23 @@ if(OXBOW_BUILD_TESTS)
     if(OXBOW_WITH_RCLONE_CRYPT)
         oxbow_add_test(RcloneCrypt)
         oxbow_add_test(RcloneCryptProvider)
+    endif()
+
+    # 一次 windeployqt 吃全部测试 exe：部署面按入参二进制的依赖并集决定，逐个挂载会漏
+    # （首个注册者恰是依赖集最小的那个）。挂在最后一个 exe 的 POST_BUILD，并对其余 exe
+    # 加 add_dependencies，保证取参时各文件已链接。不取"每 exe 挂一次"：Ninja 并行下多个
+    # windeployqt 会同时往同一目录拷同一批 dll，撞车且难复现
+    # N83：windeployqt 为 Windows 专属，非 Windows 测试直调 exe 无需部署
+    if(WIN32 AND NOT OXBOW_STATIC AND _oxbow_test_targets)
+        list(POP_BACK _oxbow_test_targets _oxbow_test_last)
+        set(_oxbow_test_files "$<TARGET_FILE:${_oxbow_test_last}>")
+        foreach(_exe IN LISTS _oxbow_test_targets)
+            list(APPEND _oxbow_test_files "$<TARGET_FILE:${_exe}>")
+        endforeach()
+        add_custom_command(TARGET ${_oxbow_test_last} POST_BUILD
+            COMMAND ${WINDEPLOYQT_EXE} --no-translations --compiler-runtime ${_oxbow_test_files})
+        if(_oxbow_test_targets)
+            add_dependencies(${_oxbow_test_last} ${_oxbow_test_targets})
+        endif()
     endif()
 endif()

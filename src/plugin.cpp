@@ -18,6 +18,10 @@
 #include <dlfcn.h> // dladdr / Dl_info：定位插件自身 .so（Linux 头不庞大，不进预编译）
 #endif
 
+// 仅为把 QtSvg 模块拉进本模块的导入表而引入（用法见入口处的构造）：svg 图标依赖的
+// iconengines / imageformats 两个插件静态导入 QtSvg，模块不先常驻它们就加载不上
+#include <QtSvg/QSvgRenderer>
+
 #include "Constants.h"
 #include "MainWindow.h"
 #include "Version.h"
@@ -164,6 +168,15 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle) {
     if (started)
         return 0;
     started = true;
+
+    // 让本模块的导入表含 QtSvg：svg 图标靠 iconengines / imageformats 两个插件，而插件
+    // 自身的依赖由 OS 按标准搜索序解析（不含插件目录）——QtSvg 不先常驻，那两个插件就加载
+    // 不上、图标全空。本模块并不使用 QSvgRenderer，这里构造一次只为留下导入项；必须是真
+    // 调用：裸取地址会被优化器折叠，导入项会静默消失（失效表现为图标全空且构建无异常）。
+    {
+        QSvgRenderer svgAnchor;
+        Q_UNUSED(svgAnchor);
+    }
 
     // N84：启动诊断行——产物自报版本身份（版本 + 短 hash[-dirty]），逆向回答
     // "手上这份产物是哪次提交、什么时候编的"。输出面与既有诊断一致：

@@ -1,7 +1,6 @@
 # 构建目录：VS 主构建与 Ninja 编译数据库（仅导出 compile_commands.json）
 build/
-build-ninja/
-build-linux/
+build-*/
 
 # IDE / 编辑器
 .vscode/

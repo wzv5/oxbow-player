@@ -94,6 +94,12 @@ if(WIN32)
             IMPORTED_IMPLIB_RELEASE "${_lib_rel}"
             IMPORTED_LOCATION_DEBUG "${_dll_dbg}"
             IMPORTED_LOCATION_RELEASE "${_dll_rel}"
+            # 无配置后缀的一份是兜底：预编译包只有 Debug / Release 两套，而多配置
+            # 生成器恒有第三种（Ninja Multi-Config 的 RelWithDebInfo）。点名的配置
+            # 各自命中配置专属值，未点名的落这一份——与 Release 同源（同用 /MD），
+            # 是语义正确而非将就；缺它时 $<TARGET_FILE:> 展开成 -NOTFOUND 进拷贝串
+            IMPORTED_IMPLIB "${_lib_rel}"
+            IMPORTED_LOCATION "${_dll_rel}"
             INTERFACE_INCLUDE_DIRECTORIES "${Sodium_INCLUDE_DIR}")
         # 动态形态绝不定义 SODIUM_STATIC：定义了头会按静态展开，链接期反而找不到符号
     endif()
