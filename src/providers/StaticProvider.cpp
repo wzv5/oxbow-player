@@ -3,6 +3,8 @@
 #include "StaticProvider.h"
 
 #include "ProviderSettingsPage.h"
+#include "Util.h"
+#include "streams/StreamTransit.h"
 
 // 静态列表的参数页（N44 §2.5.1）：本提供者无参数，但**不放空页**——空白页会被
 // 误认为渲染错误，一句说明既避免误判、也顺带交代"该提供者无参数"。
@@ -103,13 +105,23 @@ StaticProvider::load(QSettings &settings, const std::shared_ptr<ServiceRegistry>
     auto provider = std::make_shared<StaticProvider>(registry);
     // B6：按显式计数字段逐条读取。childKeys() 顺序未定义，键多时呈字典序
     // （"0","1","10","100","11"...），百项级列表会乱序呈现，不可用
+    // N105 §3：读侧三步分拣（统一按去首尾空白后的串），尽量救回用户手写的正常写法：
+    // ① 空值丢（手写的 "1="）；② 转接串丢——端点会话内、跨会话必死（N55 §3.6 同一句
+    // 判据），且必须排在归一之前：toIdentity 首行 unwrap，先归一等于把 oxbow://
+    // 悄悄救成身份；③ 其余归一（toIdentity，不访问文件系统的纯字符串变换），产物
+    // 仍非定形者丢（实测该族只有裸 file:）
     const int n = settings.value(QStringLiteral("itemCount"), 0).toInt();
     QStringList urls;
     urls.reserve(n);
     for (int j = 0; j < n; ++j) {
-        const QString file = settings.value(QString::number(j)).toString();
-        if (!file.isEmpty())
-            urls << file;
+        const QString file = settings.value(QString::number(j)).toString().trimmed();
+        if (file.isEmpty())
+            continue; // ① 空值
+        if (StreamTransit::isTransitUri(file))
+            continue;                                         // ② 转接串：跨会话必死，不进提供者
+        const QString identity = Util::Url::toIdentity(file); // ③ 相对补绝对、file:// 折本地
+        if (Util::Url::isDefiniteForm(identity))
+            urls << identity;
     }
     provider->m_urls = std::move(urls);
     return provider;

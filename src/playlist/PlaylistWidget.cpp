@@ -2335,6 +2335,25 @@ void PlaylistWidget::runJob(const JobContext &ctx, LoadingOverlay::Mode mode, in
         QMetaObject::invokeMethod(this, finish, Qt::QueuedConnection);
 }
 
+// N105 §4：接收面守候——提供者产物恒为"非 null 且身份已定形"（PlaylistProvider::enumerate
+// 的产物侧契约）。纯走 fromPath 的提供者由工厂那句断言在更早处显影（此处对它们恒真，
+// 属重复守候）；真正守住的是绕过严格工厂的构造路径（直接造实体、借宽容入口
+// fromMpvEcho）与空槽位 null。根层与整树各 descendants 层共用同一句判据；
+// Debug 显影、Release 不编入（契约破坏的既然后果，不假装置换）
+static void assertProviderOutputWellFormed(const PlaylistProvider::Enumeration &out) {
+#ifndef QT_NO_DEBUG
+    const auto check = [](const PlaylistProvider::EntityList &entities) {
+        for (const auto &entity : entities)
+            Q_ASSERT(entity && Util::Url::isDefiniteForm(entity->path()));
+    };
+    check(out.entities);
+    for (auto it = out.descendants.constBegin(); it != out.descendants.constEnd(); ++it)
+        check(it.value().entities);
+#else
+    Q_UNUSED(out);
+#endif
+}
+
 // N19/N26/N28/N29/N32：所有 tab 首次激活 / 刷新 / 换源统一走异步枚举。
 // 任务体经 shared_ptr 调用 provider->enumerate(parent)（实体构造与提供者侧元数据
 // 注入都在工作线程）——换源/删 tab 后旧提供者的销毁被自动延后到任务结束，
@@ -2387,6 +2406,8 @@ void PlaylistWidget::startEnumAsync(PlaylistListView *list, Intent intent,
         ctx, LoadingOverlay::Mode::Loading, 0, /*cancelable=*/false,
         [provider, result, parent](QPromise<void> &) {
             *result = provider->enumerate(parent); // 工作线程：实体构造 + 元数据注入仅此一步
+            if (*result) // 枚举失败无产物可守候；成功才验接收面契约（N105 §4）
+                assertProviderOutputWellFormed(**result);
         },
         [this, ctx, result](JobVerdict v) { onLoadFinished(ctx, *result, v); });
 }
@@ -3352,12 +3373,8 @@ void PlaylistWidget::refreshCurrentTab() {
     // N45：已加载 = 层在缓存且无失败文案（§2.5）
     if (auto *p = providerOfView(viewAt(tab));
         list->layerLoaded(list->browsePathIds()) && p && p->supportsModify()) {
-        // N58 §2.2：回传面消费裸实体表，此处拆包一次
-        PlaylistEntity::List items;
-        items.reserve(list->entries().size());
-        for (const auto &entry : list->entries())
-            items.push_back(entry.entity);
-        p->setItems(std::move(items));
+        // N105 §2：拆包与身份过滤收进取表出口，判据见 bareEntitiesOf
+        p->setItems(bareEntitiesOf(list));
     }
     // ② 置位：旧代码在此清 entriesLoaded + loadError。N45 层模型下"未加载"由
     // 收尾覆盖表达：当前层的层仓保留（在途期显示行与实体须保活——recordPlayback
@@ -4695,18 +4712,33 @@ void PlaylistWidget::reorderList(int fromTab, int toTab) {
     savePlaylists();
 }
 
+// N105 §2：交给提供者前的共用取表出口（N58 §2.2 的拆包 + 身份过滤收成一处）。
+// 跳过身份非定形的行（回显收编的空路径行即其中一例），不留占位、不补任何东西、
+// 其余项序不变——过滤是分层职责：来源里的边界噪声与用户手改内容不得扩散进提供者
+// 自持串。判据走 isDefiniteForm（与工厂断言、INI 读侧同一句），全仓仅此一份。
+// 实体空指针不在此复核：本出口只在 supportsModify() 为真处被调，而该能力位今天
+// 只有 StaticProvider 为真、也只有它覆写 setItems——其 setItems 本就解引用
+// entity->path()，判形只比它早一步，不新增空指针面。view 亦不复核：
+// 两个调用点各自已在栈顶判过非空
+PlaylistEntity::List PlaylistWidget::bareEntitiesOf(PlaylistListView *view) const {
+    PlaylistEntity::List items;
+    items.reserve(view->entries().size());
+    for (const auto &entry : view->entries()) {
+        if (!Util::Url::isDefiniteForm(entry.entity->path()))
+            continue;
+        items.push_back(entry.entity);
+    }
+    return items;
+}
+
 // N62 §2.3：显示中条目回传提供者（写侧唯一入口）——落盘与复制共用同一判据。
 // 未加载（含首载在途）的表不回传（N28）：此时副本条目 = 提供者自持串 = 源重启后的
 // 条目，与"复制配置"自洽
 void PlaylistWidget::backfillItems(Playlist *list) {
     PlaylistListView *view = viewAt(tabIndexOfList(list->uuid()));
     if (view && list->provider()->supportsModify() && view->layerLoaded(view->browsePathIds())) {
-        // N58 §2.2：回传面消费裸实体表，此处拆包一次
-        PlaylistEntity::List items;
-        items.reserve(view->entries().size());
-        for (const auto &entry : view->entries())
-            items.push_back(entry.entity);
-        list->provider()->setItems(std::move(items));
+        // N105 §2：拆包与身份过滤收进取表出口，判据见 bareEntitiesOf
+        list->provider()->setItems(bareEntitiesOf(view));
     }
 }
 

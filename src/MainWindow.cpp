@@ -4456,6 +4456,13 @@ void MainWindow::onAddBookmark() {
             return;
         }
     }
+    // N105 §6：无身份条目拒收——空 path 行（loadfile "" 经回显收编落 UnknownEntity）
+    // 的 key 为空串，书签跳转对空串首行早退、失效清理对空串全放行，落 INI 即死账目。
+    // 插件不主动写入异常数据：走既有文案回音，不调 addBookmark、不发成功 OSD
+    if (entity->path().isEmpty()) {
+        showOsd(tr("This item does not support bookmarks."));
+        return;
+    }
     const QString rawPath = entity->path();
     const QString curKey =
         entity->key(); // 归一化键，与 jumpToBookmark 的显示串形参同名异物，改名防混

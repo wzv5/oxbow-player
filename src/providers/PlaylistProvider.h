@@ -72,6 +72,9 @@ class PlaylistProvider {
     // 契约：视图只对提供者自己返回过的容器 id 发起非空 parent 调用；平铺形态的
     // 提供者收到非空 parent 属调用方违约——Q_ASSERT 守候，release 降级返回空结果
     // （照 fromPath 对"http 加空 registry"的既有先例），不得静默忽略。
+    // N105：产物侧契约——根层与整树各 descendants 层的实体恒为"非 null 且身份已
+    // 定形"（Util::Url::isDefiniteForm）。纯走 fromPath 的实现由工厂断言在更早处
+    // 显影，绕开严格工厂的构造路径由视图接收面断言守候（startEnumAsync 任务体）。
     // 提供者不产出"上一级"项，该行由视图合成
     virtual std::expected<Enumeration, QString> enumerate(const QStringList &parent = {}) const = 0;
     // 视图 → 提供者内容回传（只读引用）。基类默认实现忽略——不可修改的提供者

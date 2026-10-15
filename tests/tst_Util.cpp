@@ -81,6 +81,12 @@ class TestUtil : public QObject {
     // 未定形者补形态：产出自满足工厂断言谓词；补不出形态者按实测产物钉住（由工厂的
     // 回显入口落占位实体，见 tst_PlaylistEntity）
     void mpvEchoShapesUndefinedItems();
+    // ——N105 §3：Util::Url::toIdentity 的"补不出形态"族（静态表读取侧丢弃判据的前提）——
+    // 无路径可折的两支 file: 与 file:// 归一产物为空串、非定形（与 N61 用例
+    // mpvEchoShapesUndefinedItems 经 identityFromMpvEcho 所钉的同源行为互为印证；
+    // 此处钉 §3 直接调用的 toIdentity 入口）。带根斜杠的 file:/ 不在此族——它折成
+    // 盘根、判据放行，处置待裁决（见规格待裁决），故本用例不钉
+    void toIdentityBareFileSchemeStaysIndefinite();
     // ——N97：Util::listFiles（目录一层的枚举，DirProvider 与视频区拖放共用）——
     // 命中清单者被收、子目录与其内部文件不进表、空清单不过滤、不存在的目录得空；
     // 判据钉在与"同 flags + NoSort 的 entryInfoList"逐项一致上（过滤位与排序位都未变）
@@ -595,6 +601,19 @@ void TestUtil::mpvEchoShapesUndefinedItems() {
     QCOMPARE(Util::Url::identityFromMpvEcho(QStringLiteral("file:")), QString());
     QVERIFY(QFileInfo(QString()).absoluteFilePath().isEmpty());
     QVERIFY(!Util::Url::isDefiniteForm(Util::Url::identityFromMpvEcho(QStringLiteral("file:"))));
+}
+
+// N105 §3 第 3 步："归一产物仍非定形者才丢"的直接前提。无路径可折的空 path 形态
+// （裸 file: 与 file://，INI 手写异常形）经 toIdentity 须落空串——空路径经
+// toLocalFile 得空串、再由 QFileInfo("").absoluteFilePath() 返空串收口（本行实测
+// 依据见上文 mpvEchoShapesUndefinedItems 的同源断言）。若 Qt 改动令 toLocalFile
+// 对空 path 返回 "/" 一类根形态，归一会把它折成当前盘根、判据放行成盘根条目，
+// 本用例即失败（届时重开该边界处置的裁决）
+void TestUtil::toIdentityBareFileSchemeStaysIndefinite() {
+    QCOMPARE(Util::Url::toIdentity(QStringLiteral("file:")), QString());
+    QVERIFY(!Util::Url::isDefiniteForm(Util::Url::toIdentity(QStringLiteral("file:"))));
+    QCOMPARE(Util::Url::toIdentity(QStringLiteral("file://")), QString());
+    QVERIFY(!Util::Url::isDefiniteForm(Util::Url::toIdentity(QStringLiteral("file://"))));
 }
 
 void TestUtil::listFilesEnumeratesOneLevel() {

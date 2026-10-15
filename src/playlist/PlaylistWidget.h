@@ -391,6 +391,10 @@ class PlaylistWidget : public QTabWidget {
     // 内联，收成单点供落盘与复制共用，判据一字不变：可修改提供者 + 当前显示层已加载；
     // 未加载（含首载在途）不回传（N28）
     void backfillItems(Playlist *list);
+    // N105 §2：交给提供者前的共用取表出口（N58 §2.2 的拆包 + 身份过滤收成一处）——
+    // 跳过身份非定形的行（空路径行即其中一例），不留占位、不补东西、其余项序不变；
+    // 回推（refreshCurrentTab ①）与回传（backfillItems）共用，判据全仓仅此一份
+    PlaylistEntity::List bareEntitiesOf(PlaylistListView *view) const;
 
     // N57 §2.8：原五张"以控件指针为键的平行表"（层缓存 / 浏览路径 / 队列根 /
     // 显示层 / 记忆）及其定位访问器全部退场——状态是 PlaylistListView 的成员，
