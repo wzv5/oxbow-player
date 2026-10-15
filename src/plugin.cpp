@@ -222,9 +222,11 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle) {
     // keep-open 必须关闭：EOF 时由 mpv 自动前进到下一项，列表播完进入 idle；
     // 循环行为交给 loop-file / loop-playlist 设置
     mpv_set_property_string(handle, "keep-open", "no");
-    // pseudo-gui 模式默认 force-window=yes，空闲/停止时会绘制 mpv logo 提示图；
-    // 关掉后空闲时视频输出销毁，露出视频区 widget 的黑色背景
-    mpv_set_property_string(handle, "force-window", "no");
+    // 插件是 GUI 宿主，空闲 / 停止期须保有视频输出：空闲画面即真实可用的拖放入口
+    // （拖放归插件，见下行），OSD 与 mpv 默认开 console 的键也依赖 VO 存在。显式置
+    // yes 而非删掉本行——pseudo-gui 档是否生效由启动方式决定，删行会让这三项随"双击起
+    // / 终端起"漂移
+    mpv_set_property_string(handle, "force-window", "yes");
     // N97：拖放归插件——mpv 前端的 --drag-and-drop 默认 auto（拖入即整表替换），而 wid
     // 嵌入下它的 vo 窗口是视频区 HWND 的子窗口、照样收得到 WM_DROPFILES；不关掉就会
     // 和插件在视频区做的分派叠成两份动作

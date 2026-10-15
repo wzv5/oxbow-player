@@ -397,7 +397,16 @@ QSize MpvController::videoSize() const {
 // 输出尺寸，与实际渲染一致）；不可读回退 width、height（覆盖"起播早期 out
 // 未就绪"，两属性可用时机互补）；仍不可读或读得 0 判定无视频（0,0）。
 // 只读 /w、/h 帧尺寸，绝不读 /dw、/dh 显示尺寸（F7：随显示侧参数漂移）
+// N103：空闲 / 停止期先判 idle-active，为真即交无视频——见函数体内注释
 QSize MpvController::readVideoSize() const {
+    // N103：空闲 / 停止期 mpv 保有 VO 并渲染 logo 画布，而该画布带着一对非零的
+    // video-out-params（实测 960x540）。不在这里挡掉，logo 尺寸就与真实视频尺寸同权，
+    // 顺着尺寸链一路把主窗撑大、顶掉启动收口。故先判 idle-active（FLAG → int 接），
+    // 为真即交无视频；VO 本身不关——OSD 与 console 仍需它作载体。读失败按非空闲处理，
+    // 退回下方既有取值路径
+    int idle = 0;
+    if (mpv_get_property(m_mpv, "idle-active", MPV_FORMAT_FLAG, &idle) == 0 && idle != 0)
+        return QSize(0, 0);
     int64_t w = 0, h = 0;
     const bool outOk = mpv_get_property(m_mpv, "video-out-params/w", MPV_FORMAT_INT64, &w) == 0 &&
                        mpv_get_property(m_mpv, "video-out-params/h", MPV_FORMAT_INT64, &h) == 0;
