@@ -11,7 +11,7 @@ class QTimer;
 // 由 GUI 侧 ThumbHoverWatch 决定起止，本类只执行：
 //   startSession：建核（wid 指向宿主窗）→ 预设选项 → install 转接协议（早于
 //                 initialize，StreamRelay::install 的硬顺序）→ loadfile（带 start）
-//   seekTo      ：去抖 + 精确 seek
+//   seekTo      ：去抖 + 两级 seek（keyframes 先行保证跟手，静默后补 exact 收敛）
 //   endSession  ：先 mpv_terminate_destroy（阻塞至 core 拆完）——N103 销毁顺序的
 //                 前一半，宿主窗的处置（本仓是一套窗复用，即隐藏）由 GUI 侧在
 //                 sessionEnded() 之后做
@@ -42,11 +42,13 @@ class ThumbEngine : public QObject {
   private:
     void teardownCore();
     bool loadFile(double startTime);
+    void seekAbsolute(double time, bool exact);
 
     std::shared_ptr<StreamRelay> m_relay;
     mpv_handle *m_handle = nullptr;
     quint64 m_seq = 0; // 在飞会话的代次，0 = 无
     QString m_path;
-    double m_lastSeek = -1.0;       // 去抖基准：本场会话已定格的时刻
+    double m_lastSeek = -1.0;       // 去抖基准：本场会话最后请求到的时刻
     QTimer *m_drainTimer = nullptr; // 事件队列排空节拍
+    QTimer *m_exactTimer = nullptr; // 静默后补精确 seek 的单次定时器
 };

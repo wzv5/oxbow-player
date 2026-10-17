@@ -8,9 +8,13 @@
 
 namespace {
 
-// seek 去抖：与本场会话已定格时刻差小于该值（媒体秒）不发新 seek。唯一使用点在
-// 本文件，故不入 Constants.h
+// seek 去抖：与本场会话最后请求到的时刻差小于该值（媒体秒）不发新 seek。唯一使用点
+// 在本文件，故不入 Constants.h
 constexpr double kSeekDebounceSecs = 1.0;
+// 精确档延迟：keyframes 档先出图保证跟手，光标静默达该时长后再补一发 exact 收敛。
+// 高码率长 GOP 上一次 exact 要从关键帧逐帧解完整段（可达秒级），逐请求直发会把
+// 画面钉在"永远追不上光标"的状态；移动中只解一帧才是跟手的关键
+constexpr int kExactSeekDelayMs = 200;
 
 void setOptionOrIgnore(mpv_handle *handle, const char *name, const char *value) {
     mpv_set_option_string(handle, name, value);
@@ -25,8 +29,25 @@ ThumbEngine::ThumbEngine(std::shared_ptr<StreamRelay> relay, QObject *parent)
     connect(m_drainTimer, &QTimer::timeout, this, [this] {
         if (!m_handle)
             return;
-        while (mpv_wait_event(m_handle, 0)->event_id != MPV_EVENT_NONE) {
+        for (;;) {
+            const mpv_event *ev = mpv_wait_event(m_handle, 0);
+            if (ev->event_id == MPV_EVENT_NONE)
+                break;
+            // 首帧的精确收敛等文件真正装载完再排：装载前的 seek 无 demuxer 可落。
+            // 已在飞的不动——移动中的请求已经把精确档顺延，此处不得重新起表
+            if (ev->event_id == MPV_EVENT_FILE_LOADED && !m_exactTimer->isActive() &&
+                m_lastSeek >= 0.0)
+                m_exactTimer->start();
         }
+    });
+    // 精确档的唯一发起点：每次被去抖接受的请求都重启它，期间又有新请求则顺延——
+    // 光标移动中永远只有 keyframes 档在跑，停稳后才轮到 exact
+    m_exactTimer = new QTimer(this);
+    m_exactTimer->setSingleShot(true);
+    m_exactTimer->setInterval(kExactSeekDelayMs);
+    connect(m_exactTimer, &QTimer::timeout, this, [this] {
+        if (m_handle && m_lastSeek >= 0.0)
+            seekAbsolute(m_lastSeek, /*exact=*/true);
     });
 }
 
@@ -68,6 +89,9 @@ void ThumbEngine::startSession(quint64 seq, WId hostWid, const QString &path, do
     setOptionOrIgnore(m_handle, "load-positioning", "no");
     setOptionOrIgnore(m_handle, "pause", "yes");
     setOptionOrIgnore(m_handle, "keep-open", "always");
+    // 首帧落关键帧：loadfile 的 start 是绝对寻址，默认 hr-seek 档（absolute）会做
+    // 精确 seek——高码率长 GOP 上开局就要解一整段；精确收敛交给静默后的补发
+    setOptionOrIgnore(m_handle, "hr-seek", "no");
     setOptionOrIgnore(m_handle, "audio", "no");
     setOptionOrIgnore(m_handle, "sub", "no");
     setOptionOrIgnore(m_handle, "really-quiet", "yes");
@@ -117,6 +141,7 @@ void ThumbEngine::startSession(quint64 seq, WId hostWid, const QString &path, do
         return;
     }
     m_drainTimer->start();
+    m_exactTimer->start(); // 首帧同样先 keyframes 后收敛（start 只到关键帧）
     qDebug() << "[oxbow] thumb core ready";
 }
 
@@ -187,15 +212,26 @@ bool ThumbEngine::loadFile(double startTime) {
 void ThumbEngine::seekTo(double time) {
     if (!m_handle)
         return;
-    // 恒走精确 seek（关键帧稀疏的片源上 keyframes 落点长期不动）；与上次已
-    // seek 时刻差小于 1s 不重取，停点与光标最多差 1s。命令走 mpv_command
-    // （argv 形态，与主通路同款）——libmpv 客户端命令默认 no-osd，不画 seek
-    // 进度条
+    // 与上次请求时刻差小于 1s 不重取，停点与光标最多差 1s（两级 seek 下这只是省一次
+    // 无意义的关键帧重解：同一 GOP 内 keyframes 档本来也落在同一帧上）
     if (std::abs(time - m_lastSeek) < kSeekDebounceSecs)
         return;
     m_lastSeek = time;
+    // 两级 seek：先发 keyframes（只解一帧，毫秒级，画面立即跟手），并把精确档顺延；
+    // 光标静默 kExactSeekDelayMs 后 m_exactTimer 才发 exact 收敛到目标帧。高码率下
+    // exact 要从关键帧逐帧解完整段 GOP，逐请求直发会把画面钉在追不上的状态
+    seekAbsolute(time, /*exact=*/false);
+    m_exactTimer->start();
+}
+
+// 恒走 mpv_command（argv 形态，与主通路同款）——libmpv 客户端命令默认 no-osd，
+// 不画 seek 进度条；exact=false 时 keyframes 档显式覆盖 hr-seek=no 的默认
+void ThumbEngine::seekAbsolute(double time, bool exact) {
+    if (!m_handle)
+        return;
     const QList<QByteArray> utf8 = {QByteArrayLiteral("seek"), QByteArray::number(time, 'f', 3),
-                                    QByteArrayLiteral("absolute+exact")};
+                                    exact ? QByteArrayLiteral("absolute+exact")
+                                          : QByteArrayLiteral("absolute+keyframes")};
     std::vector<const char *> argv;
     argv.reserve(utf8.size() + 1);
     for (const QByteArray &arg : utf8)
@@ -215,6 +251,7 @@ void ThumbEngine::endSession() {
 
 void ThumbEngine::teardownCore() {
     m_drainTimer->stop();
+    m_exactTimer->stop();
     if (m_handle) {
         mpv_terminate_destroy(m_handle); // 阻塞至 core 拆完；此后窗口才可销毁
         m_handle = nullptr;
