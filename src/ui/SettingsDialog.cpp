@@ -330,7 +330,7 @@ const QList<SettingCategory> &settingCatalog() {
                       .fallback = QString() /*占位*/},
                      // N107：悬停缩略图开关（插件 INI 项与 mpv 项同分类混列，后端按项互斥，
                      // ignoreHttpsErrors 与 Audio 分类混列同先例）
-                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Hover Thumbnail"),
+                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Show thumbnail on hover"),
                       .widget = WidgetKind::CheckBox,
                       .iniKey = "hoverThumbnail",
                       .fallback = true,
@@ -380,8 +380,9 @@ const QList<SettingCategory> &settingCatalog() {
                       .fallback = false,
                       .note = QT_TRANSLATE_NOOP(
                           "SettingsDialog",
-                          "Uses a quadratic volume curve instead of mpv's cubic one, matching "
-                          "MPC-HC's volume scale; affects the maximum volume value")},
+                          "Uses a quadratic volume curve instead of mpv's cubic one to match "
+                          "MPC-HC's volume scale; the slider's range is rescaled so its top "
+                          "still matches Max Volume")},
                      // N42：原单行文本框升级为滤镜列表编辑器（空值语义不变：无滤镜）
                      {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Audio Filters"),
                       .widget = WidgetKind::FilterList,
