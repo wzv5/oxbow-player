@@ -361,6 +361,17 @@ const QList<SettingCategory> &settingCatalog() {
                   .fallback = 130,
                   .range = {100, 1000},
                   .mpvType = MpvType::Double},
+                 // N108：MPC-HC 兼容音量曲线（插件 INI 选项）——勾选后滑条显示百分比
+                 // 与量程按二次方听感标尺换算，换算与量程重算都在 MainWindow 侧
+                 // （Util::Volume + updateVolumeSliderRange）；本项只管键的读写
+                 {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Louder Volume Curve"),
+                  .widget = WidgetKind::CheckBox,
+                  .iniKey = "quadraticVolumeCurve",
+                  .fallback = false,
+                  .note = QT_TRANSLATE_NOOP(
+                      "SettingsDialog",
+                      "Uses a quadratic volume curve instead of mpv's cubic one, matching "
+                      "MPC-HC's volume scale; affects the maximum volume value")},
                  // N42：原单行文本框升级为滤镜列表编辑器（空值语义不变：无滤镜）
                  {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Audio Filters"),
                   .widget = WidgetKind::FilterList,

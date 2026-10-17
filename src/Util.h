@@ -95,6 +95,21 @@ QDateTime parseReleaseDate(const QString &s);
 // （Last-Modified 恒为 UTC 墙钟，正合需求）。失败返回无效 QDateTime（值未知）。
 QDateTime parseHttpDate(const QByteArray &raw);
 
+// ——音量换算族（N108）：MPC-HC 兼容音量曲线——mpv 软件音量是三次方
+// （A=(V/100)^3），MPC-HC 滑块是二次方（A=(P/100)^2），同一显示百分比下 mpv
+// 明显更轻。两函数互为逆，在滑条显示百分比 P 与 mpv volume 百分比 V 之间换算，
+// 使滑条按 MPC-HC 的听感标尺工作。整条量程（含 100 以上）统一套幂律、不分段，
+// P=V=100 处两曲线相交。纯函数、无状态、不依赖任何播放器对象
+namespace Volume {
+
+// 显示百分比 P → mpv volume 百分比 V：V = 100·(P/100)^(2/3)。P<=0 一律得 0
+double mpcToMpv(double percent);
+
+// mpv volume 百分比 V → 显示百分比 P：P = 100·(V/100)^1.5。V<=0 一律得 0
+double mpvToMpc(double percent);
+
+} // namespace Volume
+
 // ——身份与形态一族（N56 收族）：嵌套命名空间即这一族的边界——
 // 实体与提供者都从这里取内核；调用方只问角色（toIdentity 定形 / key 落键 /
 // fileName 取显示名 / 判据定性），不再自己拼加工链。算法本身与收族前逐字一致

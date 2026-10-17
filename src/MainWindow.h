@@ -110,6 +110,12 @@ class MainWindow : public QMainWindow {
   private:
     // R3：音量上限推送回调（由 MpvController::volumeMaxChanged 驱动）
     void applyVolumeMax(int v);
+    // N108：滑条量程重算单点（volume-max 推送与曲线开关切换共用）——勾选曲线时
+    // 顶端取 mpv 上限的等价百分比（Util::Volume::mpvToMpc），关态即 m_volumeMax
+    void updateVolumeSliderRange();
+    // N108：显示百分比 → mpv volume 的下发单点（按当前曲线换算，不含 OSD）——
+    // 用户动作、曲线切换与启动恢复三条路径共用同一换算
+    void pushVolume(int displayValue);
     // N56：注册表维护（自 PlaylistWidget 上移装配顶点）——初装配（构造期）与
     // 重装配（设置变更）共用，读 ini 构建 HttpClient 缺省参数 provide 进注册表；
     // 覆盖式更新（注册表身份恒定——实体持有的 registry 指针不变，下一次求值
@@ -385,6 +391,9 @@ class MainWindow : public QMainWindow {
     int m_volumeMax = 130;     // R3：音量上限，mpv 默认 130；运行时由 applyVolumeMax 同步
     int m_volumeWheelStep = 1; // 滚轮每格步长
     int m_volumeKeyStep = 5;   // 方向键每格步长
+    // N108：音量曲线开关（INI 键 quadraticVolumeCurve）——勾选时滑条显示百分比按
+    // MPC-HC 二次方听感标尺经 Util::Volume 换算为 mpv volume，量程随之取等价百分比
+    bool m_quadraticVolumeCurve = false;
     // N38：静音——菜单项与音量行图标按钮共用同一 QAction（勾选态由 mpv 推送驱动）
     QAction *m_muteAction = nullptr;
     QToolButton *m_muteButton = nullptr;

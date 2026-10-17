@@ -594,4 +594,18 @@ QDateTime parseReleaseDate(const QString &s) {
     return {};
 }
 
+// ——音量换算族（N108）——口径见 Util.h 声明处注释；<=0 一律钳 0（与 mpv 对
+// volume 负值"按 0 处理"同口径），幂律全程单调，两函数互为逆
+double Volume::mpcToMpv(double percent) {
+    if (percent <= 0.0)
+        return 0.0;
+    return 100.0 * std::pow(percent / 100.0, 2.0 / 3.0);
+}
+
+double Volume::mpvToMpc(double percent) {
+    if (percent <= 0.0)
+        return 0.0;
+    return 100.0 * std::pow(percent / 100.0, 1.5);
+}
+
 } // namespace Util

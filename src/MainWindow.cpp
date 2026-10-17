@@ -601,6 +601,11 @@ QWidget *MainWindow::createLeftArea() {
     connect(m_volumeSlider, &QSlider::valueChanged, this, [this](int value) {
         applyVolume(
             value); // B14：用户手势统一入口（拖动/点击；回流回写被 QSignalBlocker 拦截不入此）
+        // 拖动 tooltip 与 OSD 同值同刻：挂 valueChanged 取的是滑条已消化的新值
+        // （eventFilter 的 MouseMove 先于滑条处理事件，彼处读 value() 只能拿到
+        // 上一次的值）；回流回写被 QSignalBlocker 拦截，不会从这里冒出 tooltip
+        if (m_volumeSlider->isSliderDown())
+            QToolTip::showText(QCursor::pos(), QStringLiteral("%1%").arg(value), m_volumeSlider);
     });
 
     return left;
@@ -818,7 +823,9 @@ void MainWindow::connectController() {
     });
     connect(m_controller, &MpvController::volumeChanged, this, [this](double v) {
         QSignalBlocker blocker(m_volumeSlider);
-        m_volumeSlider->setValue(int(v + 0.5));
+        // N108：勾选曲线时回流反算为显示百分比——下发 f(P) 后收到同一 V，反算回
+        // P（幂等），滑条恒显示等价百分比
+        m_volumeSlider->setValue(qRound(m_quadraticVolumeCurve ? Util::Volume::mpvToMpc(v) : v));
         // B14：推送仅同步滑条，OSD 已移至用户动作统一入口 applyVolume 直显
     });
     // N38：静音推送仅作状态联动（勾选 + 图标），OSD 同 B14 由用户动作路径直显
@@ -1109,6 +1116,33 @@ void MainWindow::onPluginIniKeysChanged(const QStringList &keys) {
         provideTraversalPolicy();
     // 上报开关不再逐键枚举（N99）：账目行命中的键在同步通路内过滤，新增行零改动
     syncReporterSwitches(keys);
+    // 音量族这两项都只读 ini：配置文件为空串即整段跳过（与同函数邻居
+    // provideHttpServices / provideTraversalPolicy 同一守卫口径）
+    if (!m_configFile.isEmpty()) {
+        QSettings settings(m_configFile, QSettings::IniFormat);
+        // 滚轮 / 方向键音量步长（N5）改动即时生效：变更后重读，下一次步进即按新值
+        if (keys.contains(QStringLiteral("volumeWheelStep")) ||
+            keys.contains(QStringLiteral("volumeKeyStep"))) {
+            m_volumeWheelStep =
+                settings.value(QStringLiteral("volumeWheelStep"), m_volumeWheelStep).toInt();
+            m_volumeKeyStep =
+                settings.value(QStringLiteral("volumeKeyStep"), m_volumeKeyStep).toInt();
+        }
+        // N108：曲线开关——信号只带确有变化的键，仍先读值比对（读不到即保持当前态，
+        // 零副作用）；套用后重算量程（越界由 setRange 钳制，那一格经 applyVolume 播报
+        // 钳后值），再以钳后的当前显示值按新曲线直发（不经 applyVolume——曲线开关自身
+        // 不播 OSD、不弹提示）
+        if (keys.contains(QStringLiteral("quadraticVolumeCurve"))) {
+            const bool on =
+                settings.value(QStringLiteral("quadraticVolumeCurve"), m_quadraticVolumeCurve)
+                    .toBool();
+            if (on != m_quadraticVolumeCurve) {
+                m_quadraticVolumeCurve = on;
+                updateVolumeSliderRange();
+                pushVolume(m_volumeSlider->value());
+            }
+        }
+    }
 }
 
 // N99：上报开关的变更通路与启动期初值共用——遍历 ReporterSwitchCatalog（登记、读值与
@@ -2987,15 +3021,9 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
                              ? m_volumeWheelStep
                              : -m_volumeWheelStep);
             return true;
-        case QEvent::MouseMove:
-            // N8 Part4：拖动期间显示当前音量（isSliderDown 区分拖动与悬停）
-            if (m_volumeSlider->isSliderDown())
-                QToolTip::showText(static_cast<QMouseEvent *>(event)->globalPosition().toPoint(),
-                                   QStringLiteral("%1%").arg(m_volumeSlider->value()),
-                                   m_volumeSlider);
-            break;
         case QEvent::MouseButtonRelease:
         case QEvent::Leave:
+            // 拖动 tooltip 挂在 valueChanged 上（见音量 valueChanged 处注释），此处只管收起
             QToolTip::hideText();
             break;
         default:
@@ -3068,12 +3096,23 @@ bool MainWindow::handleVideoDropEvent(QDropEvent *event) {
 
 // B14：用户音量动作统一收口——钳制、下发 mpv 并直显音量 OSD。
 // 三条路径汇入：changeVolume（滚轮/快捷键）、滑条 valueChanged（拖动/点击）。
-// 启动恢复刻意绕行：restoreSettings 以 QSignalBlocker 直写滑条并直接
-// setProperty，不经此函数——启动路径从此无任何 OSD 调用点
+// 启动恢复刻意绕行：restoreSettings 以 QSignalBlocker 直写滑条并直接 pushVolume，
+// 不经此函数——启动路径从此无任何 OSD 调用点
+// N108：钳制上界取滑条量程上界（勾选曲线时它大于 m_volumeMax，沿用旧界会把量程
+// 顶端钳没），先在显示域钳制、再交 pushVolume 换算下发；OSD 直显钳制后的显示
+// 百分比。关态下量程上界即 m_volumeMax、换算恒等
 void MainWindow::applyVolume(int value) {
-    const int v = qBound(0, value, m_volumeMax);
-    m_controller->setProperty(QStringLiteral("volume"), double(v));
-    showOsd(tr("Volume: %1%").arg(v));
+    const int p = qBound(0, value, m_volumeSlider->maximum());
+    pushVolume(p);
+    showOsd(tr("Volume: %1%").arg(p));
+}
+
+// N108：显示百分比 → mpv volume 的唯一换算点（用户动作、曲线切换与启动恢复共用）。
+// 不含 OSD：用户动作路径由 applyVolume 追加，曲线切换与启动恢复刻意不播
+void MainWindow::pushVolume(int displayValue) {
+    m_controller->setProperty(QStringLiteral("volume"), m_quadraticVolumeCurve
+                                                            ? Util::Volume::mpcToMpv(displayValue)
+                                                            : double(displayValue));
 }
 
 // N5：统一音量调节入口。以滑条缓存为基准步进后交 applyVolume；
@@ -3531,8 +3570,19 @@ void MainWindow::ensureMpvBindingDialog() {
 // mpv 启动时会立即推送当前值（默认 130），无需手动初始化。
 void MainWindow::applyVolumeMax(int v) {
     m_volumeMax = v;
-    if (m_volumeSlider)
-        m_volumeSlider->setRange(0, m_volumeMax);
+    updateVolumeSliderRange();
+}
+
+// N108：滑条量程重算单点（applyVolumeMax 推送与曲线开关切换共用）。勾选曲线时
+// 顶端取 mpv 上限的等价百分比（Util::Volume::mpvToMpc），使 P↔V 在整条量程上
+// 双向一一对应；关态即 m_volumeMax。setRange 自带钳制：缩量程时越界的当前值
+// 被钳回，调用方按需以钳后值重下发
+void MainWindow::updateVolumeSliderRange() {
+    if (!m_volumeSlider)
+        return;
+    const int sliderMax =
+        m_quadraticVolumeCurve ? qRound(Util::Volume::mpvToMpc(m_volumeMax)) : m_volumeMax;
+    m_volumeSlider->setRange(0, sliderMax);
 }
 
 void MainWindow::onMpvShutdown() {
@@ -3607,12 +3657,20 @@ void MainWindow::restoreSettings() {
     m_volumeWheelStep =
         settings.value(QStringLiteral("volumeWheelStep"), m_volumeWheelStep).toInt();
     m_volumeKeyStep = settings.value(QStringLiteral("volumeKeyStep"), m_volumeKeyStep).toInt();
+
+    // N108：曲线开关先于音量块——恢复钳制与量程都须按曲线取等价百分比；缺键 false。
+    // 此刻 m_volumeMax 尚为构造默认 130（volume-max 推送晚于恢复），推送到达后
+    // 经 updateVolumeSliderRange 按同一曲线重算，自然对齐
+    m_quadraticVolumeCurve = settings.value(QStringLiteral("quadraticVolumeCurve"), false).toBool();
+    updateVolumeSliderRange();
     if (settings.contains(QStringLiteral("volume"))) {
-        const double vol =
-            qBound(0.0, settings.value(QStringLiteral("volume")).toDouble(), double(m_volumeMax));
-        m_controller->setProperty(QStringLiteral("volume"), vol);
+        // N108：INI 的 volume 键含义恒为"滑条显示值"——钳到当前量程（滑条上界，即
+        // 等价百分比量程）后按曲线换算下发，滑条写同值（仍带 QSignalBlocker）
+        const int p = qRound(qBound(0.0, settings.value(QStringLiteral("volume")).toDouble(),
+                                    double(m_volumeSlider->maximum())));
+        pushVolume(p);
         QSignalBlocker blocker(m_volumeSlider);
-        m_volumeSlider->setValue(int(vol + 0.5));
+        m_volumeSlider->setValue(p);
     }
 
     // N38：静音恢复——以 mpv 侧 mute 属性当前值为准：属性为真则跟随不下发，
