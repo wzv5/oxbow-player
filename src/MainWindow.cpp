@@ -35,6 +35,37 @@
 #include "platform/X11Util.h" // N83：小窗置顶 EWMH 直发（仅非 Windows 编译，见 CMakeLists）
 #endif
 
+namespace {
+
+// ——文件级调档值——唯一使用点均在本文件，故不入 Constants.h（那里只放跨文件共享的
+// 全局常量与默认清单）。集中置顶：调档只动这一处
+
+// N107 悬停缩略图：待裁决 1 的实测调档就改这一族
+// dwell：光标进滑条后停留此时长才建窗建核（快速掠过整条进度条根本不建）
+constexpr int kHoverDwellMs = 200;
+// 宽限：离开后保留此时长，期间回落即续、不重建；到期复核光标，仍在热区即自续
+// 同一节拍（复核节拍即本值，不另立）
+constexpr int kHoverGraceMs = 500;
+// 会话期光标轮询间隔：热区的上下外扩段都不在任何带 tracking 的控件内，光标在那
+// 两段移动不产生 MouseMove，seek 与重定位靠本节拍的轮询驱动
+constexpr int kHoverPollMs = 30;
+// 热区纵向：滑条上下各外扩的宽度（逻辑 px，两向同值——纵向正是用户找落点的那一度）
+constexpr int kHoverBandPx = 8;
+// 缩略图窗下沿与热区上沿的间隙（逻辑 px）：窗锚在带顶之上，热区因此不与窗矩形重叠，
+// 光标不会停在"自己刚建出来的窗口"上
+constexpr int kHoverGapPx = 2;
+// 缩略图内接框边长（逻辑 px，固定一档）：等于 miniDefaultWidth() 的一半，不随主窗
+// 尺寸与全屏切换变化
+constexpr int kThumbBoxPx = 200;
+
+// 进度条悬停 tooltip 合并节流：悬停 move 按鼠标事件率到达，而 tooltip 文本逐像素
+// 就变（hh:mm:ss 只到秒，长片源 1px ≈ 数秒），Qt 的"文本未变即复用"形同虚设——
+// 逐事件直发时每次都在重排 + 重定位顶层 tooltip 窗，实测悬停即吃满单核（注释掉
+// showText 立即回落）。窗口内的多条 move 只按最后一条位置算一次
+constexpr int kSeekTipCoalesceMs = 30;
+
+} // namespace
+
 // N15：章节+书签数据与合并规则的唯一持有者（MainWindow.cpp 文件内实现，
 // 头文件仅前向声明）。职责：接收原始章节 → 内部严格 == 去重 + time 升序；
 // 对外提供三视图——去重章节（菜单段/标记基数）、原始章节（全量）、
@@ -306,31 +337,6 @@ class CursorAutoHider : public QObject {
     bool m_mini = false; // 小窗期不布防，初值即"非小窗"（启动不进小窗）
     bool m_hidden = false;
 };
-
-namespace {
-
-// ——N107 悬停缩略图调档值——六个常量各有唯一使用点且全在本文件，故不入
-// Constants.h（那里只放跨文件共享的全局常量与默认清单）；待裁决 1 的实测调档
-// 就改这一族，紧邻用它们的会话机
-
-// dwell：光标进滑条后停留此时长才建窗建核（快速掠过整条进度条根本不建）
-constexpr int kHoverDwellMs = 200;
-// 宽限：离开后保留此时长，期间回落即续、不重建；到期复核光标，仍在热区即自续
-// 同一节拍（复核节拍即本值，不另立）
-constexpr int kHoverGraceMs = 500;
-// 会话期光标轮询间隔：热区的上下外扩段都不在任何带 tracking 的控件内，光标在那
-// 两段移动不产生 MouseMove，seek 与重定位靠本节拍的轮询驱动
-constexpr int kHoverPollMs = 30;
-// 热区纵向：滑条上下各外扩的宽度（逻辑 px，两向同值——纵向正是用户找落点的那一度）
-constexpr int kHoverBandPx = 8;
-// 缩略图窗下沿与热区上沿的间隙（逻辑 px）：窗锚在带顶之上，热区因此不与窗矩形重叠，
-// 光标不会停在"自己刚建出来的窗口"上
-constexpr int kHoverGapPx = 2;
-// 缩略图内接框边长（逻辑 px，固定一档）：等于 miniDefaultWidth() 的一半，不随主窗
-// 尺寸与全屏切换变化
-constexpr int kThumbBoxPx = 200;
-
-} // namespace
 
 // N107：进度条悬停缩略图会话机（文件内类，PopupCloseWatch / CursorAutoHider 同款
 // 口径；唯一调用方是 MainWindow，不另立文件）。
@@ -770,6 +776,12 @@ QWidget *MainWindow::createLeftArea() {
     // N8 Part3：未按下也接收 move，驱动 tooltip 跟随
     m_progressSlider->setMouseTracking(true);
     m_progressSlider->installEventFilter(this);
+    // 悬停 tooltip 合并节流：move 只记最后位置，到期按该位置算一次
+    // （逐事件直发的实测结论见 eventFilter 同名分支）
+    m_seekTipTimer = new QTimer(this);
+    m_seekTipTimer->setSingleShot(true);
+    m_seekTipTimer->setInterval(kSeekTipCoalesceMs);
+    connect(m_seekTipTimer, &QTimer::timeout, this, &MainWindow::flushSeekToolTip);
     // N8 Part5：停止态禁用且归零（起播经 playlistPosChanged 启用）
     m_progressSlider->setEnabled(false);
     m_progressSlider->setValue(0);
@@ -3311,39 +3323,28 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
             break;
         }
     } else if (watched == m_progressSlider) {
-        // N8 Part3：tooltip 跟随鼠标实时显示所指进度；拖动期持续刷新防自动隐藏。
+        // N8 Part3：tooltip 跟随鼠标显示所指进度；拖动期持续刷新防自动隐藏。
         // 停止态控件已禁用收不到鼠标事件，天然不显示。
-        // N15 实测定论（二分定位）：卡顿根因是自绘路径中“单独的手柄绘制调用”
-        // （见 ChapterSlider 注释）；tooltip 无辜，故恢复逐事件直接处理
+        // 逐事件直发已被实测否定：MouseMove 按鼠标事件率到达，而 tooltip 文本逐像素
+        // 就变（hh:mm:ss 只到秒，长片源 1px ≈ 数秒），Qt 的"文本未变即复用"形同虚设
+        // ——每个事件都演变成一次顶层 tooltip 窗的重排 + 重定位 + 暴露区重绘，悬停即
+        // 吃满单核（注释掉 showText 立即回落）。故 move 只记最后位置，由单次定时器
+        // 合并后算一次；ToolTip 事件稀有，直通同一出口
         switch (event->type()) {
-        case QEvent::ToolTip:
+        case QEvent::ToolTip: {
+            m_seekTipGlobal = static_cast<QHelpEvent *>(event)->globalPos();
+            flushSeekToolTip();
+            break;
+        }
         case QEvent::MouseMove: {
-            // ToolTip 载荷为 QHelpEvent、MouseMove 为 QMouseEvent，先归一全局坐标
-            QPoint global;
-            if (event->type() == QEvent::ToolTip)
-                global = static_cast<QHelpEvent *>(event)->globalPos();
-            else
-                global = static_cast<QMouseEvent *>(event)->globalPosition().toPoint();
-            if (m_playlistPos < 0 || m_duration <= 0.0)
-                break;
-            // N107：悬停时刻换算全仓一份算法——tooltip 与缩略图共用滑条成员，同值
-            // 同刻（滑条时长镜像由 updateChapterSlider 随 durationChanged 同批刷）
-            const double hoverTime = m_progressSlider->timeAtGlobalX(global.x());
-            if (hoverTime < 0.0)
-                break;
-            QString tip;
-            // N77 §2.3：命中查询收（正播身份，key），豁免分派在聚合器内
-            const auto cur = playingEntity();
-            if (const auto hit =
-                    m_marks->hit(hoverTime, playingListUuid(), cur ? cur->key() : QString());
-                hit && !hit->title.isEmpty())
-                tip = hit->title + QStringLiteral("\n");
-            tip += Util::formatTimePercent(hoverTime, m_duration);
-            QToolTip::showText(global, tip, m_progressSlider);
+            m_seekTipGlobal = static_cast<QMouseEvent *>(event)->globalPosition().toPoint();
+            if (!m_seekTipTimer->isActive())
+                m_seekTipTimer->start(); // 合并窗口：期间只更新位置，到期算一次
             break;
         }
         case QEvent::Leave:
-            // 拖动中移出不隐藏（保持常显），仅悬停离开时收起
+            // 拖动中移出不隐藏（保持常显），仅悬停离开时收起；挂起的那次一并作废
+            m_seekTipTimer->stop();
             if (!m_seeking)
                 QToolTip::hideText();
             break;
@@ -3371,6 +3372,26 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
         }
     }
     return QMainWindow::eventFilter(watched, event);
+}
+
+// 进度条悬停 tooltip 的唯一出口：合并节流的落点（eventFilter 只记最后位置）。
+// 判据与逐事件路径一字不差——停止态 / 时长未知 / 换算失败一律不显示
+void MainWindow::flushSeekToolTip() {
+    if (m_playlistPos < 0 || m_duration <= 0.0)
+        return;
+    // N107：悬停时刻换算全仓一份算法——tooltip 与缩略图共用滑条成员，同值同刻
+    // （滑条时长镜像由 updateChapterSlider 随 durationChanged 同批刷）
+    const double hoverTime = m_progressSlider->timeAtGlobalX(m_seekTipGlobal.x());
+    if (hoverTime < 0.0)
+        return;
+    QString tip;
+    // N77 §2.3：命中查询收（正播身份，key），豁免分派在聚合器内
+    const auto cur = playingEntity();
+    if (const auto hit = m_marks->hit(hoverTime, playingListUuid(), cur ? cur->key() : QString());
+        hit && !hit->title.isEmpty())
+        tip = hit->title + QStringLiteral("\n");
+    tip += Util::formatTimePercent(hoverTime, m_duration);
+    QToolTip::showText(m_seekTipGlobal, tip, m_progressSlider);
 }
 
 // N97：视频区拖放。受理判据只有一条——`mimeData()->hasUrls()` 为真即受理（与播放列表

@@ -392,6 +392,9 @@ class MainWindow : public QMainWindow {
     // 最大化时按当前视频尺寸重新适配——跟随全屏退出重适配的同款语义
     bool m_refitAfterMaximize = false;
     ChapterSlider *m_progressSlider = nullptr; // N15：进度条（带章节/书签标记层）
+    // 悬停 tooltip 合并节流：MouseMove 只记最后位置，单次定时器到期算一次
+    QTimer *m_seekTipTimer = nullptr;
+    QPoint m_seekTipGlobal; // 最后一条 move 的全局坐标（换算来源 + tooltip 落点）
     QSlider *m_volumeSlider = nullptr;
     // N5：音量调节配置（INI 键 volumeMax / volumeWheelStep / volumeKeyStep）
     int m_volumeMax = 130;     // R3：音量上限，mpv 默认 130；运行时由 applyVolumeMax 同步
@@ -443,6 +446,8 @@ class MainWindow : public QMainWindow {
     void repositionVideoOverlay();
     void flushOsd();
     void ensureVideoOverlay();
+    // 进度条悬停 tooltip 的唯一出口（合并节流的落点，见 eventFilter 同名分支）
+    void flushSeekToolTip();
 
     // N78：截图两槽的公共前置——取图失败（无正播 / 载荷异常）即 OSD 报错并返空图
     QImage grabScreenshotOrNotify();
