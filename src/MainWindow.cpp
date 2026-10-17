@@ -21,6 +21,7 @@
 #include "providers/ProviderCatalog.h" // N57 §2.3：后备提供者经登记表第 0 项出生，只此一处调用
 #include "streams/StreamRelay.h"
 #include "streams/StreamTransit.h" // N55 §2.7：书签存储串的转接形态分岔（判据与 §3.6 同一条）
+#include "thumb/ThumbEngine.h"     // N107：缩略图第二 core 引擎
 #include "ui/AboutDialog.h"
 #include "ui/BookmarkEditorDialog.h"
 #include "ui/ChapterSlider.h"
@@ -29,6 +30,7 @@
 #include "ui/NavigatorPanel.h"
 #include "ui/SettingsDialog.h"
 #include "ui/ShortcutsDialog.h" // N86
+#include "ui/ThumbWindow.h"     // N107：缩略图宿主窗
 #ifndef Q_OS_WIN
 #include "platform/X11Util.h" // N83：小窗置顶 EWMH 直发（仅非 Windows 编译，见 CMakeLists）
 #endif
@@ -305,6 +307,274 @@ class CursorAutoHider : public QObject {
     bool m_hidden = false;
 };
 
+namespace {
+
+// ——N107 悬停缩略图调档值——六个常量各有唯一使用点且全在本文件，故不入
+// Constants.h（那里只放跨文件共享的全局常量与默认清单）；待裁决 1 的实测调档
+// 就改这一族，紧邻用它们的会话机
+
+// dwell：光标进滑条后停留此时长才建窗建核（快速掠过整条进度条根本不建）
+constexpr int kHoverDwellMs = 200;
+// 宽限：离开后保留此时长，期间回落即续、不重建；到期复核光标，仍在热区即自续
+// 同一节拍（复核节拍即本值，不另立）
+constexpr int kHoverGraceMs = 500;
+// 会话期光标轮询间隔：热区的上下外扩段都不在任何带 tracking 的控件内，光标在那
+// 两段移动不产生 MouseMove，seek 与重定位靠本节拍的轮询驱动
+constexpr int kHoverPollMs = 30;
+// 热区纵向：滑条上下各外扩的宽度（逻辑 px，两向同值——纵向正是用户找落点的那一度）
+constexpr int kHoverBandPx = 8;
+// 缩略图窗下沿与热区上沿的间隙（逻辑 px）：窗锚在带顶之上，热区因此不与窗矩形重叠，
+// 光标不会停在"自己刚建出来的窗口"上
+constexpr int kHoverGapPx = 2;
+// 缩略图内接框边长（逻辑 px，固定一档）：等于 miniDefaultWidth() 的一半，不随主窗
+// 尺寸与全屏切换变化
+constexpr int kThumbBoxPx = 200;
+
+} // namespace
+
+// N107：进度条悬停缩略图会话机（文件内类，PopupCloseWatch / CursorAutoHider 同款
+// 口径；唯一调用方是 MainWindow，不另立文件）。
+// 会话只由进度条控件的鼠标事件驱动——Enter / Leave / MouseMove 三个事件即会话的
+// 全部输入，事件域就是控件自身，不往外装 tracking；过滤器只观察不消费，tooltip
+// 与常规派发不受影响。dwell 到期才建窗建核（快速掠过整条进度条根本不建）；离开
+// 不销毁，宽限到期复核光标：仍在热区内即自续同一节拍（不 seek 不重建），不在才
+// 收会话。一切"在不在"都是 QCursor::pos() 与热区矩形的比对（N67 cursorInVideo /
+// N66 右缘唤起同源）。热区以滑条 frameGeometry 实时推得（浮窗贴边跟随与重挂都不
+// 影响），纵向上下各外扩同一宽度、与宿主的容器边距无关；缩略图窗锚在热区上沿之
+// 上，故带顶到窗下沿恰为让开的间隙。会话期另有低频轮询兜事件盲区：热区的上下外
+// 扩段都不在任何带 tracking 的控件内，光标在那两段移动不产生 MouseMove，seek 与
+// 重定位由轮询驱动（滑条上的 MouseMove 仍即时响应）。
+// 播放侧事实（源串、能力位、时长、视频比例、开关位）由 MainWindow 一次性下发；
+// 引擎调用为跨线程队列投递，本类不做任何阻塞等待，sessionEnded 回执按会话代次
+// 校验后才隐藏窗口（N103 销毁顺序：core 拆完 → 窗口隐藏；代次用于挡掉上一场
+// core 的迟到回执误杀刚建好的新一场）。
+class ThumbHoverWatch : public QObject {
+  public:
+    ThumbHoverWatch(ChapterSlider *slider, ThumbWindow *window, ThumbEngine *engine,
+                    QWidget *mainWindow)
+        : QObject(mainWindow), m_slider(slider), m_window(window), m_engine(engine),
+          m_main(mainWindow) {
+        m_slider->installEventFilter(this);
+        m_dwellTimer = new QTimer(this);
+        m_dwellTimer->setSingleShot(true);
+        m_dwellTimer->setInterval(kHoverDwellMs);
+        connect(m_dwellTimer, &QTimer::timeout, this, [this] {
+            if (m_state != State::DwellPending)
+                return;
+            m_state = State::Idle;
+            buildSession(); // 条件不成立即静默不建
+        });
+        m_graceTimer = new QTimer(this);
+        m_graceTimer->setSingleShot(true);
+        m_graceTimer->setInterval(kHoverGraceMs);
+        connect(m_graceTimer, &QTimer::timeout, this, [this] {
+            if (m_state != State::Active)
+                return;
+            if (hotBand().contains(QCursor::pos())) {
+                m_graceTimer->start(); // 自续同一节拍：画面保持，不 seek 不重建
+                return;
+            }
+            m_pollTimer->stop();
+            m_state = State::Idle;
+            QMetaObject::invokeMethod(
+                m_engine, [e = m_engine] { e->endSession(); }, Qt::QueuedConnection);
+        });
+        m_pollTimer = new QTimer(this);
+        m_pollTimer->setInterval(kHoverPollMs);
+        connect(m_pollTimer, &QTimer::timeout, this, [this] {
+            if (m_state != State::Active)
+                return;
+            // 轮询兜事件盲区：热区的上下外扩段都不在任何带 tracking 的控件内，光标
+            // 在那两段移动不产生 MouseMove，seek 与重定位只靠轮询驱动
+            const QPoint cursor = QCursor::pos();
+            // 滑条被隐藏（小窗态整条底部条 hide）：宿主窗不随之隐藏，而复核读到的
+            // 是陈旧几何、判"仍在带内"会自续成永不销毁 —— 当场收
+            if (!m_slider->isVisible()) {
+                invalidateSession();
+                return;
+            }
+            if (!hotBand().contains(cursor))
+                return;
+            const double t = m_slider->timeAtGlobalX(cursor.x());
+            if (t >= 0.0) {
+                QMetaObject::invokeMethod(
+                    m_engine, [e = m_engine, t] { e->seekTo(t); }, Qt::QueuedConnection);
+            }
+            positionWindow(cursor);
+        });
+    }
+
+    // ——播放侧事实下发（MainWindow 各通路调用；判据本身收在本类）——
+    void setEnabled(bool on) {
+        m_enabled = on;
+        if (!on)
+            invalidateSession(); // 关：当场收掉在飞会话；开：下一次悬停即生效
+    }
+    void setSource(const QString &path, bool allowed) {
+        m_sourcePath = path;
+        m_allowed = allowed;
+    }
+    void setDuration(double v) { m_duration = v; }
+    void setVideoSize(int w, int h) {
+        m_videoW = w;
+        m_videoH = h;
+    }
+    // 换文件 / 停止 / 空闲：当场收掉在飞会话（dwell 一并取消）——旧条目的画面
+    // 不跨文件残留；引擎调用幂等，重复调用安全
+    void invalidateSession() {
+        m_dwellTimer->stop();
+        m_graceTimer->stop();
+        m_pollTimer->stop();
+        if (m_state != State::Idle) {
+            m_state = State::Idle;
+            QMetaObject::invokeMethod(
+                m_engine, [e = m_engine] { e->endSession(); }, Qt::QueuedConnection);
+        }
+    }
+    // 无事件的"已离开"（全屏控制带浮窗收起、滑条被隐藏或重挂、主窗挪位）：
+    // dwell 取消；会话期起宽限复核——带随几何实时重算，光标若仍在带内自续
+    void notifyLeft() {
+        if (m_state == State::DwellPending) {
+            m_dwellTimer->stop();
+            m_state = State::Idle;
+        } else if (m_state == State::Active) {
+            m_graceTimer->start();
+        }
+    }
+    bool isSessionActive() const { return m_state == State::Active; }
+    // 引擎 sessionEnded 回执：core 已拆完，此刻才可隐藏窗口。回执带代次，只认
+    // 当前在飞那一场——上一场 core 的迟到回执（拆解阻塞、投递无序）不得收掉刚
+    // show 的新窗口，否则新场 core 会在已 unmap 的宿主窗上继续渲染（N103 纪律②）
+    void handleSessionEnded(quint64 seq) {
+        if (seq != m_sessionSeq)
+            return;
+        m_window->hide();
+        m_pollTimer->stop();
+        if (m_state == State::Active)
+            m_state = State::Idle;
+    }
+
+  protected:
+    bool eventFilter(QObject *watched, QEvent *event) override {
+        if (watched != m_slider)
+            return QObject::eventFilter(watched, event);
+        switch (event->type()) {
+        case QEvent::Enter:
+            qDebug() << "[oxbow] thumb enter state=" << int(m_state);
+            if (m_state == State::Active)
+                m_graceTimer->stop(); // 回到滑条即继续
+            else if (m_state == State::Idle) {
+                m_state = State::DwellPending;
+                m_dwellTimer->start(); // dwell 只在 Enter 那一刻起，不重复起
+            }
+            break;
+        case QEvent::Leave:
+            if (m_state == State::DwellPending) {
+                m_dwellTimer->stop();
+                m_state = State::Idle;
+            } else if (m_state == State::Active) {
+                m_graceTimer->start(); // 到期复核兜底，期间回落即取消
+            }
+            break;
+        case QEvent::MouseMove:
+            if (m_state == State::Active) {
+                const QPoint cursor = QCursor::pos();
+                const double t = m_slider->timeAtGlobalX(cursor.x());
+                if (t >= 0.0) {
+                    QMetaObject::invokeMethod(
+                        m_engine, [e = m_engine, t] { e->seekTo(t); }, Qt::QueuedConnection);
+                }
+                positionWindow(cursor);
+            }
+            break;
+        default:
+            break;
+        }
+        return false;
+    }
+
+  private:
+    enum class State { Idle, DwellPending, Active };
+
+    // 热区：滑条全局矩形纵向上下各外扩 bandPx、横向不扩。上下对称是有意的——纵向
+    // 正是用户找落点的那一度（§5），往上挪光标不该退出会话；锚点只从滑条自身几何
+    // 推得，与宿主容器的边距无关
+    QRect hotBand() const {
+        const int band = kHoverBandPx;
+        return QRect(m_slider->mapToGlobal(QPoint(0, 0)), m_slider->size())
+            .adjusted(0, -band, 0, band);
+    }
+
+    void buildSession() {
+        // 诊断日志（[oxbow] thumb）：一次悬停一行，列全部闸口取值，失败定位用
+        qDebug() << "[oxbow] thumb build" << "enabled=" << m_enabled << "allowed=" << m_allowed
+                 << "path=" << m_sourcePath << "dur=" << m_duration
+                 << "slider=" << m_slider->isVisible() << m_slider->isEnabled();
+        if (!m_enabled || !m_allowed || m_sourcePath.isEmpty() || m_duration <= 0.0)
+            return;
+        if (!m_slider->isVisible() || !m_slider->isEnabled())
+            return; // 小窗 / 停止态滑条不可见不可用，悬停无从发生
+        const QPoint cursor = QCursor::pos();
+        if (!hotBand().contains(cursor))
+            return; // dwell 期光标可能已离开
+        const double start = m_slider->timeAtGlobalX(cursor.x());
+        if (start < 0.0)
+            return;
+        const int box = kThumbBoxPx;
+        QSize size(box, box);
+        if (m_videoW > 0 && m_videoH > 0) {
+            // 按片源宽高比内接、不留黑边；极宽片源缩成扁条是正确结果（N68 纪律同源）
+            const double scale = qMin(double(box) / m_videoW, double(box) / m_videoH);
+            size = QSize(qMax(1, qRound(m_videoW * scale)), qMax(1, qRound(m_videoH * scale)));
+        }
+        m_window->resize(size);
+        positionWindow(cursor);
+        m_window->show();  // show 必须早于 VO 开始渲染（N103 纪律①），引擎调用为
+        m_window->raise(); // 队列投递，show 先于 loadfile 落地有保证
+        // 引擎调用一律队列投递（引擎 affine 专属线程，mpv_command 的同步阻塞
+        // 不得落 GUI 线程）；functor 形态免 metatype 注册。代次随会话递增，回执
+        // 按号比对
+        const quint64 seq = ++m_sessionSeq;
+        QMetaObject::invokeMethod(
+            m_engine,
+            [e = m_engine, seq, wid = m_window->hostWid(), path = m_sourcePath, start] {
+                e->startSession(seq, wid, path, start);
+            },
+            Qt::QueuedConnection);
+        m_state = State::Active;
+        m_pollTimer->start();
+    }
+
+    // 水平以光标为中心夹在主窗内；垂直锚在热区上沿之上——窗下沿 = 带顶 −
+    // kHoverGapPx（让开的间隙，与 §5"热区不与窗口矩形重叠"同源）；frameless
+    // 窗 move() 定位即外框左上角（N1⑥ 的 frameGeometry 语义在此等价）
+    void positionWindow(const QPoint &cursor) {
+        const QRect frame = m_main->frameGeometry();
+        const int x = qBound(frame.left(), cursor.x() - m_window->width() / 2,
+                             frame.right() - m_window->width() + 1);
+        const int y = hotBand().top() - kHoverGapPx - m_window->height();
+        if (m_window->geometry().topLeft() == QPoint(x, y))
+            return; // 光标静止的轮询节拍不空转 SetWindowPos
+        m_window->move(x, y);
+    }
+
+    ChapterSlider *m_slider;
+    ThumbWindow *m_window;
+    ThumbEngine *m_engine;
+    QWidget *m_main;
+    QTimer *m_dwellTimer = nullptr;
+    QTimer *m_graceTimer = nullptr;
+    QTimer *m_pollTimer = nullptr; // 会话期光标轮询（热区外扩段的事件盲区）
+    State m_state = State::Idle;
+    quint64 m_sessionSeq = 0; // 会话代次：引擎回执按号比对，0 = 从未建场
+    bool m_enabled = true;    // INI 键 hoverThumbnail（restoreSettings / 运行期切换下发）
+    bool m_allowed = false;   // 条目能力位（fileLoaded 一次性下发）
+    QString m_sourcePath;     // 在播身份串（fileLoaded 一次性下发）
+    double m_duration = 0.0;
+    int m_videoW = 0;
+    int m_videoH = 0;
+};
+
 MainWindow::MainWindow(MpvController *controller, const QString &configFile,
                        std::shared_ptr<StreamRelay> relay, QWidget *parent)
     : QMainWindow(parent), m_controller(controller), m_configFile(configFile),
@@ -427,6 +697,20 @@ MainWindow::MainWindow(MpvController *controller, const QString &configFile,
 
     m_marks = new MarkAggregator(m_bookmarkMgr); // N15：标记聚合器
 
+    // N107：缩略图装配——引擎跑专属线程（无 parent，随 finished 的 deleteLater 收尾，
+    // 析构在引擎线程内执行使 core 拆解不落 GUI 线程）；窗口与会话机留 GUI 线程，
+    // 窗口复用一套，hide/show 切换。relay 与主 core 同一实例（端点表不分份）
+    m_thumbThread = new QThread(this);
+    m_thumbThread->setObjectName(QStringLiteral("thumb-engine"));
+    m_thumbEngine = new ThumbEngine(m_relay);
+    m_thumbEngine->moveToThread(m_thumbThread);
+    connect(m_thumbThread, &QThread::finished, m_thumbEngine, &QObject::deleteLater);
+    m_thumbThread->start();
+    m_thumbWindow = new ThumbWindow(this);
+    m_thumbWatch = new ThumbHoverWatch(m_progressSlider, m_thumbWindow, m_thumbEngine, this);
+    connect(m_thumbEngine, &ThumbEngine::sessionEnded, this,
+            [this](quint64 seq) { m_thumbWatch->handleSessionEnded(seq); });
+
     setCentralWidget(m_splitter);
     createMenus();
     connectController();
@@ -440,6 +724,18 @@ MainWindow::MainWindow(MpvController *controller, const QString &configFile,
     restoreSettings();
     updateChapterMenuState();
     updateChapterSlider();
+}
+
+MainWindow::~MainWindow() {
+    // N107：N103 销毁顺序——先阻塞拆缩略图 core 再停引擎线程，子控件（宿主窗）
+    // 随基类析构在其后销毁。常规退出已由 onMpvShutdown 收口（幂等），本处兜底
+    if (m_thumbEngine)
+        QMetaObject::invokeMethod(
+            m_thumbEngine, [e = m_thumbEngine] { e->endSession(); }, Qt::BlockingQueuedConnection);
+    if (m_thumbThread) {
+        m_thumbThread->quit();
+        m_thumbThread->wait();
+    }
 }
 
 QWidget *MainWindow::createLeftArea() {
@@ -944,6 +1240,28 @@ void MainWindow::connectController() {
     connect(m_controller, &MpvController::pauseChanged, m_cursorHider, &CursorAutoHider::setPaused);
     connect(m_controller, &MpvController::idleActive, m_cursorHider, &CursorAutoHider::setIdle);
 
+    // N107：悬停缩略图的播放侧事实下发与会话收口（各通路独立 connect，不并入
+    // 既有 lambda——判据与生命周期互不纠缠）
+    connect(m_controller, &MpvController::fileLoaded, this, [this] {
+        // N107 §4：装载完成查条目能力位并一次性下发，此后该文件生命周期内不再查询。
+        // 行号与 tab 现读（镜像时序不可靠，与 forwardReportSegment 同款口径）
+        const int pos = int(m_controller->propertyInt64(QStringLiteral("playlist-pos"), -1));
+        const int tab = m_playlist->playingTabIndex();
+        const PlaylistEntity::Ptr e = pos >= 0 ? m_playlist->playingEntityOf(tab, pos) : nullptr;
+        m_thumbWatch->setSource(m_controller->currentPlayingPath(),
+                                e && e->supportsSecondaryDecode());
+    });
+    connect(m_controller, &MpvController::durationChanged, this,
+            [this](const QString &, double v) { m_thumbWatch->setDuration(v); });
+    connect(m_controller, &MpvController::videoSizeChanged, this,
+            [this](int w, int h) { m_thumbWatch->setVideoSize(w, h); });
+    connect(m_controller, &MpvController::endFile, this,
+            [this](int) { m_thumbWatch->invalidateSession(); });
+    connect(m_controller, &MpvController::idleActive, this, [this](bool active) {
+        if (active)
+            m_thumbWatch->invalidateSession();
+    });
+
     connect(m_playlist, &PlaylistWidget::playRequested, this, &MainWindow::onPlayRequested);
     // N54：书签层级定位的两种结局——播放决策三档与失败策略都在本类（widget 只切层
     // 与定位，不知道 mpv 现状，也不报错）
@@ -1140,6 +1458,16 @@ void MainWindow::onPluginIniKeysChanged(const QStringList &keys) {
                 m_quadraticVolumeCurve = on;
                 updateVolumeSliderRange();
                 pushVolume(m_volumeSlider->value());
+            }
+        }
+        // N107：悬停缩略图开关运行期切换——关：会话机当场收掉在飞会话并停定时器；
+        // 开：下一次悬停即生效，无须重启。开关不参与主播放路径的任何判断
+        if (keys.contains(QStringLiteral("hoverThumbnail"))) {
+            const bool on =
+                settings.value(QStringLiteral("hoverThumbnail"), m_hoverThumbnailEnabled).toBool();
+            if (on != m_hoverThumbnailEnabled) {
+                m_hoverThumbnailEnabled = on;
+                m_thumbWatch->setEnabled(on);
             }
         }
     }
@@ -1842,6 +2170,8 @@ void MainWindow::moveEvent(QMoveEvent *event) {
     repositionNavigator();
     repositionVideoOverlay();
     repositionFullscreenOverlays(); // N66：全屏期两条带贴边跟随
+    if (m_thumbWatch)
+        m_thumbWatch->notifyLeft(); // N107 §2：主窗挪位使热区挪位，无事件按"已离开"起复核
 #if !defined(Q_OS_WIN) || defined(OXBOW_PUREQT)
     if (m_mini)
         scheduleMiniRefit(/*positionAroused=*/true); // 降级路径：位置变化算外部唤醒
@@ -1869,6 +2199,12 @@ void MainWindow::resizeEvent(QResizeEvent *event) {
 // 一次发布的尺寸（pending）适配
 void MainWindow::changeEvent(QEvent *event) {
     QMainWindow::changeEvent(event);
+    // N107 §2：主窗最小化同属"没有事件的状态改变"——缩略图宿主窗是主窗的 owned
+    // 窗，随 owner 一起隐掉，而带内复核读到的仍是旧几何、判"在"即自续，会话与
+    // core 会挂在已 unmap 的窗口上永不销毁（N103 纪律②），故当场收
+    if (event->type() == QEvent::WindowStateChange && (windowState() & Qt::WindowMinimized) &&
+        m_thumbWatch)
+        m_thumbWatch->invalidateSession();
     // m_fullscreen / m_mini 守卫（N68）：从最大化进入覆盖式全屏或小窗都会先
     // setWindowState(NoState)，该转移同样表现为"最大化 → 普通态"，须排除；
     // 退出全屏/小窗时标志已先置假，但旧态是 NoState，不会误入本分支
@@ -1991,6 +2327,8 @@ void MainWindow::ensureFullscreenOverlays() {
 void MainWindow::reparentIntoOverlay(QWidget *what, QWidget *host) {
     host->layout()->addWidget(what);
     what->setVisible(true);
+    if (what == m_bottomBar && m_thumbWatch)
+        m_thumbWatch->notifyLeft(); // N107 §2：滑条随带重挂，无事件按"已离开"处理
 }
 
 // §三-3：挂回原位——播放列表回 splitter（末位追加即索引 1，左 pane 恒在 0，
@@ -2004,6 +2342,8 @@ void MainWindow::restoreOriginalParent(QWidget *what) {
         m_leftPane->layout()->addWidget(what);
         what->setVisible(true);
     }
+    if (what == m_bottomBar && m_thumbWatch)
+        m_thumbWatch->notifyLeft(); // N107 §2：滑条随带重挂，无事件按"已离开"处理
 }
 
 // §三-3：浮窗显隐唯一出口（§三-5 末条：显隐只经此，不在别处直接 setVisible/show）。
@@ -2019,6 +2359,9 @@ void MainWindow::setOverlayShown(Overlay which, bool shown) {
         }
     }
     overlay->setVisible(shown);
+    // N107 §2：控制带浮窗收起即无事件的"已离开"——当场起宽限复核收掉缩略图
+    if (!shown && which == Overlay::ControlBar && m_thumbWatch)
+        m_thumbWatch->notifyLeft();
     if (shown)
         overlay->raise(); // §二-6：各浮窗 show 时自行 raise，互不干预对方 Z 序
 }
@@ -2044,8 +2387,9 @@ void MainWindow::evaluateOverlayVisibility(const QPoint &clientPos) {
     // 进行中整个状态机挂起——光标随缘扫过底区不应意外唤出控制栏，播放列表同理不收；
     // 活动弹层两浮窗一并挂起（菜单项落在浮窗之外，光标移向菜单会先触发 Leave）
     const bool popup = QApplication::activePopupWidget() != nullptr;
-    const bool holdControl =
-        m_progressSlider->isSliderDown() || m_volumeSlider->isSliderDown() || popup || m_fsResizing;
+    const bool holdControl = m_progressSlider->isSliderDown() || m_volumeSlider->isSliderDown() ||
+                             popup || m_fsResizing ||
+                             (m_thumbWatch && m_thumbWatch->isSessionActive()); // N107 §5②
     const bool holdPlaylist = m_fsResizing || popup;
     // §二-3 "光标停在浮窗内无限期保持显示"：已显示的浮窗以自身矩形保活（Leave 收起
     // 的等价判据），触发带只负责唤出——否则拖宽松手 / 弹层关闭等重评点会因光标不在
@@ -2974,23 +3318,19 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
         switch (event->type()) {
         case QEvent::ToolTip:
         case QEvent::MouseMove: {
-            // ToolTip 载荷为 QHelpEvent、MouseMove 为 QMouseEvent，先归一坐标
-            QPoint pos, global;
-            if (event->type() == QEvent::ToolTip) {
-                const auto *he = static_cast<QHelpEvent *>(event);
-                pos = he->pos();
-                global = he->globalPos();
-            } else {
-                const auto *me = static_cast<QMouseEvent *>(event);
-                pos = me->position().toPoint();
-                global = me->globalPosition().toPoint();
-            }
+            // ToolTip 载荷为 QHelpEvent、MouseMove 为 QMouseEvent，先归一全局坐标
+            QPoint global;
+            if (event->type() == QEvent::ToolTip)
+                global = static_cast<QHelpEvent *>(event)->globalPos();
+            else
+                global = static_cast<QMouseEvent *>(event)->globalPosition().toPoint();
             if (m_playlistPos < 0 || m_duration <= 0.0)
                 break;
-            const double percent = progressPercentAt(pos);
-            if (percent < 0.0)
+            // N107：悬停时刻换算全仓一份算法——tooltip 与缩略图共用滑条成员，同值
+            // 同刻（滑条时长镜像由 updateChapterSlider 随 durationChanged 同批刷）
+            const double hoverTime = m_progressSlider->timeAtGlobalX(global.x());
+            if (hoverTime < 0.0)
                 break;
-            const double hoverTime = m_duration * percent / 100.0;
             QString tip;
             // N77 §2.3：命中查询收（正播身份，key），豁免分派在聚合器内
             const auto cur = playingEntity();
@@ -3164,30 +3504,6 @@ void MainWindow::updateNowPlayingUi() {
         m_osdCoalescePending = true;
         QTimer::singleShot(0, this, &MainWindow::flushOsd);
     }
-}
-
-// N8 Part3：进度条鼠标 x → 百分比（0~100）。经样式反查 groove/handle 几何，
-// 扣除滑块半宽后线性映射，与拖动定位算法同口径
-double MainWindow::progressPercentAt(const QPoint &pos) const {
-    QStyleOptionSlider opt;
-    opt.initFrom(m_progressSlider);
-    opt.subControls = QStyle::SC_SliderGroove | QStyle::SC_SliderHandle;
-    opt.orientation = m_progressSlider->orientation();
-    opt.minimum = m_progressSlider->minimum();
-    opt.maximum = m_progressSlider->maximum();
-    opt.sliderPosition = m_progressSlider->sliderPosition();
-    opt.sliderValue = m_progressSlider->value();
-    const QRect groove =
-        style()->subControlRect(QStyle::CC_Slider, &opt, QStyle::SC_SliderGroove, m_progressSlider);
-    const QRect handle =
-        style()->subControlRect(QStyle::CC_Slider, &opt, QStyle::SC_SliderHandle, m_progressSlider);
-    const int span = groove.width() - handle.width();
-    if (span <= 0)
-        return -1.0;
-    const int dx = pos.x() - handle.width() / 2 - groove.left();
-    const int value =
-        QStyle::sliderValueFromPosition(opt.minimum, opt.maximum, qBound(0, dx, span), span);
-    return value / 10.0;
 }
 
 // N6：相对 seek。停止态（m_playlistPos<0）无播放位置可寻址，直接忽略；
@@ -3595,6 +3911,12 @@ void MainWindow::onMpvShutdown() {
     // aboutToQuit 的传输闸门（g_appQuitting）一旦落位，最后那条 Stop 会被 HttpClient
     // 静默吞掉且无任何日志
     m_reportDriver->flushAndJoin(200);
+    // N107：先阻塞拆缩略图 core（引擎线程循环仍在跑，BlockingQueuedConnection 可达）
+    // 并收起窗口——不留孤悬窗口进退出生序，第二 core 也不与 mpv 宿主收尾并发
+    // （N103 销毁顺序同源；无在飞会话时为瞬时空调用）
+    QMetaObject::invokeMethod(
+        m_thumbEngine, [e = m_thumbEngine] { e->endSession(); }, Qt::BlockingQueuedConnection);
+    m_thumbWindow->hide();
     // 收口用 exit() 而非 quit()：本插件的 Qt 循环跑在 mpv 的 cplugin 线程（非进程主线程），
     // quit() 在这种布局下只往 qApp 投递一个 Quit 事件、实测永不兑现；exit() 当场同步退出
     // 本线程循环栈上的全部循环（模态对话框还开着时一并收掉）
@@ -3663,6 +3985,10 @@ void MainWindow::restoreSettings() {
     // 经 updateVolumeSliderRange 按同一曲线重算，自然对齐
     m_quadraticVolumeCurve = settings.value(QStringLiteral("quadraticVolumeCurve"), false).toBool();
     updateVolumeSliderRange();
+    // N107：悬停缩略图开关（缺键开）；读法与音量族同形（先于任何装配动作——
+    // 会话机已在构造期装配，此处置位即生效）
+    m_hoverThumbnailEnabled = settings.value(QStringLiteral("hoverThumbnail"), true).toBool();
+    m_thumbWatch->setEnabled(m_hoverThumbnailEnabled);
     if (settings.contains(QStringLiteral("volume"))) {
         // N108：INI 的 volume 键含义恒为"滑条显示值"——钳到当前量程（滑条上界，即
         // 等价百分比量程）后按曲线换算下发，滑条写同值（仍带 QSignalBlocker）

@@ -288,155 +288,166 @@ QList<SettingChoice> tlsVerifyChoices() {
 // 全局目录（函数内 static 单例，内容 const；规避跨编译单元静态初始化顺序问题）。
 // 指定初始化器：省略的字段取声明处默认值，新增可选字段零波及。
 const QList<SettingCategory> &settingCatalog() {
-    static const QList<SettingCategory> catalog = {
-        // ① 基本 —— 插件本体选项（写 oxbow.ini）
-        {.title = QT_TRANSLATE_NOOP("SettingsDialog", "Basic"),
-         .items =
-             {
-                 {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Language"),
-                  .widget = WidgetKind::Combo,
-                  .iniKey = "language",
-                  .choices = languageChoices,
-                  .note = QT_TRANSLATE_NOOP("SettingsDialog", "Takes effect after restart")},
-                 {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Wheel Step"),
-                  .widget = WidgetKind::Combo,
-                  .iniKey = "volumeWheelStep",
-                  .choices = stepChoices,
-                  .fallback = 2, // 维护者指定：滚轮步进默认 2
-                  .note = QT_TRANSLATE_NOOP("SettingsDialog", "For adjusting volume")},
-                 {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Arrow Key Step"),
-                  .widget = WidgetKind::Combo,
-                  .iniKey = "volumeKeyStep",
-                  .choices = stepChoices,
-                  .fallback = 5, // 对齐现版：miss 兜底 5 而非第 0 项
-                  .note = QT_TRANSLATE_NOOP("SettingsDialog", "For adjusting volume")},
-                 {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Recursive Depth Limit"),
-                  .widget = WidgetKind::SpinBox,
-                  .iniKey = "recursiveDepthLimit",
-                  .fallback = App::recursiveDepthLimitDefault(),
-                  .range = {0, App::recursiveDepthLimitMax()},
-                  .note = QT_TRANSLATE_NOOP("SettingsDialog",
-                                            "For directory enumeration including subdirectories")},
-             }},
-        // ② 播放 —— mpv 选项（写 mpv.conf + 下发）
-        {.title = QT_TRANSLATE_NOOP("SettingsDialog", "Playback"),
-         .items =
-             {
-                 {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Loop Playback"),
-                  .widget = WidgetKind::Combo,
-                  .mpvKeys = {"loop-file", "loop-playlist"},
-                  .choices = loopChoices,
-                  .fallback = QString() /*占位*/},
-             }},
-        // ③ 视频 —— mpv 选项
-        {.title = QT_TRANSLATE_NOOP("SettingsDialog", "Video"),
-         .items =
-             {
-                 {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Hardware Decoding"),
-                  .widget = WidgetKind::EditableCombo,
-                  .mpvKeys = {"hwdec"},
-                  .choices = hwdecPresets,
-                  .fallback = "auto"},
-                 // N42：视频滤镜列表（与音频页同构）。备注两条合一（原生硬解下 CPU
-                 // 滤镜不可用——mpv 非 copy 硬解不自动回读硬件帧，需 copy 模式或
-                 // 软解；尺寸类滤镜的导航器已知不一致——修正属 N40，按已知项口径
-                 // 如实告知，不承诺修好）
-                 {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Video Filters"),
-                  .widget = WidgetKind::FilterList,
-                  .mpvKeys = {"vf"},
-                  .note = QT_TRANSLATE_NOOP(
-                      "SettingsDialog",
-                      "To use video filters, set Hardware Decoding to a copy mode "
-                      "(auto-copy) or no; changing it during playback may require stop "
-                      "and play to take effect"),
-                  .filterPresets = videoFilterPresets},
-             }},
-        // ④ 音频 —— mpv 选项
-        {.title = QT_TRANSLATE_NOOP("SettingsDialog", "Audio"),
-         .items =
-             {
-                 {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Max Volume"),
-                  .widget = WidgetKind::SpinBox,
-                  .mpvKeys = {"volume-max"},
-                  .fallback = 130,
-                  .range = {100, 1000},
-                  .mpvType = MpvType::Double},
-                 // N108：MPC-HC 兼容音量曲线（插件 INI 选项）——勾选后滑条显示百分比
-                 // 与量程按二次方听感标尺换算，换算与量程重算都在 MainWindow 侧
-                 // （Util::Volume + updateVolumeSliderRange）；本项只管键的读写
-                 {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Louder Volume Curve"),
-                  .widget = WidgetKind::CheckBox,
-                  .iniKey = "quadraticVolumeCurve",
-                  .fallback = false,
-                  .note = QT_TRANSLATE_NOOP(
-                      "SettingsDialog",
-                      "Uses a quadratic volume curve instead of mpv's cubic one, matching "
-                      "MPC-HC's volume scale; affects the maximum volume value")},
-                 // N42：原单行文本框升级为滤镜列表编辑器（空值语义不变：无滤镜）
-                 {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Audio Filters"),
-                  .widget = WidgetKind::FilterList,
-                  .mpvKeys = {"af"},
-                  .note = QT_TRANSLATE_NOOP(
-                      "SettingsDialog",
-                      "loudnorm works internally at 192 kHz in dynamic mode and raises the "
-                      "output sample rate; add aresample=48000 when a fixed rate is needed"),
-                  .filterPresets = audioFilterPresets},
-             }},
-        // ⑤ 网络 —— N35：远端浏览链路（WebDAV 枚举）所用 client 的缺省参数（写 oxbow.ini）；N37
-        // 起并列 mpv 侧播放证书开关
-        // （写 mpv.conf + 下发 tls-verify）——两条链路的证书校验各自独立，
-        // 只关一侧就会出现"能列出、播不了"（或反之），两开关互不联动；
-        // 并列 mpv 侧 ytdl hook 开关（写 mpv.conf + 下发 ytdl）
-        {.title = QT_TRANSLATE_NOOP("SettingsDialog", "Network"),
-         .items =
-             {
-                 {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Remote Request Timeout"),
-                  .widget = WidgetKind::SpinBox,
-                  .iniKey = "remoteTimeoutSec",
-                  .fallback = App::remoteTimeoutSecDefault(),
-                  .range = {1, 120}},
-                 {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Ignore HTTPS Certificate Errors"),
-                  .widget = WidgetKind::CheckBox,
-                  .iniKey = "ignoreHttpsErrors",
-                  .fallback = App::ignoreHttpsErrorsDefault(),
-                  // N37：澄清只管浏览侧（列表与元数据请求），不影响播放
-                  .note = QT_TRANSLATE_NOOP("SettingsDialog",
-                                            "Applies to playlist and metadata requests only; "
+    static const QList<SettingCategory> catalog =
+        {
+            // ① 基本 —— 插件本体选项（写 oxbow.ini）
+            {.title = QT_TRANSLATE_NOOP("SettingsDialog", "Basic"),
+             .items =
+                 {
+                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Language"),
+                      .widget = WidgetKind::Combo,
+                      .iniKey = "language",
+                      .choices = languageChoices,
+                      .note = QT_TRANSLATE_NOOP("SettingsDialog", "Takes effect after restart")},
+                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Wheel Step"),
+                      .widget = WidgetKind::Combo,
+                      .iniKey = "volumeWheelStep",
+                      .choices = stepChoices,
+                      .fallback = 2, // 维护者指定：滚轮步进默认 2
+                      .note = QT_TRANSLATE_NOOP("SettingsDialog", "For adjusting volume")},
+                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Arrow Key Step"),
+                      .widget = WidgetKind::Combo,
+                      .iniKey = "volumeKeyStep",
+                      .choices = stepChoices,
+                      .fallback = 5, // 对齐现版：miss 兜底 5 而非第 0 项
+                      .note = QT_TRANSLATE_NOOP("SettingsDialog", "For adjusting volume")},
+                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Recursive Depth Limit"),
+                      .widget = WidgetKind::SpinBox,
+                      .iniKey = "recursiveDepthLimit",
+                      .fallback = App::recursiveDepthLimitDefault(),
+                      .range = {0, App::recursiveDepthLimitMax()},
+                      .note = QT_TRANSLATE_NOOP(
+                          "SettingsDialog", "For directory enumeration including subdirectories")},
+                 }},
+            // ② 播放 —— mpv 选项（写 mpv.conf + 下发）
+            {.title = QT_TRANSLATE_NOOP("SettingsDialog", "Playback"),
+             .items =
+                 {
+                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Loop Playback"),
+                      .widget = WidgetKind::Combo,
+                      .mpvKeys = {"loop-file", "loop-playlist"},
+                      .choices = loopChoices,
+                      .fallback = QString() /*占位*/},
+                     // N107：悬停缩略图开关（插件 INI 项与 mpv 项同分类混列，后端按项互斥，
+                     // ignoreHttpsErrors 与 Audio 分类混列同先例）
+                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Hover Thumbnail"),
+                      .widget = WidgetKind::CheckBox,
+                      .iniKey = "hoverThumbnail",
+                      .fallback = true,
+                      .note = QT_TRANSLATE_NOOP("SettingsDialog",
+                                                "Shows a preview frame while hovering the progress "
+                                                "bar; not available for remote sources")},
+                 }},
+            // ③ 视频 —— mpv 选项
+            {.title = QT_TRANSLATE_NOOP("SettingsDialog", "Video"),
+             .items =
+                 {
+                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Hardware Decoding"),
+                      .widget = WidgetKind::EditableCombo,
+                      .mpvKeys = {"hwdec"},
+                      .choices = hwdecPresets,
+                      .fallback = "auto"},
+                     // N42：视频滤镜列表（与音频页同构）。备注两条合一（原生硬解下 CPU
+                     // 滤镜不可用——mpv 非 copy 硬解不自动回读硬件帧，需 copy 模式或
+                     // 软解；尺寸类滤镜的导航器已知不一致——修正属 N40，按已知项口径
+                     // 如实告知，不承诺修好）
+                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Video Filters"),
+                      .widget = WidgetKind::FilterList,
+                      .mpvKeys = {"vf"},
+                      .note = QT_TRANSLATE_NOOP(
+                          "SettingsDialog",
+                          "To use video filters, set Hardware Decoding to a copy mode "
+                          "(auto-copy) or no; changing it during playback may require stop "
+                          "and play to take effect"),
+                      .filterPresets = videoFilterPresets},
+                 }},
+            // ④ 音频 —— mpv 选项
+            {.title = QT_TRANSLATE_NOOP("SettingsDialog", "Audio"),
+             .items =
+                 {
+                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Max Volume"),
+                      .widget = WidgetKind::SpinBox,
+                      .mpvKeys = {"volume-max"},
+                      .fallback = 130,
+                      .range = {100, 1000},
+                      .mpvType = MpvType::Double},
+                     // N108：MPC-HC 兼容音量曲线（插件 INI 选项）——勾选后滑条显示百分比
+                     // 与量程按二次方听感标尺换算，换算与量程重算都在 MainWindow 侧
+                     // （Util::Volume + updateVolumeSliderRange）；本项只管键的读写
+                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Louder Volume Curve"),
+                      .widget = WidgetKind::CheckBox,
+                      .iniKey = "quadraticVolumeCurve",
+                      .fallback = false,
+                      .note = QT_TRANSLATE_NOOP(
+                          "SettingsDialog",
+                          "Uses a quadratic volume curve instead of mpv's cubic one, matching "
+                          "MPC-HC's volume scale; affects the maximum volume value")},
+                     // N42：原单行文本框升级为滤镜列表编辑器（空值语义不变：无滤镜）
+                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Audio Filters"),
+                      .widget = WidgetKind::FilterList,
+                      .mpvKeys = {"af"},
+                      .note = QT_TRANSLATE_NOOP(
+                          "SettingsDialog",
+                          "loudnorm works internally at 192 kHz in dynamic mode and raises the "
+                          "output sample rate; add aresample=48000 when a fixed rate is needed"),
+                      .filterPresets = audioFilterPresets},
+                 }},
+            // ⑤ 网络 —— N35：远端浏览链路（WebDAV 枚举）所用 client 的缺省参数（写 oxbow.ini）；N37
+            // 起并列 mpv 侧播放证书开关
+            // （写 mpv.conf + 下发 tls-verify）——两条链路的证书校验各自独立，
+            // 只关一侧就会出现"能列出、播不了"（或反之），两开关互不联动；
+            // 并列 mpv 侧 ytdl hook 开关（写 mpv.conf + 下发 ytdl）
+            {.title = QT_TRANSLATE_NOOP("SettingsDialog", "Network"),
+             .items =
+                 {
+                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Remote Request Timeout"),
+                      .widget = WidgetKind::SpinBox,
+                      .iniKey = "remoteTimeoutSec",
+                      .fallback = App::remoteTimeoutSecDefault(),
+                      .range = {1, 120}},
+                     {.label =
+                          QT_TRANSLATE_NOOP("SettingsDialog", "Ignore HTTPS Certificate Errors"),
+                      .widget = WidgetKind::CheckBox,
+                      .iniKey = "ignoreHttpsErrors",
+                      .fallback = App::ignoreHttpsErrorsDefault(),
+                      // N37：澄清只管浏览侧（列表与元数据请求），不影响播放
+                      .note = QT_TRANSLATE_NOOP(
+                          "SettingsDialog", "Applies to playlist and metadata requests only; "
                                             "playback is governed by the mpv-side option below")},
-                 // N37：播放侧（mpv / ffmpeg 发请求）证书开关。fallback 为未勾选——
-                 // 只在属性不可读或取值未命中两项赋值时兜底；mpv 内置默认 tls-verify=no
-                 // 且可实时读写，首次打开呈现为已勾选，保持勾选不改变任何现状
-                 {.label = QT_TRANSLATE_NOOP("SettingsDialog",
-                                             "Ignore HTTPS Certificate Errors (mpv side)"),
-                  .widget = WidgetKind::CheckBox,
-                  .mpvKeys = {"tls-verify"},
-                  .choices = tlsVerifyChoices,
-                  .fallback = false,
-                  .mpvType = MpvType::String},
-                 // mpv 侧 ytdl hook 开关（ytdl 选项，bool）：勾选 = ytdl=yes（mpv
-                 // 内置默认即启用，可实时读写——ytdl hook 脚本逐文件加载时现读该
-                 // 选项，改动对后续播放立即生效）；无 choices 走 Flag 直通两态
-                 {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Enable youtube-dl hook script"),
-                  .widget = WidgetKind::CheckBox,
-                  .mpvKeys = {"ytdl"},
-                  .fallback = true,
-                  .mpvType = MpvType::Flag},
-             }},
-        // ⑥ 播放上报 —— N74：报告者开关组（粒度 = 报告者种类，ini 键与注册表的键
-        // 一一对应；分类不设总开关）。全部写 oxbow.ini，应用成功经既有
-        // pluginIniKeysChanged 通知主窗改驱动器启用表并切闸门，实时生效、无需重启
-        {.title = QT_TRANSLATE_NOOP("SettingsDialog", "Playback Reporting"),
-         .items =
-             {
-                 {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Report playback to Jellyfin"),
-                  .widget = WidgetKind::CheckBox,
-                  .iniKey = jellyfinSwitch().iniKey, // 键名与缺省同引上报账目行（N99 单点）
-                  .fallback = jellyfinSwitch().defaultValue,
-                  .note = QT_TRANSLATE_NOOP(
-                      "SettingsDialog",
-                      "Sends watch position to the signed-in Jellyfin server so resume "
-                      "points and watched marks stay up to date")},
-             }},
+                     // N37：播放侧（mpv / ffmpeg 发请求）证书开关。fallback 为未勾选——
+                     // 只在属性不可读或取值未命中两项赋值时兜底；mpv 内置默认 tls-verify=no
+                     // 且可实时读写，首次打开呈现为已勾选，保持勾选不改变任何现状
+                     {.label = QT_TRANSLATE_NOOP("SettingsDialog",
+                                                 "Ignore HTTPS Certificate Errors (mpv side)"),
+                      .widget = WidgetKind::CheckBox,
+                      .mpvKeys = {"tls-verify"},
+                      .choices = tlsVerifyChoices,
+                      .fallback = false,
+                      .mpvType = MpvType::String},
+                     // mpv 侧 ytdl hook 开关（ytdl 选项，bool）：勾选 = ytdl=yes（mpv
+                     // 内置默认即启用，可实时读写——ytdl hook 脚本逐文件加载时现读该
+                     // 选项，改动对后续播放立即生效）；无 choices 走 Flag 直通两态
+                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Enable youtube-dl hook script"),
+                      .widget = WidgetKind::CheckBox,
+                      .mpvKeys = {"ytdl"},
+                      .fallback = true,
+                      .mpvType = MpvType::Flag},
+                 }},
+            // ⑥ 播放上报 —— N74：报告者开关组（粒度 = 报告者种类，ini 键与注册表的键
+            // 一一对应；分类不设总开关）。全部写 oxbow.ini，应用成功经既有
+            // pluginIniKeysChanged 通知主窗改驱动器启用表并切闸门，实时生效、无需重启
+            {.title = QT_TRANSLATE_NOOP("SettingsDialog", "Playback Reporting"),
+             .items =
+                 {
+                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Report playback to Jellyfin"),
+                      .widget = WidgetKind::CheckBox,
+                      .iniKey = jellyfinSwitch().iniKey, // 键名与缺省同引上报账目行（N99 单点）
+                      .fallback = jellyfinSwitch().defaultValue,
+                      .note = QT_TRANSLATE_NOOP(
+                          "SettingsDialog",
+                          "Sends watch position to the signed-in Jellyfin server so resume "
+                          "points and watched marks stay up to date")},
+                 }},
     };
     return catalog;
 }

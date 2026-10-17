@@ -214,6 +214,12 @@ class PlaylistEntity {
     virtual bool exists() const = 0;            // 未知实体恒 true（不可判定）
     virtual bool supportsFileMeta() const = 0;  // 是否具备文件级属性（大小 / 创建 / 修改）
     virtual bool supportsMediaMeta() const = 0; // 是否具备媒体属性
+    // N107：是否允许在播放之外另起一路解码（进度条悬停缩略图）。默认拒绝（白名单式，
+    // 逐类点名放行）：在不该开第二路的流上硬开，轻则解码失败、重则触发服务器的连接数
+    // 或令牌限制而被拒访；缺缩略图只是少一个预览。后续新增协议默认安全，不必记得补覆写。
+    // 例外：RcloneCryptEntity 底层是本地文件解密流，随机 seek 零成本——它看着像远端
+    // （身份串经转接），判据却与远端相反。
+    virtual bool supportsSecondaryDecode() const { return false; }
 
   protected:
     // 拷贝构造仅对子类开放：clone() 经子类的拷贝构造实现，对外仍不可拷贝

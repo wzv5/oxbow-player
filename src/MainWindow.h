@@ -21,6 +21,9 @@ class CursorAutoHider;          // N67：播放时视频区光标自动隐藏（
 class StreamRelay;              // N52：mpv 自定义协议适配层（定义于 StreamRelay.h）
 class PlaybackReporterRegistry; // N74：报告者注册表（定义于 PlaybackReporterRegistry.h）
 class PlaybackReportDriver;     // N74：上报驱动器（定义于 PlaybackReportDriver.h）
+class ThumbEngine;              // N107：缩略图第二 core 引擎（定义于 thumb/ThumbEngine.h）
+class ThumbWindow;              // N107：缩略图宿主窗（定义于 ui/ThumbWindow.h）
+class ThumbHoverWatch;          // N107：进度条悬停缩略图会话机（定义于 MainWindow.cpp）
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -30,6 +33,9 @@ class MainWindow : public QMainWindow {
     // PlaylistWidget（provide 进注册表），不做其他使用
     explicit MainWindow(MpvController *controller, const QString &configFile = QString(),
                         std::shared_ptr<StreamRelay> relay = nullptr, QWidget *parent = nullptr);
+    // N107：退出序兜底——先阻塞拆缩略图 core（N103 销毁顺序）再停引擎线程；
+    // 常规退出走 onMpvShutdown 的同款收口，本处覆盖不经它的销毁路径
+    ~MainWindow() override;
 
     // 视频显示区域（mpv 通过 wid 嵌入的目标窗口）
     QWidget *videoWidget() const { return m_videoWidget; }
@@ -446,8 +452,6 @@ class MainWindow : public QMainWindow {
     // N25：标题与 OSD #2 同源刷新（B11 镜像取名）。playlist-pos 值不变不再推送，
     // 回刷收编后的正播名错位须经此主动刷新
     void updateNowPlayingUi();
-    double
-    progressPercentAt(const QPoint &pos) const; // 进度条鼠标 x → 百分比（0~100），无效返回 -1
 
     // ---- N3：单击/双击分流与覆盖式全屏 ----
     QTimer *m_clickTimer = nullptr;     // 单次定时器，间隔=双击间隔
@@ -534,4 +538,11 @@ class MainWindow : public QMainWindow {
     // N77 §2.3：最近一次 requestLevelItemJump 的源组——jumpToBookmark 每次发射前
     // 记账（单槽覆盖，与 widget 侧单待办同形），ready / failed 两槽据此按组取展示串
     BookmarkManager::Group m_jumpSourceGroup;
+
+    // ---- N107：时间轴悬停缩略图 ----
+    QThread *m_thumbThread = nullptr;        // 引擎专属线程（引擎对象随 finished 销毁）
+    ThumbEngine *m_thumbEngine = nullptr;    // 第二 mpv core 引擎（affine 引擎线程）
+    ThumbWindow *m_thumbWindow = nullptr;    // 缩略图宿主窗（一套复用，hide/show 切换）
+    ThumbHoverWatch *m_thumbWatch = nullptr; // 会话机（事件域 = 进度条控件）
+    bool m_hoverThumbnailEnabled = true;     // INI 键 hoverThumbnail（缺键开）
 };

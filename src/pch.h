@@ -81,6 +81,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QPair>
+#include <QPalette>
 #include <QPixmap>
 #include <QPointer>
 #include <QPromise>

@@ -201,6 +201,10 @@ add_library(oxbowcore MODULE
     src/ui/MpvBindingDialog.h
     src/ui/FilterListWidget.cpp
     src/ui/FilterListWidget.h
+    src/ui/ThumbWindow.cpp
+    src/ui/ThumbWindow.h
+    src/thumb/ThumbEngine.cpp
+    src/thumb/ThumbEngine.h
 )
 
 # mpv/client.h 已内置在仓库根目录的 mpv/ 下；src 一并入包含路径只为子目录源单元解析

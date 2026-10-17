@@ -71,6 +71,12 @@ static bool resolveMpvSymbols() {
     RESOLVE(mpv_get_property_async); // N60：推送会话的屏障读（playlist 终值自带终点）
     RESOLVE(mpv_command_async); // N87：未认领按键的 keypress 注入（异步，GUI 线程不等用户命令）
     RESOLVE(mpv_error_string);  // 命令错误码转可读文本（流添加失败反馈用）
+    // N107：缩略图第二 core 的建核三件套（create / initialize / terminate_destroy）
+    // 与预设选项出口（initialize 前设选项只经 set_option_string）
+    RESOLVE(mpv_create);
+    RESOLVE(mpv_initialize);
+    RESOLVE(mpv_terminate_destroy);
+    RESOLVE(mpv_set_option_string);
 #undef RESOLVE
 
     if (missing) {

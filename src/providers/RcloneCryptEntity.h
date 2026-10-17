@@ -27,4 +27,7 @@ class RcloneCryptEntity : public HttpEntity {
     Ptr clone() const override { return std::make_shared<RcloneCryptEntity>(*this); }
 
     bool supportsFileMeta() const override { return true; }
+    // N107：底层是本地文件解密流，随机 seek 零成本——看着像远端（身份串经转接），
+    // 判据却与远端相反，点名写出免得被按"转接即昂贵"误改回去
+    bool supportsSecondaryDecode() const override { return true; }
 };

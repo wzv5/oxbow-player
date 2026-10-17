@@ -21,6 +21,8 @@ class LocalFileEntity : public PlaylistEntity {
     // 文件不存在属"值未知"（求值结果三字段全空），非能力缺失
     bool supportsFileMeta() const override { return true; }
     bool supportsMediaMeta() const override { return MediaInfoHelper::available(); }
+    // N107：本地文件随机 seek 零成本、无对手方，恒可另起一路解码
+    bool supportsSecondaryDecode() const override { return true; }
 
     // N29：fileMeta 求值口径的唯一载体——惰性求值与提供者注入共用一份，防两处漂移
     // （"不存在 / 不可读 → 三字段全空"、"size 取 qMax(0, …)"）

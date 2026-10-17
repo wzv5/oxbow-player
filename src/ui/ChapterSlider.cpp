@@ -19,6 +19,24 @@ void ChapterSlider::setDuration(double duration) {
     update();
 }
 
+double ChapterSlider::timeAtGlobalX(int globalX) const {
+    if (m_duration <= 0.0)
+        return -1.0;
+    QStyleOptionSlider opt;
+    initStyleOption(&opt);
+    const QRect groove =
+        style()->subControlRect(QStyle::CC_Slider, &opt, QStyle::SC_SliderGroove, this);
+    const QRect handle =
+        style()->subControlRect(QStyle::CC_Slider, &opt, QStyle::SC_SliderHandle, this);
+    const int span = groove.width() - handle.width();
+    if (span <= 0)
+        return -1.0;
+    const int dx = mapFromGlobal(QPoint(globalX, 0)).x() - handle.width() / 2 - groove.left();
+    const int value =
+        QStyle::sliderValueFromPosition(opt.minimum, opt.maximum, qBound(0, dx, span), span);
+    return m_duration * value / double(opt.maximum - opt.minimum);
+}
+
 void ChapterSlider::changeEvent(QEvent *event) {
     QSlider::changeEvent(event);
     if (event->type() == QEvent::PaletteChange || event->type() == QEvent::StyleChange) {

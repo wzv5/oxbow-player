@@ -7,6 +7,11 @@ class ChapterSlider : public QSlider {
     explicit ChapterSlider(QWidget *parent = nullptr);
     void setMarkTimes(const QList<double> &times);
     void setDuration(double duration);
+    // N107：全局 X → 悬停时刻（秒）。纯几何换算，无状态、不发信号；算法与
+    // QSlider 自身点击定位同口径（样式反查 groove/handle，扣滑块半宽后线性
+    // 映射）。全仓悬停时刻换算只此一份：进度条 tooltip 那一路同样调它。
+    // 时长未定返回 -1。
+    double timeAtGlobalX(int globalX) const;
 
   protected:
     void paintEvent(QPaintEvent *event) override;

@@ -38,8 +38,9 @@ class StreamRelay final : public StreamRelayIf {
     StreamRelay &operator=(const StreamRelay &) = delete;
 
     // 注册 oxbow 协议（注册名取 StreamTransit::kProtocol）并置 cancel_fn。
-    // 硬顺序①：必须早于 MpvController::startEventThread——首次 mpv_wait_event
-    // 解除 mpv 启动门控后，命令行首文件即会 open 流。
+    // 硬顺序①：必须早于对应 core 的 mpv_initialize——mpv_stream_cb_add_ro 只在
+    // initialize 前有效。可对不同 handle 各调一次（N107：主 core 与缩略图 core
+    // 共用同一份端点表），端点表不随 handle 分份。
     bool install(mpv_handle *handle);
 
     // 端点表发布（§2.6 发布即下发）：playUrl 每铸一条 URI 顺手 publish 一条，
@@ -56,7 +57,6 @@ class StreamRelay final : public StreamRelayIf {
     std::shared_ptr<StreamEndpoint> takeEndpoint(const QUuid &listUuid);
 
   private:
-    mpv_handle *m_handle = nullptr;
     mutable QMutex m_mutex;                                  // 只保护端点表这一瞬间
     QHash<QUuid, std::weak_ptr<StreamEndpoint>> m_endpoints; // 键即身份，无字面形态
 };

@@ -133,7 +133,6 @@ int openCb(void *user_data, char *uri, mpv_stream_cb_info *info) {
 } // namespace
 
 bool StreamRelay::install(mpv_handle *handle) {
-    m_handle = handle;
     const int err = mpv_stream_cb_add_ro(handle, StreamTransit::kProtocol, this, &openCb);
     if (err != 0) {
         qDebug() << "[oxbow] stream_cb register failed:" << err;
