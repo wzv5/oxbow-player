@@ -175,6 +175,15 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle) {
         return 0;
     started = true;
 
+    // 让位：wid 已有真实值时，说明父窗口由用户（--wid）或另一个插件先占了——画面
+    // 归属不在本插件，再接手只会两边各持一个 vo 窗口互相覆盖。故在一切初始化之前
+    // 直接结束。判据只认正数窗口号：-1 是"脱离外部窗口、用 mpv 自己的窗口"（未配置
+    // 时的默认，实测原生窗口即 -1），0 是"画到 root / 桌面壁纸"（手册 options-wid），
+    // 两个特殊值都无外部宿主。属性读不到按未配置处理，照常启动
+    int64_t existingWid = -1;
+    if (mpv_get_property(handle, "wid", MPV_FORMAT_INT64, &existingWid) >= 0 && existingWid > 0)
+        return 0; // 让位不是失败：与重复入口同款返回 0，mpv 不记加载错误
+
     // 让本模块的导入表含 QtSvg：svg 图标靠 iconengines / imageformats 两个插件，而插件
     // 自身的依赖由 OS 按标准搜索序解析（不含插件目录）——QtSvg 不先常驻，那两个插件就加载
     // 不上、图标全空。本模块并不使用 QSvgRenderer，这里构造一次只为留下导入项；必须是真
