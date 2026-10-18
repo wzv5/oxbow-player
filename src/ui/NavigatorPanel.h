@@ -8,6 +8,9 @@ class MpvController;
 // 状态以 mpv 推送的属性值为准；按需创建时先现读播种一次（mpv 对值不变的
 // 属性不推送，新实例会错过首推）；拖拽/滚轮路径会乐观地同步本地副本，
 // 避免等待属性回推造成的迟滞（回推值一致，不会跳变）。
+// N110：尺寸事实源改报有效尺寸（源尺寸套用画面比例后的显示矩形）后，「1:1」
+// 的基准随之变为当前有效画面——强制画面比例与变形片源（SAR≠1）下退化为
+// 「相对当前画面基础的倍率」；video-zoom / video-pan 的数学不变。
 class NavigatorCanvas : public QWidget {
     Q_OBJECT
   public:
@@ -25,7 +28,7 @@ class NavigatorCanvas : public QWidget {
     bool hasVideo() const { return isActive(); }
     // 当前 video-zoom（缩放事实源）；面板据其驱动滑块线性刻度
     double currentZoom() const { return m_zoom; }
-    // 相对 1:1（源分辨率）的显示百分比：100 ⇔ 视频按源分辨率显示
+    // 相对 1:1（有效画面，N110）的显示百分比：100 ⇔ 视频按当前有效尺寸显示
     int displayPercent() const;
     // 给定 zoom 对应的 1:1 相对百分比（供量程上下界计算）
     int zoomToPercent(double zoom) const;
@@ -35,10 +38,10 @@ class NavigatorCanvas : public QWidget {
     // 以下入口供面板控件调用；空闲态（无视频）下为空操作
     void requestZoom(double zoom);
     void requestReset();
-    void requestNativeSize(); // 按源分辨率 1:1 显示并居中
+    void requestNativeSize(); // 按有效尺寸 1:1 显示并居中（显示宽 = 有效宽，N110）
 
   signals:
-    // 缩放变化（含外部/属性推送来源），percent 为相对 1:1（源分辨率）的整数百分比
+    // 缩放变化（含外部/属性推送来源），percent 为相对 1:1（有效画面，N110）的整数百分比
     void zoomVisualChanged(int percent);
     // 有视频 ↔ 无视频，面板据此启用/灰置控件
     void activeChanged(bool active);

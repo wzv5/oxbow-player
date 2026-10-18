@@ -405,15 +405,60 @@ void MpvController::handleFileLoaded() {
 // 把 w 覆成 0，导航器播种恒判"无视频"。新增调用点务必按此表核对。
 QSize MpvController::videoSize() const {
     // N40：公开入口与事件侧发布共用同一条取值路径（纯读，不写去重状态）
+    // N110：返回语义为**有效尺寸**（源尺寸 + 画面比例保轴换算）
     return readVideoSize();
 }
 
-// N40：视频尺寸取值收口（F1/F3②/F5）——先读 video-out-params/w、/h（滤镜后
+// N110：源尺寸出口——取值路径与 readVideoSize 同一条、不做比例换算。唯一用途
+// 是喂缩略图（ThumbHoverWatch::setVideoSize）：第二 core 是独立 mpv 实例、
+// 不受主侧 video-aspect-override 影响，呈现未拉伸的像素帧
+QSize MpvController::sourceVideoSize() const { return readSourceVideoSize(); }
+
+// N110：保轴换算——源尺寸 + 显示宽高比 A → 有效显示矩形。A 宽于源像素比时保
+// 高度（W = h·A）、窄于时保宽度（H = w/A），另一轴由其推出，永远只上采样、
+// 不降采样——与 mpv 内建的 override→SAR 落地算式逐分支同向，实测两方向与
+// (dw, dh) 逐位一致（N110 §三-2）。aspect 不可用（非有限 / ≤0）或源为空不换算
+// 按源返回（(0,0) 无视频到不了换算：N103 idle 判定在取值路径最前）；出口对
+// int 主域饱和到 [1, INT_MAX]——mpv 对极端小值自身把轴钳到 INT_MAX（实测
+// 1e-9 → dh=2147483647），aspect 作为 dw/dh 整商重构回的轴不会越界，饱和是
+// 防御性兜底
+static QSize effectiveVideoSize(int w, int h, double aspect) {
+    if (w <= 0 || h <= 0 || !(aspect > 0.0) || !qIsFinite(aspect))
+        return QSize(w, h);
+    auto roundSat = [](double v) -> int {
+        const double r = std::floor(v + 0.5); // 半上取整
+        return int(qBound(1.0, r, double(std::numeric_limits<int>::max())));
+    };
+    if (aspect > double(w) / double(h))
+        return QSize(roundSat(double(h) * aspect), h); // 保高度，上采样宽
+    return QSize(w, roundSat(double(w) / aspect));     // 保宽度，上采样高
+}
+
+// N40/N110：有效尺寸取值收口（F1/F3②/F5）——先读 video-out-params/w、/h（滤镜后
+// 输出尺寸，与实际渲染一致）；不可读回退 width、height（覆盖"起播早期 out
+// 未就绪"，两属性可用时机互补）；仍不可读或读得 0 判定无视频（0,0）。
+// 取到源尺寸后再读 video-out-params/aspect 保轴换算，返回值语义为**当前画面的
+// 有效尺寸**（w/h 即当前显示宽高比）。只读 /w、/h 与 /aspect，绝不读 /dw、/dh
+// 显示尺寸（N40 F7 硬规则保持：随显示侧参数漂移）
+// N103：空闲 / 停止期先判 idle-active，为真即交无视频——见 readSourceVideoSize 函数体内注释
+QSize MpvController::readVideoSize() const {
+    const QSize source = readSourceVideoSize();
+    if (source.width() <= 0 || source.height() <= 0)
+        return source; // 无视频，不到换算
+    // 起播早期走 width/height 回退时 aspect 同样缺席（N110 §三-4）：该波按源值
+    // 发布，随后的 reconfig 波补发有效值——override 激活时表现为毫秒级的两次
+    // 窗口适配（既有 F3② 瞬态的加重版，规格明示不处理）。读失败交 0.0，与缺席
+    // 同落 effectiveVideoSize 的换算守卫，按源尺寸返回
+    return effectiveVideoSize(source.width(), source.height(),
+                              propertyDouble(QStringLiteral("video-out-params/aspect"), 0.0));
+}
+
+// N40：源尺寸取值收口（F1/F3②/F5）——先读 video-out-params/w、/h（滤镜后
 // 输出尺寸，与实际渲染一致）；不可读回退 width、height（覆盖"起播早期 out
 // 未就绪"，两属性可用时机互补）；仍不可读或读得 0 判定无视频（0,0）。
 // 只读 /w、/h 帧尺寸，绝不读 /dw、/dh 显示尺寸（F7：随显示侧参数漂移）
 // N103：空闲 / 停止期先判 idle-active，为真即交无视频——见函数体内注释
-QSize MpvController::readVideoSize() const {
+QSize MpvController::readSourceVideoSize() const {
     // N103：空闲 / 停止期 mpv 保有 VO 并渲染 logo 画布，而该画布带着一对非零的
     // video-out-params（实测 960x540）。不在这里挡掉，logo 尺寸就与真实视频尺寸同权，
     // 顺着尺寸链一路把主窗撑大、顶掉启动收口。故先判 idle-active（FLAG → int 接），

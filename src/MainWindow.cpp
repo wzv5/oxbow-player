@@ -58,6 +58,20 @@ constexpr int kHoverGapPx = 2;
 // 尺寸与全屏切换变化
 constexpr int kThumbBoxPx = 200;
 
+// N110 画面比例内建档：比值档常量表——value 与 mpv 对同一写法的解析同源（C 双
+// 精度直除，double 可精确比），勾选比对只认 double（读回串是归一化十进制，串
+// 比较完全不可用，含"no"在内）；token 即写入 mpv 的比值式字面量，mpv 归一化
+// 收账，写法不影响状态与勾选。档间最小间距 |16/9 − 1.85| = 0.0722，勾选容差
+// 0.01 远小于其半，至多命中一档
+struct AspectPreset {
+    const char *token;
+    double value;
+};
+constexpr AspectPreset kAspectPresets[] = {
+    {"4:3", 4.0 / 3.0}, {"16:9", 16.0 / 9.0}, {"16:10", 16.0 / 10.0},
+    {"1.85:1", 1.85},   {"2.35:1", 2.35},
+};
+
 // 进度条悬停 tooltip 合并节流：悬停 move 按鼠标事件率到达，而 tooltip 文本逐像素
 // 就变（hh:mm:ss 只到秒，长片源 1px ≈ 数秒），Qt 的"文本未变即复用"形同虚设——
 // 逐事件直发时每次都在重排 + 重定位顶层 tooltip 窗，实测悬停即吃满单核（注释掉
@@ -1060,6 +1074,39 @@ void MainWindow::createMenus() {
                                QStringLiteral("display-stats-toggle")});
     });
 
+    // N110：画面比例子菜单（视图菜单末尾第四段）。条目不登记 ActionManager——
+    // 内建档动作没有独立语义名（七条"设某比例"），登记只会让 N86 快捷键编辑器
+    // 多出七行不可读的空键行；与滤子 / 流 / 章节子菜单同属"属性直读直写"形态，
+    // 沿用本地 QAction 先例（不可改绑、无默认键、不进快捷键编辑器）。勾选态真源
+    // 是属性 video-aspect-override 而非几何，回填挂父视图菜单的 aboutToShow
+    // （N43"弹出时按属性实时重建"同款手筋）——外部改动因此天然反映，无需观察
+    // 或回灌；setProperty 之后由 reconfig 主触发与既有接线承载全部联动，菜单侧
+    // 零手工触发
+    viewMenu->addSeparator();
+    m_aspectGroup = new QActionGroup(this);
+    m_aspectGroup->setExclusive(true);
+    m_aspectOriginal = m_aspectGroup->addAction(tr("Original"));
+    for (const AspectPreset &p : kAspectPresets)
+        m_aspectPresets.append(m_aspectGroup->addAction(QLatin1String(p.token)));
+    m_aspectCustom = m_aspectGroup->addAction(tr("Custom"));
+    QMenu *aspectMenu = viewMenu->addMenu(tr("Aspect Ratio"));
+    for (QAction *a : m_aspectGroup->actions()) {
+        a->setCheckable(true);
+        aspectMenu->addAction(a);
+    }
+    connect(m_aspectOriginal, &QAction::triggered, this, [this] {
+        m_controller->setProperty(QStringLiteral("video-aspect-override"), QStringLiteral("no"));
+    });
+    for (int i = 0; i < m_aspectPresets.size(); ++i) {
+        connect(m_aspectPresets[i], &QAction::triggered, this, [this, i] {
+            // 写入 token 原样交 mpv 归一化收账；全部写值落在实测域 [-2, 10] 内，无拒收面
+            m_controller->setProperty(QStringLiteral("video-aspect-override"),
+                                      QLatin1String(kAspectPresets[i].token));
+        });
+    }
+    connect(m_aspectCustom, &QAction::triggered, this, &MainWindow::onCustomAspectRatio);
+    connect(viewMenu, &QMenu::aboutToShow, this, &MainWindow::updateAspectCheckedStates);
+
     // Esc 隐绑定经管理器取用，守卫逻辑留主窗口：全屏或小窗态退出（N68），
     // 弹出菜单打开时 Esc 由 popup 自行消费
     connect(m_actions->shortcut(AM::Id::Escape), &QShortcut::activated, this, [this] {
@@ -1265,8 +1312,12 @@ void MainWindow::connectController() {
     });
     connect(m_controller, &MpvController::durationChanged, this,
             [this](const QString &, double v) { m_thumbWatch->setDuration(v); });
-    connect(m_controller, &MpvController::videoSizeChanged, this,
-            [this](int w, int h) { m_thumbWatch->setVideoSize(w, h); });
+    // N110：喂缩略图的是**片源像素尺寸**，不是信号载荷的有效尺寸——第二 core
+    // 呈现未拉伸的像素帧（N110 §四-3.1），故经源尺寸出口现读再喂
+    connect(m_controller, &MpvController::videoSizeChanged, this, [this](int, int) {
+        const QSize src = m_controller->sourceVideoSize();
+        m_thumbWatch->setVideoSize(src.width(), src.height());
+    });
     connect(m_controller, &MpvController::endFile, this,
             [this](int) { m_thumbWatch->invalidateSession(); });
     connect(m_controller, &MpvController::idleActive, this, [this](bool active) {
@@ -2456,11 +2507,93 @@ void MainWindow::repositionFullscreenOverlays() {
     }
 }
 
+// N110：画面比例勾选回填（挂父视图菜单 aboutToShow，弹出时现读现填）。只认
+// double——读回归一化十进制串，串比较完全不可用（§三-3）；内建档常量表与 mpv
+// 对同一写法的解析同源，容差 0.01 内视为同档（1% 比例差在典型窗高下宽度差仅
+// 数像素，显示不可辨异——手输 1.777778 与点选 16:9 勾为同档是对的行为）；档间
+// 最小间距 0.0722，容差远小于其半，至多命中一档。不中 → 勾自定义并缀当前值；
+// -1 / 0 废弃哨兵（外部特殊态）全不勾、自定义条目不带值
+void MainWindow::updateAspectCheckedStates() {
+    const double v = m_controller->propertyDouble(QStringLiteral("video-aspect-override"), -2.0);
+    const QAction *checked = nullptr;
+    QString customText;
+    if (v == -2.0) {
+        checked = m_aspectOriginal; // "no" 的哨兵，读回恒 -2（§三-3）
+    } else if (v > 0.0) {
+        for (int i = 0; i < m_aspectPresets.size(); ++i) {
+            if (qAbs(v - kAspectPresets[i].value) <= 0.01) {
+                checked = m_aspectPresets[i];
+                break;
+            }
+        }
+        if (!checked)
+            customText =
+                tr("Custom") + QStringLiteral(" (") + QString::number(v) + QStringLiteral(")");
+    }
+    // v == -1.0 / 0.0 落到此处：全部不勾、自定义条目不带值
+    const QList<QAction *> actions = m_aspectGroup->actions();
+    for (QAction *a : actions)
+        a->setChecked(a == checked);
+    m_aspectCustom->setText(customText.isEmpty() ? tr("Custom") : customText);
+}
+
+// N110：自定义画面比例输入（自定义档条目触发）。循环到合法或取消：非法 → 警告
+// 一行说明合法写法，随即重弹同一输入框并预填刚才的输入；取消 / 空输入不改原值，
+// 上一次的有效值保留。受理写法（trim 后）：w:h（两段各自为正的有限 double，分母
+// > 0）与正 double，且须是紧凑串（内部含空白一律判非法，见函数体内注释）；统一
+// 校验 0 < 比值 ≤ 10——上限与 mpv 数值域一致（§三-3 实测 10 受理、10.0001 拒收），
+// 放行更大值会被 mpv 静默拒收成"校验通过、画面纹丝不动"的死区，10 同时挡住 e 记法
+// 误输。校验通过写入 trim 后原样（不改写法、不归一化成 double），mpv 归一化收账，
+// 写法不影响状态与勾选
+void MainWindow::onCustomAspectRatio() {
+    // 预填：当前值 > 0 交其十进制串；哨兵态（-2 / -1 / 0）为空
+    const double v = m_controller->propertyDouble(QStringLiteral("video-aspect-override"), -2.0);
+    QString prefill = v > 0.0 ? QString::number(v) : QString();
+    while (true) {
+        bool ok = false;
+        const QString text = QInputDialog::getText(this, tr("Custom Aspect Ratio"),
+                                                   tr("Aspect ratio (e.g. 16:9, 2.35:1 or 1.85):"),
+                                                   QLineEdit::Normal, prefill, &ok);
+        if (!ok || text.trimmed().isEmpty())
+            return; // 取消 / 空输入：不改原值
+        const QString trimmed = text.trimmed();
+        bool valid = false;
+        double ratio = 0.0;
+        const qsizetype colon = trimmed.indexOf(QLatin1Char(':'));
+        if (colon > 0) {
+            bool wOk = false, hOk = false;
+            const double rw = trimmed.left(colon).toDouble(&wOk);
+            const double rh = trimmed.mid(colon + 1).toDouble(&hOk);
+            valid = wOk && hOk && qIsFinite(rw) && qIsFinite(rh) && rw > 0.0 && rh > 0.0;
+            if (valid)
+                ratio = rw / rh;
+        } else {
+            ratio = trimmed.toDouble(&valid);
+            valid = valid && qIsFinite(ratio);
+        }
+        // 紧凑性把关：QString::toDouble 自带吞首尾空白，"16 : 9" 这类含内部空白的写法
+        // 两段各自解析得通过，随后又原样写进 mpv——mpv 对它的宽容度未实测，一旦不容
+        // 就正好落进上面要避开的"插件受理、mpv 静默拒收、画面纹丝不动"死区。故写值前
+        // 先判非法（不动写入形态，只把受理面收到紧凑串）
+        const bool compact =
+            !std::any_of(trimmed.cbegin(), trimmed.cend(), [](QChar c) { return c.isSpace(); });
+        if (compact && valid && ratio > 0.0 && ratio <= 10.0) {
+            m_controller->setProperty(QStringLiteral("video-aspect-override"), trimmed);
+            return;
+        }
+        QMessageBox::warning(this, tr("Invalid aspect ratio"),
+                             tr("Enter a positive ratio up to 10, as w:h or a decimal "
+                                "(e.g. 16:9 or 2.35)."));
+        prefill = text; // 刚才的输入原样带回输入框
+    }
+}
+
 // N10：普通态窗口自适应当前视频——视频域尽可能物理像素 1:1（逻辑尺寸 =
 // 像素 ÷ devicePixelRatio，高 DPI 下不被系统缩放拉伸），任一边超出所在屏
 // 工作区即整窗等比缩到恰好放入；resize 后外框越出工作区时按最小移动原则
 // 两轴独立钳回（恰好不越界）。全屏/最大化/无视频流不动作；
 // 停止不复位、全屏退出维持全屏前普通尺寸（本函数仅在分辨率推送时触发）
+// N110：入参由源尺寸改为有效尺寸，故强制画面比例后窗口按新比例重排（§四-2）
 void MainWindow::adaptWindowSizeToVideo(int videoW, int videoH) {
     // m_mini 守卫（N68）：小窗几何由 toggleMini / 换片自适应单源负责，
     // 尺寸推送不得把小窗重排成默认尺寸

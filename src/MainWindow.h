@@ -312,6 +312,11 @@ class MainWindow : public QMainWindow {
     void rebuildFilterMenus();
     void toggleFilterEntry(const QString &property, int index);
 
+    // N110：画面比例——勾选态挂父视图菜单 aboutToShow 现读回填（只认 double）；
+    // 自定义档输入循环到合法或取消，取消 / 空输入不改原值
+    void updateAspectCheckedStates();
+    void onCustomAspectRatio();
+
     // N15：章节与书签
     void rebuildChapterMenu();
     void updateChapterMenuState();
@@ -522,6 +527,12 @@ class MainWindow : public QMainWindow {
     // ---- N43：滤镜子菜单（条目弹出时按属性实时重建，不作缓存）----
     QMenu *m_videoFilterMenu = nullptr;
     QMenu *m_audioFilterMenu = nullptr;
+
+    // ---- N110：画面比例子菜单（勾选态真源是属性，弹出时现读回填）----
+    QActionGroup *m_aspectGroup = nullptr;
+    QAction *m_aspectOriginal = nullptr; // "原始"（override = "no"，读回 -2）
+    QList<QAction *> m_aspectPresets;    // 五个比值档，序与 kAspectPresets 表一致
+    QAction *m_aspectCustom = nullptr;   // 自定义（不中档时条目带当前值）
 
     // ---- N15：章节与书签 ----
     QMenu *m_chapterMenu = nullptr;

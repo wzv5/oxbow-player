@@ -217,7 +217,9 @@ class MpvController : public QObject {
     void videoZoomChanged(double zoom);
     void videoPanXChanged(double panX);
     void videoPanYChanged(double panY);
-    void videoSizeChanged(int width, int height); // 0,0 表示无视频
+    // N110：有效尺寸推送——源尺寸套用画面比例（video-aspect-override）后的显示
+    // 矩形，w/h 即当前显示宽高比；0,0 表示无视频
+    void videoSizeChanged(int width, int height);
     // B18：以下 4 项首参为归属键（同 durationChanged），由 FILE_LOADED
     // 主动读发出，不再 observe（等值不重推 / 推送滞后均随之消除）
     // 媒体元数据字典（N4）：键大小写因文件而异，接收方需做不敏感匹配
@@ -241,11 +243,20 @@ class MpvController : public QObject {
     void mpvShutdown();
 
   public:
-    // 当前视频尺寸（N40）：经统一取值路径当场读取——先 video-out-params/w、/h
-    // （滤镜后输出尺寸，F1），不可读回退 width、height（F3②：可用时机互补），
-    // 仍不可读或读得 0 返回 QSize(0,0) 表示无视频。纯读，不写去重状态
+    // 当前视频**有效尺寸**（N40 取值收口 / N110 语义升级）：经统一取值路径当场
+    // 读取——先 video-out-params/w、/h（滤镜后输出尺寸，F1），不可读回退 width、
+    // height（F3②：可用时机互补），仍不可读或读得 0 返回 QSize(0,0) 表示无视频；
+    // 取到源尺寸后再读 video-out-params/aspect 做保轴换算，返回源尺寸套用画面
+    // 比例（video-aspect-override）后的显示矩形，w/h 即当前显示宽高比（与 mpv
+    // 内建显示尺寸算式逐位等价，N110 §三-2）。只读 /aspect、绝不读 /dw、/dh
+    // （N40 F7 硬规则保持：显示尺寸随显示侧参数漂移）。纯读，不写去重状态
     // （本函数会在 GUI 线程被导航器构造期调用）
     QSize videoSize() const;
+
+    // N110：源尺寸出口——同一条取值路径、不做比例换算，返回解码/滤镜后的像素
+    // 帧尺寸。唯一用途是喂缩略图（ThumbHoverWatch::setVideoSize）：第二 core 是
+    // 独立 mpv 实例、不受主侧 override 影响，呈现未拉伸的像素帧
+    QSize sourceVideoSize() const;
 
     // B17：启动事件线程（阻塞 mpv_wait_event(-1)）。必须在 wid 等嵌入相关
     // 属性设置完成后调用：首次 mpv_wait_event 会解除 mpv 核心的启动门控
@@ -264,16 +275,18 @@ class MpvController : public QObject {
     handleStartFile(const mpv_event *event); // START_FILE：刷新当前文件缓存 + 在飞槽 id（N104）
     void handleFileLoaded();                 // FILE_LOADED：以缓存为归属键主动读 5 项属性并发射
     // N40：视频尺寸取值与发布（均在事件线程执行；videoSize() 复用同一取值路径）
-    QSize readVideoSize() const; // 取值收口：out 优先、width/height 回退、皆不可读判无视频
+    QSize
+    readSourceVideoSize() const; // 源尺寸取值收口：out 优先、width/height 回退、皆不可读判无视频
+    QSize readVideoSize() const; // 有效尺寸 = 源尺寸 + video-aspect-override 保轴换算（N110）
     void publishVideoSize();     // 去重收口：与上次已发布值比对，不同才写入并 emit
 
     // N92：配置目录取值的唯一收口，两个文件路径出口共用（校验与安全顺序见其声明处）
     QString configDir() const;
 
     mpv_handle *m_mpv; // 由 mpv 拥有，插件不销毁
-    // N40：上次已发布的视频尺寸——去重收口的比对基准（不再是从前"width/height
-    // 两属性合并缓存"）；仅事件线程读写（去重收口与 idle-active 兜底），
-    // videoSize() 纯读不经过它
+    // N40：上次已发布的视频有效尺寸（N110 起：源尺寸套用画面比例）——去重收口的
+    // 比对基准（不再是从前"width/height 两属性合并缓存"）；仅事件线程读写
+    // （去重收口与 idle-active 兜底），videoSize() 纯读不经过它
     int m_videoW = 0, m_videoH = 0;
     // B18：当前文件路径缓存——START_FILE 时写入，FILE_LOADED / duration
     // observe 推送读取作为归属键；仅事件线程读写，无需加锁
