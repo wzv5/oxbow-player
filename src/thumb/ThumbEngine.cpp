@@ -81,6 +81,7 @@ void ThumbEngine::startSession(quint64 seq, WId hostWid, const QString &path, do
     setOptionOrIgnore(m_handle, "config", "no");
     setOptionOrIgnore(m_handle, "osc", "no");
     setOptionOrIgnore(m_handle, "ytdl", "no");
+    setOptionOrIgnore(m_handle, "drag-and-drop", "no");
     setOptionOrIgnore(m_handle, "load-console", "no");
     setOptionOrIgnore(m_handle, "load-commands", "no");
     setOptionOrIgnore(m_handle, "load-auto-profiles", "no");
@@ -111,14 +112,13 @@ void ThumbEngine::startSession(quint64 seq, WId hostWid, const QString &path, do
     setOptionOrIgnore(m_handle, "demuxer-readahead-secs", "0");
     setOptionOrIgnore(m_handle, "demuxer-max-bytes", "128KiB");
 #ifndef Q_OS_WIN
-    // N83 主 core 同款口径：VO 键盘与指针事件逐项关到底（旧版回退
-    // input-x11-keyboard），另关 mpv 侧光标自动隐藏（与 N67 双层打架）。Windows
-    // 上 mpv 本就拿不到键盘，且自会向父窗口转发鼠标消息，不设。
     setOptionOrIgnore(m_handle, "input-cursor", "no");
     setOptionOrIgnore(m_handle, "cursor-autohide", "no");
     if (mpv_set_option_string(m_handle, "input-vo-keyboard", "no") != 0)
         mpv_set_option_string(m_handle, "input-x11-keyboard", "no");
     setOptionOrIgnore(m_handle, "input-media-keys", "no");
+    if (qEnvironmentVariable("XDG_SESSION_TYPE") == QLatin1String("wayland"))
+        setOptionOrIgnore(m_handle, "gpu-context", "x11egl");
 #endif
 
     // 转接协议注册必须早于 initialize（StreamRelay::install 的硬顺序）；失败

@@ -146,6 +146,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <clocale>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
