@@ -2157,9 +2157,15 @@ class OsdLabel : public QLabel {
 void MainWindow::ensureVideoOverlay() {
     if (m_videoOverlay)
         return;
-    m_videoOverlay =
-        new QWidget(this, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowDoesNotAcceptFocus |
-                              Qt::WindowTransparentForInput);
+    Qt::WindowFlags overlayFlags = Qt::Tool | Qt::FramelessWindowHint |
+                                   Qt::WindowDoesNotAcceptFocus | Qt::WindowTransparentForInput;
+#ifndef Q_OS_WIN
+    // Linux/X11：合成器对受管 Tool 窗施加"保持在屏内"的保屏钳制（四向、逐轴），
+    // 主窗拖出工作区后 OSD 冻在屏缘不再跟随；绕过窗口管理器即脱离该路径，恢复
+    // 自由定位。Windows 的 SetWindowPos 无此钳制，不引入该 hint（语义也与 X11 不同）
+    overlayFlags |= Qt::X11BypassWindowManagerHint;
+#endif
+    m_videoOverlay = new QWidget(this, overlayFlags);
     m_videoOverlay->setAttribute(Qt::WA_TranslucentBackground);
     m_videoOverlay->setAttribute(Qt::WA_ShowWithoutActivating);
     m_videoOverlay->setAttribute(Qt::WA_TransparentForMouseEvents, true);
