@@ -2,45 +2,60 @@
 
 [English](README.md) · **简体中文**
 
-> mpv 驱动的桌面视频播放器——界面克制，专注播放本身。
+> mpv 的桌面前端：播放由 mpv 负责，本项目提供 Qt 界面。
 
 ## 简介
 
-Oxbow 是一款 Windows / Linux 桌面视频播放器：播放内核是 [mpv](https://mpv.io/)，界面由 Qt 构建。它以 mpv 插件的形式安装——放进 mpv 的 scripts 目录，之后每次启动 mpv，迎接你的都是一个带完整界面的播放器。
+Oxbow 是 Windows / Linux 上的桌面视频播放器，播放内核为 [mpv](https://mpv.io/)，界面以 Qt 构建。它以 mpv C 插件的形式运行——把插件目录放进 mpv 的 scripts 目录，之后每次启动 mpv 即为带界面的播放器。
 
-Oxbow 的理念很朴素：**看视频时，任何多余的界面都是干扰**。它把力气花在需要的地方，补齐日常使用的便利：播放列表管理、书签、小窗、导航器。
+Oxbow 的特色是**精简、高效、不打扰**——界面不做覆盖遮挡式，播放时任何遮挡都是干扰。
 
 ![Oxbow 主界面：设置对话框与多标签页播放列表](docs/screenshot-zh.png)
 
 ## 功能特性
 
-- **多标签页列表**：每个标签页可各自选择列表来源：
-  - 静态（手工编辑的列表）；
-  - 本地目录（绑定一个本地目录，随时刷新查看最新内容）；
+- **多标签页列表**：每个标签页独立选择列表来源：
+  - 静态（手工编辑的清单）；
+  - 本地目录（绑定一个目录，按需刷新以显示最新内容）；
   - WebDAV（浏览服务器上的目录）；
   - 外部（m3u / txt 直播源）；
   - Jellyfin（浏览媒体库）；
-  - Rclone Crypt（播放由 rclone `crypt` 后端加密的本地目录——文件名与内容边读边解密，只读）；
-- **续播记忆**：各标签页记住最后播放的条目与进度，下次打开接着看；
-- **书签与章节**：书签一键添加，和章节一起标注在进度条上——一眼可见，点击即跳；
-- **小窗模式**：全局置顶小窗，等比缩放，屏幕边缘自动吸附；
-- **导航器**：类似 Photoshop 导航器的全画面缩略图——视口矩形标注当前可见范围，点击跳转、拖拽平移、滚轮缩放；
-- **滤镜编辑器**：音频 / 视频滤镜逐条增删，即改即听即看；
-- **截图**：一键复制到剪贴板，或另存为文件。
+  - Rclone Crypt（rclone `crypt` 加密的目录，文件名与内容边读边解密，只读）。
+- **播放上报**：向媒体服务器回报播放进度与暂停、停止状态。目前支持：
+  - Jellyfin——"继续观看"、已看标记与续播点随播放自动更新。
+- **续播记忆**：各标签页记录最后播放的条目与播放位置，下次打开从该位置继续。
+- **书签与章节**：书签一键添加，与章节一同标记在进度条上，点击即跳转。
+- **悬停缩略图**：光标停在进度条上时显示该时刻的画面预览。支持本地文件与 Rclone Crypt；远端源不提供，取帧开销过大。
+- **小窗模式**：置顶小窗，等比缩放，靠近屏幕边缘时自动吸附。
+- **导航器**：类似 Photoshop 的导航器，以视口矩形示意当前可见范围，支持点击跳转、拖拽平移、滚轮缩放。
+- **滤镜编辑器**：音频 / 视频滤镜逐条增删，改动即时生效。
+- **音量曲线**：可将音量映射切换为与 MPC-HC 一致的二次曲线，代替 mpv 默认的三次曲线，低音量下的响度更高。
+- **mpv 键位编辑器**：以可视化方式查看与编辑 `input.conf`。
+- **截图**：复制到剪贴板，或保存为文件。
+
+## mpv 兼容性
+
+Oxbow 以插件形式运行在 mpv 中，需要与其他插件共存，同时保留 mpv 自身的操作习惯。为此遵循三条约定：
+
+- **主动避让，不争渲染窗口**：加载时先读取 mpv 的 `wid` 属性。若该属性已有值——用户通过 `--wid` 指定了宿主，或其他插件先行接管——插件在任何初始化之前退出，避免两套输出互相覆盖。
+- **键盘透传**：插件认领的快捷键由自身处理；未认领的按键交还给 mpv，因此 `input.conf` 中的自定义绑定与 mpv 默认键位照常生效。
+- **鼠标不透传**：鼠标事件由插件界面处理，不转发给 mpv，因此 mpv 侧的鼠标绑定不生效。
 
 ## 安装
 
 ### 前置条件
 
-- Windows 10（1809+）及以上（64 位）——这一下限来自 Qt 6
-- Linux（x86_64），X11 会话，或带 XWayland 的 Wayland 会话——视频区经 mpv 的 `wid` 嵌入，只在 X11 一侧成立；无 XWayland 的纯 Wayland 会话不受支持
-- [mpv](https://mpv.io/)——任意较新版本（各发行版打包的 mpv 都带 Oxbow 所需的插件接口）
+- Windows 10（1809+）及以上，64 位——该下限来自 Qt 6
+- Linux：X11 会话，或带 XWayland 的 Wayland 会话
+- [mpv](https://mpv.io/) 任意较新版本——各发行版打包的 mpv 均带有本插件所需的插件接口
+
+视频区通过 mpv 的 `wid` 嵌入，该属性只在 X11 一侧存在，因此无 XWayland 的纯 Wayland 会话不受支持。
 
 ### 安装插件
 
 下载最新预编译包：<https://github.com/wzv5/oxbow-player/releases/latest>；或从[源码构建](#从源码构建)。
 
-插件是放在 mpv 脚本目录下的一个文件夹：
+插件是 mpv 脚本目录下的一个文件夹：
 
 ```text
 <mpv>/portable_config/scripts/oxbow/     # 便携版 mpv（Windows）
@@ -52,29 +67,33 @@ Oxbow 的理念很朴素：**看视频时，任何多余的界面都是干扰**�
 
 ```text
 ~/.config/mpv/scripts/oxbow/             # Linux
-└── main.so         # 整个插件就是这一个文件——从源码构建后手动拷入
+└── main.so         # 整个插件即此文件——从源码构建后手动拷入
 ```
 
-Linux 上媒体元数据补全使用系统 `libmediainfo`（Debian/Ubuntu 装 `libmediainfo0`，Fedora 装 `mediainfo-libs`），缺库时该功能自动降级，不影响其余使用。
-
-启动 mpv——Oxbow 窗口自动弹出。
+Linux 上媒体元数据补全依赖系统 `libmediainfo`；缺失时该功能不可用，其余功能不受影响。
 
 ## 卸载
 
-**Oxbow 是绿色的**：直接删除插件目录（`scripts/oxbow/`）即完成卸载——不写注册表、不碰系统目录。全部配置与书签都在目录内唯一的 `oxbow.ini` 里，随之一并删除，mpv 本身不受任何影响。
+**Oxbow 为绿色部署**：删除 `scripts/oxbow/` 目录即完成卸载。全部设置与书签保存在目录内的 `oxbow.ini` 中，随目录一并删除；不写注册表，不改动系统目录，mpv 本身不受影响。
 
 ## 从源码构建
 
 ### 环境要求
 
-- 任何支持 C++23 的工具链理论上均可；Windows 目标完整验证过，Linux（X11 / XWayland）受支持——其他组合未测试
+- 支持 C++23 的工具链（Windows 目标已完整验证，Linux（X11 / XWayland）受支持，其他组合未测试）
 - CMake
 - Ninja
 - Qt 6.x
-- libsodium——Rclone Crypt 后端的 scrypt 与 secretbox 来源。Windows 取官方预编译包解压，把根目录经 `-DLIBSODIUM_ROOT` 传入（缺失或组合不齐会在 configure 期显式报错）；Linux 装开发包（Debian/Ubuntu 装 `libsodium-dev`，Fedora 装 `libsodium-devel`）。配 `-DOXBOW_WITH_RCLONE_CRYPT=OFF` 关掉该后端时，这条依赖整个不再被查找
-- 仅 Linux：OpenSSL 开发头文件（Debian/Ubuntu 装 `libssl-dev`，Fedora 装 `openssl-devel`）——Rclone Crypt 名字层的 AES 单块原理由它承担。关掉该后端时同样不需要
-- 无需 mpv 开发包——仓库内已内置 `mpv/client.h`
-- 仅 Linux：X11 开发头文件（Debian/Ubuntu 装 `libx11-dev`，Fedora 装 `libX11-devel`）与 Qt 6 开发包（Widgets、Concurrent、Network、LinguistTools）
+- 无需 mpv 开发包——`mpv/client.h` 已内置于仓库
+- 仅 Linux：X11 开发头文件
+
+可选依赖：
+
+- libsodium（仅 Rclone Crypt 后端需要）：Windows 下解压官方预编译包，将其根目录经 `-DLIBSODIUM_ROOT` 传入
+- OpenSSL（仅 Linux，仅 Rclone Crypt 后端需要）
+- libmediainfo（仅运行时需要，不参与构建）：缺失时媒体元数据补全不可用
+
+以 `-DOXBOW_WITH_RCLONE_CRYPT=OFF` 关闭 Rclone Crypt 后端时，libsodium 与 OpenSSL 均不需要。
 
 ### 配置与构建
 
@@ -87,11 +106,11 @@ cmake --build build --config Release
 ```
 
 - `Qt6_ROOT` 指向本机 Qt 安装目录。
-- `LIBSODIUM_ROOT`（开启 Rclone Crypt 后端时 Windows 必填）指向解压后的 libsodium 预编译包根目录：其下须有 `include/sodium.h` 与 `x64/<Debug|Release>/<v143>/<static|dynamic>/libsodium.lib`。缺项会在 configure 期带具体路径报错，绝不静默退成"crypt 功能不可用"。配 `-DOXBOW_WITH_RCLONE_CRYPT=OFF` 时这个变量根本不会被读取。
-- `MPV_BIN_DIR`（选填，仅 Windows）指向 mpv.exe 所在目录。设置后每次构建会自动把插件部署到 mpv 旁的 `portable_config/scripts/oxbow/`——构建完即可直接运行。
-- 不设 `MPV_BIN_DIR` 时，产物落在 `build/Release/`，需手动拷贝（见[安装](#安装)）。
+- `LIBSODIUM_ROOT`（Windows 且 Rclone Crypt 后端开启时必填）指向解压后的 libsodium 预编译包根目录，其下须有 `include/sodium.h` 与 `x64/<Debug|Release>/<v143>/<static|dynamic>/libsodium.lib`。缺项会在 configure 期带具体路径报错，不会静默退化为"crypt 不可用"。配 `-DOXBOW_WITH_RCLONE_CRYPT=OFF` 时该变量不被读取。
+- `MPV_BIN_DIR`（选填，仅 Windows）指向 mpv.exe 所在目录。设置后每次构建自动将插件部署到 mpv 旁的 `portable_config/scripts/oxbow/`，构建完成即可运行。
+- 未设置 `MPV_BIN_DIR` 时，产物落在 `build/Release/`，需手动拷贝（见[安装](#安装)）。
 
-Linux（单配置生成器；构建类型须显式给，默认为空）：
+Linux（单配置生成器；构建类型须显式指定，默认为空）：
 
 ```bash
 cd public
@@ -99,19 +118,19 @@ cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
 
-无需 `Qt6_ROOT` 与 `LIBSODIUM_ROOT`——`find_package` 直接命中系统 Qt，加密侧走系统的 libsodium（经 pkg-config）与 OpenSSL。产物是单个 `build/main.so`，拷到 `~/.config/mpv/scripts/oxbow/main.so` 即可（见[安装](#安装)）。
+无需 `Qt6_ROOT` 与 `LIBSODIUM_ROOT`——`find_package` 会命中系统 Qt，加密侧由系统 libsodium（经 pkg-config）与 OpenSSL 覆盖。产物为单个 `build/main.so`，拷至 `~/.config/mpv/scripts/oxbow/main.so` 即可（见[安装](#安装)）。
 
-发版纪律：版本号单源于 `CMakeLists.txt` 顶部的 `project(oxbow-player VERSION …)`——每次发布前手工 +1 并保证重新 configure，插件内嵌的版本（关于对话框 / 启动诊断行）才与发布对应。commit hash 与构建时刻每次构建自动重算，无需人工干预。
+版本号只定义在 `CMakeLists.txt` 顶部的 `project(oxbow-player VERSION …)`。每次发布前手工递增并重新 configure，插件内嵌的版本（关于对话框 / 启动诊断行）才与发布一致。commit hash 与构建时刻每次构建自动重算，无需干预。
 
 ### 构建选项
 
 | 选项 | 默认 | 说明 |
 | --- | --- | --- |
-| `OXBOW_STATIC` | `OFF` | 静态链接 Qt 与加密依赖（libsodium）。减体积、加快启动，建议开启——需要静态版 Qt 与预编译包里的静态 libsodium。**仅 Windows。** |
-| `OXBOW_WITH_RCLONE_CRYPT` | `ON` | 是否构建 Rclone Crypt 后端（rclone `crypt` 加密目录的只读提供者）。置 `OFF` 整条撤掉：不再查找 libsodium 与 OpenSSL，也不需要 `LIBSODIUM_ROOT`。已存的两类数据不受损——原 `rclonecrypt://` 身份串原样留着，存量该类型列表在重载时按"键未知"回落默认（静态）提供者，重新开启即恢复。 |
-| `OXBOW_BUILD_TESTS` | `OFF` | 构建单元测试可执行文件；运行方式 `ctest --test-dir build -C <配置>`。 |
+| `OXBOW_STATIC` | `OFF` | 静态链接 Qt 与加密依赖（libsodium）。减小体积、加快启动，建议开启——需要静态版 Qt 与预编译包中的静态 libsodium。**仅 Windows。** |
+| `OXBOW_WITH_RCLONE_CRYPT` | `ON` | 是否构建 Rclone Crypt 后端（rclone `crypt` 加密目录的只读提供者）。置 `OFF` 时整条撤除：不再查找 libsodium 与 OpenSSL，也不需要 `LIBSODIUM_ROOT`。 |
+| `OXBOW_BUILD_TESTS` | `OFF` | 构建单元测试可执行文件。 |
 | `OXBOW_PUREQT` | `OFF` | 强制部分功能（如小窗）走纯 Qt 降级路径（开发辅助）。 |
-| `MPV_BIN_DIR` | *（空）* | mpv.exe 所在目录；设置后启用构建后自动部署。**仅 Windows**——Linux 只编译产物。 |
+| `MPV_BIN_DIR` | *（空）* | mpv.exe 所在目录；设置后启用构建后自动部署。**仅 Windows**——Linux 只产出文件。 |
 
 ## 名字的由来
 
@@ -122,4 +141,5 @@ cmake --build build
 - [mpv](https://mpv.io/)——播放内核
 - [Qt](https://www.qt.io/)——应用框架
 - [MediaInfo](https://mediaarea.net/en/MediaInfo)——可选的媒体元数据
+- [libsodium](https://libsodium.org/) · [OpenSSL](https://www.openssl.org/)——Rclone Crypt 后端的加密原语
 - [Icons8](https://icons8.com/)——默认图标包

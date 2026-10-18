@@ -2,39 +2,54 @@
 
 **English** · [简体中文](README.zh-CN.md)
 
-> A desktop video player powered by mpv — minimal interface, focused on playback itself.
+> A desktop front end for mpv: mpv does the playback, this project provides the Qt interface.
 
 ## Introduction
 
-Oxbow is a desktop video player for Windows and Linux: the playback engine is [mpv](https://mpv.io/), the interface is built with Qt. It installs as an mpv plugin — drop it into mpv's scripts directory, and from then on, starting mpv greets you with a full-fledged player interface.
+Oxbow is a desktop video player for Windows and Linux. The playback engine is [mpv](https://mpv.io/), the interface is built with Qt. It runs as an mpv C plugin — place the plugin folder in mpv's scripts directory, and from then on starting mpv gives you the player with its full interface.
 
-Oxbow's philosophy is simple: **when watching a video, any extra interface is a distraction**. It spends its effort where it matters, adding the conveniences of everyday use: playlist management, bookmarks, mini window, and navigator.
+Oxbow aims for **a lean, efficient and unobtrusive interface** — no overlay-style interface, since anything covering the frame is a distraction while watching.
 
 ![Oxbow main window: settings dialog and the multi-tab playlist](docs/screenshot-en.png)
 
 ## Features
 
-- **Multi-tab playlists**: each tab picks its own list source:
+- **Multi-tab playlists**: each tab selects its own list source:
   - Static (hand-edited lists);
   - Local directory (bound to a folder, refreshed on demand to show the latest contents);
   - WebDAV (browse directories on a server);
   - External (m3u / txt live sources);
   - Jellyfin (browse media libraries);
-  - Rclone Crypt (browse and play a folder encrypted by rclone's `crypt` backend — names and content are decrypted on the fly, read-only);
-- **Resume memory**: each tab remembers the last played item and playback position, so you pick up where you left off next time;
-- **Bookmarks & chapters**: bookmarks are one click away and, together with chapters, marked right on the seek bar — visible at a glance, click to jump;
-- **Mini window mode**: an always-on-top mini window with aspect-locked resizing and automatic edge snapping;
-- **Navigator**: a Photoshop-style whole-frame thumbnail — the viewport rectangle shows what is currently visible; click to jump, drag to pan, scroll to zoom;
-- **Filter editor**: add or remove audio / video filters one by one, taking effect immediately;
-- **Screenshots**: copy to clipboard or save to file with one action.
+  - Rclone Crypt (a folder encrypted by rclone's `crypt` backend — names and content are decrypted on the fly, read-only).
+- **Playback reporting**: report playback progress and pause/stop state to media servers. Currently supported:
+  - Jellyfin — its Continue Watching row, watched marks and resume points update automatically as you play.
+- **Resume memory**: each tab remembers the last played item and playback position, so you pick up where you left off next time.
+- **Bookmarks & chapters**: bookmarks can be added with one click and, together with chapters, are marked on the seek bar — click to jump.
+- **Hover thumbnails**: resting the cursor on the seek bar shows the frame at that moment. Supported for local files and Rclone Crypt; remote sources are not supported, as fetching a frame costs too much.
+- **Mini window mode**: an always-on-top mini window with aspect-locked resizing and automatic edge snapping.
+- **Navigator**: like Photoshop's navigator — a viewport rectangle shows what is currently visible; click to jump, drag to pan, scroll to zoom.
+- **Filter editor**: add or remove audio / video filters one by one, taking effect immediately.
+- **Volume curve**: the volume mapping can be switched to MPC-HC's quadratic curve instead of mpv's default cubic one, which raises the loudness at low volume levels.
+- **mpv key bindings editor**: view and edit `input.conf` visually.
+- **Screenshots**: copy to clipboard or save to file.
+
+## mpv compatibility
+
+Oxbow runs as a plugin inside mpv and has to coexist with other plugins while keeping mpv's own operating conventions intact. It follows three rules:
+
+- **It steps aside instead of fighting for the output window.** On load it reads mpv's `wid` property first; if a window is already assigned — either by the user's `--wid` or because another plugin got there first — Oxbow exits before any initialization, so the two never end up covering each other's output.
+- **Keyboard events pass through.** Shortcuts Oxbow claims are handled by itself; every other key is handed back to mpv, so bindings in `input.conf` and mpv's default key map keep working.
+- **Mouse events do not pass through.** The mouse is handled entirely by Oxbow's interface and never forwarded to mpv, so mpv-side mouse bindings do not take effect.
 
 ## Installation
 
 ### Prerequisites
 
-- Windows 10 (1809+) or later (64-bit) — this floor comes from Qt 6
-- Linux (x86_64) with an X11 session, or a Wayland session with XWayland — the video area is embedded through mpv's `wid`, which only exists on the X11 side; pure-Wayland sessions without XWayland are not supported
+- Windows 10 (1809+) or later, 64-bit — this floor comes from Qt 6
+- Linux with an X11 session, or a Wayland session with XWayland
 - [mpv](https://mpv.io/) — any recent version (all distro builds ship the plugin interface Oxbow needs)
+
+The video area is embedded through mpv's `wid`, which only exists on the X11 side; pure-Wayland sessions without XWayland are therefore not supported.
 
 ### Install the plugin
 
@@ -55,26 +70,30 @@ The plugin is a folder placed under mpv's script directory:
 └── main.so         # the whole plugin — built from source, copied by hand
 ```
 
-On Linux, media metadata enrichment uses the system `libmediainfo` (`libmediainfo0` on Debian/Ubuntu, `mediainfo-libs` on Fedora) when present; without it the feature simply degrades.
-
-Start mpv — the Oxbow window opens automatically.
+On Linux, media metadata enrichment depends on the system `libmediainfo`. Without it that feature is unavailable; nothing else is affected.
 
 ## Uninstall
 
-**Oxbow is portable**: delete the plugin folder (`scripts/oxbow/`) and it is gone — nothing written to the registry, nothing touched system-wide. All settings and bookmarks live in the single `oxbow.ini` inside that folder and are removed along with it; mpv itself is unaffected.
+**Oxbow is portable**: delete the `scripts/oxbow/` directory and it is gone. All settings and bookmarks live in the single `oxbow.ini` inside that folder and are removed along with it; nothing is written to the registry, nothing is touched system-wide, and mpv itself is unaffected.
 
 ## Building from source
 
 ### Requirements
 
-- Any toolchain with C++23 support should work in theory; the Windows target is fully verified, Linux (X11 / XWayland) is supported — other combinations are untested
+- Any toolchain with C++23 support (the Windows target is fully verified, Linux (X11 / XWayland) is supported, other combinations are untested)
 - CMake
 - Ninja
 - Qt 6.x
-- libsodium — the Rclone Crypt backend's scrypt and secretbox. On Windows, unpack the official prebuilt package and pass its root directory as `-DLIBSODIUM_ROOT` (configuration fails early if it is missing or incomplete); on Linux, install the development package (`libsodium-dev` on Debian/Ubuntu, `libsodium-devel` on Fedora). Skipped entirely with `-DOXBOW_WITH_RCLONE_CRYPT=OFF`
-- Linux only: OpenSSL development headers (`libssl-dev` on Debian/Ubuntu, `openssl-devel` on Fedora) — the AES block primitive for the Rclone Crypt name layer. Also skipped with `-DOXBOW_WITH_RCLONE_CRYPT=OFF`
-- No mpv dev package needed — the repo bundles `mpv/client.h`
-- Linux only: X11 development headers (`libx11-dev` on Debian/Ubuntu, `libX11-devel` on Fedora) and the Qt 6 development packages (Widgets, Concurrent, Network, LinguistTools)
+- No mpv dev package needed — `mpv/client.h` is bundled in the repo
+- Linux only: X11 development headers
+
+Optional dependencies:
+
+- libsodium (needed only by the Rclone Crypt backend): on Windows, unpack the official prebuilt package and pass its root directory as `-DLIBSODIUM_ROOT`
+- OpenSSL (Linux only, needed only by the Rclone Crypt backend)
+- libmediainfo (runtime only, not a build dependency): without it media metadata enrichment is unavailable
+
+libsodium and OpenSSL are not needed with `-DOXBOW_WITH_RCLONE_CRYPT=OFF`.
 
 ### Configure and build
 
@@ -87,7 +106,7 @@ cmake --build build --config Release
 ```
 
 - `Qt6_ROOT` points at your Qt installation.
-- `LIBSODIUM_ROOT` (required on Windows while the Rclone Crypt backend is enabled) points at the root of the unpacked libsodium prebuilt package — it must contain `include/sodium.h` and `x64/<Debug|Release>/<v143>/<static|dynamic>/libsodium.lib`. Configuration stops with a fatal error listing whatever is missing; nothing silently degrades into "Rclone Crypt unavailable". With `-DOXBOW_WITH_RCLONE_CRYPT=OFF` this variable is not read at all.
+- `LIBSODIUM_ROOT` (required on Windows while the Rclone Crypt backend is enabled) points at the root of the unpacked libsodium prebuilt package — it must contain `include/sodium.h` and `x64/<Debug|Release>/<v143>/<static|dynamic>/libsodium.lib`. Configuration stops with a fatal error listing whatever is missing rather than silently degrading into "Rclone Crypt unavailable". With `-DOXBOW_WITH_RCLONE_CRYPT=OFF` this variable is not read at all.
 - `MPV_BIN_DIR` (optional, Windows only) points at the directory containing `mpv.exe`. When set, every build automatically deploys the plugin into `portable_config/scripts/oxbow/` next to mpv — ready to run right after building.
 - Without `MPV_BIN_DIR`, the artifacts land in `build/Release/` and must be copied manually (see [Installation](#installation)).
 
@@ -101,15 +120,15 @@ cmake --build build
 
 No `Qt6_ROOT` or `LIBSODIUM_ROOT` is needed — `find_package` picks up the system Qt, and system libsodium (via pkg-config) and OpenSSL cover the crypto side. The artifact is a single `build/main.so`; copy it to `~/.config/mpv/scripts/oxbow/main.so` (see [Installation](#installation)).
 
-Release discipline: the version lives solely in `project(oxbow-player VERSION …)` at the top of `CMakeLists.txt` — bump it by hand before each release and re-configure before building, so the version baked into the plugin (About dialog / startup diagnostic) matches the release. The commit hash and build time are recomputed on every build automatically.
+The version number is defined solely in `project(oxbow-player VERSION …)` at the top of `CMakeLists.txt` — bump it by hand and re-configure before each release, so the version baked into the plugin (About dialog / startup diagnostic) matches the release. The commit hash and build time are recomputed on every build automatically.
 
 ### Build options
 
 | Option | Default | Description |
 | --- | --- | --- |
 | `OXBOW_STATIC` | `OFF` | Link Qt and crypto dependencies (libsodium) statically. Smaller footprint, faster startup; recommended — requires a static Qt build and the static libsodium library. **Windows only.** |
-| `OXBOW_WITH_RCLONE_CRYPT` | `ON` | Build the Rclone Crypt backend (the rclone `crypt` read-only folder provider). Set to `OFF` to drop it entirely: libsodium and OpenSSL are then not looked for at all and `LIBSODIUM_ROOT` is not needed. Lists already saved with that provider fall back to the default (static) provider on load — the stored `rclonecrypt://` identities themselves are untouched, so they work again as soon as the feature is enabled. |
-| `OXBOW_BUILD_TESTS` | `OFF` | Build the unit-test executables; run with `ctest --test-dir build -C <config>`. |
+| `OXBOW_WITH_RCLONE_CRYPT` | `ON` | Build the Rclone Crypt backend (the rclone `crypt` read-only folder provider). Set to `OFF` to drop it entirely: libsodium and OpenSSL are then not looked for at all and `LIBSODIUM_ROOT` is not needed. |
+| `OXBOW_BUILD_TESTS` | `OFF` | Build the unit-test executables. |
 | `OXBOW_PUREQT` | `OFF` | Force some features (e.g. the mini window) onto the pure-Qt fallback path (development aid). |
 | `MPV_BIN_DIR` | *(empty)* | Directory containing `mpv.exe`; enables automatic post-build deployment. **Windows only** — Linux builds artifacts only. |
 
@@ -122,4 +141,5 @@ This project was started purely to test Ox Alpha's capabilities — the test wen
 - [mpv](https://mpv.io/) — the playback engine
 - [Qt](https://www.qt.io/) — the application framework
 - [MediaInfo](https://mediaarea.net/en/MediaInfo) — optional media metadata
+- [libsodium](https://libsodium.org/) · [OpenSSL](https://www.openssl.org/) — cryptographic primitives for the Rclone Crypt backend
 - [Icons8](https://icons8.com/) — the default icon pack
