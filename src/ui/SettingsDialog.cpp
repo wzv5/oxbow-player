@@ -333,7 +333,7 @@ const QList<SettingCategory> &settingCatalog() {
                       .choices = languageChoices,
                       .note = QT_TRANSLATE_NOOP("SettingsDialog", "Takes effect after restart")},
                      // N115：Style 兜底空串 = 第 0 项 Auto；Color Scheme 仅 Qt ≥ 6.8
-                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Style"),
+                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Interface Style"),
                       .widget = WidgetKind::Combo,
                       .iniKey = "style",
                       .choices = styleChoices,
@@ -346,8 +346,8 @@ const QList<SettingCategory> &settingCatalog() {
                       .fallback = QStringLiteral("system"),
                       .note = QT_TRANSLATE_NOOP(
                           "SettingsDialog",
-                          "Only some styles (such as Fusion) support color schemes; "
-                          "styles that do not support it ignore this setting silently")},
+                          "Only some styles (such as Fusion) follow this setting; "
+                          "others ignore it silently")},
 #endif
                      {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Wheel Step"),
                       .widget = WidgetKind::Combo,
@@ -371,7 +371,7 @@ const QList<SettingCategory> &settingCatalog() {
                      // N113：OSD 形态四档（插件 INI 后端；只管插件自己的消息，mpv 内置
                      // OSD 不受影响）。位置取 Basic 末位，不打散音量步进与递归深度的
                      // 既有相邻关系
-                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "OSD"),
+                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "OSD Mode"),
                       .widget = WidgetKind::Combo,
                       .iniKey = "osdMode",
                       .choices = osdModeChoices,
