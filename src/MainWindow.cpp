@@ -2479,6 +2479,9 @@ void MainWindow::onCustomAspectRatio() {
 // 两轴独立钳回（恰好不越界）。全屏/最大化/无视频流不动作；
 // 停止不复位、全屏退出维持全屏前普通尺寸（本函数仅在分辨率推送时触发）
 // N110：入参由源尺寸改为有效尺寸，故强制画面比例后窗口按新比例重排（§四-2）
+// N114：有效尺寸任一维小于视频区最小尺寸时，按 KeepAspectRatioByExpanding 语义
+// 放大到恰好覆盖 videoDefaultSize（最小必要放大、保比），消除最小尺寸钳制黑边；
+// 极端比例下工作区上限仍优先，缩回后不足最小尺寸的黑边属既定边界
 void MainWindow::adaptWindowSizeToVideo(int videoW, int videoH) {
     // m_mini 守卫（N68）：小窗几何由 toggleMini / 换片自适应单源负责，
     // 尺寸推送不得把小窗重排成默认尺寸
@@ -2487,6 +2490,17 @@ void MainWindow::adaptWindowSizeToVideo(int videoW, int videoH) {
     const QRect work = screen()->availableGeometry();
     const qreal dpr = devicePixelRatioF();
     QSize want(qRound(videoW / dpr), qRound(videoH / dpr));
+    // N114：want 任一维低于视频区最小尺寸（videoDefaultSize 480×320，比例 3:2）时，
+    // 目标窗口必然低于主窗最小尺寸、视频区将被钳在最小尺寸上，mpv 只能在错比容器内
+    // 居中补黑边。按两维覆盖系数的较大者等比放大（绑定维恰好落在最小值上，另一维由
+    // 比例推出，绝不放大超过消除黑边所需的倍率）；比较与放大全在逻辑域（want 已除
+    // DPR），手算系数而非 QSize::scaled，取整与 N110 保轴换算同口径（半上）
+    const QSize videoMin = App::videoDefaultSize();
+    if (want.width() < videoMin.width() || want.height() < videoMin.height()) {
+        const double s = qMax(double(videoMin.width()) / want.width(),
+                              double(videoMin.height()) / want.height());
+        want = QSize(qRound(want.width() * s), qRound(want.height() * s));
+    }
     // 双重余量：外框装饰 + 客户区内非视频域（菜单栏/进度行/控制行固定高度）。
     // 若只扣外框，缩放分支会把视频域放到"工作区−外框"上限，
     // 加上非视频域后整窗仍会撑破工作区（验收实测缺陷）
