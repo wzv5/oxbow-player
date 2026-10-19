@@ -2,6 +2,7 @@
 
 #include "SettingsDialog.h"
 
+#include "AppearanceManager.h" // N115：Style 候选唯一出处
 #include "Constants.h"
 #include "FilterListWidget.h"
 #include "mpvbridge/MpvConf.h"
@@ -195,6 +196,27 @@ QList<SettingChoice> languageChoices() {
     return l;
 }
 
+// N115：界面样式清单——候选经 AppearanceManager 取 keys() 原样顺序；Auto 项
+// data 为空串（与语言项同形）
+QList<SettingChoice> styleChoices() {
+    QList<SettingChoice> l;
+    l.append({QT_TRANSLATE_NOOP("SettingsDialog", "Auto"), QString(), {}}); // 空 data = Auto
+    for (const QString &k : AppearanceManager::availableStyles())
+        l.append({k, k, {}});
+    return l;
+}
+
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+// N115：配色方案三态——与目录项同受版本门禁（setColorScheme 自 Qt 6.8 引入）
+QList<SettingChoice> colorSchemeChoices() {
+    return {
+        {QT_TRANSLATE_NOOP("SettingsDialog", "System"), QStringLiteral("system"), {}},
+        {QT_TRANSLATE_NOOP("SettingsDialog", "Light"), QStringLiteral("light"), {}},
+        {QT_TRANSLATE_NOOP("SettingsDialog", "Dark"), QStringLiteral("dark"), {}},
+    };
+}
+#endif
+
 // 循环模式：复合项示例——一个 UI 项管辖两个 mpv key（R3 §3.7 语义的数据化）。
 // 第 0 项为占位（assignments 为空）：用户手改 conf 产生的非预设组合回填到该项，
 // 应用时不下发 mpv、不写 conf（不干涉用户意图）。
@@ -310,6 +332,23 @@ const QList<SettingCategory> &settingCatalog() {
                       .iniKey = "language",
                       .choices = languageChoices,
                       .note = QT_TRANSLATE_NOOP("SettingsDialog", "Takes effect after restart")},
+                     // N115：Style 兜底空串 = 第 0 项 Auto；Color Scheme 仅 Qt ≥ 6.8
+                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Style"),
+                      .widget = WidgetKind::Combo,
+                      .iniKey = "style",
+                      .choices = styleChoices,
+                      .fallback = QString() /* 空 = Auto（第 0 项） */},
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Color Scheme"),
+                      .widget = WidgetKind::Combo,
+                      .iniKey = "colorScheme",
+                      .choices = colorSchemeChoices,
+                      .fallback = QStringLiteral("system"),
+                      .note = QT_TRANSLATE_NOOP(
+                          "SettingsDialog",
+                          "Only some styles (such as Fusion) support color schemes; "
+                          "styles that do not support it ignore this setting silently")},
+#endif
                      {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Wheel Step"),
                       .widget = WidgetKind::Combo,
                       .iniKey = "volumeWheelStep",
@@ -436,8 +475,9 @@ const QList<SettingCategory> &settingCatalog() {
                       .fallback = App::ignoreHttpsErrorsDefault(),
                       // N37：澄清只管浏览侧（列表与元数据请求），不影响播放
                       .note = QT_TRANSLATE_NOOP(
-                          "SettingsDialog", "Applies to playlist and metadata requests only; "
-                                            "playback is governed by the mpv-side option below")},
+                          "SettingsDialog",
+                          "Applies to playlist and metadata requests only; "
+                          "playback is governed by the mpv-side option below")},
                      // N37：播放侧（mpv / ffmpeg 发请求）证书开关。fallback 为未勾选——
                      // 只在属性不可读或取值未命中两项赋值时兜底；mpv 内置默认 tls-verify=no
                      // 且可实时读写，首次打开呈现为已勾选，保持勾选不改变任何现状
@@ -828,10 +868,8 @@ void SettingsDialog::buildUi() {
             if (item->note && *item->note) { // 非空指针且有内容才显示
                 auto *note = new QLabel(tr(item->note));
                 note->setWordWrap(true);
-                QPalette pal = note->palette();
-                pal.setColor(QPalette::WindowText,
-                             pal.color(QPalette::Disabled, QPalette::WindowText));
-                note->setPalette(pal);
+                // N115：灰字走禁用态，随主题切换即时跟随（不再 pin 快照调色板）
+                note->setEnabled(false);
                 QFont nf = note->font();
                 nf.setPointSize(qMax(nf.pointSize() - 1, 1));
                 note->setFont(nf);

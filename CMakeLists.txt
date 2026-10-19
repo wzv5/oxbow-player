@@ -177,6 +177,8 @@ add_library(oxbowcore MODULE
     src/ui/LoadingOverlay.h
     src/ui/OsdController.cpp
     src/ui/OsdController.h
+    src/ui/AppearanceManager.cpp
+    src/ui/AppearanceManager.h
     src/playlist/PlaylistWidget.cpp
     src/playlist/PlaylistWidget.h
     src/BookmarkManager.cpp

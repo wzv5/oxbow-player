@@ -4,6 +4,8 @@
 
 #include "mpvbridge/MpvController.h"
 
+#include "ui/AppearanceManager.h" // N115
+
 // N54：两处接线要用到嵌套类型（PlaylistWidget::LevelJump / JumpFailure、
 // BookmarkManager::Origin），嵌套类型必须有完整类型可见
 #include "BookmarkManager.h"
@@ -140,6 +142,8 @@ class MainWindow : public QMainWindow {
     // N77 §2.3：正播 tab 的列表身份——凡书签读点（聚合器三查询 / 取号 / 编辑器聚焦）
     // 与 key 一并传给消费方；停止态或无列表返回 nil（nil 键组照常参与严格口径）
     QUuid playingListUuid() const;
+    // N115：style / colorScheme 两键的唯一读取点（启动与运行期共用，空配置路径跳过）
+    void applyAppearanceFromIni();
     // N56：注册表维护的设置变更入口（自 PlaylistWidget 上移）——命中相关键时
     // 重读 ini 覆盖注册表内部实例，下一次求值即生效
     void onPluginIniKeysChanged(const QStringList &keys);
@@ -338,6 +342,8 @@ class MainWindow : public QMainWindow {
     QString m_configFile; // 配置文件完整路径（插件 DLL 同目录下的 oxbow.ini）
     // N52：转接协议适配层（寿命归 plugin.cpp 的 shared_ptr，覆盖 exec 全程）
     std::shared_ptr<StreamRelay> m_relay;
+    // N115：唯一套用点（按值持有，构造捕获平台默认样式）
+    AppearanceManager m_appearance;
     ActionManager *m_actions = nullptr; // A15：全部 UI 动作出生与登记处，先于容器构建
     // N56 §2.7：服务注册表由装配顶点（本类）创建并持有，注入 PlaylistWidget；
     // relay 的 provide<StreamRelayIf> 亦在此完成（早于任何提供者出生）

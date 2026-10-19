@@ -116,6 +116,8 @@
 #include <QStringList>
 #include <QStringView>
 #include <QStyle>
+#include <QStyleFactory>
+#include <QStyleHints>
 #include <QStyleOptionSlider>
 #include <QStyledItemDelegate>
 #include <QTabBar>

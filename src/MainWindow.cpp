@@ -600,6 +600,9 @@ MainWindow::MainWindow(MpvController *controller, const QString &configFile,
                        std::shared_ptr<StreamRelay> relay, QWidget *parent)
     : QMainWindow(parent), m_controller(controller), m_configFile(configFile),
       m_relay(std::move(relay)) {
+    // N115：样式与配色最先生效（早于任何子控件创建与 show）
+    applyAppearanceFromIni();
+
     setWindowTitle(App::name());
 
     // N102：mpv 版本一次性填充，About 对话框等消费者此后不依赖 MpvController
@@ -1479,6 +1482,15 @@ void MainWindow::provideTraversalPolicy() {
     m_registry->provide<TraversalPolicy>(std::move(policy));
 }
 
+// N115：两键的唯一读取点——启动与运行期变更共用，只取原文交给 AppearanceManager
+void MainWindow::applyAppearanceFromIni() {
+    if (m_configFile.isEmpty())
+        return;
+    QSettings settings(m_configFile, QSettings::IniFormat);
+    m_appearance.apply(settings.value(QStringLiteral("style")).toString(),
+                       settings.value(QStringLiteral("colorScheme")).toString());
+}
+
 // N56：设置对话框 ini 键变更入口（自 PlaylistWidget 上移）——命中相关键时重读
 // ini 覆盖注册表内部实例，下一次求值即生效
 void MainWindow::onPluginIniKeysChanged(const QStringList &keys) {
@@ -1531,6 +1543,10 @@ void MainWindow::onPluginIniKeysChanged(const QStringList &keys) {
             m_osd->setMode(OsdController::modeFromIniValue(
                 settings.value(QStringLiteral("osdMode"), QStringLiteral("overlay")).toString()));
         }
+        // N115：样式 / 配色即时生效（与启动期同一 helper；分支不设门禁——低版本
+        // 触发后配色步不在编，无副作用）
+        if (keys.contains(QStringLiteral("style")) || keys.contains(QStringLiteral("colorScheme")))
+            applyAppearanceFromIni();
     }
 }
 
