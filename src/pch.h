@@ -57,6 +57,7 @@
 #include <QHelpEvent>
 #include <QIODevice>
 #include <QIcon>
+#include <QIconEngine>
 #include <QImage>
 #include <QImageWriter>
 #include <QInputDialog>

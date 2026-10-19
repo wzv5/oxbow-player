@@ -64,7 +64,7 @@ void ChapterSlider::rebuildMarksLayer() {
         return;
     QColor col = palette().color(QPalette::Highlight);
     if (!col.isValid() || col.alpha() == 0)
-        col = QColor(0, 120, 215);
+        col = palette().color(QPalette::WindowText); // 兜底也走角色值，不自备定色
     p.setPen(QPen(col.darker(130), 1));
     p.setBrush(col);
     p.setRenderHint(QPainter::Antialiasing, true); // 预渲染一次，AA 成本可接受

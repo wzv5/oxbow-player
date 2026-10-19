@@ -31,7 +31,8 @@
 #include "ui/OsdController.h" // N113：三形态 OSD 控制器
 #include "ui/SettingsDialog.h"
 #include "ui/ShortcutsDialog.h" // N86
-#include "ui/ThumbWindow.h"     // N107：缩略图宿主窗
+#include "ui/ThemedIconEngine.h"
+#include "ui/ThumbWindow.h" // N107：缩略图宿主窗
 #ifndef Q_OS_WIN
 #include "platform/X11Util.h" // N83：小窗置顶 EWMH 直发（仅非 Windows 编译，见 CMakeLists）
 #endif
@@ -596,13 +597,11 @@ class ThumbHoverWatch : public QObject {
     int m_videoH = 0;
 };
 
-MainWindow::MainWindow(MpvController *controller, const QString &configFile,
-                       std::shared_ptr<StreamRelay> relay, QWidget *parent)
+MainWindow::MainWindow(MpvController *controller, AppearanceManager *appearance,
+                       const QString &configFile, std::shared_ptr<StreamRelay> relay,
+                       QWidget *parent)
     : QMainWindow(parent), m_controller(controller), m_configFile(configFile),
-      m_relay(std::move(relay)) {
-    // N115：样式与配色最先生效（早于任何子控件创建与 show）
-    applyAppearanceFromIni();
-
+      m_relay(std::move(relay)), m_appearance(appearance) {
     setWindowTitle(App::name());
 
     // N102：mpv 版本一次性填充，About 对话框等消费者此后不依赖 MpvController
@@ -824,9 +823,9 @@ QWidget *MainWindow::createLeftArea() {
     m_muteButton->setAutoRaise(true);
     m_muteButton->setFixedSize(24, 24);
     m_muteButton->setToolTip(tr("Mute"));
-    m_muteButton->setIcon(style()->standardIcon(QStyle::SP_MediaVolume)); // 初值：未静音
     m_muteAction = m_actions->action(ActionManager::Id::Mute);
     bindButton(m_muteButton, m_muteAction);
+    applyMuteState(false); // 初值：未静音
     seekLayout->addWidget(m_muteButton);
     seekLayout->addWidget(m_volumeSlider);
     // N66：进度行与控制行不再直接进左 pane 布局，收进底部条带容器
@@ -843,40 +842,43 @@ QWidget *MainWindow::createLeftArea() {
     auto *controlLayout = new QHBoxLayout(controlRow);
     controlLayout->setContentsMargins(8, 0, 8, 8);
     controlLayout->setSpacing(8);
-    m_playButton = new QPushButton(style()->standardIcon(QStyle::SP_MediaPlay), QString());
+    m_playButton = new QPushButton(QString());
     m_playButton->setToolTip(tr("Play/Pause"));
     m_playButton->setFixedSize(36, 36);
-    auto *stopButton = new QPushButton(style()->standardIcon(QStyle::SP_MediaStop), QString());
-    stopButton->setToolTip(tr("Stop"));
-    stopButton->setFixedSize(36, 36);
-    auto *prevButton =
-        new QPushButton(style()->standardIcon(QStyle::SP_MediaSkipBackward), QString());
-    prevButton->setToolTip(tr("Previous File"));
-    prevButton->setFixedSize(36, 36);
-    auto *nextButton =
-        new QPushButton(style()->standardIcon(QStyle::SP_MediaSkipForward), QString());
-    nextButton->setToolTip(tr("Next File"));
-    nextButton->setFixedSize(36, 36);
+    m_stopButton = new QPushButton(QString());
+    m_stopButton->setToolTip(tr("Stop"));
+    m_stopButton->setFixedSize(36, 36);
+    m_prevButton = new QPushButton(QString());
+    m_prevButton->setToolTip(tr("Previous File"));
+    m_prevButton->setFixedSize(36, 36);
+    m_nextButton = new QPushButton(QString());
+    m_nextButton->setToolTip(tr("Next File"));
+    m_nextButton->setFixedSize(36, 36);
     m_timeLabel = new QLabel(QStringLiteral("00:00 / 00:00"));
-    m_streamButton = new QPushButton(QStringLiteral("♪"));
+    m_streamButton = new QPushButton(QString());
     m_streamButton->setToolTip(tr("Switch Stream"));
     m_streamButton->setFixedSize(36, 36);
     m_streamButton->hide();
-    auto *settingsButton = new QPushButton(QIcon(App::iconPath(App::iconSettings())), QString());
-    settingsButton->setToolTip(tr("Settings"));
-    settingsButton->setFixedSize(36, 36);
-    // 该按钮可切换：选中底偏深，On 态换白色版素材（两态各按显示尺寸现绘，不涉缩放）
-    QIcon playlistIcon(App::iconPath(App::iconPlaylist()));
-    playlistIcon.addFile(App::iconPath(App::iconPlaylistOn()), QSize(), QIcon::Normal, QIcon::On);
-    m_playlistToggle = new QPushButton(playlistIcon, QString());
+    m_settingsButton = new QPushButton(QString());
+    m_settingsButton->setToolTip(tr("Settings"));
+    m_settingsButton->setFixedSize(36, 36);
+    m_playlistToggle = new QPushButton(QString());
     m_playlistToggle->setToolTip(tr("Show/Hide Playlist"));
     m_playlistToggle->setFixedSize(36, 36);
     m_playlistToggle->setCheckable(true);
+    // 控制行图标钉 24：样式默认取 16，而这批素材的细笔画只有画幅的 1/12——摊到 16px
+    // 不足一整像素，覆盖率封顶在约 0.7（实测峰值 alpha 180/255），观感就是"发灰"；
+    // 笔画摊到 2 整像素才实心。音量行的静音钮在 24 的容器里保持默认尺寸，不入本组
+    QPushButton *controlIcons[] = {m_playButton,   m_stopButton,     m_prevButton,    m_nextButton,
+                                   m_streamButton, m_settingsButton, m_playlistToggle};
+    for (QPushButton *b : controlIcons)
+        b->setIconSize(QSize(24, 24));
+    retintIcons(); // 控制行各钮与静音钮的图标初值——与主题切换后的重染同一个出口
 
     // 控制行按钮与音量行静音按钮不接受焦点（C2）：Space 归全局快捷键，
     // 避免焦点按钮被 Space 二次触发（N38：静音按钮并入本组）
-    QAbstractButton *noFocusButtons[] = {m_playButton,     stopButton,     prevButton,
-                                         nextButton,       m_streamButton, settingsButton,
+    QAbstractButton *noFocusButtons[] = {m_playButton,     m_stopButton,   m_prevButton,
+                                         m_nextButton,     m_streamButton, m_settingsButton,
                                          m_playlistToggle, m_muteButton};
     for (QAbstractButton *b : noFocusButtons) {
         b->setFocusPolicy(Qt::NoFocus);
@@ -899,24 +901,24 @@ QWidget *MainWindow::createLeftArea() {
     }
 
     controlLayout->addWidget(m_playButton);
-    controlLayout->addWidget(stopButton);
-    controlLayout->addWidget(prevButton);
-    controlLayout->addWidget(nextButton);
+    controlLayout->addWidget(m_stopButton);
+    controlLayout->addWidget(m_prevButton);
+    controlLayout->addWidget(m_nextButton);
     controlLayout->addSpacing(8);
     controlLayout->addWidget(m_timeLabel);
     controlLayout->addStretch(1);
     controlLayout->addWidget(m_streamButton);
-    controlLayout->addWidget(settingsButton);
+    controlLayout->addWidget(m_settingsButton);
     controlLayout->addWidget(m_playlistToggle);
     bottomLayout->addWidget(controlRow);
     layout->addWidget(m_bottomBar); // 左 pane 布局末项（N66 容器）
 
     // A15：全局按钮统一经 bindButton 引用主实例（事件来源 trigger + 启停跟随）
     bindButton(m_playButton, m_actions->action(ActionManager::Id::PlayPause));
-    bindButton(stopButton, m_actions->action(ActionManager::Id::Stop));
-    bindButton(prevButton, m_actions->action(ActionManager::Id::PrevFile));
-    bindButton(nextButton, m_actions->action(ActionManager::Id::NextFile));
-    bindButton(settingsButton, m_actions->action(ActionManager::Id::Settings));
+    bindButton(m_stopButton, m_actions->action(ActionManager::Id::Stop));
+    bindButton(m_prevButton, m_actions->action(ActionManager::Id::PrevFile));
+    bindButton(m_nextButton, m_actions->action(ActionManager::Id::NextFile));
+    bindButton(m_settingsButton, m_actions->action(ActionManager::Id::Settings));
     connect(m_playlistToggle, &QPushButton::toggled, this, [this](bool on) {
         if (m_playlistAction)
             m_playlistAction->setChecked(on); // 经 QAction 统一到 setPlaylistVisible
@@ -1169,8 +1171,7 @@ void MainWindow::connectController() {
         }
     });
     connect(m_controller, &MpvController::pauseChanged, this, [this](bool paused) {
-        m_playButton->setIcon(
-            style()->standardIcon(paused ? QStyle::SP_MediaPlay : QStyle::SP_MediaPause));
+        applyPlayIcon(paused);
         // N7 #1：播放↔暂停 OSD（仅播放态互切，起停由 #2/#3 去重覆盖）。单击引发的
         // 回声同样入队，OSD 与属性回声同刻出现（N113）
         if (m_playlistPos >= 0)
@@ -1243,8 +1244,7 @@ void MainWindow::connectController() {
             updateNowPlayingUi();
             // 强制重置播放暂停按钮状态
             bool paused = m_controller->propertyFlag("pause", true);
-            m_playButton->setIcon(
-                style()->standardIcon(paused ? QStyle::SP_MediaPlay : QStyle::SP_MediaPause));
+            applyPlayIcon(paused);
         }
     });
     // B9 Part1：整表自然播完（EOF）即清进度留记忆项，播放按钮即可从头播；
@@ -1276,7 +1276,7 @@ void MainWindow::connectController() {
     // 列表播完或停止后 mpv 进入空闲，复位播放按钮与进度条（C1）
     connect(m_controller, &MpvController::idleActive, this, [this](bool active) {
         if (active) {
-            m_playButton->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
+            applyPlayIcon(true);
             QSignalBlocker blocker(m_progressSlider);
             m_progressSlider->setValue(0);
             // N8 Part5：停止态禁用进度条（与 C1 归零同点）
@@ -1482,13 +1482,13 @@ void MainWindow::provideTraversalPolicy() {
     m_registry->provide<TraversalPolicy>(std::move(policy));
 }
 
-// N115：两键的唯一读取点——启动与运行期变更共用，只取原文交给 AppearanceManager
+// N115：style / colorScheme 两键的运行期读取点（初始 apply 在插件入口完成）
 void MainWindow::applyAppearanceFromIni() {
     if (m_configFile.isEmpty())
         return;
     QSettings settings(m_configFile, QSettings::IniFormat);
-    m_appearance.apply(settings.value(QStringLiteral("style")).toString(),
-                       settings.value(QStringLiteral("colorScheme")).toString());
+    m_appearance->apply(settings.value(QStringLiteral("style")).toString(),
+                        settings.value(QStringLiteral("colorScheme")).toString());
 }
 
 // N56：设置对话框 ini 键变更入口（自 PlaylistWidget 上移）——命中相关键时重读
@@ -1756,7 +1756,7 @@ void MainWindow::playAt(int index) {
     m_controller->setProperty(QStringLiteral("playlist-pos"), index);
     m_controller->setProperty(QStringLiteral("pause"), false);
     // 若 pause 原本就是 no，mpv 不会再推送属性变化，图标需手动更新
-    m_playButton->setIcon(style()->standardIcon(QStyle::SP_MediaPause));
+    applyPlayIcon(false);
 }
 
 void MainWindow::togglePause() {
@@ -1791,7 +1791,7 @@ void MainWindow::enterStoppedState() {
     // stop 默认会清空播放列表，keep-playlist 标志只停止播放
     m_controller->command({QStringLiteral("stop"), QStringLiteral("keep-playlist")});
     // stop 不改变 pause 属性，按钮图标不会自动更新，手动置为“可播放”态
-    m_playButton->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
+    applyPlayIcon(true);
 }
 
 void MainWindow::stop() { enterStoppedState(); }
@@ -2169,6 +2169,9 @@ void MainWindow::changeEvent(QEvent *event) {
     if (event->type() == QEvent::WindowStateChange && (windowState() & Qt::WindowMinimized) &&
         m_thumbWatch)
         m_thumbWatch->invalidateSession();
+    // N116：外观事件走重染，不走下面的窗口态分支（以最后到达的 PaletteChange 收口）
+    if (event->type() == QEvent::PaletteChange || event->type() == QEvent::StyleChange)
+        retintIcons();
     // m_fullscreen / m_mini 守卫（N68）：从最大化进入覆盖式全屏或小窗都会先
     // setWindowState(NoState)，该转移同样表现为"最大化 → 普通态"，须排除；
     // 退出全屏/小窗时标志已先置假，但旧态是 NoState，不会误入本分支
@@ -3518,6 +3521,32 @@ void MainWindow::pushVolume(int displayValue) {
 // UI 不在此处回写，由 volumeChanged 观察回流刷新（防环已有 QSignalBlocker）
 void MainWindow::changeVolume(int delta) { applyVolume(m_volumeSlider->value() + delta); }
 
+// 播放 / 暂停图标的唯一赋值点（paused 为真出"播放"三角）；现态记入 m_playIconPaused
+// 供 retintIcons 重灌
+void MainWindow::applyPlayIcon(bool paused) {
+    m_playIconPaused = paused;
+    m_playButton->setIcon(Ui::themedIcon(App::iconPath(paused ? App::iconPlay() : App::iconPause()),
+                                         palette().color(QPalette::WindowText)));
+}
+
+// 控制行与静音 / 开关 / 齿轮图标按当前调色板重灌——图标内容不随调色板自绘，故初值与
+// 外观事件共用这一出口，幂等。开关钮 On 态取 HighlightedText：勾选态底色是样式的
+// Highlight，图标取其配套前景。首行守卫兜住控件树建成前到达的样式事件
+void MainWindow::retintIcons() {
+    if (!m_playButton)
+        return;
+    const QColor tint = palette().color(QPalette::WindowText);
+    applyPlayIcon(m_playIconPaused);
+    m_stopButton->setIcon(Ui::themedIcon(App::iconPath(App::iconStop()), tint));
+    m_prevButton->setIcon(Ui::themedIcon(App::iconPath(App::iconSkipBackward()), tint));
+    m_nextButton->setIcon(Ui::themedIcon(App::iconPath(App::iconSkipForward()), tint));
+    m_streamButton->setIcon(Ui::themedIcon(App::iconPath(App::iconStream()), tint));
+    m_settingsButton->setIcon(Ui::themedIcon(App::iconPath(App::iconSettings()), tint));
+    m_playlistToggle->setIcon(Ui::themedIcon(App::iconPath(App::iconPlaylist()), tint,
+                                             palette().color(QPalette::HighlightedText)));
+    applyMuteState(m_muteAction->isChecked());
+}
+
 // N38：静音状态联动单一出口——菜单勾选与图标按钮同一处刷新，两者共用同一
 // QAction 实例故天然同源。勾选态经 QSignalBlocker 直写，不回触发；本函数不播报
 // OSD（OSD 由用户动作路径直显，与 B14 音量同构），故启动与恢复期均无 OSD 调用点
@@ -3525,7 +3554,8 @@ void MainWindow::applyMuteState(bool muted) {
     QSignalBlocker blocker(m_muteAction);
     m_muteAction->setChecked(muted);
     m_muteButton->setIcon(
-        style()->standardIcon(muted ? QStyle::SP_MediaVolumeMuted : QStyle::SP_MediaVolume));
+        Ui::themedIcon(App::iconPath(muted ? App::iconVolumeMuted() : App::iconVolume()),
+                       palette().color(QPalette::WindowText)));
 }
 
 // B11 / N56 §2.7：取名一律读正播实体的显示名 title()（与列表行同一字段，标题与 OSD #2
@@ -3737,8 +3767,7 @@ void MainWindow::onPlayRequested(const PlaylistEntity::List &entities, int tab, 
     // 四步式在暂停态下重推则写入 pause=yes 保持暂停。
     // 同值写入不触发属性变化推送，故无多余 pauseChanged / OSD，图标需手动更新（同 playAt）
     m_controller->setProperty(QStringLiteral("pause"), keepPaused);
-    m_playButton->setIcon(
-        style()->standardIcon(keepPaused ? QStyle::SP_MediaPlay : QStyle::SP_MediaPause));
+    applyPlayIcon(keepPaused);
 }
 
 void MainWindow::onRemoveRequested(QList<int> rows) {
@@ -4183,7 +4212,7 @@ QString MainWindow::formatTrackText(const MpvController::TrackInfo &t) const {
     return result;
 }
 
-// 当前文件某类轨道的快照，按 id 升序——三组流子菜单与 ♪ 按钮的分组都从这份取表出生，
+// 当前文件某类轨道的快照，按 id 升序——三组流子菜单与流选择按钮的分组都从这份取表出生，
 // 故条目顺序全仓一致
 QList<MpvController::TrackInfo> MainWindow::tracksOfType(const QString &type) const {
     QList<MpvController::TrackInfo> result;
@@ -4248,7 +4277,7 @@ void MainWindow::addTrackSelectionGroup(QMenu *menu, const QString &type) {
     }
 }
 
-// N94：字幕选择条目的唯一体——播放菜单的两组与 ♪ 按钮的两个分组都从这里出生，故判据
+// N94：字幕选择条目的唯一体——播放菜单的两组与流选择按钮的两个分组都从这里出生，故判据
 // 全仓只此一份。两组都列全量字幕轨，不排除已被对方占用的那条——"同一条只能落在一组"
 // 由点击时的抢占下发体现（见 switchToTrack / switchToSecondarySubtitle）
 void MainWindow::addSubtitleSelectionGroup(QMenu *menu, bool secondary) {

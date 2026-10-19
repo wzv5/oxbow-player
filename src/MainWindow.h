@@ -33,8 +33,11 @@ class MainWindow : public QMainWindow {
   public:
     // N52：relay 由 plugin.cpp 构造并 install 后传入，构造期收下（不在 show()
     // 之后才装配——列表构造期就要能从注册表取到 relay）；本类仅持有与转交
-    // PlaylistWidget（provide 进注册表），不做其他使用
-    explicit MainWindow(MpvController *controller, const QString &configFile = QString(),
+    // PlaylistWidget（provide 进注册表），不做其他使用。
+    // appearance 由 plugin.cpp 构造并完成初始 apply 后注入（非拥有），本类只做
+    // 运行期 ini 变更的套用
+    explicit MainWindow(MpvController *controller, AppearanceManager *appearance,
+                        const QString &configFile = QString(),
                         std::shared_ptr<StreamRelay> relay = nullptr, QWidget *parent = nullptr);
     // N107：退出序兜底——先阻塞拆缩略图 core（N103 销毁顺序）再停引擎线程；
     // 常规退出走 onMpvShutdown 的同款收口，本处覆盖不经它的销毁路径
@@ -142,8 +145,13 @@ class MainWindow : public QMainWindow {
     // N77 §2.3：正播 tab 的列表身份——凡书签读点（聚合器三查询 / 取号 / 编辑器聚焦）
     // 与 key 一并传给消费方；停止态或无列表返回 nil（nil 键组照常参与严格口径）
     QUuid playingListUuid() const;
-    // N115：style / colorScheme 两键的唯一读取点（启动与运行期共用，空配置路径跳过）
+    // N115：style / colorScheme 两键的运行期读取点（空配置路径跳过；初始 apply 在入口）
     void applyAppearanceFromIni();
+    // 播放 / 暂停图标的唯一赋值点（paused 为真出"播放"三角），现态记入 m_playIconPaused
+    void applyPlayIcon(bool paused);
+    // 控制行与静音 / 开关 / 齿轮图标按当前调色板重灌：构造期灌初值与 changeEvent 收到
+    // 外观事件共用此出口（幂等，首行判空兜住控件树建成前的样式事件）
+    void retintIcons();
     // N56：注册表维护的设置变更入口（自 PlaylistWidget 上移）——命中相关键时
     // 重读 ini 覆盖注册表内部实例，下一次求值即生效
     void onPluginIniKeysChanged(const QStringList &keys);
@@ -257,7 +265,7 @@ class MainWindow : public QMainWindow {
     // N13：轨道文案与切换
     QString formatTrackText(const MpvController::TrackInfo &t) const;
     qint64 trackBitrate(const MpvController::TrackInfo &t) const;
-    // 按类型取轨道快照并按 id 升序——三组流子菜单与 ♪ 按钮的分组共用这一份取表
+    // 按类型取轨道快照并按 id 升序——三组流子菜单与流选择按钮的分组共用这一份取表
     QList<MpvController::TrackInfo> tracksOfType(const QString &type) const;
     void rebuildTrackMenus();
     // B18：流按钮与流子菜单状态统一由 m_tracks 派生
@@ -279,7 +287,7 @@ class MainWindow : public QMainWindow {
     // secondary 选槽位——勾选一律按 main-selection（主字幕 0、第二字幕 1）：
     // selected 的语义是"在解码"，两条字幕同时解码时双双为真，判不出归属。
     // 两个 add* 都不清空菜单、也不加标题与分隔线：播放菜单的子菜单日后要在字幕流下
-    // 追加"添加字幕"之类的动作，♪ 按钮的分组则只提供选择，两处形态各异，故外层一律
+    // 追加"添加字幕"之类的动作，流选择按钮的分组则只提供选择，两处形态各异，故外层一律
     // 留给调用方
     void addSubtitleSelectionGroup(QMenu *menu, bool secondary);
 
@@ -342,8 +350,9 @@ class MainWindow : public QMainWindow {
     QString m_configFile; // 配置文件完整路径（插件 DLL 同目录下的 oxbow.ini）
     // N52：转接协议适配层（寿命归 plugin.cpp 的 shared_ptr，覆盖 exec 全程）
     std::shared_ptr<StreamRelay> m_relay;
-    // N115：唯一套用点（按值持有，构造捕获平台默认样式）
-    AppearanceManager m_appearance;
+    // N115：外观套用点——入口构造并注入的非拥有指针，本类只做运行期套用
+    // （平台默认样式的构造期捕获因此发生在入口，先于任何 setStyle）
+    AppearanceManager *m_appearance = nullptr;
     ActionManager *m_actions = nullptr; // A15：全部 UI 动作出生与登记处，先于容器构建
     // N56 §2.7：服务注册表由装配顶点（本类）创建并持有，注入 PlaylistWidget；
     // relay 的 provide<StreamRelayIf> 亦在此完成（早于任何提供者出生）
@@ -418,6 +427,11 @@ class MainWindow : public QMainWindow {
     QAction *m_muteAction = nullptr;
     QToolButton *m_muteButton = nullptr;
     QPushButton *m_playButton = nullptr;
+    bool m_playIconPaused = true; // 播放钮当前图标对应的态（true = 显示"播放"三角）
+    QPushButton *m_stopButton = nullptr;
+    QPushButton *m_prevButton = nullptr;
+    QPushButton *m_nextButton = nullptr;
+    QPushButton *m_settingsButton = nullptr;
     QLabel *m_timeLabel = nullptr;
     QPushButton *m_playlistToggle = nullptr;
     QAction *m_playlistAction = nullptr;
@@ -516,7 +530,7 @@ class MainWindow : public QMainWindow {
     QMenu *m_audioStreamMenu = nullptr;
     QMenu *m_subStreamMenu = nullptr;
     QMenu *m_secondarySubStreamMenu = nullptr; // N94：第二字幕流（播放菜单，位于字幕流之下）
-    QPushButton *m_streamButton = nullptr;     // ♪ 流选择按钮
+    QPushButton *m_streamButton = nullptr;     // 流选择按钮
 
     // ---- N43：滤镜子菜单（条目弹出时按属性实时重建，不作缓存）----
     QMenu *m_videoFilterMenu = nullptr;

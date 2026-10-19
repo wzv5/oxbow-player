@@ -127,6 +127,7 @@ add_library(oxbowcore MODULE
     src/ui/NavigatorPanel.h
     src/playlist/PlaylistDelegate.cpp
     src/playlist/PlaylistDelegate.h
+    src/playlist/PlaylistTheme.h
     src/playlist/PlaylistEntity.cpp
     src/playlist/PlaylistEntity.h
     src/playlist/Playlist.cpp
@@ -209,6 +210,8 @@ add_library(oxbowcore MODULE
     src/ui/ThumbWindow.h
     src/thumb/ThumbEngine.cpp
     src/thumb/ThumbEngine.h
+    src/ui/ThemedIconEngine.cpp
+    src/ui/ThemedIconEngine.h
 )
 
 # mpv/client.h 已内置在仓库根目录的 mpv/ 下；src 一并入包含路径只为子目录源单元解析
@@ -332,10 +335,19 @@ qt_add_resources(oxbowcore "icons"
         icons/icons8/locate-playing.svg
         icons/icons8/search.svg
         icons/icons8/playlist.svg
-        icons/icons8/playlist-on.svg
         icons/icons8/settings.svg
         icons/icons8/filter-add.svg
         icons/icons8/filter-remove.svg
+        icons/icons8/play.svg
+        icons/icons8/pause.svg
+        icons/icons8/stop.svg
+        icons/icons8/skip-backward.svg
+        icons/icons8/skip-forward.svg
+        icons/icons8/stream.svg
+        icons/icons8/volume.svg
+        icons/icons8/volume-muted.svg
+        icons/icons8/filter-up.svg
+        icons/icons8/filter-down.svg
 )
 
 qt_add_translations(oxbowcore MERGE_QT_TRANSLATIONS
@@ -460,6 +472,8 @@ if(OXBOW_BUILD_TESTS)
         src/MediaInfoHelper.h
         src/ui/FilterListWidget.cpp
         src/ui/FilterListWidget.h
+        src/ui/ThemedIconEngine.cpp
+        src/ui/ThemedIconEngine.h
         src/streams/StreamTransit.cpp
         src/streams/StreamTransit.h
         src/streams/ByteStream.h

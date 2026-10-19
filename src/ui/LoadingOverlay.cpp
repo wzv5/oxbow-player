@@ -2,20 +2,38 @@
 
 #include "LoadingOverlay.h"
 
+namespace {
+
+// 信息面板：自绘不透明 Window 底 + Mid 1px 直角边框（与 NavigatorPanel 边框风格同源）。
+// 颜色在绘制期现取调色板，故运行期换配色即时跟随——样式表的 palette() 由
+// QStyleSheetStyle 在 polish 期解析一次，换配色不会重解析，遂弃用
+class InfoPanel : public QWidget {
+  public:
+    using QWidget::QWidget;
+
+  protected:
+    void paintEvent(QPaintEvent *) override {
+        QPainter painter(this);
+        const QPalette pal = palette();
+        painter.fillRect(rect(), pal.color(QPalette::Window));
+        painter.setPen(pal.color(QPalette::Mid));
+        painter.drawRect(rect().adjusted(0, 0, -1, -1));
+    }
+};
+
+} // namespace
+
 LoadingOverlay::LoadingOverlay(QWidget *parent) : QWidget(parent) {
     setVisible(false);
 
     auto *outer = new QVBoxLayout(this);
     outer->addStretch();
 
-    // 信息区：不透明 Window 底 + Mid 1px 直角边框（与 NavigatorPanel 边框风格一致）；
-    // 颜色一律取 palette，不写死，浅/深主题跟随
-    auto *panel = new QFrame(this);
-    panel->setObjectName(QStringLiteral("N19InfoPanel"));
-    panel->setStyleSheet(QStringLiteral("QFrame#N19InfoPanel { background-color: palette(window); "
-                                        "border: 1px solid palette(mid); }"));
+    auto *panel = new InfoPanel(this);
     auto *inner = new QVBoxLayout(panel);
-    inner->setContentsMargins(24, 16, 24, 16);
+    // 24 / 16 之外再让出描边那 1px——原样式表的 border 由 QStyleSheetStyle 计入
+    // box-model 内边距，自绘边框不吃布局，不让就比改前面大一圈
+    inner->setContentsMargins(25, 17, 25, 17);
     inner->setSpacing(8);
 
     m_title = new QLabel(panel);

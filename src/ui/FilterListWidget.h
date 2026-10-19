@@ -91,6 +91,10 @@ class FilterListWidget : public QGroupBox {
     // 编译串（只读预览行内容与 Apply 下发串同源）
     QString compiledString() const;
 
+  protected:
+    // 调色板 / 样式变更：当场重染四枚按钮并重设条目前景（本控件在设置对话框内常驻）
+    void changeEvent(QEvent *event) override;
+
   signals:
     // 任何用户侧变更（勾选 / 编辑 / 增删 / 移动 / 粘贴）统一发出
     void changed();
@@ -102,6 +106,8 @@ class FilterListWidget : public QGroupBox {
     // 守护对条目数据的写回（标红改 ForegroundRole 会再次触发 itemChanged）
     void refreshDerived();
     void updateButtons();
+    // 四枚按钮图标的唯一赋值点（初值与外观事件共用，幂等）
+    void retintIcons();
 
     QTreeWidget *m_tree = nullptr;
     QToolButton *m_addButton = nullptr;

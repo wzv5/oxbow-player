@@ -544,6 +544,8 @@ class PlaylistWidget : public QTabWidget {
     // ——N49 底部工具条——
     // 让位：压住内部页面栈的最大高度并把工具条摆到底部（含主动几何修正，§2.3）
     void reserveBottomBarSpace();
+    // N116：底栏两枚图标的唯一赋值点（初值与外观事件共用，幂等；构造期判空）
+    void retintIcons();
     // 正播中判据（按钮启用态与定位入口的守卫共用）：mpv 已注入、非空闲、path 非空
     bool hasPlayingItem() const;
     // 手动定位唯一入口：切到在播 tab 并把在播项选中滚动可见；忙时延后（§2.4）
@@ -761,6 +763,7 @@ class PlaylistWidget : public QTabWidget {
     QWidget *m_bottomBar = nullptr;
     QToolButton *m_locateButton = nullptr;
     QLineEdit *m_searchBox = nullptr;
+    QAction *m_searchAction = nullptr; // 搜索框装饰图标动作（图标由 retintIcons 供）
     // 内部页面栈缓存（QTabWidget 唯一的 QStackedWidget 子控件）；取不到时整个让位
     // 静默跳过，不引入崩溃面
     QStackedWidget *m_stack = nullptr;

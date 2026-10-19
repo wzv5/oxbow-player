@@ -28,6 +28,8 @@ class MpvBindingDialog : public QDialog {
     void showEvent(QShowEvent *event) override;
     // 记录器 Del / 退格 / Esc 清空该行而非记作键（同 N86）
     bool eventFilter(QObject *watched, QEvent *event) override;
+    // 调色板 / 样式变更重跑行视觉（解除编辑框 Text 色的构造期 pin）
+    void changeEvent(QEvent *event) override;
 
   private slots:
     void showContextMenu(const QPoint &viewportPos);

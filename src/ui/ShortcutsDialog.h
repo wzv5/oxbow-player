@@ -29,6 +29,8 @@ class ShortcutsDialog : public QDialog {
     void showEvent(QShowEvent *event) override;
     // Del / 退格 / Esc 清空该行而非记作快捷键
     bool eventFilter(QObject *watched, QEvent *event) override;
+    // 调色板 / 样式变更重跑行视觉（重算冲突 tint 与编辑框底色）
+    void changeEvent(QEvent *event) override;
 
   private slots:
     // 冲突校验 + 四情形落盘；返回 false 时 OK 不得关闭对话框

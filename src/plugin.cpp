@@ -247,7 +247,18 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle) {
         return 1; // 协议注册失败：让 mpv 记为脚本加载失败，比静默残缺更可诊断
 
     const QString configFile = resolveConfigFilePath();
-    auto *window = new MainWindow(controller, configFile, std::move(relay));
+
+    // N116：外观初始套用前移到入口——主窗构造（及其全部子控件）之前先按 ini 套样式与
+    // 配色。AppearanceManager 构造期在此捕获平台默认样式（先于任何 setStyle，Auto 语义
+    // 不变）；入口栈对象寿命覆盖 QApplication::exec()，主窗只收非拥有指针做运行期套用
+    AppearanceManager appearance;
+    {
+        QSettings s(configFile, QSettings::IniFormat);
+        appearance.apply(s.value(QStringLiteral("style")).toString(),
+                         s.value(QStringLiteral("colorScheme")).toString());
+    }
+
+    auto *window = new MainWindow(controller, &appearance, configFile, std::move(relay));
     controller->setParent(window);
 
     // 作为 GUI 宿主，让 mpv 在播放列表结束后保持运行而不是直接退出

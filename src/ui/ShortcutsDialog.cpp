@@ -197,6 +197,14 @@ QList<int> ShortcutsDialog::conflictRows() const {
     return rows;
 }
 
+// 冲突底色由 Base / Highlight 现算后写入条目并 pin 进编辑框，调色板变更不会自跟随；
+// 本对话框非模态、复用不重建，故外观事件到达时当场重算（m_table 守卫兜住建成前的事件）
+void ShortcutsDialog::changeEvent(QEvent *event) {
+    QDialog::changeEvent(event);
+    if ((event->type() == QEvent::PaletteChange || event->type() == QEvent::StyleChange) && m_table)
+        refreshRowVisuals();
+}
+
 void ShortcutsDialog::refreshRowVisuals() {
     // 两种信号独立叠加：加粗 = 与声明默认不同；高亮 = 冲突
     const QList<int> conflicts = conflictRows();

@@ -3,6 +3,7 @@
 #include "PlaylistDelegate.h"
 
 #include "PlaylistEntity.h"
+#include "PlaylistTheme.h"
 #include "Util.h"
 
 namespace {
@@ -40,9 +41,9 @@ void PlaylistDelegate::paint(QPainter *painter, const QStyleOptionViewItem &opti
 
     painter->save();
 
-    // 选中背景：浅灰平铺（维护者裁决，替代过重的系统高亮色）
+    // 选中背景：派生浅灰平铺（维护者裁决，替代过重的系统高亮色；随主题派生）
     if (option.state & QStyle::State_Selected)
-        painter->fillRect(option.rect, QColor(232, 232, 232));
+        painter->fillRect(option.rect, PlaylistTheme::selectionBackground(option.palette));
 
     int x = option.rect.left() + kMarginH;
     const int cy = option.rect.center().y();
@@ -54,13 +55,11 @@ void PlaylistDelegate::paint(QPainter *painter, const QStyleOptionViewItem &opti
     x += kIconSize + kItemPadding;
 
     QFontMetrics fm(option.font);
-    // 四色规则：播放失败红 / 正在播放降饱和蓝 / 选中黑 / 其余深灰；一律不用粗体
+    // 四色规则：播放失败红 / 正在播放蓝 / 选中 / 其余灰，随主题派生；一律不用粗体
     // （N104：错误优先于正播——两真同帧是"这条刚报 error、PlayingRole 还没等回显
     // 回落"，此刻 mpv 已跳走，红比蓝贴近事实）
-    const QColor textColor = failed                                    ? QColor(0xC6, 0x28, 0x28)
-                             : playing                                 ? QColor(0x19, 0x76, 0xD2)
-                             : (option.state & QStyle::State_Selected) ? QColor(Qt::black)
-                                                                       : QColor(0x60, 0x60, 0x60);
+    const QColor textColor = PlaylistTheme::rowForeground(option.palette, failed, playing,
+                                                          option.state & QStyle::State_Selected);
     painter->setFont(option.font);
     painter->setPen(textColor);
 

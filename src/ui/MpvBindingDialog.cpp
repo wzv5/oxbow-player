@@ -503,6 +503,14 @@ int MpvBindingDialog::builtinState(const Row &row, const QHash<QString, int> &ef
                                                                                 : StateCovered;
 }
 
+// 行刷新对每个键位编辑框显式 setPalette 了 Text 色，构造期 pin 之后不会自跟随；
+// 本对话框非模态、复用不重建，故外观事件到达时当场重算（m_table 守卫兜住建成前的事件）
+void MpvBindingDialog::changeEvent(QEvent *event) {
+    QDialog::changeEvent(event);
+    if ((event->type() == QEvent::PaletteChange || event->type() == QEvent::StyleChange) && m_table)
+        refreshRowVisuals();
+}
+
 void MpvBindingDialog::refreshRowVisuals() {
     const bool wasBatch = m_batchUpdating;
     m_batchUpdating = true;

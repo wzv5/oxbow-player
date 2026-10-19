@@ -7,6 +7,7 @@
 #include "PlaylistDelegate.h"
 #include "PlaylistListView.h" // N57 §2.2：视图即状态载体，本页所有列表页由 createView 出生
 #include "PlaylistRegistry.h" // N57 §2.3：默认 tab 的列表与默认名出口
+#include "PlaylistTheme.h"
 #include "ServiceRegistry.h"
 #include "Util.h"
 #include "mpvbridge/MpvController.h"
@@ -14,6 +15,7 @@
 #include "streams/StreamTransit.h"
 #include "ui/ListSettingsDialog.h"
 #include "ui/LoadingOverlay.h"
+#include "ui/ThemedIconEngine.h"
 
 PlaylistWidget::PlaylistWidget(const QString &configFile, std::shared_ptr<ServiceRegistry> registry,
                                std::shared_ptr<PlaylistRegistry> lists, QWidget *parent)
@@ -61,13 +63,12 @@ PlaylistWidget::PlaylistWidget(const QString &configFile, std::shared_ptr<Servic
     m_stack =
         findChild<QStackedWidget *>(); // 内部页面栈（QTabWidget 唯一的 QStackedWidget 子控件）
     m_bottomBar = new QWidget(this);
-    // 底色取 base（与列表视口同色——工具条在视觉上并入内容区，内容区整体再与主窗口
-    // 底色区分）。样式表背景即不透明底，同样盖住样式画的 tab pane 边框线（§2.1）；
-    // 颜色取调色板角色以适应浅深主题，写法沿用 LoadingOverlay 的 QFrame#N19InfoPanel
-    // 先例。列表自身的 StyledPanel 边框即列表与工具条之间的分隔，不再额外画线
-    m_bottomBar->setObjectName(QStringLiteral("PlaylistBottomBar"));
-    m_bottomBar->setStyleSheet(
-        QStringLiteral("QWidget#PlaylistBottomBar { background-color: palette(base); }"));
+    // 底色走背景角色 Base（与列表视口同色——工具条在视觉上并入内容区，内容区整体再与
+    // 主窗口底色区分），由 Qt 随当前调色板自绘，运行期换配色零接线；不透明底同样盖住
+    // 样式画的 tab pane 边框线（§2.1）。列表自身的 StyledPanel 边框即列表与工具条之间
+    // 的分隔，不再额外画线
+    m_bottomBar->setAutoFillBackground(true);
+    m_bottomBar->setBackgroundRole(QPalette::Base);
     auto *barLayout = new QHBoxLayout(m_bottomBar);
     // 四周留 2、控件间距 2（默认边距约 9、默认间距约 6 对 16px 图标与 24px 条目行高
     // 明显过大）。整行高 = 控件高 + 4 = 28（条目行 24）
@@ -84,7 +85,6 @@ PlaylistWidget::PlaylistWidget(const QString &configFile, std::shared_ptr<Servic
     // 不设 iconSize 时 QToolButton 取样式的工具栏图标度量（常为 24px 而非 16px），
     // 故钉死显示尺寸；素材是矢量，缩放不失真，这里只定观感大小（§2.1）
     m_locateButton->setIconSize(QSize(16, 16));
-    m_locateButton->setIcon(QIcon(App::iconPath(App::iconLocatePlaying())));
     m_locateButton->setToolTip(tr("Locate Playing Item")); // §2.8：由被删的右键菜单项平移而来
     connect(m_locateButton, &QToolButton::clicked, this, &PlaylistWidget::locatePlayingItem);
     m_searchBox = new QLineEdit(m_bottomBar);
@@ -92,8 +92,8 @@ PlaylistWidget::PlaylistWidget(const QString &configFile, std::shared_ptr<Servic
     m_searchBox->setClearButtonEnabled(true);
     // 框内右侧装饰图标：Qt 为其预留位置（文字不压图、长文本滚动也不盖图），与清除
     // 按钮并存时排在清除按钮左侧。只作标识——不接 triggered、不设 tooltip、不置灰，
-    // 点击无行为；半透明已烘进素材的 fill-opacity，代码不再合成（§2.2）
-    m_searchBox->addAction(QIcon(App::iconPath(App::iconSearch())), QLineEdit::TrailingPosition);
+    // 点击无行为（§2.2）。QAction 存成员，图标由 retintIcons 供（重染时原地 setIcon）
+    m_searchAction = m_searchBox->addAction(QIcon(), QLineEdit::TrailingPosition);
     // §2.7：焦点在搜索框时认领按键（与列表同为 ShortcutOverride 认领，同一实现）
     m_searchBox->installEventFilter(this);
     connect(m_searchBox, &QLineEdit::returnPressed, this, &PlaylistWidget::searchNextInCurrentList);
@@ -119,6 +119,7 @@ PlaylistWidget::PlaylistWidget(const QString &configFile, std::shared_ptr<Servic
         abandonJob();
     });
     reserveBottomBarSpace(); // N49：让位初算（幂等，此后由各重算点维护）
+    retintIcons();           // 底栏两枚图标初值（与主题切换后的重染同一出口）
     updateBottomBarState();  // N49：按钮启用态初值
 }
 
@@ -3641,7 +3642,21 @@ bool PlaylistWidget::event(QEvent *event) {
     // StyleChange 可能改字体与边框，进而改工具条高度与 stack 的 y 偏移
     if (event->type() == QEvent::StyleChange)
         reserveBottomBarSpace();
+    // 外观事件重染底栏图标（底色走背景角色自跟随，无须这里管），与上面的让位重算互不牵连
+    if (event->type() == QEvent::PaletteChange || event->type() == QEvent::StyleChange)
+        retintIcons();
     return handled;
+}
+
+// 底栏两枚图标的唯一赋值点——图标内容不随调色板自绘，初值与外观事件共用此出口（幂等）。
+// 底为 Base 故染色取 Text；搜索装饰另压半档 alpha，还原旧素材 fill-opacity 的观感
+void PlaylistWidget::retintIcons() {
+    if (!m_locateButton || !m_searchAction)
+        return;
+    QColor tint = palette().color(QPalette::Text);
+    m_locateButton->setIcon(Ui::themedIcon(App::iconPath(App::iconLocatePlaying()), tint));
+    tint.setAlpha(128);
+    m_searchAction->setIcon(Ui::themedIcon(App::iconPath(App::iconSearch()), tint));
 }
 
 // 正播中判据（§2.4）：按钮启用态与定位入口的守卫共用，判据只此一份
@@ -3837,14 +3852,14 @@ void PlaylistWidget::showPropertiesDialog(const PlaylistEntity::Ptr &entityPtr) 
             view->document()->setDefaultTextOption(opt);
         }
         QTextCursor cur(view->document());
-        // 配色与播放列表三色体系对齐（维护者指定）：
-        // 属性名=正播项蓝、属性值=普通未选灰、组标题保持浅灰
+        // 配色与播放列表三色体系对齐（维护者指定）：属性名=正播项蓝、
+        // 属性值=普通未选灰、组标题浅灰；随主题派生（构建期现取，无跟随接线）
         QTextCharFormat nameFmt;
-        nameFmt.setForeground(QColor(0x19, 0x76, 0xD2));
+        nameFmt.setForeground(PlaylistTheme::accentColor(view->palette()));
         QTextCharFormat valueFmt;
-        valueFmt.setForeground(QColor(0x60, 0x60, 0x60));
+        valueFmt.setForeground(PlaylistTheme::propValueForeground(view->palette()));
         QTextCharFormat headFmt; // 分组标题：浅灰
-        headFmt.setForeground(QColor(0x90, 0x90, 0x90));
+        headFmt.setForeground(PlaylistTheme::groupHeadForeground(view->palette()));
 
         auto appendRow = [&cur, &nameFmt, &valueFmt](const Row &row) {
             cur.setCharFormat(nameFmt);
@@ -4186,11 +4201,11 @@ void PlaylistWidget::showContainerPropertiesDialog(const PlaylistProvider::Conta
         view->document()->setDefaultTextOption(opt);
     }
     QTextCursor cur(view->document());
-    // 配色与实体属性对话框一致：属性名蓝、属性值灰
+    // 配色与实体属性对话框一致：属性名蓝、属性值灰；随主题派生（构建期现取）
     QTextCharFormat nameFmt;
-    nameFmt.setForeground(QColor(0x19, 0x76, 0xD2));
+    nameFmt.setForeground(PlaylistTheme::accentColor(view->palette()));
     QTextCharFormat valueFmt;
-    valueFmt.setForeground(QColor(0x60, 0x60, 0x60));
+    valueFmt.setForeground(PlaylistTheme::propValueForeground(view->palette()));
     for (const Row &row : rows) {
         cur.setCharFormat(nameFmt);
         cur.insertText(row.prop + QStringLiteral(":"));

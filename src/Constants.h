@@ -62,11 +62,19 @@ inline QString defaultIconPack() { return QStringLiteral("icons8"); }
 inline QString iconLocatePlaying() { return QStringLiteral("locate-playing"); }
 inline QString iconSearch() { return QStringLiteral("search"); }
 inline QString iconPlaylist() { return QStringLiteral("playlist"); }
-// 可切换按钮的选中态：素材是矢量，换色只能另出一张（染色会把选中态钉成位图）
-inline QString iconPlaylistOn() { return QStringLiteral("playlist-on"); }
 inline QString iconSettings() { return QStringLiteral("settings"); }
 inline QString iconFilterAdd() { return QStringLiteral("filter-add"); }
 inline QString iconFilterRemove() { return QStringLiteral("filter-remove"); }
+inline QString iconPlay() { return QStringLiteral("play"); }
+inline QString iconPause() { return QStringLiteral("pause"); }
+inline QString iconStop() { return QStringLiteral("stop"); }
+inline QString iconSkipBackward() { return QStringLiteral("skip-backward"); }
+inline QString iconSkipForward() { return QStringLiteral("skip-forward"); }
+inline QString iconStream() { return QStringLiteral("stream"); }
+inline QString iconVolume() { return QStringLiteral("volume"); }
+inline QString iconVolumeMuted() { return QStringLiteral("volume-muted"); }
+inline QString iconFilterUp() { return QStringLiteral("filter-up"); }
+inline QString iconFilterDown() { return QStringLiteral("filter-down"); }
 // 解析单点：语义键 → 资源路径。将来加"图标包"设置项时只改 defaultIconPack 的取值来源
 inline QString iconPath(const QString &key) {
     return QStringLiteral(":/icons/%1/%2.svg").arg(defaultIconPack(), key);

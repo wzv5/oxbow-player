@@ -2,6 +2,7 @@
 
 #include "Constants.h"
 #include "FilterListWidget.h"
+#include "ThemedIconEngine.h"
 
 // ——滤镜串编译 / 解析纯函数实现——
 
@@ -234,7 +235,6 @@ FilterListWidget::FilterListWidget(const QString &title, const QList<FilterPrese
     buttons->setSpacing(4);
 
     m_addButton = new QToolButton(this);
-    m_addButton->setIcon(QIcon(App::iconPath(App::iconFilterAdd())));
     m_addButton->setToolTip(tr("Add Filter"));
     m_addButton->setPopupMode(QToolButton::InstantPopup);
     QMenu *presetMenu = new QMenu(m_addButton);
@@ -258,19 +258,17 @@ FilterListWidget::FilterListWidget(const QString &title, const QList<FilterPrese
     m_addButton->setMenu(presetMenu);
     buttons->addWidget(m_addButton);
 
-    // 条目操作：图标按钮 + tooltip（增删取图标包素材，上下移用 Qt 内置标准图标）
+    // 条目操作：图标按钮 + tooltip（四枚统一走图标包素材 + 运行期染色）
     m_removeButton = new QToolButton(this);
-    m_removeButton->setIcon(QIcon(App::iconPath(App::iconFilterRemove())));
     m_removeButton->setToolTip(tr("Remove selected entries"));
     buttons->addWidget(m_removeButton);
     m_upButton = new QToolButton(this);
-    m_upButton->setIcon(style()->standardIcon(QStyle::SP_ArrowUp));
     m_upButton->setToolTip(tr("Move up"));
     buttons->addWidget(m_upButton);
     m_downButton = new QToolButton(this);
-    m_downButton->setIcon(style()->standardIcon(QStyle::SP_ArrowDown));
     m_downButton->setToolTip(tr("Move down"));
     buttons->addWidget(m_downButton);
+    retintIcons(); // 四枚图标初值（与主题切换后的重染同一出口）
     buttons->addStretch(1);
 
     QPushButton *copyButton = new QPushButton(tr("Copy String"), this);
@@ -377,10 +375,11 @@ void FilterListWidget::appendEntries(const QStringList &texts) {
 
 void FilterListWidget::refreshDerived() {
     // 顶层逗号标红（就地提示，不阻断）：顶层逗号只能是条目分隔符，值中的逗号
-    // 必须用引号包裹；其余条目恢复树控件的默认前景色（取 m_tree 而非本分组框
-    // 的调色板——条目由树控件绘制，两者的 Text 角色在自定义主题下未必同源）
+    // 必须用引号包裹；其余条目恢复默认前景。前景取本控件调色板的 Text——
+    // 条目由树控件绘制，但调色板事件在控件树里的传播次序不定，本控件的派发
+    // 早于子控件且届时自身已解算完毕（现状两者恒同值）
     m_blockChanged = true;
-    const QBrush normalText = m_tree->palette().text();
+    const QBrush normalText = palette().text();
     for (int i = 0; i < m_tree->topLevelItemCount(); ++i) {
         QTreeWidgetItem *it = m_tree->topLevelItem(i);
         const QBrush brush = hasTopLevelComma(it->text(1)) ? QBrush(Qt::red) : normalText;
@@ -402,4 +401,25 @@ void FilterListWidget::updateButtons() {
     m_removeButton->setEnabled(hasSelection);
     m_upButton->setEnabled(movable && row > 0);
     m_downButton->setEnabled(movable && row >= 0 && row < count - 1);
+}
+
+// 四枚按钮图标的唯一赋值点——图标内容不随调色板自绘，初值与外观事件共用此出口（幂等）
+void FilterListWidget::retintIcons() {
+    const QColor tint = palette().color(QPalette::WindowText);
+    m_addButton->setIcon(Ui::themedIcon(App::iconPath(App::iconFilterAdd()), tint));
+    m_removeButton->setIcon(Ui::themedIcon(App::iconPath(App::iconFilterRemove()), tint));
+    m_upButton->setIcon(Ui::themedIcon(App::iconPath(App::iconFilterUp()), tint));
+    m_downButton->setIcon(Ui::themedIcon(App::iconPath(App::iconFilterDown()), tint));
+}
+
+// 本控件在设置对话框内常驻，主题切换发生时可能仍在屏上：当场重染四枚并重算条目前景。
+// m_preview 是本控件重算路径上最后建成的成员，判它即兜住控件树建成前的样式事件
+void FilterListWidget::changeEvent(QEvent *event) {
+    QGroupBox::changeEvent(event);
+    if (event->type() != QEvent::PaletteChange && event->type() != QEvent::StyleChange)
+        return;
+    if (!m_preview)
+        return;
+    retintIcons();
+    refreshDerived();
 }
