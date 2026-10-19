@@ -147,6 +147,17 @@ QList<SettingChoice> stepChoices() {
     return l;
 }
 
+// N113：OSD 形态四档（插件 INI 后端，写串）——顺序即 UI 顺序，值与 OsdController
+// 的 modeFromIniValue 对表
+QList<SettingChoice> osdModeChoices() {
+    return {
+        {QT_TRANSLATE_NOOP("SettingsDialog", "Off"), QStringLiteral("off"), {}},
+        {QT_TRANSLATE_NOOP("SettingsDialog", "mpv overlay"), QStringLiteral("overlay"), {}},
+        {QT_TRANSLATE_NOOP("SettingsDialog", "mpv show-text"), QStringLiteral("show-text"), {}},
+        {QT_TRANSLATE_NOOP("SettingsDialog", "Standalone"), QStringLiteral("standalone"), {}},
+    };
+}
+
 // 语言 native 显示名（迁自原 populateLanguageCombo 的显示逻辑）
 QString nativeLanguageDisplayName(const QString &loc) {
     if (loc == QLatin1String("en"))
@@ -318,6 +329,18 @@ const QList<SettingCategory> &settingCatalog() {
                       .range = {0, App::recursiveDepthLimitMax()},
                       .note = QT_TRANSLATE_NOOP(
                           "SettingsDialog", "For directory enumeration including subdirectories")},
+                     // N113：OSD 形态四档（插件 INI 后端；只管插件自己的消息，mpv 内置
+                     // OSD 不受影响）。位置取 Basic 末位，不打散音量步进与递归深度的
+                     // 既有相邻关系
+                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "OSD"),
+                      .widget = WidgetKind::Combo,
+                      .iniKey = "osdMode",
+                      .choices = osdModeChoices,
+                      .fallback = QStringLiteral("overlay"),
+                      .note = QT_TRANSLATE_NOOP(
+                          "SettingsDialog",
+                          "Controls the plugin's own OSD only; mpv's built-in OSD is "
+                          "unaffected")},
                  }},
             // ② 播放 —— mpv 选项（写 mpv.conf + 下发）
             {.title = QT_TRANSLATE_NOOP("SettingsDialog", "Playback"),

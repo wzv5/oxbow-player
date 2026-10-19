@@ -97,6 +97,7 @@
 #include <QPromise>
 #include <QPushButton>
 #include <QRadioButton>
+#include <QRawFont>
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QSet>

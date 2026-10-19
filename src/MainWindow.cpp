@@ -28,6 +28,7 @@
 #include "ui/FilterListWidget.h"
 #include "ui/MpvBindingDialog.h" // N89：mpv 键位编辑（input.conf）
 #include "ui/NavigatorPanel.h"
+#include "ui/OsdController.h" // N113：三形态 OSD 控制器
 #include "ui/SettingsDialog.h"
 #include "ui/ShortcutsDialog.h" // N86
 #include "ui/ThumbWindow.h"     // N107：缩略图宿主窗
@@ -683,6 +684,12 @@ MainWindow::MainWindow(MpvController *controller, const QString &configFile,
     // N67：视频区光标自动隐藏——构造即接管事件过滤；播放态由 connectController
     // 的两条转发 connect 喂入
     m_cursorHider = new CursorAutoHider(m_videoWidget, this);
+
+    // N113：OSD 控制器——紧跟视频区装配就位。必须早于 ThumbWindow 创建（其内部
+    // hostWid() 会触发主窗 QMoveEvent，moveEvent 里的 reposition 要求 m_osd 已
+    // 存在）；这些调用点不做空指针容错，装配序就是防线，错序靠崩溃显影
+    m_osd = new OsdController(this, m_videoWidget, m_controller);
+
     // N66 §三-4：弹层关闭补重评经 qApp 级过滤器观察——观察器为独立对象（原因见
     // PopupCloseWatch 类注释），主窗 eventFilter 只服务对象级过滤
     qApp->installEventFilter(new PopupCloseWatch([this] { reevaluateOverlays(); }, this));
@@ -1001,7 +1008,7 @@ void MainWindow::createMenus() {
     connect(m_muteAction, &QAction::triggered, this, [this] {
         const bool target = !m_controller->propertyFlag(QStringLiteral("mute"), false);
         m_controller->setProperty(QStringLiteral("mute"), target);
-        showOsd(target ? tr("Mute: On") : tr("Mute: Off"));
+        m_osd->show(target ? tr("Mute: On") : tr("Mute: Off"));
     });
     // N6：速度控制组
     playMenu->addSeparator();
@@ -1161,20 +1168,10 @@ void MainWindow::connectController() {
     connect(m_controller, &MpvController::pauseChanged, this, [this](bool paused) {
         m_playButton->setIcon(
             style()->standardIcon(paused ? QStyle::SP_MediaPlay : QStyle::SP_MediaPause));
-        // N7 #1：播放↔暂停 OSD（仅播放态互切，起停由 #2/#3 去重覆盖）
-        if (m_playlistPos >= 0) {
-            // B14：视频区单击引发的回声在此一次性吞咽——暂停 OSD 由单击
-            // 超时补显，双击场景（含恢复回声）全程静默；标志随按压周期复位
-            if (m_suppressPlayPauseOsd) {
-                m_suppressPlayPauseOsd = false;
-                return;
-            }
-            m_pendingPlayPause = paused ? tr("Pause") : tr("Play");
-            if (!m_osdCoalescePending) {
-                m_osdCoalescePending = true;
-                QTimer::singleShot(0, this, &MainWindow::flushOsd);
-            }
-        }
+        // N7 #1：播放↔暂停 OSD（仅播放态互切，起停由 #2/#3 去重覆盖）。单击引发的
+        // 回声同样入队，OSD 与属性回声同刻出现（N113）
+        if (m_playlistPos >= 0)
+            m_osd->queue(OsdController::Priority::PlayPause, paused ? tr("Pause") : tr("Play"));
     });
     connect(m_controller, &MpvController::volumeChanged, this, [this](double v) {
         QSignalBlocker blocker(m_volumeSlider);
@@ -1285,13 +1282,8 @@ void MainWindow::connectController() {
             if (!m_closing)
                 setWindowTitle(App::name());
             // N7 #3：停止 OSD（单源去重，playlistPos -1 不触发，以 m_playlistPos>=0 为守卫）
-            if (m_playlistPos >= 0) {
-                m_pendingStop = tr("Stop");
-                if (!m_osdCoalescePending) {
-                    m_osdCoalescePending = true;
-                    QTimer::singleShot(0, this, &MainWindow::flushOsd);
-                }
-            }
+            if (m_playlistPos >= 0)
+                m_osd->queue(OsdController::Priority::Stop, tr("Stop"));
         }
     });
 
@@ -1533,6 +1525,12 @@ void MainWindow::onPluginIniKeysChanged(const QStringList &keys) {
                 m_thumbWatch->setEnabled(on);
             }
         }
+        // N113：OSD 形态运行期切换——同值 setMode 内部即返（零副作用）；离开当前
+        // 形态的清除由控制器自管，立即生效、无须重启
+        if (keys.contains(QStringLiteral("osdMode"))) {
+            m_osd->setMode(OsdController::modeFromIniValue(
+                settings.value(QStringLiteral("osdMode"), QStringLiteral("overlay")).toString()));
+        }
     }
 }
 
@@ -1644,7 +1642,7 @@ QImage MainWindow::grabScreenshotOrNotify() {
     // 两个入口槽只看空图短路
     const QImage img = m_controller->screenshotRaw();
     if (img.isNull())
-        showOsd(tr("No screenshot available"));
+        m_osd->show(tr("No screenshot available"));
     return img;
 }
 
@@ -1653,7 +1651,7 @@ void MainWindow::copyScreenshotToClipboard() {
     if (img.isNull())
         return;
     QApplication::clipboard()->setImage(img); // 与 FilterListWidget / PlaylistWidget 同源
-    showOsd(tr("Screenshot copied to clipboard"));
+    m_osd->show(tr("Screenshot copied to clipboard"));
 }
 
 void MainWindow::saveScreenshotToFile() {
@@ -1731,10 +1729,10 @@ void MainWindow::saveScreenshotToFile() {
     QImageWriter writer(path, format);
     if (!writer.write(img)) {
         qDebug() << "[oxbow] screenshot write failed:" << writer.errorString() << path;
-        showOsd(tr("Failed to save screenshot"));
+        m_osd->show(tr("Failed to save screenshot"));
         return;
     }
-    showOsd(tr("Screenshot saved"));
+    m_osd->show(tr("Screenshot saved"));
 }
 
 void MainWindow::playAt(int index) {
@@ -1874,7 +1872,7 @@ void MainWindow::seekReleased() {
     // N7 #7：进度跳转 OSD（固定 hh:mm:ss）。N8 Part5：duration<=0 分支已删——
     // 停止态滑条禁用后不可达，残余场景（直播流）下 absolute-percent 本就无效
     if (m_duration > 0.0)
-        showOsd(
+        m_osd->show(
             tr("Seek: %1").arg(Util::formatTimePercent(m_duration * percent / 100.0, m_duration)));
 }
 
@@ -2115,129 +2113,10 @@ void MainWindow::repositionNavigator() {
     m_navigator->refresh(); // 渲染区域尺寸可能已变，视口矩形需重算
 }
 
-// ---- N7：VideoOverlay 统一 OSD（A3 顶级 Tool 浮窗）----
-namespace {
-class OsdLabel : public QLabel {
-  public:
-    using QLabel::QLabel;
-
-  protected:
-    void paintEvent(QPaintEvent *) override {
-        QPainter p(this);
-        p.setRenderHints(QPainter::Antialiasing | QPainter::TextAntialiasing);
-        const QString text = this->text();
-        if (text.isEmpty())
-            return;
-        QFont f = font();
-        f.setPointSize(20);
-        f.setBold(true);
-        p.setFont(f);
-        QFontMetrics fm(f);
-        const int padX = 10;
-        const int padY = 6;
-        QPainterPath path;
-        path.addText(padX, padY + fm.ascent(), f, text);
-        QPen pen(Qt::black, 5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-        p.strokePath(path, pen);
-        p.fillPath(path, QBrush(Qt::white));
-    }
-    QSize sizeHint() const override {
-        QFont f = font();
-        f.setPointSize(20);
-        f.setBold(true);
-        QFontMetrics fm(f);
-        const QString t = text();
-        const int w = fm.horizontalAdvance(t) + 20;
-        const int h = fm.height() + 12;
-        return QSize(w, h);
-    }
-};
-} // namespace
-
-void MainWindow::ensureVideoOverlay() {
-    if (m_videoOverlay)
-        return;
-    Qt::WindowFlags overlayFlags = Qt::Tool | Qt::FramelessWindowHint |
-                                   Qt::WindowDoesNotAcceptFocus | Qt::WindowTransparentForInput;
-#ifndef Q_OS_WIN
-    // Linux/X11：合成器对受管 Tool 窗施加"保持在屏内"的保屏钳制（四向、逐轴），
-    // 主窗拖出工作区后 OSD 冻在屏缘不再跟随；绕过窗口管理器即脱离该路径，恢复
-    // 自由定位。Windows 的 SetWindowPos 无此钳制，不引入该 hint（语义也与 X11 不同）
-    overlayFlags |= Qt::X11BypassWindowManagerHint;
-#endif
-    m_videoOverlay = new QWidget(this, overlayFlags);
-    m_videoOverlay->setAttribute(Qt::WA_TranslucentBackground);
-    m_videoOverlay->setAttribute(Qt::WA_ShowWithoutActivating);
-    m_videoOverlay->setAttribute(Qt::WA_TransparentForMouseEvents, true);
-    // 容器透明，内部控件自绘
-    auto *layout = new QVBoxLayout(m_videoOverlay);
-    layout->setContentsMargins(12, 12, 12, 12);
-    layout->setSpacing(0);
-    // B12：SetNoConstraint——浮窗几何恒由 setGeometry(视频区矩形) 决定，
-    // 不被内容 sizeHint 撑大；超宽文本（长文件名）由父窗口边界自然硬切，
-    // 杜绝默认约束模式把内容最小尺寸施加为顶级窗口尺寸而压过播放列表
-    layout->setSizeConstraint(QLayout::SetNoConstraint);
-    m_osdLabel = new OsdLabel(m_videoOverlay);
-    m_osdLabel->setAttribute(Qt::WA_TransparentForMouseEvents, true);
-    // N7：无背景，仅描边白字（20pt），不使用 style sheet
-    m_osdLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-    m_osdLabel->hide();
-    layout->addWidget(m_osdLabel, 0, Qt::AlignTop | Qt::AlignLeft);
-    layout->addStretch(1);
-    m_osdTimer = new QTimer(this);
-    m_osdTimer->setSingleShot(true);
-    connect(m_osdTimer, &QTimer::timeout, this, [this] {
-        if (m_osdLabel)
-            m_osdLabel->hide();
-        if (m_videoOverlay && !m_osdLabel->isVisible())
-            m_videoOverlay->hide();
-    });
-}
-
-void MainWindow::repositionVideoOverlay() {
-    if (!m_videoOverlay || !m_videoWidget)
-        return;
-    const QPoint globalPos = m_videoWidget->mapToGlobal(QPoint(0, 0));
-    m_videoOverlay->setGeometry(QRect(globalPos, m_videoWidget->size()));
-}
-
-void MainWindow::showOsd(const QString &text) {
-    // N68：小窗期不显示 OSD（客户区过小，叠加层可读性差）；被抑制的消息不排队、
-    // 不补显——暂停提示 / 书签确认等均有时效，退出小窗后补显已失意义，故
-    // 退出路径不涉及 OSD 恢复
-    if (m_mini)
-        return;
-    ensureVideoOverlay();
-    m_osdLabel->setText(text);
-    m_osdLabel->adjustSize();
-    repositionVideoOverlay();
-    m_videoOverlay->show();
-    m_osdLabel->show();
-    m_videoOverlay->raise();
-    m_osdTimer->start(2000);
-}
-
-void MainWindow::flushOsd() {
-    m_osdCoalescePending = false;
-    // 优先级：#2 起播/切文件 > #3 停止 > #1 播放/暂停
-    QString text;
-    if (!m_pendingNowPlaying.isEmpty())
-        text = m_pendingNowPlaying;
-    else if (!m_pendingStop.isEmpty())
-        text = m_pendingStop;
-    else if (!m_pendingPlayPause.isEmpty())
-        text = m_pendingPlayPause;
-    m_pendingNowPlaying.clear();
-    m_pendingStop.clear();
-    m_pendingPlayPause.clear();
-    if (!text.isEmpty())
-        showOsd(text);
-}
-
 void MainWindow::moveEvent(QMoveEvent *event) {
     QMainWindow::moveEvent(event);
     repositionNavigator();
-    repositionVideoOverlay();
+    m_osd->reposition();
     repositionFullscreenOverlays(); // N66：全屏期两条带贴边跟随
     if (m_thumbWatch)
         m_thumbWatch->notifyLeft(); // N107 §2：主窗挪位使热区挪位，无事件按"已离开"起复核
@@ -2250,7 +2129,7 @@ void MainWindow::moveEvent(QMoveEvent *event) {
 void MainWindow::resizeEvent(QResizeEvent *event) {
     QMainWindow::resizeEvent(event);
     repositionNavigator();
-    repositionVideoOverlay();
+    m_osd->reposition();
     repositionFullscreenOverlays(); // N66：全屏期两条带贴边跟随
 #if !defined(Q_OS_WIN) || defined(OXBOW_PUREQT)
     if (m_mini)
@@ -2317,7 +2196,7 @@ void MainWindow::syncVideoGeometry() {
         const QPoint origin = m_videoPlaceholder->mapTo(this, QPoint(0, 0));
         m_videoWidget->setGeometry(QRect(origin, m_videoPlaceholder->size()));
     }
-    repositionVideoOverlay();
+    m_osd->reposition();
     repositionFullscreenOverlays(); // N66：两条带几何与视频区对位同源（§三-3 挂载点并列）
 }
 
@@ -2344,7 +2223,7 @@ void MainWindow::setFullscreenPlaylistEdgeEnabled(bool enabled) {
     reevaluateOverlays(); // 关闭且未显示 / 开启两档：按光标位置与新允许位定态
 }
 
-// §三-2：两个宿主浮窗按需创建（同 ensureNavigator / ensureVideoOverlay 的生命周期：
+// §三-2：两个宿主浮窗按需创建（同 ensureNavigator / OsdController::ensureOverlay 的生命周期：
 // 首次进全屏才构造，成员指针为 null 即未创建）。焦点标志两窗分叉（§二-1）：控制栏带
 // WindowDoesNotAcceptFocus（控件全 NoFocus 无须键盘）；播放列表不带——搜索框与列表
 // 键盘导航需要激活窗口，点它成为活动窗口后快捷键经 Qt::Tool + parent 回落仍作用主窗
@@ -2480,8 +2359,8 @@ void MainWindow::evaluateOverlayVisibility(const QPoint &clientPos) {
 }
 
 // §三-3：两条带几何——控制栏贴底满宽高 h；播放列表贴右满高宽 m_fsPlaylistWidth
-// （钳制在面板下限与客户区宽 50%，§二-8）。挂载点与 repositionVideoOverlay 完全并列。
-// 顶级浮窗 setGeometry 取全局屏幕坐标（repositionVideoOverlay 先 mapToGlobal 同口径），
+// （钳制在面板下限与客户区宽 50%，§二-8）。挂载点与 OSD 叠加窗重挂（m_osd->reposition）完全并列。
+// 顶级浮窗 setGeometry 取全局屏幕坐标（OsdController::reposition 先 mapToGlobal 同口径），
 // 故按主窗客户区的全局矩形定位——本地 rect 只在全屏所在屏原点恰为 (0,0) 时数值巧合
 // 相等，副屏下两条带会整体漂到主屏原点
 void MainWindow::repositionFullscreenOverlays() {
@@ -3274,25 +3153,30 @@ void MainWindow::toggleMini() {
     m_controller->setProperty(QStringLiteral("fullscreen"), false);
     // 同一收口喂给光标行为机：进小窗即解除布防并恢复已藏的指针，退出重新计时长
     m_cursorHider->setMini(m_mini);
+    // N68/N113：小窗进出同一收口喂 OSD 控制器——抑制期消息照收照丢、不补显
+    m_osd->setSuppressed(m_mini);
 }
 
-// 实时读 mpv 的 pause（缓存可能滞后一个事件周期）；读取失败按已暂停处理，
-// 走延迟路径更安全
-bool MainWindow::isPaused() { return m_controller->propertyFlag(QStringLiteral("pause"), true); }
-
-// 单击定时器超时：确非双击，按按压来源分流收尾。
-// 播放态点击（B14）：暂停已即时生效，此处补显被吞咽的暂停 OSD；
-// 暂停/停止态点击：执行延迟的恢复/开播动作
+// 单击定时器超时：确非双击，执行 press 记下的动作意图（N113：press 不碰 mpv）。
+// InTrackToggle：仅当此刻仍在播放条目上下文才互切——窗口期内文件播完或被停止的，
+// "暂停"意图已失效，什么都不做（否则会走停止态开播路径意外重新开播）；窗口期内
+// pause 被别的路径翻转的，照旧再切一次（与空格 / 按钮的互切同形，不为此加守卫）。
+// StoppedStart：停止态开播；窗口期内已被起播则等价"再切一次"
 void MainWindow::onVideoClickTimeout() {
-    if (!m_clickActionPending)
+    if (m_clickAction == ClickAction::None)
         return;
-    m_clickActionPending = false;
-    if (m_pendingPauseRestore) {
-        // 实时状态校验：防窗口期内空格键反向操作后错显"暂停"
-        if (isPaused())
-            showOsd(tr("Pause"));
-    } else {
+    const ClickAction action = m_clickAction;
+    m_clickAction = ClickAction::None;
+    switch (action) {
+    case ClickAction::InTrackToggle:
+        if (m_playlistPos >= 0)
+            togglePause();
+        break;
+    case ClickAction::StoppedStart:
         togglePause();
+        break;
+    case ClickAction::None:
+        break;
     }
 }
 
@@ -3427,34 +3311,19 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
                 fw->clearFocus();
             if (event->type() == QEvent::MouseButtonDblClick) {
                 m_clickTimer->stop();
-                m_clickActionPending = false;
-                if (m_pendingPauseRestore) {
-                    m_pendingPauseRestore = false;
-                    m_controller->setProperty(QStringLiteral("pause"), false); // 恢复播放
-                }
+                m_clickAction = ClickAction::None;
                 toggleFullscreen();
                 break;
             }
             // "定时器未活跃"守卫：双击间隔内带位移的第二 press 不重启流程
             if (m_clickTimer->isActive())
                 break;
-            // 入口无条件复位各标志：状态只在单轮 press→(双击|超时)
-            // 生命周期内存活，杜绝上轮残留泄漏进本轮
-            m_pendingPauseRestore = false;
-            m_clickActionPending = false;
-            m_suppressPlayPauseOsd = false;
-            if (m_playlistPos >= 0 && !isPaused()) {
-                // 播放中：立即暂停（单击终态不变），OSD 延迟到超时补显；
-                // 双击则由恢复回声吞咽实现全程静默（B14）。
-                // 置 pending 使超时门闸放行（按来源分流补显/动作）
-                togglePause();
-                m_pendingPauseRestore = true;
-                m_clickActionPending = true;
-                m_suppressPlayPauseOsd = true;
-            } else {
-                // 暂停/停止态：延迟到超时执行，避免误开播后抵消的音频闪烁
-                m_clickActionPending = true;
-            }
+            // 入口无条件复位动作意图：状态只在单轮 press→(双击|超时)
+            // 生命周期内存活，杜绝上轮残留泄漏进本轮。
+            // press 不碰 mpv（N113）：意图按缓存 m_playlistPos 记账（零 mpv 调用），
+            // 动作一律等满双击间隔由超时收口
+            m_clickAction =
+                m_playlistPos < 0 ? ClickAction::StoppedStart : ClickAction::InTrackToggle;
             m_clickTimer->start(QApplication::doubleClickInterval());
             break;
         }
@@ -3604,7 +3473,7 @@ bool MainWindow::handleVideoDropEvent(QDropEvent *event) {
 void MainWindow::applyVolume(int value) {
     const int p = qBound(0, value, m_volumeSlider->maximum());
     pushVolume(p);
-    showOsd(tr("Volume: %1%").arg(p));
+    m_osd->show(tr("Volume: %1%").arg(p));
 }
 
 // N108：显示百分比 → mpv volume 的唯一换算点（用户动作、曲线切换与启动恢复共用）。
@@ -3659,11 +3528,8 @@ void MainWindow::updateNowPlayingUi() {
         setWindowTitle(name); // N8 Part1：标题跟随正播项显示名
     else
         name = tr("Unknown File");
-    m_pendingNowPlaying = QStringLiteral("[%1/%2] %3").arg(m_playlistPos + 1).arg(total).arg(name);
-    if (!m_osdCoalescePending) {
-        m_osdCoalescePending = true;
-        QTimer::singleShot(0, this, &MainWindow::flushOsd);
-    }
+    m_osd->queue(OsdController::Priority::NowPlaying,
+                 QStringLiteral("[%1/%2] %3").arg(m_playlistPos + 1).arg(total).arg(name));
 }
 
 // N6：相对 seek。停止态（m_playlistPos<0）无播放位置可寻址，直接忽略；
@@ -3677,11 +3543,11 @@ void MainWindow::seekRelative(int deltaSeconds) {
         const double target = qBound(0.0, m_timePos + deltaSeconds, m_duration);
         const QString sign =
             deltaSeconds >= 0 ? tr("+%1s").arg(deltaSeconds) : tr("%1s").arg(deltaSeconds);
-        showOsd(tr("Seek: %1 / %2").arg(sign, Util::formatTimePercent(target, m_duration)));
+        m_osd->show(tr("Seek: %1 / %2").arg(sign, Util::formatTimePercent(target, m_duration)));
     } else {
         const QString sign =
             deltaSeconds >= 0 ? tr("+%1s").arg(deltaSeconds) : tr("%1s").arg(deltaSeconds);
-        showOsd(tr("Seek: %1").arg(sign));
+        m_osd->show(tr("Seek: %1").arg(sign));
     }
 }
 
@@ -3698,12 +3564,12 @@ void MainWindow::changeSpeed(double delta) {
         num.chop(1);
     if (num.endsWith(QLatin1Char('.')))
         num.chop(1);
-    showOsd(tr("Speed: %1x").arg(num));
+    m_osd->show(tr("Speed: %1x").arg(num));
 }
 
 void MainWindow::resetSpeed() {
     m_controller->setProperty(QStringLiteral("speed"), 1.0);
-    showOsd(tr("Speed: 1x"));
+    m_osd->show(tr("Speed: 1x"));
 }
 
 // N5：空白区域点击清焦兜底——未被交互控件消费的鼠标按下事件一路冒泡至此，
@@ -4190,6 +4056,10 @@ void MainWindow::restoreSettings() {
             m_playlist->requestTab(idx); // 空闲时逐字等价于 setCurrentIndex，忙时自动排队
     }
 
+    // N113：OSD 形态（缺键默认 overlay；非法值经 modeFromIniValue 落缺省形态）
+    m_osd->setMode(OsdController::modeFromIniValue(
+        settings.value(QStringLiteral("osdMode"), QStringLiteral("overlay")).toString()));
+
     updateNavigationActions(); // A16：启动恢复完成后的初始启停状态
 }
 
@@ -4477,12 +4347,12 @@ void MainWindow::switchToTrack(const MpvController::TrackInfo &t) {
     if (t.type == QLatin1String("sub") && t.mainSelection == 1)
         m_controller->setProperty(QStringLiteral("secondary-sid"), QStringLiteral("no"));
     m_controller->setProperty(prop, int(t.id));
-    showOsd(prefix + formatTrackText(t));
+    m_osd->show(prefix + formatTrackText(t));
 }
 
 void MainWindow::disableSubtitles() {
     m_controller->setProperty(QStringLiteral("sid"), QStringLiteral("no"));
-    showOsd(tr("Subtitle: None"));
+    m_osd->show(tr("Subtitle: None"));
 }
 
 // N94：第二字幕。与 switchToTrack 的 sub 分支对称——抢占方向反过来（目标是主字幕
@@ -4491,12 +4361,12 @@ void MainWindow::switchToSecondarySubtitle(const MpvController::TrackInfo &t) {
     if (t.mainSelection == 0)
         m_controller->setProperty(QStringLiteral("sid"), QStringLiteral("no"));
     m_controller->setProperty(QStringLiteral("secondary-sid"), int(t.id));
-    showOsd(tr("Secondary Subtitle: ") + formatTrackText(t));
+    m_osd->show(tr("Secondary Subtitle: ") + formatTrackText(t));
 }
 
 void MainWindow::disableSecondarySubtitles() {
     m_controller->setProperty(QStringLiteral("secondary-sid"), QStringLiteral("no"));
-    showOsd(tr("Secondary Subtitle: None"));
+    m_osd->show(tr("Secondary Subtitle: None"));
 }
 
 // ——N96 手动添加音频流 / 字幕流——
@@ -4536,10 +4406,10 @@ void MainWindow::addAudioTrack() {
     // 插件拿不到更准的
     const int err = m_controller->command({QStringLiteral("audio-add"), Util::Url::toNative(path)});
     if (err != 0) {
-        showOsd(tr("Failed to add audio: %1").arg(MpvController::errorString(err)));
+        m_osd->show(tr("Failed to add audio: %1").arg(MpvController::errorString(err)));
         return;
     }
-    showOsd(tr("Audio: ") + QFileInfo(path).fileName());
+    m_osd->show(tr("Audio: ") + QFileInfo(path).fileName());
 }
 
 void MainWindow::addSubtitleTrack(bool secondary) {
@@ -4561,12 +4431,12 @@ void MainWindow::applySubtitleFile(const QString &path, bool secondary) {
         cmd << QStringLiteral("auto");
     const int err = m_controller->command(cmd);
     if (err != 0) {
-        showOsd(tr("Failed to add subtitle: %1").arg(MpvController::errorString(err)));
+        m_osd->show(tr("Failed to add subtitle: %1").arg(MpvController::errorString(err)));
         return;
     }
     // 第二字幕此刻还只是条尚未归属槽位的字幕轨，播"字幕"而非"第二字幕"（要等用户点选、
     // 真占上 secondary-sid 时由那条路径播轨道名）
-    showOsd(tr("Subtitle: ") + QFileInfo(path).fileName());
+    m_osd->show(tr("Subtitle: ") + QFileInfo(path).fileName());
 }
 
 // ---- N43：播放菜单的滤镜子菜单 ----
@@ -4990,13 +4860,13 @@ void MainWindow::onAddBookmark() {
     // 跨会话必死，它本来就不该有书签（N76 §2.2 后，默认 tab 里唯一可能播着 oxbow://
     // 的项就是收编来的转接项）。此处"归属"取书签承诺的归属（正播 tab 的列表，即
     // 下面 origin 的算法），不是实体的 m_ownerUuid——N55 变更记录 2 的钉定，N76 维持。
-    // 拒收时经 showOsd 给一条失败提示（与成功那条同一通道、同一强度——用户按了键
+    // 拒收时经 m_osd->show 给一条失败提示（与成功那条同一通道、同一强度——用户按了键
     // 就得当场听到回音，静默早退等于没响应），不调 addBookmark、不发成功 OSD
     if (StreamTransit::isTransitUri(entity->playUrl())) {
         const int playingTab = m_playlist->playingTabIndex();
         const Playlist *playing = m_playlist->listOf(playingTab);
         if (!playing || playing->uuid() == kDefaultListUuid) {
-            showOsd(tr("This item does not support bookmarks."));
+            m_osd->show(tr("This item does not support bookmarks."));
             return;
         }
     }
@@ -5004,7 +4874,7 @@ void MainWindow::onAddBookmark() {
     // 的 key 为空串，书签跳转对空串首行早退、失效清理对空串全放行，落 INI 即死账目。
     // 插件不主动写入异常数据：走既有文案回音，不调 addBookmark、不发成功 OSD
     if (entity->path().isEmpty()) {
-        showOsd(tr("This item does not support bookmarks."));
+        m_osd->show(tr("This item does not support bookmarks."));
         return;
     }
     const QString rawPath = entity->path();
@@ -5033,7 +4903,7 @@ void MainWindow::onAddBookmark() {
     if (const Playlist *playing = m_playlist->listOf(playingTab))
         origin = {playing->uuid(), m_playlist->queueRootIdsOf(playingTab)};
     m_bookmarkMgr->addBookmark(rawPath, t, title, origin);
-    showOsd(tr("Bookmark added: [%1] %2").arg(Util::formatTimeHMSms(t), title));
+    m_osd->show(tr("Bookmark added: [%1] %2").arg(Util::formatTimeHMSms(t), title));
 }
 
 void MainWindow::closeEvent(QCloseEvent *event) {

@@ -24,6 +24,7 @@ class PlaybackReportDriver;     // N74：上报驱动器（定义于 PlaybackRep
 class ThumbEngine;              // N107：缩略图第二 core 引擎（定义于 thumb/ThumbEngine.h）
 class ThumbWindow;              // N107：缩略图宿主窗（定义于 ui/ThumbWindow.h）
 class ThumbHoverWatch;          // N107：进度条悬停缩略图会话机（定义于 MainWindow.cpp）
+class OsdController;            // N113：三形态 OSD 控制器（定义于 ui/OsdController.h）
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -220,7 +221,6 @@ class MainWindow : public QMainWindow {
     // A20：最小移动钳回——外框矩形按两轴独立、越界多少移多少收进区域，
     // 返回外框左上角（未越界原样返回）；MainWindow 内多处复用
     QPoint minimalMoveTopLeft(const QRect &frame, const QRect &area) const;
-    bool isPaused();
     void onVideoClickTimeout();
     // N5：统一音量调节入口——钳制到 [0, 上限] 后下发 mpv，UI 经观察回流刷新
     void changeVolume(int delta);
@@ -438,19 +438,8 @@ class MainWindow : public QMainWindow {
     // 本次进程是否发生过播放（A13）：未播放就关闭属于会话延续，
     // 不得清除上次保存的 lastListUuid（N57 §2.7）
     bool m_playedThisSession = false;
-    // ---- N7：VideoOverlay 视频叠加层（A3 顶级 Tool 浮窗，仅 OSD/字幕/弹幕，不含控制栏）----
-    QWidget *m_videoOverlay = nullptr; // 顶级浮窗容器（VideoOverlay），几何始终跟随 m_videoWidget
-    QLabel *m_osdLabel = nullptr;      // OSD 文本（左上角 12px 内边距）
-    QTimer *m_osdTimer = nullptr;      // OSD 2s 自动隐藏
-    // 帧合并去重：同事件循环内多信号折叠为一次显示（#2 > #3 > #1）
-    bool m_osdCoalescePending = false;
-    QString m_pendingNowPlaying;
-    QString m_pendingStop;
-    QString m_pendingPlayPause;
-    void showOsd(const QString &text);
-    void repositionVideoOverlay();
-    void flushOsd();
-    void ensureVideoOverlay();
+    // ---- OSD 三形态控制器（N113）：本类定「说什么」，它定「怎么显示」----
+    OsdController *m_osd = nullptr; // 构造期创建：视频区装配之后、ThumbWindow 之前
     // 进度条悬停 tooltip 的唯一出口（合并节流的落点，见 eventFilter 同名分支）
     void flushSeekToolTip();
 
@@ -464,12 +453,11 @@ class MainWindow : public QMainWindow {
     void updateNowPlayingUi();
 
     // ---- N3：单击/双击分流与覆盖式全屏 ----
-    QTimer *m_clickTimer = nullptr;     // 单次定时器，间隔=双击间隔
-    bool m_pendingPauseRestore = false; // 播放中 press 已暂停，双击需恢复播放
-    bool m_clickActionPending = false;  // 暂停/停止态 press 待超时执行
-    // B14：一次性吞咽标志——视频区单击引发的暂停/恢复属性回声不入 OSD 队列；
-    // 暂停 OSD 由单击超时补显，双击场景全程静默
-    bool m_suppressPlayPauseOsd = false;
+    QTimer *m_clickTimer = nullptr; // 单次定时器，间隔=双击间隔
+    // N113：单击超时的动作意图——press 只按缓存 m_playlistPos 记账（< 0 记 StoppedStart，
+    // 否则 InTrackToggle），不碰 mpv；超时按实时态分流收口
+    enum class ClickAction { None, InTrackToggle, StoppedStart };
+    ClickAction m_clickAction = ClickAction::None;
     // N91：退出区间标志。点过关闭钮即置位并保持——窗口此后须一直 mapped 到进程结束
     // （提前 unmap 会让 vo 等不到 Present 完成事件而卡死），故重复关闭钮与标题回刷都由它挡
     bool m_closing = false;
