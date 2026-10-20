@@ -675,6 +675,11 @@ MainWindow::MainWindow(MpvController *controller, AppearanceManager *appearance,
     m_videoWidget->installEventFilter(this); // 单击/双击分流
     // N97：视频区接受本地文件拖放（三类事件在同一 eventFilter 分支内受理与分派）
     m_videoWidget->setAcceptDrops(true);
+    // N117：只作 Tab 落点（ClickFocus 会让点击置焦与 N5 清焦同轮竞争）；持焦与
+    // 归空在键盘语义上等价，FocusIn 由本类 eventFilter 按 reason 自清。Tab 能否
+    // 走到 TabFocus 单挂的控件由 styleHints()->tabFocusBehavior() 决定（Windows
+    // 缺省 TabFocusAllControls，判据即 TabFocus；macOS 缺省只认 StrongFocus）
+    m_videoWidget->setFocusPolicy(Qt::TabFocus);
     // N66 §三-4：唤起固定走 QWindow 层——WA_NativeWindow 置位即有 QWindow，平台
     // 投递给原生 HWND 的每条 move 由 Qt 无条件转发到该 QWindow，早于 widget 层的
     // 鼠标追踪门闸，无须开追踪、无回退分支。指针落成员：安装与 eventFilter 比对
@@ -2795,6 +2800,11 @@ void MainWindow::toggleFullscreen() {
         }
         m_navigatorAction->setEnabled(true);
         // N66 §二-7：全屏期动作未禁用，退出无需恢复可用态（原 A20 恢复行随之作废）
+        // N117：激活指派晚于本分支的显示序列，兜底会把焦点落进已重新可见的播放
+        // 列表——预置视频区为顶层 focus_child 抢在指派前，FocusIn 处自清归 null。
+        // 让位期跳过，维持 N90 的 null 基线（N95 组字不受扰）
+        if (!m_inputYielded)
+            m_videoWidget->setFocus(Qt::OtherFocusReason);
     }
     {
         QSignalBlocker blocker(m_fullscreenAction); // 防循环触发 toggleFullscreen
@@ -3174,6 +3184,9 @@ void MainWindow::toggleMini() {
         raise();
         activateWindow();
         syncVideoGeometry(); // 兜底：退出后视频区对位回占位符
+        // N117：焦点复位同 toggleFullscreen 退出分支（预置 + FocusIn 自清归 null）
+        if (!m_inputYielded)
+            m_videoWidget->setFocus(Qt::OtherFocusReason);
     }
     {
         QSignalBlocker blocker(m_miniAction); // 防循环触发 toggleMini（全屏同款）
@@ -3358,6 +3371,13 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
             m_clickAction =
                 m_playlistPos < 0 ? ClickAction::StoppedStart : ClickAction::InTrackToggle;
             m_clickTimer->start(QApplication::doubleClickInterval());
+            break;
+        }
+        case QEvent::FocusIn: {
+            // N117：程序性置焦当场自清归 null；Tab / Backtab 是真焦点导航，放行
+            const auto reason = static_cast<QFocusEvent *>(event)->reason();
+            if (reason != Qt::TabFocusReason && reason != Qt::BacktabFocusReason)
+                m_videoWidget->clearFocus();
             break;
         }
         default:
@@ -3656,11 +3676,12 @@ void MainWindow::keyPressEvent(QKeyEvent *event) {
 // N90：让位期键盘归属判据（合取式，单点）——让位生效 ∧ 焦点不属于主窗内任何子控件。
 // 实测落点是 focusWidget() 归空（Windows 与 X11 一致）：主窗从未设焦点策略（QMainWindow 默认
 // NoFocus），clearFocus 与点视频画面 / 点空白都不会把主窗本体设成焦点控件；"等于主窗本体"一条
-// 只在将来给主窗开了焦点策略时成立，留作余量。eventFilter 的 windowHandle 分支与 event() 的
-// ShortcutOverride 覆写共用；焦点在子控件时判据不成立，键盘交回常规派发
+// 只在将来给主窗开了焦点策略时成立，留作余量。N117 起列表侧之外视频区也可接焦（链上首个
+// Tab 落点，让位期激活兜底会短暂落它再自清），计入判据。eventFilter 的 windowHandle 分支与
+// event() 的 ShortcutOverride 覆写共用；焦点在播放列表侧控件时判据不成立，键盘交回常规派发
 bool MainWindow::yieldOwnsKeyboard() const {
     QWidget *fw = QApplication::focusWidget();
-    return m_inputYielded && (fw == nullptr || fw == this);
+    return m_inputYielded && (fw == nullptr || fw == this || fw == m_videoWidget);
 }
 
 // N90：让位转发的单点——取名非空即异步注入 keypress，eventFilter 的截断分支与
