@@ -43,6 +43,7 @@ class ActionManager : public QObject {
         Navigator,
         Fullscreen,
         MiniWindow,  // N68：小窗模式（勾选态由 toggleMini 收口回写）
+        MenuBar,     // N119：菜单栏开关（勾选态即偏好；默认无键，键位留改绑余地）
         ToggleStats, // 视图菜单：状态信息叠加层（由 mpv 侧 stats 脚本渲染）
         Escape,      // 隐绑定：无菜单实体，仅键盘触发
         AddBookmark,

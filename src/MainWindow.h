@@ -5,6 +5,7 @@
 #include "mpvbridge/MpvController.h"
 
 #include "ui/AppearanceManager.h" // N115
+#include "ui/MenuSpec.h"          // N119：菜单描述表
 
 // N54：两处接线要用到嵌套类型（PlaylistWidget::LevelJump / JumpFailure、
 // BookmarkManager::Origin），嵌套类型必须有完整类型可见
@@ -12,7 +13,6 @@
 #include "playlist/PlaylistWidget.h"
 
 class NavigatorPanel;
-class ActionManager;
 class BookmarkEditorDialog;
 class ShortcutsDialog;
 class ChapterSlider;
@@ -171,7 +171,14 @@ class MainWindow : public QMainWindow {
     // 且线程从未起过，则起线程并投一次 beginCollecting。启动一次即不再销毁：开关
     // 切换走驱动器内闸门，不走这里
     void maybeBootReportDriver();
-    void createMenus();
+    // N119：菜单栏装配——遍历描述表建五个顶级菜单，内容挂 aboutToShow 整体重建
+    void createMenuBar();
+    // N119：动作连接唯一出生处，启动调一次
+    void connectActions();
+    // N119：按描述表装配一个菜单段，不连任何信号（菜单栏与右键菜单共用）
+    void renderMenuGroup(QMenu &menu, const MenuSpec::Group &group);
+    // N119：视频区右键菜单入口，弹出前按 N5 清焦
+    void showVideoContextMenu(const QPoint &globalPos);
     QWidget *createLeftArea();
     // A15：无状态按钮统一接线——事件来源走 action trigger，启停跟随 action enabled
     void bindButton(QAbstractButton *btn, QAction *action);
@@ -201,7 +208,8 @@ class MainWindow : public QMainWindow {
     void evaluateOverlayVisibility(const QPoint &clientPos);
     void reevaluateOverlays();
     void repositionFullscreenOverlays();
-    void setFullscreenPlaylistEdgeEnabled(bool enabled);
+    // N119：菜单栏可见性唯一收口——偏好真相 ∧ 非覆盖态
+    void applyMenuBarVisibility();
     // N10：普通态窗口尺寸自适应视频（videoSizeChanged 直连触发，
     // 物理像素 1:1、工作区钳制、最小移动收回；尺寸事实源经 N40 改滤镜后输出尺寸）
     void adaptWindowSizeToVideo(int videoW, int videoH);
@@ -267,9 +275,10 @@ class MainWindow : public QMainWindow {
     qint64 trackBitrate(const MpvController::TrackInfo &t) const;
     // 按类型取轨道快照并按 id 升序——三组流子菜单与流选择按钮的分组共用这一份取表
     QList<MpvController::TrackInfo> tracksOfType(const QString &type) const;
-    void rebuildTrackMenus();
-    // B18：流按钮与流子菜单状态统一由 m_tracks 派生
-    void updateStreamControls();
+    // N119：轨道动态段——四个子菜单现读现填
+    void buildTrackSection(QMenu &parent);
+    // B18：流选择按钮的显隐与启用由 m_tracks 派生
+    void updateStreamButton();
     void showStreamMenu();
     // N13：按 type 把 vid / aid / sid 排出。N94：目标是第二字幕时先关第二字幕再设
     // sid（mpv 不允许主 / 第二同为一条，切换即抢占）
@@ -318,19 +327,18 @@ class MainWindow : public QMainWindow {
     // true）；受理与否体现在事件对象上，判据与执行只在 Drop 做一次
     bool handleVideoDropEvent(QDropEvent *event);
 
-    // N43：播放菜单的滤镜子菜单（视频在前）——条目与启用态在播放菜单弹出时
-    // 按 af / vf 属性实时重建；点击条目翻转其启用位并整串下发（运行期态，
-    // 不写 conf）
-    void rebuildFilterMenus();
+    // N43：滤镜动态段——两个子菜单按 af / vf 现读重建；点击条目翻转启用位并整串下发
+    void buildFilterSection(QMenu &parent);
     void toggleFilterEntry(const QString &property, int index);
 
-    // N110：画面比例——勾选态挂父视图菜单 aboutToShow 现读回填（只认 double）；
-    // 自定义档输入循环到合法或取消，取消 / 空输入不改原值
-    void updateAspectCheckedStates();
+    // N110：比例动态段——Original + 五档 + Custom 当场新建，勾选按属性现读回填
+    void buildAspectSection(QMenu &parent);
     void onCustomAspectRatio();
 
     // N15：章节与书签
-    void rebuildChapterMenu();
+    // N119：章节动态段——填进本菜单本身（另三个填充函数往 parent 里建子菜单），
+    // 并登记为活体章节菜单
+    void buildChapterSection(QMenu &target);
     void updateChapterMenuState();
     void updateChapterMenuChecked();
     void updateChapterSlider();
@@ -384,12 +392,14 @@ class MainWindow : public QMainWindow {
     // 失效模式退化为唤起静默失灵而非比对悬空指针（构造期断言违约显影）
     QPointer<QWindow> m_videoWindow = nullptr;
     int m_bottomBarHeight = 0; // 重挂时记录的 sizeHint 高度（Hidden 态读不到实测高度）
-    bool m_fsPlaylistEdgeEnabled =
-        false;                 // 右缘自动显示允许位（全屏态真相源；ini 键 fullscreenPlaylistEdge）
     int m_fsPlaylistWidth = 0; // 全屏期浮窗宽度（进程内记忆，与窗口态 m_playlistWidth 互不写入）
     // 窗口态面板可见性真相：唯一写点 setPlaylistVisible；saveSettings 读此而非活体
-    // isVisible()——全屏期面板被重挂隐藏、A11 二次保存在窗口隐藏后触发，活体不可信
+    // isVisible()——全屏期面板被重挂隐藏、A11 二次保存在窗口隐藏后触发，活体不可信。
+    // N119 §3.1：全屏期同一开关也写此真相，右缘门控同读
     bool m_playlistVisibleTruth = false;
+    // N119：菜单栏偏好真相——写点只有 Menu Bar 动作与 restoreSettings；saveSettings
+    // 读此而非 menuBar()->isVisible()（覆盖态活体恒假，A11 同坑）
+    bool m_menuBarVisibleTruth = true;
     int m_preFsLeftWidth = 0;     // 进全屏前的左 pane 宽度（退出恢复锚点；须在普通几何下采集）
     bool m_fsResizing = false;    // 列表浮窗左缘拖宽进行中（挂起条件之一）
     int m_fsResizeStartX = 0;     // 拖宽起点光标全局 x
@@ -444,6 +454,7 @@ class MainWindow : public QMainWindow {
     NavigatorPanel *m_navigator = nullptr;  // 导航器浮窗（N3 按需创建）：null=未打开
     QAction *m_fullscreenAction = nullptr;  // 视图菜单"全屏"勾选项（N3）
     QAction *m_miniAction = nullptr;        // 视图菜单"小窗"勾选项（N68）
+    QAction *m_aboutAction = nullptr;       // About 动作（不进登记表，两个菜单共用一份）
 
     double m_duration = 0.0;
     double m_timePos = 0.0;
@@ -526,24 +537,9 @@ class MainWindow : public QMainWindow {
 
     // ---- N13：轨道选择 ----
     QList<MpvController::TrackInfo> m_tracks;
-    QMenu *m_videoStreamMenu = nullptr;
-    QMenu *m_audioStreamMenu = nullptr;
-    QMenu *m_subStreamMenu = nullptr;
-    QMenu *m_secondarySubStreamMenu = nullptr; // N94：第二字幕流（播放菜单，位于字幕流之下）
-    QPushButton *m_streamButton = nullptr;     // 流选择按钮
-
-    // ---- N43：滤镜子菜单（条目弹出时按属性实时重建，不作缓存）----
-    QMenu *m_videoFilterMenu = nullptr;
-    QMenu *m_audioFilterMenu = nullptr;
-
-    // ---- N110：画面比例子菜单（勾选态真源是属性，弹出时现读回填）----
-    QActionGroup *m_aspectGroup = nullptr;
-    QAction *m_aspectOriginal = nullptr; // "原始"（override = "no"，读回 -2）
-    QList<QAction *> m_aspectPresets;    // 五个比值档，序与 kAspectPresets 表一致
-    QAction *m_aspectCustom = nullptr;   // 自定义（不中档时条目带当前值）
+    QPushButton *m_streamButton = nullptr; // 流选择按钮
 
     // ---- N15：章节与书签 ----
-    QMenu *m_chapterMenu = nullptr;
     BookmarkManager *m_bookmarkMgr = nullptr;
     BookmarkEditorDialog *m_bookmarkEditor = nullptr;
     // R3：设置对话框（非模态，按需创建）
@@ -555,7 +551,9 @@ class MainWindow : public QMainWindow {
     bool m_inputYielded = false;
     // N95：组字中标志（由 inputMethodEvent 按 preeditString 维护；非空时键名转发只吞不转）
     bool m_imeComposing = false;
-    QActionGroup *m_chapterGroup = nullptr;
+    // N119：活体章节菜单——最近一次构建的章节段所在菜单，updateChapterMenuChecked
+    // 仅在其可见时逐 tick 回写；右键菜单即建即毁，QPointer 兜底
+    QPointer<QMenu> m_liveChapterMenu;
     // 章节+书签标记聚合器（MainWindow.cpp 内实现）：合并规则 + 缓存
     // 收口于此，主窗口不再持有抽象成员；进程生命周期随主窗口
     MarkAggregator *m_marks = nullptr;

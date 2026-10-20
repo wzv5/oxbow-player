@@ -275,18 +275,21 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle) {
     // 嵌入下它的 vo 窗口是视频区 HWND 的子窗口、照样收得到 WM_DROPFILES；不关掉就会
     // 和插件在视频区做的分派叠成两份动作
     mpv_set_property_string(handle, "drag-and-drop", "no");
+    // N119：输入与光标全平台显式接管，不再搭 mpv 的实现细节——Windows 上"鼠标到不了
+    // mpv"靠的是 wid 嵌入下 VO 子窗被 EnableWindow(0) 这个巧合（默认键位表里本就烘着
+    // MBTN_RIGHT cycle pause），而核心侧的光标自动隐藏不需要鼠标事件做前提就会向 VO
+    // 预推"藏"。两项在 Windows 均无可观测变化；光标行为单源于 Qt 层（N67）
+    mpv_set_property_string(handle, "input-cursor", "no");
+    mpv_set_property_string(handle, "cursor-autohide", "no");
 
 #ifndef Q_OS_WIN
     // N83：X11 嵌入的输入接管——**事件层**关到底（实测 mpv 嵌入窗口的事件掩码截走
-    // 指针事件，Qt 视频区收不到任何鼠标事件）：VO 键盘与指针事件逐项关闭
-    // （input-vo-keyboard 不存在的旧版 mpv 回退 input-x11-keyboard），另关 mpv 侧
-    // 光标自动隐藏（N67 已在 Qt 层做，避免两层打架）。键盘因此恒由 Qt 独占。
+    // 指针事件，Qt 视频区收不到任何鼠标事件）：VO 键盘事件关闭（input-vo-keyboard
+    // 不存在的旧版 mpv 回退 input-x11-keyboard），键盘因此恒由 Qt 独占。Windows 无此
+    // 需要：wid 嵌入下焦点窗口是 Qt 的，键盘本就到不了 mpv，该选项在 Windows 无对应物。
     // N87：**绑定层不干涉**——不设 input-default-bindings，取值交给 mpv 默认与用户自己的
     // mpv.conf。未认领按键经 keypress 注入后走的是绑定查找，那张默认键位表正是要查的表，
-    // 显式置 no 会挡掉它，显式置 yes 又替用户做了决定。Windows 上 mpv 本就拿不到键盘
-    // （wid 嵌入下焦点窗口是 Qt 的），且自会向父窗口转发鼠标消息（插件依赖该路径）
-    mpv_set_property_string(handle, "input-cursor", "no");
-    mpv_set_property_string(handle, "cursor-autohide", "no");
+    // 显式置 no 会挡掉它，显式置 yes 又替用户做了决定
     if (mpv_set_property_string(handle, "input-vo-keyboard", "no") != 0)
         mpv_set_property_string(handle, "input-x11-keyboard", "no");
     // N83：Wayland 会话下强制 mpv 的 GL 上下文走 x11egl（实测嵌入成功）——mpv

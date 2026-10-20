@@ -39,6 +39,8 @@ ActionManager::ActionManager(QWidget *host) : m_host(host) {
     // N68：小窗模式（PiP）；勾选态由 toggleMini 收口回写
     declareAction(Id::MiniWindow, QStringLiteral("MiniWindow"), tr("Mini &Window"),
                   QStringLiteral("I"), true);
+    // N119：菜单栏开关——勾选态即偏好，可见性收口在主窗；默认无键，键位留改绑余地
+    declareAction(Id::MenuBar, QStringLiteral("MenuBar"), tr("&Menu Bar"), QKeySequence(), true);
     // 无状态开关：显隐真相由 mpv 的 stats 脚本持有，插件侧不跟踪勾选态
     declareAction(Id::ToggleStats, QStringLiteral("ToggleStats"), tr("Toggle &Status Info"),
                   Qt::Key_T);

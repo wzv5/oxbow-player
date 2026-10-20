@@ -74,6 +74,8 @@ constexpr AspectPreset kAspectPresets[] = {
     {"1.85:1", 1.85},   {"2.35:1", 2.35},
 };
 
+// N119：菜单描述表在 ui/MenuSpec.h（唯一来源）；本文件只做渲染与两个入口
+
 // 进度条悬停 tooltip 合并节流：悬停 move 按鼠标事件率到达，而 tooltip 文本逐像素
 // 就变（hh:mm:ss 只到秒，长片源 1px ≈ 数秒），Qt 的"文本未变即复用"形同虚设——
 // 逐事件直发时每次都在重排 + 重定位顶层 tooltip 窗，实测悬停即吃满单核（注释掉
@@ -248,8 +250,9 @@ class PopupCloseWatch : public QObject {
 // 不另立文件）。播放中光标停在视频区 3 秒无鼠标活动即藏（Qt::BlankCursor），
 // 任何活动立即恢复并重新计时；暂停 / 停止立即恢复。不区分全屏与否，但小窗模式
 // 整体不布防。
-// mpv 侧 cursor-autohide 不参与本行为——插件不向 mpv 透传鼠标事件，该选项实际
-// 不生效（N67 §二-1），光标行为单源于本类
+// mpv 侧 cursor-autohide 不参与本行为：N119 起入口全平台显式置 no——核心侧的自动隐藏
+// 不需要鼠标事件做前提就会向 VO 预推"藏"，留着它等于把本类搭在上游实现的偶然上。
+// 光标行为单源于本类（N67 §二-1）
 class CursorAutoHider : public QObject {
   public:
     explicit CursorAutoHider(QWidget *video, QObject *parent) : QObject(parent), m_video(video) {
@@ -746,7 +749,9 @@ MainWindow::MainWindow(MpvController *controller, AppearanceManager *appearance,
             [this](quint64 seq) { m_thumbWatch->handleSessionEnded(seq); });
 
     setCentralWidget(m_splitter);
-    createMenus();
+    // N119：连接先于装配——渲染只按描述表摆条目，不连任何信号
+    connectActions();
+    createMenuBar();
     connectController();
 
     // 导航器浮窗（N3 改按需创建）：冷启动不构造对象，首次打开经
@@ -959,170 +964,81 @@ void MainWindow::bindButton(QAbstractButton *btn, QAction *action) {
     btn->setEnabled(action->isEnabled());
 }
 
-void MainWindow::createMenus() {
+// N119：动作连接唯一出生处，启动调一次——容器渲染永不连接，反复展开菜单因此不叠加
+// 连接。结构归描述表与 createMenuBar，连接归本函数
+void MainWindow::connectActions() {
     using AM = ActionManager;
     auto act = [this](AM::Id id) { return m_actions->action(id); };
 
-    // N85：菜单栏按下清焦的过滤挂载——QMenuBar 自行消费按下事件，主窗
-    // mousePressEvent 的冒泡兜底（N5）够不到它，点击菜单栏焦点会原地留在
-    // 播放列表，方向键回不到全局音量模式。分支语义见 eventFilter
-    menuBar()->installEventFilter(this);
-
-    QMenu *fileMenu = menuBar()->addMenu(tr("&File"));
-    fileMenu->addAction(act(AM::Id::Open));
     connect(act(AM::Id::Open), &QAction::triggered, this, &MainWindow::openFiles);
-    fileMenu->addAction(act(AM::Id::Settings));
     connect(act(AM::Id::Settings), &QAction::triggered, this, &MainWindow::ensureSettingsDialog);
-    fileMenu->addAction(act(AM::Id::Shortcuts));
     connect(act(AM::Id::Shortcuts), &QAction::triggered, this, &MainWindow::ensureShortcutsDialog);
     // N89：mpv 键位编辑器与 N86 并列相邻但完全独立——一个管 mpv 侧（input.conf），
     // 一个管插件侧（[shortcuts] 节）。登记在表里只为与其他菜单入口同处一处（默认不
     // 绑键、可改绑、禁用态处处生效），配置与键位仍互不共享
-    fileMenu->addAction(act(AM::Id::MpvKeyBindings));
     connect(act(AM::Id::MpvKeyBindings), &QAction::triggered, this,
             &MainWindow::ensureMpvBindingDialog);
-    // N78：截图组——与 Settings 间加分隔符独立成组，其后原有「分隔符 + Quit」不动
-    fileMenu->addSeparator();
-    fileMenu->addAction(act(AM::Id::ScreenshotCopy));
+    // N78：截图组
     connect(act(AM::Id::ScreenshotCopy), &QAction::triggered, this,
             &MainWindow::copyScreenshotToClipboard);
-    fileMenu->addAction(act(AM::Id::ScreenshotSave));
     connect(act(AM::Id::ScreenshotSave), &QAction::triggered, this,
             &MainWindow::saveScreenshotToFile);
-    fileMenu->addSeparator();
-    fileMenu->addAction(act(AM::Id::Quit));
     connect(act(AM::Id::Quit), &QAction::triggered, this, &QWidget::close);
 
-    QMenu *playMenu = menuBar()->addMenu(tr("&Play"));
-    playMenu->addAction(act(AM::Id::PlayPause));
     connect(act(AM::Id::PlayPause), &QAction::triggered, this, &MainWindow::togglePause);
-    playMenu->addAction(act(AM::Id::Stop));
     connect(act(AM::Id::Stop), &QAction::triggered, this, &MainWindow::stop);
-    playMenu->addSeparator();
-    playMenu->addAction(act(AM::Id::PrevFile));
     connect(act(AM::Id::PrevFile), &QAction::triggered, this, &MainWindow::playlistPrev);
-    playMenu->addAction(act(AM::Id::NextFile));
     connect(act(AM::Id::NextFile), &QAction::triggered, this, &MainWindow::playlistNext);
-    // N5：音量步进（动作快捷键 ↑/↓ 全局生效，此处为菜单可见入口）
-    playMenu->addSeparator();
-    playMenu->addAction(act(AM::Id::VolumeUp));
+    // N5：音量步进（动作快捷键 ↑/↓ 全局生效，菜单为可见入口）
     connect(act(AM::Id::VolumeUp), &QAction::triggered, this,
             [this] { changeVolume(m_volumeKeyStep); });
-    playMenu->addAction(act(AM::Id::VolumeDown));
     connect(act(AM::Id::VolumeDown), &QAction::triggered, this,
             [this] { changeVolume(-m_volumeKeyStep); });
     // N38：静音——命令取 mpv 实时属性读改写（勾选态只作显示，不参与判定）；
     // OSD 与 B14 音量同构：用户动作路径直显，不入 #1/#2/#3 合并队列
     m_muteAction = act(AM::Id::Mute);
-    playMenu->addAction(m_muteAction);
     connect(m_muteAction, &QAction::triggered, this, [this] {
         const bool target = !m_controller->propertyFlag(QStringLiteral("mute"), false);
         m_controller->setProperty(QStringLiteral("mute"), target);
         m_osd->show(target ? tr("Mute: On") : tr("Mute: Off"));
     });
     // N6：速度控制组
-    playMenu->addSeparator();
-    playMenu->addAction(act(AM::Id::SpeedUp));
     connect(act(AM::Id::SpeedUp), &QAction::triggered, this, [this] { changeSpeed(+0.25); });
-    playMenu->addAction(act(AM::Id::SpeedDown));
     connect(act(AM::Id::SpeedDown), &QAction::triggered, this, [this] { changeSpeed(-0.25); });
-    playMenu->addAction(act(AM::Id::SpeedReset));
     connect(act(AM::Id::SpeedReset), &QAction::triggered, this, &MainWindow::resetSpeed);
-    // N43：视频/音频滤镜子菜单（视频在前，与流选择组同序），位于速度组与流选择组
-    // 之间。重建挂父菜单的 aboutToShow——子菜单被禁用时不可能被展开、自身
-    // aboutToShow 永不触发，靠它自己翻转不了"从无滤镜到有滤镜"的启用态
-    playMenu->addSeparator();
-    m_videoFilterMenu = playMenu->addMenu(tr("Video Filters"));
-    m_audioFilterMenu = playMenu->addMenu(tr("Audio Filters"));
-    m_videoFilterMenu->setEnabled(false);
-    m_audioFilterMenu->setEnabled(false);
-    connect(playMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildFilterMenus);
-    // N13：视频/音频/字幕流子菜单（视频在前），无流时整菜单禁用
-    // N94：追加第二字幕流，位于字幕流之下
-    playMenu->addSeparator();
-    m_videoStreamMenu = playMenu->addMenu(tr("Video"));
-    m_audioStreamMenu = playMenu->addMenu(tr("Audio"));
-    m_subStreamMenu = playMenu->addMenu(tr("Subtitle"));
-    m_secondarySubStreamMenu = playMenu->addMenu(tr("Secondary Subtitle"));
-    m_videoStreamMenu->setEnabled(false);
-    m_audioStreamMenu->setEnabled(false);
-    m_subStreamMenu->setEnabled(false);
-    m_secondarySubStreamMenu->setEnabled(false);
-    connect(m_videoStreamMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildTrackMenus);
-    connect(m_audioStreamMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildTrackMenus);
-    connect(m_subStreamMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildTrackMenus);
-    connect(m_secondarySubStreamMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildTrackMenus);
-
-    m_chapterMenu = menuBar()->addMenu(tr("&Chapter"));
-    m_chapterGroup = new QActionGroup(this);
-    m_chapterGroup->setExclusive(true);
-    connect(m_chapterMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildChapterMenu);
+    // N15：章节与书签入口（菜单落点在章节段的动态填充里）
     connect(act(AM::Id::AddBookmark), &QAction::triggered, this, &MainWindow::onAddBookmark);
     connect(act(AM::Id::BookmarkEditor), &QAction::triggered, this,
             &MainWindow::ensureBookmarkEditor);
 
-    QMenu *viewMenu = menuBar()->addMenu(tr("&View"));
     m_playlistAction = act(AM::Id::Playlist);
-    viewMenu->addAction(m_playlistAction);
     connect(m_playlistAction, &QAction::toggled, this, &MainWindow::setPlaylistVisible);
 
     m_navigatorAction = act(AM::Id::Navigator);
-    viewMenu->addAction(m_navigatorAction);
     connect(m_navigatorAction, &QAction::toggled, this, &MainWindow::setNavigatorVisible);
 
     // 全屏（N3）：F11/视图菜单/Esc/双击四路共用 toggleFullscreen 收口
     m_fullscreenAction = act(AM::Id::Fullscreen);
-    viewMenu->addAction(m_fullscreenAction);
     connect(m_fullscreenAction, &QAction::toggled, this, [this](bool on) {
         if (on != m_fullscreen)
             toggleFullscreen();
     });
     // 小窗（N68）：I/视图菜单/Esc/关闭钮多路共用 toggleMini 收口；全屏与小窗互斥
     m_miniAction = act(AM::Id::MiniWindow);
-    viewMenu->addAction(m_miniAction);
     connect(m_miniAction, &QAction::toggled, this, [this](bool on) {
         if (on != m_mini)
             toggleMini();
     });
+    // N119：菜单栏开关——勾选态即偏好，可见性收口见 applyMenuBarVisibility
+    connect(act(AM::Id::MenuBar), &QAction::toggled, this, [this](bool on) {
+        m_menuBarVisibleTruth = on;
+        applyMenuBarVisibility();
+    });
     // 状态信息叠加层：转发 script-message 给 mpv 侧 stats 脚本，插件不持有开关状态
-    viewMenu->addAction(act(AM::Id::ToggleStats));
     connect(act(AM::Id::ToggleStats), &QAction::triggered, this, [this] {
         m_controller->command({QStringLiteral("script-message-to"), QStringLiteral("stats"),
                                QStringLiteral("display-stats-toggle")});
     });
-
-    // N110：画面比例子菜单（视图菜单末尾第四段）。条目不登记 ActionManager——
-    // 内建档动作没有独立语义名（七条"设某比例"），登记只会让 N86 快捷键编辑器
-    // 多出七行不可读的空键行；与滤子 / 流 / 章节子菜单同属"属性直读直写"形态，
-    // 沿用本地 QAction 先例（不可改绑、无默认键、不进快捷键编辑器）。勾选态真源
-    // 是属性 video-aspect-override 而非几何，回填挂父视图菜单的 aboutToShow
-    // （N43"弹出时按属性实时重建"同款手筋）——外部改动因此天然反映，无需观察
-    // 或回灌；setProperty 之后由 reconfig 主触发与既有接线承载全部联动，菜单侧
-    // 零手工触发
-    viewMenu->addSeparator();
-    m_aspectGroup = new QActionGroup(this);
-    m_aspectGroup->setExclusive(true);
-    m_aspectOriginal = m_aspectGroup->addAction(tr("Original"));
-    for (const AspectPreset &p : kAspectPresets)
-        m_aspectPresets.append(m_aspectGroup->addAction(QLatin1String(p.token)));
-    m_aspectCustom = m_aspectGroup->addAction(tr("Custom"));
-    QMenu *aspectMenu = viewMenu->addMenu(tr("Aspect Ratio"));
-    for (QAction *a : m_aspectGroup->actions()) {
-        a->setCheckable(true);
-        aspectMenu->addAction(a);
-    }
-    connect(m_aspectOriginal, &QAction::triggered, this, [this] {
-        m_controller->setProperty(QStringLiteral("video-aspect-override"), QStringLiteral("no"));
-    });
-    for (int i = 0; i < m_aspectPresets.size(); ++i) {
-        connect(m_aspectPresets[i], &QAction::triggered, this, [this, i] {
-            // 写入 token 原样交 mpv 归一化收账；全部写值落在实测域 [-2, 10] 内，无拒收面
-            m_controller->setProperty(QStringLiteral("video-aspect-override"),
-                                      QLatin1String(kAspectPresets[i].token));
-        });
-    }
-    connect(m_aspectCustom, &QAction::triggered, this, &MainWindow::onCustomAspectRatio);
-    connect(viewMenu, &QMenu::aboutToShow, this, &MainWindow::updateAspectCheckedStates);
 
     // Esc 隐绑定经管理器取用，守卫逻辑留主窗口：全屏或小窗态退出（N68），
     // 弹出菜单打开时 Esc 由 popup 自行消费
@@ -1138,11 +1054,75 @@ void MainWindow::createMenus() {
     connect(m_actions->shortcut(AM::Id::SeekBackward), &QShortcut::activated, this,
             [this] { seekRelative(-5); });
 
-    QMenu *helpMenu = menuBar()->addMenu(tr("&Help"));
     // N102：About 由主窗自建、不经登记表——判据见 ActionManager.h 头注释（无改绑
     // 需求的入口不进键位表，免得在快捷键编辑器里白占一行）
-    QAction *aboutAction = helpMenu->addAction(tr("&About"));
-    connect(aboutAction, &QAction::triggered, this, [this] { AboutDialog(this).exec(); });
+    m_aboutAction = new QAction(tr("&About"), this);
+    connect(m_aboutAction, &QAction::triggered, this, [this] { AboutDialog(this).exec(); });
+}
+
+// N119：菜单栏装配——五个顶级菜单是常驻实例（既有语义与 N85 的过滤都挂在实例上），
+// 只换内容不重建容器；内容挂 aboutToShow，打开时所见即当前状态
+void MainWindow::createMenuBar() {
+    // N85：菜单栏按下清焦的过滤挂载——QMenuBar 自行消费按下事件，主窗
+    // mousePressEvent 的冒泡兜底（N5）够不到它，点击菜单栏焦点会原地留在
+    // 播放列表，方向键回不到全局音量模式。分支语义见 eventFilter
+    menuBar()->installEventFilter(this);
+
+    for (const MenuSpec::Group &group : MenuSpec::kGroups) {
+        QMenu *menu = menuBar()->addMenu(tr(group.title));
+        connect(menu, &QMenu::aboutToShow, this,
+                [this, menu, group] { renderMenuGroup(*menu, group); });
+    }
+}
+
+// N119：按描述表装配一个菜单段——先 clear 再逐条填，不连任何信号（动作的连接住
+// connectActions，动态段的连接随条目现连、随 clear() 消亡）。两个渲染面同一份判定
+void MainWindow::renderMenuGroup(QMenu &menu, const MenuSpec::Group &group) {
+    using Kind = MenuSpec::Item::Kind;
+    menu.clear();
+    for (const MenuSpec::Item &item : group.items) {
+        if (item.hiddenIn(m_fullscreen, m_mini))
+            continue;
+        switch (item.kind) {
+        case Kind::Action:
+            menu.addAction(m_actions->action(item.action));
+            break;
+        case Kind::About:
+            menu.addAction(m_aboutAction);
+            break;
+        case Kind::Separator:
+            menu.addSeparator();
+            break;
+        case Kind::Filters:
+            buildFilterSection(menu);
+            break;
+        case Kind::Tracks:
+            buildTrackSection(menu);
+            break;
+        case Kind::Chapter:
+            buildChapterSection(menu);
+            break;
+        case Kind::Aspect:
+            buildAspectSection(menu);
+            break;
+        }
+    }
+}
+
+// N119：视频区右键菜单入口——整棵现建、建完即渲染、exec 即毁，动作仍是共享主实例。
+// 弹出前按 N5 清焦；弹层父指针挂 window()（pitfalls：transient parent 链）
+void MainWindow::showVideoContextMenu(const QPoint &globalPos) {
+    if (auto *fw = QApplication::focusWidget())
+        fw->clearFocus();
+    QMenu root(window());
+    for (const MenuSpec::Group &group : MenuSpec::kGroups)
+        renderMenuGroup(*root.addMenu(tr(group.title)), group);
+    root.exec(globalPos);
+}
+
+// 进出覆盖态的四处调用点全走这里，不再盲 show / hide（隐藏偏好不被退出推翻）
+void MainWindow::applyMenuBarVisibility() {
+    menuBar()->setVisible(m_menuBarVisibleTruth && !m_fullscreen && !m_mini);
 }
 
 void MainWindow::connectController() {
@@ -1218,7 +1198,7 @@ void MainWindow::connectController() {
         // 流子菜单启用态派生自正播实体（N96），而实体正是随本信号落定的：控件状态必须
         // 随其派生输入一起刷新。只靠 endFile 那次调用会停在"实体尚未更新"的瞬间，
         // 停止态能否复位就全押在 mpv 各属性推送的先后上（无依据）
-        updateStreamControls();
+        updateStreamButton();
         // N8 Part5：停止态禁用进度条并归位 0；播放态恢复可用
         m_progressSlider->setEnabled(pos >= 0);
         if (pos < 0) {
@@ -1274,7 +1254,7 @@ void MainWindow::connectController() {
             m_progressSlider->setValue(0);
         }
         m_tracks.clear();
-        updateStreamControls();
+        updateStreamButton();
         m_marks->setChapters({});
         updateChapterSlider();
     });
@@ -1358,7 +1338,7 @@ void MainWindow::connectController() {
     connect(m_controller, &MpvController::tracksChanged, this,
             [this](const QString &, const QList<MpvController::TrackInfo> &tracks) {
                 m_tracks = tracks;
-                updateStreamControls();
+                updateStreamButton();
             });
     // N15：章节
     connect(m_controller, &MpvController::chaptersChanged, this,
@@ -1910,10 +1890,22 @@ void MainWindow::setPlaylistVisible(bool visible) {
         return;
     }
     if (m_fullscreen) {
-        // N66 §二-7：全屏期 ☰ / Ctrl+L 改义——不触碰 splitter、不改窗口态面板
-        // 可见性、不写 playlistExpanded，只翻右缘自动显示允许位。按钮→动作→本函数
-        // 三条入口在此单点汇聚分流
-        setFullscreenPlaylistEdgeEnabled(visible);
+        // N119 §3.1：全屏期同一开关只写真相，不碰 splitter 与窗口几何；勾上不立即显示，
+        // 等右缘触发。取消须无条件立即收起——重评的保活判据 cursorOnPlaylist 会让光标
+        // 停在面板上时不收，"取消 = 两态都关"就此落空。按钮与动作是两条独立勾选链
+        // （bindButton 只同步 enabled），按真相各回写一次（A12）
+        m_playlistVisibleTruth = visible;
+        if (!visible)
+            setOverlayShown(Overlay::Playlist, false);
+        {
+            QSignalBlocker toggleBlocker(m_playlistToggle);
+            m_playlistToggle->setChecked(visible);
+        }
+        {
+            QSignalBlocker actionBlocker(m_playlistAction);
+            m_playlistAction->setChecked(visible);
+        }
+        reevaluateOverlays();
         return;
     }
     if (visible) {
@@ -2226,27 +2218,6 @@ void MainWindow::syncVideoGeometry() {
 
 // ---- N66：全屏浮窗控制栏与播放列表 ----
 
-// §三-3：全屏态 ☰ 语义的唯一收口——翻转右缘自动显示允许位 + 重评显隐 + 按 A12
-// 口径同步 ☰ 与动作勾选态。允许位与窗口态可见性互不污染：本函数不碰 splitter
-// 与 setPlaylistVisible
-void MainWindow::setFullscreenPlaylistEdgeEnabled(bool enabled) {
-    if (m_fsPlaylistEdgeEnabled == enabled)
-        return;
-    m_fsPlaylistEdgeEnabled = enabled;
-    // §二-7：关闭且正在显示 → 立即收起；开启 → 不自动显示，等边缘触发
-    if (!enabled)
-        setOverlayShown(Overlay::Playlist, false);
-    {
-        QSignalBlocker toggleBlocker(m_playlistToggle);
-        m_playlistToggle->setChecked(enabled);
-    }
-    {
-        QSignalBlocker actionBlocker(m_playlistAction);
-        m_playlistAction->setChecked(enabled);
-    }
-    reevaluateOverlays(); // 关闭且未显示 / 开启两档：按光标位置与新允许位定态
-}
-
 // §三-2：两个宿主浮窗按需创建（同 ensureNavigator / OsdController::ensureOverlay 的生命周期：
 // 首次进全屏才构造，成员指针为 null 即未创建）。焦点标志两窗分叉（§二-1）：控制栏带
 // WindowDoesNotAcceptFocus（控件全 NoFocus 无须键盘）；播放列表不带——搜索框与列表
@@ -2375,7 +2346,8 @@ void MainWindow::evaluateOverlayVisibility(const QPoint &clientPos) {
         m_playlistOverlay->isVisible() && m_playlistOverlay->geometry().contains(globalPos);
     const bool controlTarget = (inBottom && !cursorOnPlaylist) || cursorOnControl;
     const bool playlistTarget =
-        !controlTarget && ((inRight && m_fsPlaylistEdgeEnabled) || cursorOnPlaylist);
+        !controlTarget &&
+        ((inRight && m_playlistVisibleTruth) || cursorOnPlaylist); // N119 §3.1：右缘门控读同一真相
     if (!holdControl)
         setOverlayShown(Overlay::ControlBar, controlTarget);
     if (!holdPlaylist)
@@ -2416,22 +2388,45 @@ void MainWindow::repositionFullscreenOverlays() {
     }
 }
 
-// N110：画面比例勾选回填（挂父视图菜单 aboutToShow，弹出时现读现填）。只认
-// double——读回归一化十进制串，串比较完全不可用（§三-3）；内建档常量表与 mpv
-// 对同一写法的解析同源，容差 0.01 内视为同档（1% 比例差在典型窗高下宽度差仅
-// 数像素，显示不可辨异——手输 1.777778 与点选 16:9 勾为同档是对的行为）；档间
-// 最小间距 0.0722，容差远小于其半，至多命中一档。不中 → 勾自定义并缀当前值；
-// -1 / 0 废弃哨兵（外部特殊态）全不勾、自定义条目不带值
-void MainWindow::updateAspectCheckedStates() {
+// N119：比例动态段——条目当场新建、无 QActionGroup 成员，勾选按 video-aspect-override
+// 现读回填。只认 double：读回的归一化十进制串不可用于比较（§三-3）；容差 0.01 内算同档
+// （档间最小间距 0.0722，容差远小于其半，至多命中一档）。不中档 → 全不勾、Custom 缀当前值；
+// -1 / 0 废弃哨兵 → 全不勾、Custom 不带值
+void MainWindow::buildAspectSection(QMenu &parent) {
+    QMenu *aspectMenu = parent.addMenu(tr("Aspect Ratio"));
+    QAction *original = aspectMenu->addAction(tr("Original"));
+    original->setCheckable(true);
+    QList<QAction *> presets;
+    for (const AspectPreset &p : kAspectPresets) {
+        QAction *a = aspectMenu->addAction(QLatin1String(p.token));
+        a->setCheckable(true);
+        presets.append(a);
+    }
+    QAction *custom = aspectMenu->addAction(tr("Custom"));
+    custom->setCheckable(true);
+
+    connect(original, &QAction::triggered, this, [this] {
+        m_controller->setProperty(QStringLiteral("video-aspect-override"), QStringLiteral("no"));
+    });
+    for (int i = 0; i < presets.size(); ++i) {
+        connect(presets[i], &QAction::triggered, this, [this, i] {
+            // 写入 token 原样交 mpv 归一化收账；全部写值落在实测域 [-2, 10] 内，无拒收面
+            m_controller->setProperty(QStringLiteral("video-aspect-override"),
+                                      QLatin1String(kAspectPresets[i].token));
+        });
+    }
+    connect(custom, &QAction::triggered, this, &MainWindow::onCustomAspectRatio);
+
+    // 勾选回填（原 updateAspectCheckedStates 主体平移）
     const double v = m_controller->propertyDouble(QStringLiteral("video-aspect-override"), -2.0);
-    const QAction *checked = nullptr;
+    QAction *checked = nullptr;
     QString customText;
     if (v == -2.0) {
-        checked = m_aspectOriginal; // "no" 的哨兵，读回恒 -2（§三-3）
+        checked = original; // "no" 的哨兵，读回恒 -2（§三-3）
     } else if (v > 0.0) {
-        for (int i = 0; i < m_aspectPresets.size(); ++i) {
+        for (int i = 0; i < presets.size(); ++i) {
             if (qAbs(v - kAspectPresets[i].value) <= 0.01) {
-                checked = m_aspectPresets[i];
+                checked = presets[i];
                 break;
             }
         }
@@ -2440,10 +2435,12 @@ void MainWindow::updateAspectCheckedStates() {
                 tr("Custom") + QStringLiteral(" (") + QString::number(v) + QStringLiteral(")");
     }
     // v == -1.0 / 0.0 落到此处：全部不勾、自定义条目不带值
-    const QList<QAction *> actions = m_aspectGroup->actions();
-    for (QAction *a : actions)
+    original->setChecked(checked == original);
+    for (QAction *a : presets)
         a->setChecked(a == checked);
-    m_aspectCustom->setText(customText.isEmpty() ? tr("Custom") : customText);
+    // 自定义档恒不勾：不中档时只把当前值缀在条目上（N110 口径），命中判据里没有它
+    custom->setChecked(false);
+    custom->setText(customText.isEmpty() ? tr("Custom") : customText);
 }
 
 // N110：自定义画面比例输入（自定义档条目触发）。循环到合法或取消：非法 → 警告
@@ -2689,9 +2686,8 @@ void MainWindow::toggleFullscreen() {
         if (m_navigator)
             m_navigator->hide();
         m_navigatorAction->setEnabled(false);
-        // N66 §二-7：全屏期播放列表动作保持可用（原 A20 禁用口径作废，改义见
-        // setPlaylistVisible 的全屏分流）
         m_fullscreen = true;
+        applyMenuBarVisibility();       // 幂等复算（菜单栏已在上方按原位先藏）
         m_refitAfterFullscreen = false; // 进全屏清空：仅记录"本次全屏期内是否换片"
         // A18 无框手动几何全屏（Windows 口径；Linux 不走手动几何——flags 切换后经
         // showFullScreen 走状态机，见下方 #else）：绕开 WindowFullScreen 状态机（其进出必经
@@ -2729,16 +2725,6 @@ void MainWindow::toggleFullscreen() {
         if (m_fsPlaylistWidth <= 0) // 进程内记忆首取窗口态宽度（为零用默认值，§二-8）
             m_fsPlaylistWidth = m_playlistWidth > 0 ? m_playlistWidth : App::playlistDefaultWidth();
         repositionFullscreenOverlays();
-        // N66 §二-7：☰ / 动作勾选态切到允许位（QSignalBlocker 挡在回调外，A12 口径；
-        // 退出时置回窗口态真相，两向同步都在回调外完成）
-        {
-            QSignalBlocker toggleBlocker(m_playlistToggle);
-            m_playlistToggle->setChecked(m_fsPlaylistEdgeEnabled);
-        }
-        {
-            QSignalBlocker actionBlocker(m_playlistAction);
-            m_playlistAction->setChecked(m_fsPlaylistEdgeEnabled);
-        }
     } else {
         m_fullscreen = false;
         // N66 §二-2 ①：改 flags 前只收浮窗、把两控件挂回原位（②只恢复对象树形状，
@@ -2762,7 +2748,7 @@ void MainWindow::toggleFullscreen() {
             showMaximized();
         else
             show();
-        menuBar()->show(); // 恢复菜单栏（布局重排会经占位符事件链触发几何同步）
+        applyMenuBarVisibility(); // 按偏好恢复——隐藏偏好不得被退出全屏推翻
         syncVideoGeometry();
         // N66 §二-2 ④：主窗几何落定后按窗口态恢复面板可见性与宽度。锚点用进全屏前
         // 记下的左 pane 宽度直调（挂回后现读必被新默认分配污染，A20 坑 2）；调用时机
@@ -2772,16 +2758,6 @@ void MainWindow::toggleFullscreen() {
         m_playlist->setVisible(m_playlistVisibleTruth);
         if (m_playlistVisibleTruth)
             applyPlaylistGeometry(true, m_preFsLeftWidth);
-        // N66 §二-7：☰ 与 m_playlistAction 勾选态置回窗口态真相（A12 口径，
-        // QSignalBlocker 挡在回调外，否则勾选态被钉在错误来源上）
-        {
-            QSignalBlocker toggleBlocker(m_playlistToggle);
-            m_playlistToggle->setChecked(m_playlistVisibleTruth);
-        }
-        {
-            QSignalBlocker actionBlocker(m_playlistAction);
-            m_playlistAction->setChecked(m_playlistVisibleTruth);
-        }
         // B16：全屏期内若切换过视频，当前尺寸与"进全屏前的小窗"已不一致；
         // 恢复普通态后按当前视频尺寸重新适配（最大化分支不走此路，保持全屏宽度）
         if (m_refitAfterFullscreen) {
@@ -3063,6 +3039,7 @@ void MainWindow::toggleMini() {
                 layout()->activate();
         }
         m_mini = true;
+        applyMenuBarVisibility(); // 幂等复算（上方已先藏，布局冲刷依赖其不含菜单栏）
 #if defined(Q_OS_WIN) && !defined(OXBOW_PUREQT)
         // 主路径：新一轮生命周期开始，上轮拖动的锚点与 inset 缓存先作废（正常由
         // WM_EXITSIZEMOVE 清，异常序可能压根没走到）——陈旧锚点会让首轮 WM_MOVING
@@ -3168,7 +3145,7 @@ void MainWindow::toggleMini() {
             showMaximized();
         else
             show();
-        menuBar()->show();
+        applyMenuBarVisibility(); // 按偏好恢复——隐藏偏好不得被退出小窗推翻
         m_bottomBar->show();
         m_playlist->setVisible(m_playlistVisibleTruth);
         if (m_navigator) { // 非 null ⟹ 必为被本方案隐藏的小窗前可见面板
@@ -3239,8 +3216,8 @@ bool MainWindow::event(QEvent *event) {
     return QMainWindow::event(event);
 }
 
-// 占位符几何跟随 + 视频区单击/双击分流（N3）。
-// 右键与 Release 不处理：右键无任何行为变化。
+// 占位符几何跟随 + 视频区单击 / 双击分流（N3）+ 右键菜单（N119）。
+// Release 不处理；右键走 ContextMenu 分支，不进这套按压 / 双击计时。
 // N66：本过滤器只服务本类对象级安装（视频区 / 占位符 / 滑条 / 浮窗 / 热区条）；
 // app 级的弹层关闭观察由独立的 PopupCloseWatch 承载，不经此函数（§三-4）
 bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
@@ -3347,11 +3324,20 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
                              ? m_volumeWheelStep
                              : -m_volumeWheelStep);
             return true;
+        case QEvent::ContextMenu: {
+            // N119：右键抬起时由平台层投递本事件，不必自判左右键；清焦与弹层收口在
+            // showVideoContextMenu。键盘唤出不在本方案（非目标），命中即放行
+            auto *ce = static_cast<QContextMenuEvent *>(event);
+            if (ce->reason() == QContextMenuEvent::Keyboard)
+                break;
+            showVideoContextMenu(ce->globalPos());
+            return true;
+        }
         case QEvent::MouseButtonPress:
         case QEvent::MouseButtonDblClick: {
             auto *me = static_cast<QMouseEvent *>(event);
             if (me->button() != Qt::LeftButton)
-                break; // 右键无任何行为变化
+                break; // 右键不进这套按压 / 双击计时（菜单归 ContextMenu 分支）
             // N5：点击画面即离开列表焦点，方向键回到全局音量模式
             if (auto *fw = QApplication::focusWidget())
                 fw->clearFocus();
@@ -4049,8 +4035,9 @@ void MainWindow::saveSettings() {
     // 隐藏、A11 二次保存在窗口隐藏后触发，活体读数都会把该键错写成 false（N66）
     settings.setValue(QStringLiteral("playlistExpanded"), m_playlistVisibleTruth);
 
-    // N66 §二-7：右缘自动显示允许位（全屏态真相源，与 playlistExpanded 互不读写）
-    settings.setValue(QStringLiteral("fullscreenPlaylistEdge"), m_fsPlaylistEdgeEnabled);
+    // N119：菜单栏偏好读真相成员——覆盖态 menuBar()->isVisible() 恒假，读活体会把偏好
+    // 错存成 false（A11 在 playlistExpanded 上踩过的同一坑）
+    settings.setValue(QStringLiteral("menuBarVisible"), m_menuBarVisibleTruth);
 
     // N10：窗口几何/最大化不再落盘（启动恒为固定默认尺寸 960×600）
 
@@ -4119,9 +4106,15 @@ void MainWindow::restoreSettings() {
     if (settings.value(QStringLiteral("playlistExpanded"), false).toBool())
         setPlaylistVisible(true);
 
-    // N66 §二-7：右缘自动显示允许位（缺键按关闭——右缘唤出是需主动开启的能力）
-    m_fsPlaylistEdgeEnabled =
-        settings.value(QStringLiteral("fullscreenPlaylistEdge"), false).toBool();
+    // N119：菜单栏偏好（缺键 true）——挡回调回放勾选态，再收口一次可见性。时点在首次
+    // show 之前，布局重排经占位符事件链触发 syncVideoGeometry，与退出全屏同款
+    m_menuBarVisibleTruth = settings.value(QStringLiteral("menuBarVisible"), true).toBool();
+    QAction *menuBarAction = m_actions->action(ActionManager::Id::MenuBar);
+    {
+        QSignalBlocker blocker(menuBarAction);
+        menuBarAction->setChecked(m_menuBarVisibleTruth);
+    }
+    applyMenuBarVisibility();
 
     // N57 §2.7：会话键改用身份——上次播放的非默认列表按身份直查注册表，命中才换算
     // 视图坐标并切换（currentChanged 联动自动选中该表记忆的最后播放项）；查不到或
@@ -4247,29 +4240,29 @@ QList<MpvController::TrackInfo> MainWindow::tracksOfType(const QString &type) co
     return result;
 }
 
-// 各子菜单的 aboutToShow 都挂本函数，故一次弹出把四组一起重建。清空 + 追加的形态留在
-// 调用点：播放菜单的字幕流子菜单日后要在这组条目之外追加"添加字幕"之类的动作，
-// 分组函数本身只管选择条目
-void MainWindow::rebuildTrackMenus() {
-    if (m_videoStreamMenu) {
-        m_videoStreamMenu->clear();
-        addTrackSelectionGroup(m_videoStreamMenu, QStringLiteral("video"));
-    }
-    if (m_audioStreamMenu) {
-        m_audioStreamMenu->clear();
-        addTrackSelectionGroup(m_audioStreamMenu, QStringLiteral("audio"));
-        appendTrackAddAction(m_audioStreamMenu, false);
-    }
-    if (m_subStreamMenu) {
-        m_subStreamMenu->clear();
-        addSubtitleSelectionGroup(m_subStreamMenu, false);
-        appendTrackAddAction(m_subStreamMenu, true);
-    }
-    if (m_secondarySubStreamMenu) {
-        m_secondarySubStreamMenu->clear();
-        addSubtitleSelectionGroup(m_secondarySubStreamMenu, true);
-        appendTrackAddAction(m_secondarySubStreamMenu, true, true);
-    }
+// N119：轨道动态段——四个子菜单当场新建、现读现填。追加"添加"项的形态留在调用点
+// （分组函数只管选择条目）。启用判据在构建时判定：视频组看视频轨，其余三组看正播
+// 实体——0 轨恰是"添加"的用武之地，不按轨道数判禁用
+void MainWindow::buildTrackSection(QMenu &parent) {
+    QMenu *video = parent.addMenu(tr("Video"));
+    addTrackSelectionGroup(video, QStringLiteral("video"));
+    video->setEnabled(!tracksOfType(QStringLiteral("video")).isEmpty());
+
+    const bool hasPlaying = playingEntity() != nullptr;
+    QMenu *audio = parent.addMenu(tr("Audio"));
+    addTrackSelectionGroup(audio, QStringLiteral("audio"));
+    appendTrackAddAction(audio, false);
+    audio->setEnabled(hasPlaying);
+
+    QMenu *sub = parent.addMenu(tr("Subtitle"));
+    addSubtitleSelectionGroup(sub, false);
+    appendTrackAddAction(sub, true);
+    sub->setEnabled(hasPlaying);
+
+    QMenu *secondary = parent.addMenu(tr("Secondary Subtitle"));
+    addSubtitleSelectionGroup(secondary, true);
+    appendTrackAddAction(secondary, true, true);
+    secondary->setEnabled(hasPlaying);
 }
 
 // N96：流子菜单"添加"项装配单点——条件分隔线（菜单非空才加，0 轨时添加项顶格、不留
@@ -4334,11 +4327,9 @@ void MainWindow::addSubtitleSelectionGroup(QMenu *menu, bool secondary) {
     }
 }
 
-// B18：流按钮与流子菜单的状态由两份输入派生——轨道计数取 m_tracks，音频 / 字幕三个子菜单
-// 的启用态取正播实体（N96：0 轨恰是"添加"的用武之地，故不再按轨道数判禁用）。刷新点随
-// 输入走：tracksChanged（轨道表）/ playlistPosChanged（正播实体）/ END_FILE 会话态重置
-// （清空 m_tracks 即按钮隐藏）
-void MainWindow::updateStreamControls() {
+// B18：流选择按钮的显隐与启用由 m_tracks 派生。刷新点随输入走：tracksChanged（轨道
+// 表）/ playlistPosChanged（正播实体）/ END_FILE 会话态重置（清空 m_tracks 即隐藏）
+void MainWindow::updateStreamButton() {
     int v = 0, a = 0, s = 0;
     for (const auto &t : m_tracks) {
         if (t.type == QLatin1String("video"))
@@ -4353,17 +4344,6 @@ void MainWindow::updateStreamControls() {
         m_streamButton->setVisible(visible);
         m_streamButton->setEnabled(visible);
     }
-    if (m_videoStreamMenu)
-        m_videoStreamMenu->setEnabled(v > 0);
-    // 判据取正播实体唯一出口。残留时序窗口：切集间隙与播完收尾瞬间实体仍指旧条目、
-    // 菜单短暂可用，随即被下一轮推送纠正（已裁决接受，不为此加判据）
-    const bool hasPlaying = playingEntity() != nullptr;
-    if (m_audioStreamMenu)
-        m_audioStreamMenu->setEnabled(hasPlaying);
-    if (m_subStreamMenu)
-        m_subStreamMenu->setEnabled(hasPlaying);
-    if (m_secondarySubStreamMenu)
-        m_secondarySubStreamMenu->setEnabled(hasPlaying); // N94：与主字幕同规则
 }
 
 void MainWindow::showStreamMenu() {
@@ -4519,15 +4499,11 @@ void MainWindow::applySubtitleFile(const QString &path, bool secondary) {
     m_osd->show(tr("Subtitle: ") + QFileInfo(path).fileName());
 }
 
-// ---- N43：播放菜单的滤镜子菜单 ----
-
-// 弹出时整体重建（挂父菜单 Play 的 aboutToShow，见 createMenus）：条目与勾选态
-// 每次按属性实时读重算，故菜单打开时所见即当前生效状态；无条目则整菜单禁用
-void MainWindow::rebuildFilterMenus() {
-    auto rebuild = [this](QMenu *menu, const QString &property) {
-        if (!menu)
-            return;
-        menu->clear();
+// N43：滤镜动态段——两个子菜单按 af / vf 现读重建，勾选态即启用位；无条目则该子菜单
+// 禁用。填充挂父段（本段展开时一次建齐）：被禁用的子菜单永不展开，靠它自己翻转不了
+// "从无滤镜到有滤镜"的启用态
+void MainWindow::buildFilterSection(QMenu &parent) {
+    auto build = [this](QMenu *menu, const QString &property) {
         const QList<FilterEntry> entries = m_controller->filterEntries(property);
         const int count = int(entries.size());
         for (int i = 0; i < count; ++i) {
@@ -4539,8 +4515,8 @@ void MainWindow::rebuildFilterMenus() {
         }
         menu->setEnabled(count > 0);
     };
-    rebuild(m_videoFilterMenu, QStringLiteral("vf"));
-    rebuild(m_audioFilterMenu, QStringLiteral("af"));
+    build(parent.addMenu(tr("Video Filters")), QStringLiteral("vf"));
+    build(parent.addMenu(tr("Audio Filters")), QStringLiteral("af"));
 }
 
 // 点击条目：翻转启用位后整串重写——禁停位就是编译串上的 ! 前缀，与设置对话框
@@ -4575,39 +4551,36 @@ void MainWindow::updateChapterMenuState() {
         a->setEnabled(hasFile);
 }
 
+// N119：章节 / 书签的命中判据单点（时间 / 类别 / 标题齐等）——构建时的勾选初值与菜单
+// 可见期的逐 tick 回写同调此处，分写两处迟早分叉
+static bool markHits(const MarkAggregator::Mark &hit, double time, bool isBookmark,
+                     const QString &title) {
+    return hit.time == time && hit.isBookmark == isBookmark && hit.title == title;
+}
+
 void MainWindow::updateChapterMenuChecked() {
-    if (!m_chapterMenu || !m_chapterGroup)
-        return;
+    QMenu *menu = m_liveChapterMenu.data();
+    if (!menu || !menu->isVisible())
+        return; // 无活体 UI（尚未构建或右键弹层已毁），或菜单不可见
     // N77 §2.3：命中查询收（正播身份，key），豁免分派在聚合器内
     const auto cur = playingEntity();
     const auto hit = m_marks->hit(m_timePos, playingListUuid(),
                                   cur ? cur->key() : QString()); // std::optional<Mark>
-    const bool hasHit = hit.has_value();
-    const bool wasExclusive = m_chapterGroup->isExclusive();
-    m_chapterGroup->setExclusive(false);
-    const auto actions = m_chapterMenu->actions();
-    for (QAction *act : actions) {
+    // 无 QActionGroup：逐条显式回写即互斥（命中者勾上，其余落下）
+    for (QAction *act : menu->actions()) {
         if (!act->isCheckable())
-            continue;
-        double t = act->data().toDouble();
-        bool shouldCheck = hasHit && hit->time == t &&
-                           ((hit->isBookmark && act->property("isBookmark").toBool()) ||
-                            (!hit->isBookmark && !act->property("isBookmark").toBool()));
-        if (shouldCheck) {
-            if (act->property("title").toString() != hit->title)
-                shouldCheck = false;
-        }
-        act->setChecked(shouldCheck);
+            continue; // 两个登记动作不在命中面上
+        const bool checked = hit.has_value() && markHits(*hit, act->data().toDouble(),
+                                                         act->property("isBookmark").toBool(),
+                                                         act->property("title").toString());
+        act->setChecked(checked);
     }
-    m_chapterGroup->setExclusive(wasExclusive);
 }
 
-void MainWindow::rebuildChapterMenu() {
-    if (!m_chapterMenu)
-        return;
-    m_chapterMenu->clear();
-    // 菜单项由 clear() 连同销毁，QAction 析构时自动脱离 m_chapterGroup，
-    // 此处重建 action 后重新入组即可
+void MainWindow::buildChapterSection(QMenu &target) {
+    // N119：登记活体章节菜单——updateChapterMenuChecked 据此在菜单可见时逐 tick 跟随
+    // 播放位置；右键弹层即建即毁，QPointer 自动归空
+    m_liveChapterMenu = &target;
     const auto marksChapters = m_marks->chapters();
     // N56 §2.7：以当前内容为对象的取串点统一取正播实体——key 作书签仓键匹配（B15），
     // path 作跳转用的原始显示路径；无正播实体（停止态）两者为空，菜单只剩章节段。
@@ -4619,18 +4592,20 @@ void MainWindow::rebuildChapterMenu() {
     const QString curDisplay = playing ? playing->path() : QString();
     // 书签经聚合器统一读入口（书签永不查重，即原始）
     const QList<MarkAggregator::Mark> bookmarkMarks = m_marks->bookmarks(curUuid, curKey);
+    // 勾选初值按构建时刻现算（判据同出 markHits，至多一条勾上）
+    const auto hit = m_marks->hit(m_timePos, curUuid, curKey);
 
     // 跳转目标 = 菜单构建时的当前文件（菜单条目语义上属于该文件）
-    auto addSection = [this, curDisplay](const QList<MarkAggregator::Mark> &items) {
+    auto addSection = [&](const QList<MarkAggregator::Mark> &items) {
         for (const auto &it : items) {
             const QString text =
                 QStringLiteral("[%1] %2").arg(Util::formatTimeHMSms(it.time), it.title);
-            QAction *a = m_chapterMenu->addAction(text);
+            QAction *a = target.addAction(text);
             a->setCheckable(true);
             a->setData(it.time);
             a->setProperty("isBookmark", it.isBookmark);
             a->setProperty("title", it.title);
-            m_chapterGroup->addAction(a);
+            a->setChecked(hit.has_value() && markHits(*hit, it.time, it.isBookmark, it.title));
             const double t = it.time;
             // N54：书签条目带上来源走"回绑定列表"的跳转；N77：合并视图内各组来源
             // 不同，每条捕获自己组的来源，不再整文件取一次。章节条目属"当前文件的
@@ -4652,8 +4627,8 @@ void MainWindow::rebuildChapterMenu() {
         chapterMarks.append({c.time, c.title, false, BookmarkManager::Origin()});
 
     // 去重：章节内部严格 == 已在聚合器 chapters 处理；此处仅分段显示，保持原序
-    // 若书签与章节同 time，菜单两段都会显示各自项，但选中跟随以书签优先（updateChapterMenuChecked）
-    // 标记层已合并，菜单允许重复显示以区分来源，符合“平铺显示所有章节/书签”
+    // 书签与章节同 time 时两段各显示自己那条（标记层已合并，菜单允许重复显示以区分
+    // 来源），谁被勾由 markHits 定
     bool hasChapter = !chapterMarks.isEmpty();
     bool hasBookmark = !bookmarkMarks.isEmpty();
 
@@ -4661,22 +4636,21 @@ void MainWindow::rebuildChapterMenu() {
         addSection(chapterMarks);
     }
     if (hasChapter && hasBookmark)
-        m_chapterMenu->addSeparator();
+        target.addSeparator();
     if (hasBookmark) {
         addSection(bookmarkMarks);
     }
     if (hasChapter || hasBookmark)
-        m_chapterMenu->addSeparator();
+        target.addSeparator();
 
     QAction *addAct = m_actions->action(ActionManager::Id::AddBookmark);
     QAction *editorAct = m_actions->action(ActionManager::Id::BookmarkEditor);
     if (addAct)
-        m_chapterMenu->addAction(addAct);
+        target.addAction(addAct);
     if (editorAct)
-        m_chapterMenu->addAction(editorAct);
+        target.addAction(editorAct);
 
     updateChapterMenuState();
-    updateChapterMenuChecked();
 }
 
 // N54：章节跳转。原 jumpToFileTime 函数体逐字沿用（改名 + 末尾四行收进

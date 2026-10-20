@@ -117,6 +117,7 @@ add_library(oxbowcore MODULE
     src/ActionManager.h
     src/MainWindow.cpp
     src/MainWindow.h
+    src/ui/MenuSpec.h # N119：菜单描述表（header-only，唯一消费者是 MainWindow）
     src/mpvbridge/MpvController.cpp
     src/mpvbridge/MpvController.h
     src/mpvbridge/MpvKeyName.cpp
