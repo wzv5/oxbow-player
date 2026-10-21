@@ -210,6 +210,8 @@ class MainWindow : public QMainWindow {
     void repositionFullscreenOverlays();
     // N119：菜单栏可见性唯一收口——偏好真相 ∧ 非覆盖态
     void applyMenuBarVisibility();
+    // N121：尺寸事实的唯一入口——权威 videoSizeChanged 与 on_preloaded 预估值共用
+    void applyVideoSize(int videoW, int videoH);
     // N10：普通态窗口尺寸自适应视频（videoSizeChanged 直连触发，
     // 物理像素 1:1、工作区钳制、最小移动收回；尺寸事实源经 N40 改滤镜后输出尺寸）
     void adaptWindowSizeToVideo(int videoW, int videoH);

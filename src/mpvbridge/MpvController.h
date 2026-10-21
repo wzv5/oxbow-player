@@ -161,6 +161,12 @@ class MpvController : public QObject {
         int mainSelection = -1;
         int demuxW = 0;
         int demuxH = 0;
+        // N121：on_preloaded 预适配的选轨与尺寸估算（demux 级字段）
+        bool albumArt = false; // 内嵌封面；auto 选轨时跳过
+        int demuxCropW = 0;    // 容器 crop 后宽；0 = 无容器 crop
+        int demuxCropH = 0;
+        int demuxRotation = 0; // 容器旋转（顺时针，度）
+        double demuxPar = 0.0; // 像素宽高比；0 = 未声明
         double demuxFps = 0.0;
         int demuxSamplerate = 0;
         int demuxChannelCount = 0;
@@ -220,6 +226,10 @@ class MpvController : public QObject {
     // N110：有效尺寸推送——源尺寸套用画面比例（video-aspect-override）后的显示
     // 矩形，w/h 即当前显示宽高比；0,0 表示无视频
     void videoSizeChanged(int width, int height);
+    // N121：on_preloaded hook 的预适配尺寸（demux 级估算，不是权威值）。仅在 GUI
+    // 线程发射；发射期间 mpv 核心被 hook 阻塞，接收方须在返回前完成窗口适配
+    // （事件线程据此有界等待）。权威 videoSizeChanged 随后照常校正
+    void preloadVideoSizeHint(int width, int height);
     // B18：以下 4 项首参为归属键（同 durationChanged），由 FILE_LOADED
     // 主动读发出，不再 observe（等值不重推 / 推送滞后均随之消除）
     // 媒体元数据字典（N4）：键大小写因文件而异，接收方需做不敏感匹配
@@ -279,6 +289,15 @@ class MpvController : public QObject {
     readSourceVideoSize() const; // 源尺寸取值收口：out 优先、width/height 回退、皆不可读判无视频
     QSize readVideoSize() const; // 有效尺寸 = 源尺寸 + video-aspect-override 保轴换算（N110）
     void publishVideoSize();     // 去重收口：与上次已发布值比对，不同才写入并 emit
+    // N121：MPV_EVENT_HOOK 分派（仅事件线程）。所有收到的 hook 都必须 continue
+    void handleHook(const mpv_event *event);
+    // N121：当前文件的选项生效回显（先 file-local 再全局），只走字符串通道——
+    // choice 类选项的 native 是字符串，请求 INT64 会整条失败（根因见实现处注释）
+    QString fileOptionEcho(const QString &name) const;
+    // N121：on_preloaded 的 demux 尺寸估算（仅事件线程）；无视频 / 无尺寸返回空
+    QSize preloadSizeHint() const;
+    // N121：把预估值有界阻塞交接给 GUI 线程（上限见 App::preloadResizeTimeoutMs）
+    void requestPreloadResize();
 
     // N92：配置目录取值的唯一收口，两个文件路径出口共用（校验与安全顺序见其声明处）
     QString configDir() const;

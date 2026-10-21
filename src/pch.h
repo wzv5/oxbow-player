@@ -101,6 +101,7 @@
 #include <QRawFont>
 #include <QRegularExpression>
 #include <QSaveFile>
+#include <QSemaphore>
 #include <QSet>
 #include <QSettings>
 #include <QShortcut>

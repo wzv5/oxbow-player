@@ -2,6 +2,7 @@
 
 #include "MpvController.h"
 
+#include "Constants.h"
 #include "Util.h" // N61 §2.3：回显整形（playlist 条目 filename 进判据前唯一一道加工）
 
 #include "ui/FilterListWidget.h"
@@ -116,6 +117,17 @@ QList<MpvController::TrackInfo> parseTrackList(const mpv_node *node) {
                 info.demuxW = int(v->u.int64);
             else if (key == QLatin1String("demux-h") && v->format == MPV_FORMAT_INT64)
                 info.demuxH = int(v->u.int64);
+            // N121：on_preloaded 预适配用的 demux 级字段
+            else if (key == QLatin1String("albumart") && v->format == MPV_FORMAT_FLAG)
+                info.albumArt = v->u.flag != 0;
+            else if (key == QLatin1String("demux-crop-w") && v->format == MPV_FORMAT_INT64)
+                info.demuxCropW = int(v->u.int64);
+            else if (key == QLatin1String("demux-crop-h") && v->format == MPV_FORMAT_INT64)
+                info.demuxCropH = int(v->u.int64);
+            else if (key == QLatin1String("demux-rotation") && v->format == MPV_FORMAT_INT64)
+                info.demuxRotation = int(v->u.int64);
+            else if (key == QLatin1String("demux-par") && v->format == MPV_FORMAT_DOUBLE)
+                info.demuxPar = v->u.double_;
             else if (key == QLatin1String("demux-fps") && v->format == MPV_FORMAT_DOUBLE)
                 info.demuxFps = v->u.double_;
             else if (key == QLatin1String("demux-samplerate") && v->format == MPV_FORMAT_INT64)
@@ -276,6 +288,11 @@ class MpvController::EventThread : public QThread {
                 // 触发多次、前几次仍读旧值），取值与去重收口在 publishVideoSize
                 m_ctrl->publishVideoSize();
                 break;
+            case MPV_EVENT_HOOK:
+                // N121：on_preloaded 的同步预适配入口（所有 hook 都由
+                // handleHook 负责 continue）
+                m_ctrl->handleHook(e);
+                break;
             case MPV_EVENT_SHUTDOWN:
                 emit m_ctrl->mpvShutdown();
                 return;
@@ -339,6 +356,13 @@ MpvController::MpvController(mpv_handle *mpv, QObject *parent) : QObject(parent)
     mpv_observe_property(m_mpv, PropTrackList, "track-list", MPV_FORMAT_NODE);
     // B18：metadata / file-format / chapter-list 改 FILE_LOADED 主动读
     // （见 handleFileLoaded），不 observe；track-list 见上
+
+    // N121：on_preloaded 同步预适配。必须早于 startEventThread 的首次
+    // mpv_wait_event——该调用释放核心启动门控，命令行首文件随后才开始装载。
+    // 注册失败只退化为既有 VIDEO_RECONFIG 异步适配，不阻断启动
+    const int hookRc = mpv_hook_add(m_mpv, 0, "on_preloaded", 0);
+    if (hookRc < 0)
+        qDebug() << "[oxbow] mpv_hook_add(on_preloaded) failed:" << hookRc;
 }
 
 void MpvController::startEventThread() { m_eventThread->start(); }
@@ -414,6 +438,13 @@ QSize MpvController::videoSize() const {
 // 不受主侧 video-aspect-override 影响，呈现未拉伸的像素帧
 QSize MpvController::sourceVideoSize() const { return readSourceVideoSize(); }
 
+// N121：半上取整并饱和到 [1, INT_MAX]——N110 有效尺寸换算与起播预估值共用，
+// 极端小比例（1e-9）下不会越界
+static int saturatedRound(double v) {
+    const double r = std::floor(v + 0.5); // 半上取整
+    return int(qBound(1.0, r, double(std::numeric_limits<int>::max())));
+}
+
 // N110：保轴换算——源尺寸 + 显示宽高比 A → 有效显示矩形。A 宽于源像素比时保
 // 高度（W = h·A）、窄于时保宽度（H = w/A），另一轴由其推出，永远只上采样、
 // 不降采样——与 mpv 内建的 override→SAR 落地算式逐分支同向，实测两方向与
@@ -425,13 +456,9 @@ QSize MpvController::sourceVideoSize() const { return readSourceVideoSize(); }
 static QSize effectiveVideoSize(int w, int h, double aspect) {
     if (w <= 0 || h <= 0 || !(aspect > 0.0) || !qIsFinite(aspect))
         return QSize(w, h);
-    auto roundSat = [](double v) -> int {
-        const double r = std::floor(v + 0.5); // 半上取整
-        return int(qBound(1.0, r, double(std::numeric_limits<int>::max())));
-    };
     if (aspect > double(w) / double(h))
-        return QSize(roundSat(double(h) * aspect), h); // 保高度，上采样宽
-    return QSize(w, roundSat(double(w) / aspect));     // 保宽度，上采样高
+        return QSize(saturatedRound(double(h) * aspect), h); // 保高度，上采样宽
+    return QSize(w, saturatedRound(double(w) / aspect));     // 保宽度，上采样高
 }
 
 // N40/N110：有效尺寸取值收口（F1/F3②/F5）——先读 video-out-params/w、/h（滤镜后
@@ -492,6 +519,136 @@ void MpvController::publishVideoSize() {
     m_videoW = size.width();
     m_videoH = size.height();
     emit videoSizeChanged(m_videoW, m_videoH);
+}
+
+// N121：MPV_EVENT_HOOK 分派（仅事件线程）。本类只注册 on_preloaded；任何收到的
+// hook 都必须 continue——漏调会让 mpv 核心冻结，故 name 之外的判据一律放行在后
+void MpvController::handleHook(const mpv_event *event) {
+    const auto *hook = static_cast<const mpv_event_hook *>(event->data);
+    if (hook->name && qstrcmp(hook->name, "on_preloaded") == 0)
+        requestPreloadResize();
+    if (mpv_hook_continue(m_mpv, hook->id) < 0)
+        qDebug() << "[oxbow] mpv_hook_continue failed";
+}
+
+// N121：当前文件的选项生效回显——先 file-local-options/<name>，空则退 <name>
+// （file-local 未建立或本文件未覆盖该项时读到空串）。一律走字符串通道：choice 类
+// 选项（audio-display / video-rotate / vid 的 auto、no）的 native 是字符串，请求
+// MPV_FORMAT_INT64 整条失败而 helper 只把失败折成默认值（实测 --no-audio-display
+// 因此被判成显示封面），字符串通道则两种 native 都可用；名字串与数值串两形态交调用方判
+QString MpvController::fileOptionEcho(const QString &name) const {
+    QString echo = propertyString(QStringLiteral("file-local-options/%1").arg(name));
+    if (echo.isEmpty())
+        echo = propertyString(name);
+    return echo;
+}
+
+// N121：on_preloaded 的预适配尺寸——decoder 尚未创建，video-out-params 不存在，
+// 取 track-list 的 demux 级字段按 N110 口径估算。仅事件线程调用；无视频轨 /
+// 尺寸不可用返回空（不预适配，交给 VIDEO_RECONFIG）
+QSize MpvController::preloadSizeHint() const {
+    mpv_node node;
+    if (mpv_get_property(m_mpv, "track-list", MPV_FORMAT_NODE, &node) < 0)
+        return QSize();
+    const QList<TrackInfo> tracks = parseTrackList(&node);
+    mpv_free_node_contents(&node);
+
+    // vid 三态：显式轨道 >= 0、auto、no（--no-video，没有视频要适配）。回显认不了
+    // 的形态一律按 auto 走选轨启发式
+    const QString vidEcho = fileOptionEcho(QStringLiteral("vid"));
+    bool vidOk = false;
+    const qint64 vid = vidEcho.toLongLong(&vidOk);
+    if (vidEcho == QLatin1String("no") || (vidOk && vid == -2))
+        return QSize();
+
+    const TrackInfo *video = nullptr;
+    if (vidOk && vid >= 0) {
+        // 显式 vid 直取（封面也可显式选中）
+        for (const TrackInfo &track : tracks) {
+            if (track.type == QLatin1String("video") && track.id == vid && track.demuxW > 0 &&
+                track.demuxH > 0) {
+                video = &track;
+                break;
+            }
+        }
+    } else {
+        // auto：真实视频轨优先
+        for (const TrackInfo &track : tracks) {
+            if (track.type == QLatin1String("video") && !track.albumArt && track.demuxW > 0 &&
+                track.demuxH > 0) {
+                video = &track;
+                break;
+            }
+        }
+        // 纯音频 + 内嵌封面：mpv 默认把封面当视频输出（audio-display != no），
+        // 按封面的 demux 尺寸预适配
+        if (!video) {
+            const QString audioDisplay = fileOptionEcho(QStringLiteral("audio-display"));
+            bool adOk = false;
+            const qint64 adNum = audioDisplay.toLongLong(&adOk);
+            const bool hideCover =
+                audioDisplay == QLatin1String("no") || (adOk && adNum == 0); // 数值形态的 no 档
+            if (!hideCover) {
+                for (const TrackInfo &track : tracks) {
+                    if (track.type == QLatin1String("video") && track.albumArt &&
+                        track.demuxW > 0 && track.demuxH > 0) {
+                        video = &track;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    if (!video)
+        return QSize();
+
+    const int baseW = video->demuxCropW > 0 ? video->demuxCropW : video->demuxW;
+    const int baseH = video->demuxCropH > 0 ? video->demuxCropH : video->demuxH;
+    const double par =
+        (qIsFinite(video->demuxPar) && video->demuxPar > 0.0) ? video->demuxPar : 1.0;
+
+    // video-rotate：数值加到容器旋转上（与 decoder wrapper 的算式同源）；no 与 <0
+    // 连容器旋转也不应用；读不到按 mpv 默认 0（即随容器元数据）
+    const QString rotateEcho = fileOptionEcho(QStringLiteral("video-rotate"));
+    bool rotOk = false;
+    const qint64 rotOpt = rotateEcho.toLongLong(&rotOk);
+    int rot = video->demuxRotation;
+    if (rotateEcho == QLatin1String("no"))
+        rot = 0;
+    else if (rotOk)
+        rot = rotOpt < 0 ? 0 : video->demuxRotation + int(rotOpt);
+    rot = ((rot % 360) + 360) % 360;
+
+    int w = saturatedRound(double(baseW) * par);
+    int h = baseH;
+    if (rot == 90 || rot == 270)
+        std::swap(w, h);
+
+    // 画面比例覆盖与权威路径同口径：>0 有效，负值 = Original / 未设置
+    const double override = propertyDouble(QStringLiteral("video-aspect-override"), -2.0);
+    const double aspect =
+        (qIsFinite(override) && override > 0.0) ? override : double(w) / double(h);
+    return effectiveVideoSize(w, h, aspect);
+}
+
+// N121：on_preloaded 的同步交接——hint 排队到 GUI 线程（MpvController 的线程
+// 亲和是 GUI），事件线程有界等待；信号在 GUI 线程直连接收方，适配完成后才放行
+// hook。超时不撤销已投递事件：GUI 恢复后仍会补一次预适配，权威值随后校正
+void MpvController::requestPreloadResize() {
+    const QSize hint = preloadSizeHint();
+    if (hint.width() <= 0 || hint.height() <= 0)
+        return;
+    qDebug() << "[oxbow] preload hint" << hint.width() << "x" << hint.height();
+    auto done = std::make_shared<QSemaphore>();
+    QMetaObject::invokeMethod(
+        this,
+        [this, hint, done] {
+            emit preloadVideoSizeHint(hint.width(), hint.height());
+            done->release();
+        },
+        Qt::QueuedConnection);
+    if (!done->tryAcquire(1, App::preloadResizeTimeoutMs()))
+        qDebug() << "[oxbow] preload resize wait timeout";
 }
 
 // N96：返回 mpv_command_string 的错误码（0 成功）；空串不特判，mpv 自报参数错误

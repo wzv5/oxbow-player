@@ -67,6 +67,8 @@ static bool resolveMpvSymbols() {
     RESOLVE(mpv_free_node_contents); // B18：FILE_LOADED 主动读 NODE 属性后释放
     RESOLVE(mpv_command_node);       // N52：loadfile 逐文件选项的节点通道
     RESOLVE(mpv_wait_event);
+    RESOLVE(mpv_hook_add);           // N121：on_preloaded 同步预适配
+    RESOLVE(mpv_hook_continue);      // N121：hook 放行
     RESOLVE(mpv_stream_cb_add_ro);   // N52：oxbow:// 转接协议注册
     RESOLVE(mpv_get_property_async); // N60：推送会话的屏障读（playlist 终值自带终点）
     RESOLVE(mpv_command_async); // N87：未认领按键的 keypress 注入（异步，GUI 线程不等用户命令）

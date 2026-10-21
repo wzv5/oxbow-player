@@ -137,4 +137,10 @@ inline int miniRefitDebounceMs() { return 250; }
 // 无上界（罕见且每轮代价极小，极端比例复测项见规格实测清单）
 inline int miniRefitMaxAttempts() { return 3; }
 
+// ——N121 起播预适配——
+// on_preloaded hook 内等待 GUI 线程完成窗口预适配的上限（毫秒）。正常适配在
+// 几毫秒内完成；上限只兜 GUI 无法处理投递事件的极端情形，超时即放行播放，
+// 预适配延后执行或交给 VIDEO_RECONFIG 校正
+inline int preloadResizeTimeoutMs() { return 100; }
+
 } // namespace App

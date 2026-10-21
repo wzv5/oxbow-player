@@ -1383,24 +1383,12 @@ void MainWindow::connectController() {
 
     // N10/B16/N40：起播拿到分辨率即适配窗口。尺寸信号经控制器去重收口（事件驱动 +
     // 与上次已发布值比对），只在真实变化时到达、且每次都是一致对——原"单发定时器
-    // 合并两属性突发"的适配缓冲已随之删除，此处直连触发
-    connect(m_controller, &MpvController::videoSizeChanged, this, [this](int w, int h) {
-        m_pendingVideoW = w;
-        m_pendingVideoH = h;
-        if (m_mini) {
-            // N68：小窗期换片就地适配（与全屏"退出再适配"不同——小窗本身就该跟着
-            // 视频走，无须 refit 标志）。停止进 idle 与换片至无流的 (0,0) 推送不动作：
-            // 维持小窗形态与当前尺寸不变（尺寸稳定性优先，进入时的 16:9 仅针对无流进场）
-            if (w > 0 && h > 0)
-                QTimer::singleShot(0, this, [this] { refitMiniToVideo(); });
-            return;
-        }
-        if (m_fullscreen && w > 0 && h > 0)
-            m_refitAfterFullscreen = true;
-        else if (isMaximized() && w > 0 && h > 0)
-            m_refitAfterMaximize = true; // N40 变更：还原最大化时重适配（跟随全屏逻辑）
-        adaptWindowSizeToVideo(w, h);    // (0,0) 与全屏/最大化在入口内守卫，无动作
-    });
+    // 合并两属性突发"的适配缓冲已随之删除，此处直连触发。
+    // N121：on_preloaded 的预估值提前走同一入口；预估值由 GUI 线程直连发射，
+    // hook 等它完成才放行，权威值随后照常校正
+    connect(m_controller, &MpvController::videoSizeChanged, this, &MainWindow::applyVideoSize);
+    connect(m_controller, &MpvController::preloadVideoSizeHint, this, &MainWindow::applyVideoSize,
+            Qt::DirectConnection);
     // 停止态步进以选中 tab 为基准，切换 tab 需刷新启停（A16）
     connect(m_playlist, &QTabWidget::currentChanged, this,
             [this](int) { updateNavigationActions(); });
@@ -2492,6 +2480,27 @@ void MainWindow::onCustomAspectRatio() {
                                 "(e.g. 16:9 or 2.35)."));
         prefill = text; // 刚才的输入原样带回输入框
     }
+}
+
+// N121：尺寸事实的唯一 GUI 入口——权威 videoSizeChanged（事件线程排队）与
+// on_preloaded 预估值（GUI 线程直连）共用。预估值可能略偏，权威值随后校正；
+// 两路都只写既有状态机，不引入第二套适配语义
+void MainWindow::applyVideoSize(int videoW, int videoH) {
+    m_pendingVideoW = videoW;
+    m_pendingVideoH = videoH;
+    if (m_mini) {
+        // N68：小窗期换片就地适配（与全屏"退出再适配"不同——小窗本身就该跟着
+        // 视频走，无须 refit 标志）。停止进 idle 与换片至无流的 (0,0) 推送不动作：
+        // 维持小窗形态与当前尺寸不变（尺寸稳定性优先，进入时的 16:9 仅针对无流进场）
+        if (videoW > 0 && videoH > 0)
+            QTimer::singleShot(0, this, [this] { refitMiniToVideo(); });
+        return;
+    }
+    if (m_fullscreen && videoW > 0 && videoH > 0)
+        m_refitAfterFullscreen = true;
+    else if (isMaximized() && videoW > 0 && videoH > 0)
+        m_refitAfterMaximize = true;        // N40 变更：还原最大化时重适配（跟随全屏逻辑）
+    adaptWindowSizeToVideo(videoW, videoH); // (0,0) 与全屏/最大化在入口内守卫，无动作
 }
 
 // N10：普通态窗口自适应当前视频——视频域尽可能物理像素 1:1（逻辑尺寸 =
