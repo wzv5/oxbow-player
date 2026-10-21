@@ -2,11 +2,13 @@
 
 #include "PlaylistEntity.h"
 
-#include "providers/HttpEntity.h"
-#include "providers/JellyfinEntity.h"
-#include "providers/LocalFileEntity.h"
+#include "entities/HttpEntity.h"
+#include "entities/JellyfinEntity.h"
+#include "entities/LocalFileEntity.h"
+#include "entities/StdinEntity.h"
+#include "entities/UnknownEntity.h"
 #if defined(OXBOW_WITH_RCLONE_CRYPT)
-#include "providers/RcloneCryptEntity.h"
+#include "entities/RcloneCryptEntity.h"
 #endif
 // N55：playUrl() 出口经归属提供者现算——实体侧唯一 include 提供者头之处
 // （实体头只前置声明，无环）
@@ -103,6 +105,8 @@ PlaylistEntity::Ptr PlaylistEntity::fromPath(const QString &path,
 // 与 fromPath 同一条分派、同一条判据，只把"违约显影"换成"降级保行"——不含任何加工
 PlaylistEntity::Ptr PlaylistEntity::fromMpvEcho(const QString &identity,
                                                 const std::shared_ptr<ServiceRegistry> &registry) {
+    if (Util::Url::isMpvStdin(identity))
+        return std::make_shared<StdinEntity>(registry);
     if (!Util::Url::isDefiniteForm(identity))
         return std::make_shared<UnknownEntity>(identity, registry); // 降级：保行、不炸
     return fromPath(identity, registry);
@@ -229,13 +233,4 @@ void PlaylistEntity::setMediaMeta(const MediaMeta &meta) {
     if (!supportsMediaMeta())
         return;
     m_mediaMeta = meta;
-}
-
-// ——兜底实体——
-
-// 通用文件图标（与重构前网络路径表现一致）；仅 GUI 线程调用。
-// provider 无状态，函数内 static 复用一次构造
-QIcon UnknownEntity::computeIcon() const {
-    static QFileIconProvider provider;
-    return provider.icon(QFileIconProvider::File);
 }

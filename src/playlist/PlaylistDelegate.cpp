@@ -2,9 +2,9 @@
 
 #include "PlaylistDelegate.h"
 
-#include "PlaylistEntity.h"
 #include "PlaylistTheme.h"
 #include "Util.h"
+#include "entities/PlaylistEntity.h"
 
 namespace {
 constexpr int kIconSize = 16;

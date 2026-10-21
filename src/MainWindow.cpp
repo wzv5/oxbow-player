@@ -5001,6 +5001,11 @@ void MainWindow::onAddBookmark() {
         m_osd->show(tr("This item does not support bookmarks."));
         return;
     }
+    // N124：stdin 是一次性数据流，回跳不可兑现
+    if (Util::Url::isMpvStdin(entity->path())) {
+        m_osd->show(tr("This item does not support bookmarks."));
+        return;
+    }
     const QString rawPath = entity->path();
     const QString curKey =
         entity->key(); // 归一化键，与 jumpToBookmark 的显示串形参同名异物，改名防混

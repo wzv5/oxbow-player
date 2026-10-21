@@ -7,7 +7,7 @@
 #include "ServiceRegistry.h"
 #include "TraversalPolicy.h"
 #include "Util.h"
-#include "WebDavEntity.h"
+#include "entities/WebDavEntity.h"
 #include "streams/HttpByteStream.h"
 #include "streams/StreamEndpoint.h"
 

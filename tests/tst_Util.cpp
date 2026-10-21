@@ -87,6 +87,8 @@ class TestUtil : public QObject {
     // 此处钉 §3 直接调用的 toIdentity 入口）。带根斜杠的 file:/ 不在此族——它折成
     // 盘根、判据放行，处置待裁决（见规格待裁决），故本用例不钉
     void toIdentityBareFileSchemeStaysIndefinite();
+    // ——N124：仅精确 "-" 判真；整形对 "-" 原样返回，普通相对路径仍照旧补形态
+    void mpvStdinCriteriaAndEchoShaping();
     // ——N97：Util::listFiles（目录一层的枚举，DirProvider 与视频区拖放共用）——
     // 命中清单者被收、子目录与其内部文件不进表、空清单不过滤、不存在的目录得空；
     // 判据钉在与"同 flags + NoSort 的 entryInfoList"逐项一致上（过滤位与排序位都未变）
@@ -614,6 +616,26 @@ void TestUtil::toIdentityBareFileSchemeStaysIndefinite() {
     QVERIFY(!Util::Url::isDefiniteForm(Util::Url::toIdentity(QStringLiteral("file:"))));
     QCOMPARE(Util::Url::toIdentity(QStringLiteral("file://")), QString());
     QVERIFY(!Util::Url::isDefiniteForm(Util::Url::toIdentity(QStringLiteral("file://"))));
+}
+
+// N124：判据只认精确的 "-"；整形出口对 "-" 原样返回，不殃及普通相对路径
+void TestUtil::mpvStdinCriteriaAndEchoShaping() {
+    QVERIFY(Util::Url::isMpvStdin(QStringLiteral("-")));
+    QVERIFY(!Util::Url::isMpvStdin(QString()));
+    QVERIFY(!Util::Url::isMpvStdin(QStringLiteral(" -")));
+    QVERIFY(!Util::Url::isMpvStdin(QStringLiteral("- ")));
+    QVERIFY(!Util::Url::isMpvStdin(QStringLiteral("./-")));
+    QVERIFY(!Util::Url::isMpvStdin(QStringLiteral("--")));
+    QVERIFY(!Util::Url::isMpvStdin(QStringLiteral("/dev/stdin")));
+    QVERIFY(!Util::Url::isMpvStdin(QStringLiteral("fd://0")));
+    QVERIFY(!Util::Url::isMpvStdin(QStringLiteral("fdclose://0")));
+
+    QCOMPARE(Util::Url::identityFromMpvEcho(QStringLiteral("-")), QStringLiteral("-"));
+    QCOMPARE(Util::Url::identityFromMpvEcho(Util::Url::identityFromMpvEcho(QStringLiteral("-"))),
+             QStringLiteral("-"));
+    const QString absRel = QDir::toNativeSeparators(
+        QFileInfo(QStringLiteral("still-relative.mkv")).absoluteFilePath());
+    QCOMPARE(Util::Url::identityFromMpvEcho(QStringLiteral("still-relative.mkv")), absRel);
 }
 
 void TestUtil::listFilesEnumeratesOneLevel() {

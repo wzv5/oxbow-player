@@ -124,11 +124,12 @@ class PlaylistEntity {
     // 为什么仍保留 fromPath 的断言：它守的是**插件自身四个出口**的契约，与外部来路无关
     // ——放宽只走具名的这一条路，不给 bool 参数（调用点上 true / false 不表达任何东西，
     // 将来一处顺手传错即静默失去显影）。
+    // N124：stdin 分派先于定形检查——"-" 未定形却须原样当身份，落 StdinEntity。
     // 折叠漏喂按既有纪律显影：oxbow:// 含 "://" 属已定形，本入口不拆包装 → 转接串当
     // 身份落 UnknownEntity，故调用点那一句 unwrap 不得省
     // 不变式：入参已定形时 fromMpvEcho(s, r)->path() == s，与 fromPath 同类型同身份；
-    // 不可定形时落 UnknownEntity，其 isLocalFile 为假 ⇒ StaticProvider 恒等下发 ⇒
-    // 下一轮回显逐字节相等 ⇒ 静默，不落入"重复收编永续"
+    // 不可定形者落 StdinEntity（stdin）或 UnknownEntity，两者 isLocalFile 皆为假
+    // ⇒ StaticProvider 恒等下发 ⇒ 下一轮回显逐字节相等 ⇒ 静默，不落入"重复收编永续"
     static Ptr fromMpvEcho(const QString &identity,
                            const std::shared_ptr<ServiceRegistry> &registry);
 
@@ -148,8 +149,9 @@ class PlaylistEntity {
     // 默认 Util::Url::key(path())（构造期缓存）；远端可重写为服务端 id
     virtual QString key() const;
     // N56 §2.4：显示出口——path() 剥除凭据后的形态（构造期缓存，非虚）。
-    // 非虚是刻意的：显示纪律不得被派生类破坏（与 m_key 同款）。取用点收敛在
-    // 列表 tooltip 与属性对话框 File Path 两处；右键复制路径 / 打开位置给原样
+    // 非虚是刻意的：显示纪律不得被派生类破坏（与 m_key 同款）；派生类唯一的改写机会
+    // 是构造期那一次 setDisplayUrl。取用点只有列表 tooltip 与属性对话框 File Path；
+    // 右键复制路径 / 打开位置给原样
     // （工具性动作，用户要一份能直接用的地址），书签层完全豁免（原样展示）
     const QString &displayUrl() const { return m_displayUrl; }
     // N56 §2.5：键级判等——实体自答"这个串是不是我"（内部 m_key == key(串)，
@@ -236,6 +238,8 @@ class PlaylistEntity {
         m_title = std::move(title);
         m_titleSet = true;
     }
+    // 构造期受控覆写显示形态的唯一写点（当前使用者只有 StdinEntity）
+    void setDisplayUrl(QString displayUrl) { m_displayUrl = std::move(displayUrl); }
     // ——N65 选项注入口（条目级单文件选项的唯一写点）——
     // 仅 PlaylistProvider 经友元可及（与 setFileMeta / setMediaMeta 同一条授权
     // 通道，友元不继承，具体提供者经其静态转发写入）；枚举期一次定死，入列后
@@ -303,37 +307,10 @@ class PlaylistEntity {
     QString m_key;             // 构造期缓存：Util::Url::key(path())——key()
                                // 在委托绘制热路径上，避免逐行逐帧重算
     QString m_displayUrl;      // N56：构造期缓存 stripCredentials(path())——显示出口，
-                               // 与 m_key 同款（构造期定死、不可被子类改动）
+                               // 与 m_key 同款（构造期定死，构造后不再变）
     QVariantMap m_playOptions; // N65：条目级单文件选项（键 = mpv 选项名，值原样；
                                // 空 map = 无选项，随拷贝构造与 clone() 自动携带）
     mutable std::optional<FileMeta> m_fileMeta;
     mutable std::optional<MediaMeta> m_mediaMeta;
     mutable std::optional<QIcon> m_icon;
-};
-
-// 兜底实体（N26）：工厂对网络 / 流路径产出。插件不做任何额外加工，
-// path() 原样喂 mpv / 持久化 / 回显比对。完整远端实体（服务端标题、延迟解析、
-// 远端元数据）归后续篇；未知实体是其最小替身，保证网络项有实体可落
-// （回刷收编的 mpv 列表即现实引用者）。
-class UnknownEntity : public PlaylistEntity {
-  public:
-    // registry 必填（经基类持有，兜底实体不用；无缺省，调用点显式传）
-    explicit UnknownEntity(QString path, const std::shared_ptr<ServiceRegistry> &registry)
-        : PlaylistEntity(std::move(path), registry) {}
-
-    Ptr clone() const override { return std::make_shared<UnknownEntity>(*this); }
-
-    bool isLocalFile() const override { return false; }
-    bool exists() const override { return true; } // 不可判定，不参与失效清理
-    bool supportsFileMeta() const override { return false; }
-    bool supportsMediaMeta() const override { return false; }
-
-  protected:
-    FileMeta computeFileMeta() const override {
-        return {}; // 恒不被调（supportsFileMeta 为假）
-    }
-    MediaMeta computeMediaMeta() const override {
-        return {}; // 恒不被调（supportsMediaMeta 为假）
-    }
-    QIcon computeIcon() const override;
 };

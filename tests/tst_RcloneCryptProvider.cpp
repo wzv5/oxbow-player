@@ -13,8 +13,8 @@
 
 #include "RcloneCryptFixture.h"
 #include "ServiceRegistry.h"
-#include "playlist/PlaylistEntity.h"
-#include "providers/RcloneCryptEntity.h"
+#include "entities/PlaylistEntity.h"
+#include "entities/RcloneCryptEntity.h"
 #include "providers/RcloneCryptProvider.h"
 #include "rclonecrypt/RcloneCrypt.h"
 #include "streams/StreamEndpoint.h"

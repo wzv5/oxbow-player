@@ -2,7 +2,9 @@
 
 #include "pch.h"
 
-#include "playlist/PlaylistEntity.h"
+#include "PlaylistEntity.h"
+
+#include "Util.h"
 
 // ServiceRegistry 前向声明见 PlaylistEntity.h（本头仅以引用形态使用，无需包含）
 
@@ -24,7 +26,19 @@ class HttpEntity : public PlaylistEntity {
   public:
     // registry 必须非空（构造内断言）：http(s) + 空 registry 属调用错误，
     // 工厂已在分派处挡住（Debug 断言、Release 降级 UnknownEntity）
-    HttpEntity(QString path, const std::shared_ptr<ServiceRegistry> &registry);
+    HttpEntity(QString path, const std::shared_ptr<ServiceRegistry> &registry)
+        : PlaylistEntity(std::move(path), registry) {
+        Q_ASSERT(registry != nullptr);
+
+        // 显示名（N35 §2.2）：取末段并 percent-decode 后 setFilename（基类 deriveNames
+        // 用 QFileInfo 取末段、不解码，否则列表出现 "%20"、"%E4%B8%AD" 之类）。逻辑自
+        // N37 起收编进 Util::Url::fileName（标题 / OSD 取名共用同一出口）；解后为空
+        // （如以 / 结尾）回退基类行为（title 已按 path() 派生）。
+        // 构造参数名遮蔽基类同名访问器，取 path() 须显式限定
+        const QString decoded = Util::Url::fileName(PlaylistEntity::path());
+        if (!decoded.isEmpty())
+            setFilename(decoded);
+    }
 
     Ptr clone() const override { return std::make_shared<HttpEntity>(*this); }
 
@@ -37,9 +51,16 @@ class HttpEntity : public PlaylistEntity {
 
   protected:
     // N39：恒不被调（supportsFileMeta 为假）。原同步阻塞 HEAD 求值已删，见类注释
-    FileMeta computeFileMeta() const override;
-    MediaMeta computeMediaMeta() const override; // 恒不被调（supportsMediaMeta 为假）
-    QIcon computeIcon() const override;
+    FileMeta computeFileMeta() const override { return {}; }
+    // 恒不被调（supportsMediaMeta 为假）
+    MediaMeta computeMediaMeta() const override { return {}; }
+
+    // 通用文件图标（与 UnknownEntity 同形，N35 §2.2）；仅 GUI 线程调用。
+    // provider 无状态，函数内 static 复用一次构造
+    QIcon computeIcon() const override {
+        static QFileIconProvider provider;
+        return provider.icon(QFileIconProvider::File);
+    }
 
   private:
     // registry 存于基类（registry() 取用），clone 经拷贝构造携带同一实例

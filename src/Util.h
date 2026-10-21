@@ -130,7 +130,9 @@ QString toIdentity(const QString &path);
 
 // N61 §2.1：mpv 回显整形——"来源是 mpv 的 playlist 条目 filename 键"这一族的定形出口。
 // 判据只有一条：**仅未定形者施加 toIdentity，余者逐字节原样返回**（定形与否问
-// isDefiniteForm，本函数与工厂断言共用那一条判据，不各写一遍）。
+// isDefiniteForm，本函数与工厂断言共用那一条判据，不各写一遍）。判据之前先走
+// isMpvStdin：mpv 用单独的 "-" 表示标准输入，它未定形却须原样当身份，补形态得到的
+// 是工作目录下的假路径。
 // mpv 从不改写下发的串（相对进、相对出；绝对化只发生在 path 属性，而它按环境变量
 // PWD 拼、可指向不存在的路径），故回显里的相对串必须先补形态才能进判据与工厂。
 // 为什么两侧统一施加 toIdentity 不行：它首行做 StreamTransit::unwrap，那会把
@@ -139,7 +141,7 @@ QString toIdentity(const QString &path);
 // 补不出形态者（空串、裸 "file:"、单斜杠伪 URL）按"只补形态、不兜形"原样返回，
 // 由工厂的**回显专用入口** PlaylistEntity::fromMpvEcho 落 UnknownEntity 兜底——
 // 系统边界上的正确行为是降级，不是终止进程（插件只保证自己产出的路径正确）。
-// 唯一例外是盘符相对串（D:a.mkv）：Qt 的 isAbsolute 判它已定形 → 原样返回且真进工厂。
+// 已定形一侧的边界是盘符相对串（D:a.mkv）：Qt 的 isAbsolute 判它为真 → 原样返回且真进工厂。
 // 消费点两处：PlaylistWidget::setPlaylist 的解析段、MpvController::currentPlayingPath。
 QString identityFromMpvEcho(const QString &echo);
 
@@ -244,10 +246,17 @@ bool isLocal(const QString &path);
 bool isMissingLocal(const QString &path);
 
 // N61 变更记录第 1 条：串是否**已定形**（能当条目身份用）——非空，且绝对路径或含
-// "://"。这条判据的**唯一持有者**：PlaylistEntity::fromPath 那句断言、
-// identityFromMpvEcho 的分支条件、fromMpvEcho 的兜底分派三处共用，不各写一遍。
+// "://"。这条判据的**唯一持有者**：凡问"这串能不能当身份"都走它（工厂断言、回显
+// 整形、提供者写回与复制导出过滤），不各写一遍。
 // 盘符相对串（D:a.mkv）按 Qt 判据算已定形——不修，它落在"尽力而为"一侧。
 bool isDefiniteForm(const QString &path);
+
+// N124：mpv 的标准输入标记，判据与实体身份串共用它，全仓不散写这个字面量
+inline constexpr char kMpvStdinPath[] = "-";
+
+// N124：仅精确等于 "-" 时为真（/dev/stdin、fd://0 不特殊化）。回显整形分流、
+// 实体分派与书签拒收共用这一份判据
+bool isMpvStdin(const QString &path);
 
 } // namespace Url
 

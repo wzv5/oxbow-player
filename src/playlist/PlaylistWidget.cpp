@@ -866,7 +866,7 @@ void PlaylistWidget::setItemEntity(QListWidgetItem *item, const PlaylistEntity::
     // N70：第二行给文件名（名称类排序键在读的那个串）——显示名与文件名分家后，外部表与
     // Jellyfin 表上两者不再相同，这一行让用户一眼对照；文件名为空则只给一行
     QString tip = entity->displayUrl();
-    if (!entity->fileName().isEmpty())
+    if (!entity->fileName().isEmpty() && entity->fileName() != entity->displayUrl())
         tip += QLatin1Char('\n') + entity->fileName();
     item->setToolTip(tip);
 }
@@ -1106,7 +1106,11 @@ void PlaylistWidget::setPlaylist(const QVariantList &items) {
         if (hit && StreamTransit::isTransitUri(pushed.at(i))) {
             entity = rit.value()->clone();
         } else if (hit) {
-            entity = PlaylistEntity::fromPath(pushed.at(i), m_registry);
+            // N124：stdin 命中走回显入口——"-" 是非定形身份，严格工厂那句断言会撞
+            entity =
+                Util::Url::isMpvStdin(pushed.at(i))
+                    ? PlaylistEntity::fromMpvEcho(StreamTransit::unwrap(pushed.at(i)), m_registry)
+                    : PlaylistEntity::fromPath(pushed.at(i), m_registry);
             stampOwnership(*entity, m_lists->defaultList());
             const PlaylistEntity::Ptr &src = rit.value();
             entity->setFilename(src->fileName());
@@ -4728,7 +4732,7 @@ void PlaylistWidget::reorderList(int fromTab, int toTab) {
 }
 
 // N105 §2：交给提供者前的共用取表出口（N58 §2.2 的拆包 + 身份过滤收成一处）。
-// 跳过身份非定形的行（回显收编的空路径行即其中一例），不留占位、不补任何东西、
+// 跳过身份非定形的行（回显收编的空路径行与 stdin 行即其中两例），不留占位、不补任何东西、
 // 其余项序不变——过滤是分层职责：来源里的边界噪声与用户手改内容不得扩散进提供者
 // 自持串。判据走 isDefiniteForm（与工厂断言、INI 读侧同一句），全仓仅此一份。
 // 实体空指针不在此复核：本出口只在 supportsModify() 为真处被调，而该能力位今天
@@ -4817,6 +4821,9 @@ QList<PlaylistFile::Entry> PlaylistWidget::collectTrackEntries(int tabIndex,
                 *skippedSome = true;
             continue;
         }
+        // N124：非定形身份不进产物（stdin 即其一），与空槽位同档静默跳过
+        if (!Util::Url::isDefiniteForm(target.url))
+            continue;
         // playTargets 与实体表一一对应（空实体也占位回空串），按下标取回标题
         entries.push_back(PlaylistFile::Entry{target.url, src[i]->title()});
     }

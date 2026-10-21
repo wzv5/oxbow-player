@@ -2,7 +2,7 @@
 
 #include "pch.h"
 
-#include "playlist/PlaylistEntity.h"
+#include "PlaylistEntity.h"
 
 // 身份 scheme 常量唯一持有者：工厂分派（PlaylistEntity::fromPath）与提供者铸造
 // （JellyfinProvider）共用同一点定义，杜绝"键写错导致分派落空"的静默失败
@@ -41,5 +41,12 @@ class JellyfinEntity : public PlaylistEntity {
     // 窗口内可能命中，返回空值即"值未知"）
     FileMeta computeFileMeta() const override { return {}; }
     MediaMeta computeMediaMeta() const override { return {}; }
-    QIcon computeIcon() const override;
+
+    // 通用文件图标（与 HttpEntity / UnknownEntity 同形）；仅 GUI 线程调用。
+    // 无封面展示位（N69 非目标：/Images/Primary 不接入），通用图标即现状口径。
+    // provider 无状态，函数内 static 复用一次构造
+    QIcon computeIcon() const override {
+        static QFileIconProvider provider;
+        return provider.icon(QFileIconProvider::File);
+    }
 };

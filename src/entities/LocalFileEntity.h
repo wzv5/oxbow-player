@@ -2,7 +2,9 @@
 
 #include "pch.h"
 
-#include "playlist/PlaylistEntity.h"
+#include "PlaylistEntity.h"
+
+#include "MediaInfoHelper.h"
 
 // 本地文件实体（N26）：元数据全部就地求值——QFileInfo 一次 stat 取文件级字段，
 // MediaInfoHelper 同步解析媒体属性，QFileIconProvider 取系统图标。
@@ -25,11 +27,32 @@ class LocalFileEntity : public PlaylistEntity {
     bool supportsSecondaryDecode() const override { return true; }
 
     // N29：fileMeta 求值口径的唯一载体——惰性求值与提供者注入共用一份，防两处漂移
-    // （"不存在 / 不可读 → 三字段全空"、"size 取 qMax(0, …)"）
-    static FileMeta fileMetaFrom(const QFileInfo &fi);
+    // （"不存在 / 不可读 → 三字段全空"、"size 取 qMax(0, …)"）。
+    // 不存在或不可读：三字段全空（"值未知"），不抛错
+    static FileMeta fileMetaFrom(const QFileInfo &fi) {
+        FileMeta meta;
+        if (!fi.exists() || !fi.isReadable())
+            return meta;
+        meta.size = qMax<qint64>(0, fi.size());
+        meta.created = fi.birthTime();
+        meta.modified = fi.lastModified();
+        return meta;
+    }
 
   protected:
-    FileMeta computeFileMeta() const override;
-    MediaMeta computeMediaMeta() const override;
-    QIcon computeIcon() const override;
+    FileMeta computeFileMeta() const override { return fileMetaFrom(QFileInfo(path())); }
+
+    // MediaInfoHelper::parse 打开失败返回默认 Data（字段皆空/0），
+    // 失败结果同样入实体缓存，防同一坏文件反复解析
+    MediaMeta computeMediaMeta() const override { return MediaInfoHelper::parse(path()); }
+
+    // 文件不存在 / 失败取通用图标；仅 GUI 线程调用。
+    // provider 无状态，函数内 static 复用一次构造（千行目录免千次构造）
+    QIcon computeIcon() const override {
+        static QFileIconProvider provider;
+        const QFileInfo fi(path());
+        if (!fi.exists())
+            return provider.icon(QFileIconProvider::File);
+        return provider.icon(fi);
+    }
 };

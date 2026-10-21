@@ -3,11 +3,11 @@
 #include "JellyfinProvider.h"
 
 #include "Constants.h"
-#include "JellyfinEntity.h"
 #include "ProviderSettingsPage.h"
 #include "ServiceRegistry.h"
 #include "Util.h"
 #include "Version.h"
+#include "entities/JellyfinEntity.h"
 #include "playbackreport/PlaybackReporter.h"
 #include "streams/HttpByteStream.h"
 #include "streams/StreamEndpoint.h"

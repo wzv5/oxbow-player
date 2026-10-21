@@ -492,8 +492,12 @@ QString toIdentity(const QString &path) {
 // 兜住，插件自身的四个出口则撞断言显影）。参数与产出的分工见声明处注释
 // 补不出形态者原样返回，由工厂的 fromMpvEcho 入口落 UnknownEntity（N61 变更记录第 1 条）
 QString identityFromMpvEcho(const QString &echo) {
+    if (isMpvStdin(echo))
+        return echo;
     return isDefiniteForm(echo) ? echo : toIdentity(echo);
 }
+
+bool isMpvStdin(const QString &path) { return path == QLatin1String(kMpvStdinPath); }
 
 // 是否网络/流路径（含 :// 且非 file: 前缀）：本地目录提供者据此拒绝、mpv 源据此保持原样。
 // 用串前缀判定，避免 QUrl::scheme() 把 Windows 盘符 "C:\dir" 误判为 scheme、

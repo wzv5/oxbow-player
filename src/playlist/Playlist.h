@@ -2,7 +2,7 @@
 
 #include "pch.h"
 
-#include "PlaylistEntity.h"
+#include "entities/PlaylistEntity.h"
 #include "providers/PlaylistProvider.h"
 
 class PlaybackReporterRegistry; // N74：报告者注册表（本类是注册点，只 add 不读）

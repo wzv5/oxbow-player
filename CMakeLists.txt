@@ -59,7 +59,7 @@ if(OXBOW_WITH_RCLONE_CRYPT)
         src/streams/RcloneCryptByteStream.h
         src/providers/RcloneCryptProvider.cpp
         src/providers/RcloneCryptProvider.h
-        src/providers/RcloneCryptEntity.h
+        src/entities/RcloneCryptEntity.h
     )
     # AES 后端按平台分文件，以构建条件为唯一权威（X11Util 纪律）：错平台编进去就在
     # 缺 CNG / OpenSSL 处编译失败，源内叠二次守卫反而把编译错降级成链接期未定义符号
@@ -129,8 +129,8 @@ add_library(oxbowcore MODULE
     src/playlist/PlaylistDelegate.cpp
     src/playlist/PlaylistDelegate.h
     src/playlist/PlaylistTheme.h
-    src/playlist/PlaylistEntity.cpp
-    src/playlist/PlaylistEntity.h
+    src/entities/PlaylistEntity.cpp
+    src/entities/PlaylistEntity.h
     src/playlist/Playlist.cpp
     src/playlist/Playlist.h
     src/playlist/PlaylistRegistry.cpp
@@ -139,13 +139,12 @@ add_library(oxbowcore MODULE
     src/playlist/PlaylistListView.h
     src/playlist/PlaylistFile.cpp
     src/playlist/PlaylistFile.h
-    src/providers/LocalFileEntity.cpp
-    src/providers/LocalFileEntity.h
-    src/providers/HttpEntity.cpp
-    src/providers/HttpEntity.h
-    src/providers/WebDavEntity.h
-    src/providers/JellyfinEntity.cpp
-    src/providers/JellyfinEntity.h
+    src/entities/LocalFileEntity.h
+    src/entities/HttpEntity.h
+    src/entities/WebDavEntity.h
+    src/entities/JellyfinEntity.h
+    src/entities/UnknownEntity.h
+    src/entities/StdinEntity.h
     src/ServiceRegistry.h
     src/playbackreport/PlaybackReporter.h
     src/playbackreport/PlaybackReporterRegistry.cpp
@@ -443,21 +442,20 @@ if(OXBOW_BUILD_TESTS)
         src/mpvbridge/MpvKeyName.h
         src/BookmarkManager.cpp
         src/BookmarkManager.h
-        src/playlist/PlaylistEntity.cpp
-        src/playlist/PlaylistEntity.h
+        src/entities/PlaylistEntity.cpp
+        src/entities/PlaylistEntity.h
         src/playlist/Playlist.cpp
         src/playlist/Playlist.h
         src/playlist/PlaylistRegistry.cpp
         src/playlist/PlaylistRegistry.h
         src/playlist/PlaylistFile.cpp
         src/playlist/PlaylistFile.h
-        src/providers/LocalFileEntity.cpp
-        src/providers/LocalFileEntity.h
-        src/providers/HttpEntity.cpp
-        src/providers/HttpEntity.h
-        src/providers/WebDavEntity.h
-        src/providers/JellyfinEntity.cpp
-        src/providers/JellyfinEntity.h
+        src/entities/LocalFileEntity.h
+        src/entities/HttpEntity.h
+        src/entities/WebDavEntity.h
+        src/entities/JellyfinEntity.h
+        src/entities/UnknownEntity.h
+        src/entities/StdinEntity.h
         src/ServiceRegistry.h
         # 上报框架四源单元（驱动器不在此列：其现读四项引用 MpvController，进测试库
         # 链接不可能成立）

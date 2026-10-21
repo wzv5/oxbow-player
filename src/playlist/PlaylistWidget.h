@@ -2,10 +2,10 @@
 
 #include "pch.h"
 
-#include "PlaylistEntity.h"
 #include "PlaylistFile.h"     // N80：导出条目结构 Entry 与清单写出；本类只留菜单与编排
 #include "PlaylistListView.h" // N57 §2.2：视图态的家，本类的编排一律经它读写
 #include "PlaylistRegistry.h" // N57 §2.5：播放目标初值取保留身份 kDefaultListUuid
+#include "entities/PlaylistEntity.h"
 #include "providers/PlaylistProvider.h"
 #include "ui/LoadingOverlay.h"
 

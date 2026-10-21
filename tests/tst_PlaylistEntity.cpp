@@ -11,9 +11,11 @@
 
 #include "ServiceRegistry.h"
 #include "Util.h"
-#include "playlist/PlaylistEntity.h"
-#include "providers/HttpEntity.h"
-#include "providers/LocalFileEntity.h"
+#include "entities/HttpEntity.h"
+#include "entities/LocalFileEntity.h"
+#include "entities/PlaylistEntity.h"
+#include "entities/StdinEntity.h"
+#include "entities/UnknownEntity.h"     // dynamic_cast 用例需要完整类型
 #include "providers/PlaylistProvider.h" // N55：归属注入口的形参类型与转接能力枚举
 #include "providers/StaticProvider.h"   // N55 §九：恒等提供者验归属现算
 #include "streams/StreamRelay.h"        // N55 §九：StreamRelayIf 取用接缝（纯头，测试桩实现）
@@ -179,6 +181,9 @@ class TestPlaylistEntity : public QObject {
     // N61 变更记录第 1 条：回显专用入口 fromMpvEcho——已定形者与 fromPath 同类型同身份、
     // 转接串折回身份，补不出形态者（空 filename / 裸 file:）不撞断言而是落 UnknownEntity
     void echoEntryFallsBackToPlaceholder();
+    // N124：stdin 分派——身份串仍是 mpv 原样的 "-"（与回显逐字节一致），显示面构造期
+    // 定死为 "stdin"，能力位与 clone 沿用兜底实体
+    void stdinEchoDispatchesStdinEntity();
     // N55 §2.2/§2.3：归属注入口与出生属性——playUrl() 走归属现算（StaticProvider 恒等
     // 与转接提供者各验一次，断言形态出自归属提供者而非所在列表）
     void ownershipStampDrivesPlayUrl();
@@ -615,6 +620,38 @@ void TestPlaylistEntity::echoEntryFallsBackToPlaceholder() {
     auto rel = PlaylistEntity::fromMpvEcho(shapedRel, registry);
     QVERIFY(dynamic_cast<LocalFileEntity *>(rel.get()) != nullptr);
     QCOMPARE(rel->path(), shapedRel);
+}
+
+// N124：stdin 只经回显工厂落 StdinEntity。身份串保持 mpv 原样的 "-"（换成展示名即破
+// 回显逐字节比对），显示面在构造期定死为 "stdin"；能力位沿用兜底实体，clone 保类型带名
+void TestPlaylistEntity::stdinEchoDispatchesStdinEntity() {
+    auto registry = testRegistry();
+    const QString echo = Util::Url::identityFromMpvEcho(QStringLiteral("-"));
+    QVERIFY(!Util::Url::isDefiniteForm(echo)); // 未定形却原样返回，靠的是 stdin 短路
+
+    auto e = PlaylistEntity::fromMpvEcho(echo, registry);
+    QVERIFY(dynamic_cast<StdinEntity *>(e.get()) != nullptr);
+    QCOMPARE(e->path(), QStringLiteral("-"));
+    QCOMPARE(e->displayUrl(), QStringLiteral("stdin"));
+    QCOMPARE(e->fileName(), QStringLiteral("stdin"));
+    QCOMPARE(e->title(), QStringLiteral("stdin")); // 标题随文件名派生
+    QVERIFY(e->suffix().isEmpty());
+    // 文件名与显示形态同串，正是列表 tooltip 只给一行的依据
+    QCOMPARE(e->fileName(), e->displayUrl());
+    QVERIFY(!e->isLocalFile());
+    QVERIFY(e->exists());
+    QVERIFY(!e->supportsFileMeta());
+    QVERIFY(!e->supportsMediaMeta());
+    QVERIFY(!e->supportsSecondaryDecode()); // 悬停缩略图不开第二路解码
+    // 键与判等仍走基类通用路径规则（记忆定位口径不变）
+    QCOMPARE(e->key(), Util::Url::key(QStringLiteral("-")));
+    QVERIFY(e->matches(QStringLiteral("-")));
+
+    auto c = e->clone();
+    QVERIFY(dynamic_cast<StdinEntity *>(c.get()) != nullptr);
+    QCOMPARE(c->path(), e->path());
+    QCOMPARE(c->displayUrl(), e->displayUrl());
+    QCOMPARE(c->title(), e->title());
 }
 
 // N55 §2.2/§2.3：归属注入口与出生属性。形态只问归属提供者——实体不认识"所在列表"，

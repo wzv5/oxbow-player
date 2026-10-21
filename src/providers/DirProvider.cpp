@@ -3,11 +3,11 @@
 #include "DirProvider.h"
 
 #include "Constants.h"
-#include "LocalFileEntity.h"
 #include "ProviderSettingsPage.h"
 #include "ServiceRegistry.h"
 #include "TraversalPolicy.h"
 #include "Util.h"
+#include "entities/LocalFileEntity.h"
 
 namespace {
 // 非 Q_OBJECT 类的用户可见串：英文源 + QT_TRANSLATE_NOOP 标注翻译上下文

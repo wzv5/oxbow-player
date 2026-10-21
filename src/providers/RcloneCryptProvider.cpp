@@ -4,10 +4,10 @@
 
 #include "Constants.h"
 #include "ProviderSettingsPage.h"
-#include "RcloneCryptEntity.h"
 #include "ServiceRegistry.h"
 #include "TraversalPolicy.h"
 #include "Util.h"
+#include "entities/RcloneCryptEntity.h"
 #include "streams/FileByteStream.h"
 #include "streams/RcloneCryptByteStream.h"
 #include "streams/StreamEndpoint.h"
