@@ -3089,6 +3089,12 @@ void MainWindow::toggleMini() {
         m_controller->setProperty(QStringLiteral("video-pan-y"), 0.0);
         // 占位符最小尺寸放宽（videoDefaultSize 480×320 会把 400px 宽钳住），退出恢复
         m_videoPlaceholder->setMinimumSize(QSize(0, 0));
+        // QWidget::updateGeometry 只失效直接父布局：占位符到主窗布局隔着左 pane 与
+        // splitter，须逐层补失效，主窗布局才会重算最小尺寸。播放列表此刻若已隐藏，
+        // hide() 无事件可发，这条链无人打通，主窗最小宽会停在普通态的 480，把下面的
+        // 400 宽整块钳走（实测成窗 480）
+        for (QWidget *w = m_videoPlaceholder; w && w != this; w = w->parentWidget())
+            w->updateGeometry();
         // 收起 UI 与放宽下限都只是"记在布局上"，必须**趁窗口仍可见**把布局重算落地：
         // 隐藏态下 QLayout::activate() 与 LayoutRequest 一律被 Qt 推迟（实测：先切
         // flags 再冲刷，minimumSizeHint 恒停在普通态的 705×400 = 480+220+把手 /
