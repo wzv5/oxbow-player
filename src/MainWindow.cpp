@@ -1105,6 +1105,9 @@ void MainWindow::renderMenuGroup(QMenu &menu, const MenuSpec::Group &group) {
         case Kind::Aspect:
             buildAspectSection(menu);
             break;
+        case Kind::WindowSize:
+            buildWindowSizeSection(menu);
+            break;
         }
     }
 }
@@ -2431,6 +2434,25 @@ void MainWindow::buildAspectSection(QMenu &parent) {
     custom->setText(customText.isEmpty() ? tr("Custom") : customText);
 }
 
+// N122：窗口尺寸动态段——形态项用 ActionManager 主实例按当前形态装配；五档倍率不进
+// 登记表、无快捷键、不翻译，当场新建（连接随 clear() 消亡），启用态按有效视频尺寸判定
+void MainWindow::buildWindowSizeSection(QMenu &parent) {
+    QMenu *menu = parent.addMenu(tr("Window Size"));
+    if (!m_mini)
+        menu->addAction(m_actions->action(ActionManager::Id::Fullscreen));
+    if (!m_fullscreen) {
+        menu->addAction(m_actions->action(ActionManager::Id::MiniWindow));
+        menu->addSeparator();
+        const bool hasVideo = m_pendingVideoW > 0 && m_pendingVideoH > 0;
+        static constexpr double kScales[] = {0.25, 0.5, 1.0, 1.5, 2.0};
+        for (const double s : kScales) {
+            QAction *a = menu->addAction(QString::number(s) + QLatin1Char('x'));
+            a->setEnabled(hasVideo);
+            connect(a, &QAction::triggered, this, [this, s] { applyWindowScale(s); });
+        }
+    }
+}
+
 // N110：自定义画面比例输入（自定义档条目触发）。循环到合法或取消：非法 → 警告
 // 一行说明合法写法，随即重弹同一输入框并预填刚才的输入；取消 / 空输入不改原值，
 // 上一次的有效值保留。受理写法（trim 后）：w:h（两段各自为正的有限 double，分母
@@ -2503,47 +2525,25 @@ void MainWindow::applyVideoSize(int videoW, int videoH) {
     adaptWindowSizeToVideo(videoW, videoH); // (0,0) 与全屏/最大化在入口内守卫，无动作
 }
 
-// N10：普通态窗口自适应当前视频——视频域尽可能物理像素 1:1（逻辑尺寸 =
-// 像素 ÷ devicePixelRatio，高 DPI 下不被系统缩放拉伸），任一边超出所在屏
-// 工作区即整窗等比缩到恰好放入；resize 后外框越出工作区时按最小移动原则
-// 两轴独立钳回（恰好不越界）。全屏/最大化/无视频流不动作；
-// 停止不复位、全屏退出维持全屏前普通尺寸（本函数仅在分辨率推送时触发）
-// N110：入参由源尺寸改为有效尺寸，故强制画面比例后窗口按新比例重排（§四-2）
-// N114：有效尺寸任一维小于视频区最小尺寸时，按 KeepAspectRatioByExpanding 语义
-// 放大到恰好覆盖 videoDefaultSize（最小必要放大、保比），消除最小尺寸钳制黑边；
-// 极端比例下工作区上限仍优先，缩回后不足最小尺寸的黑边属既定边界
-void MainWindow::adaptWindowSizeToVideo(int videoW, int videoH) {
-    // m_mini 守卫（N68）：小窗几何由 toggleMini / 换片自适应单源负责，
-    // 尺寸推送不得把小窗重排成默认尺寸
-    if (videoW <= 0 || videoH <= 0 || m_fullscreen || m_mini || isMaximized())
-        return;
+// N122：普通态视频区尺寸收口，N10 自适应与倍率命令共用；want 为目标视频区逻辑尺寸，
+// 调用方须保证普通态且各维 > 0。低于 videoDefaultSize 按两维覆盖系数的较大者等比放大
+// 到恰好覆盖（N114，保比无黑边），超出工作区视频域整窗等比缩回——上限须同时扣外框
+// 装饰与客户区非视频域，只扣外框会撑破工作区；B16 迭代收敛与最小移动钳回沿用 N10
+void MainWindow::resizeVideoAreaTo(const QSize &wantLogical) {
     const QRect work = screen()->availableGeometry();
-    const qreal dpr = devicePixelRatioF();
-    QSize want(qRound(videoW / dpr), qRound(videoH / dpr));
-    // N114：want 任一维低于视频区最小尺寸（videoDefaultSize 480×320，比例 3:2）时，
-    // 目标窗口必然低于主窗最小尺寸、视频区将被钳在最小尺寸上，mpv 只能在错比容器内
-    // 居中补黑边。按两维覆盖系数的较大者等比放大（绑定维恰好落在最小值上，另一维由
-    // 比例推出，绝不放大超过消除黑边所需的倍率）；比较与放大全在逻辑域（want 已除
-    // DPR），手算系数而非 QSize::scaled，取整与 N110 保轴换算同口径（半上）
+    QSize want = wantLogical;
     const QSize videoMin = App::videoDefaultSize();
     if (want.width() < videoMin.width() || want.height() < videoMin.height()) {
         const double s = qMax(double(videoMin.width()) / want.width(),
                               double(videoMin.height()) / want.height());
         want = QSize(qRound(want.width() * s), qRound(want.height() * s));
     }
-    // 双重余量：外框装饰 + 客户区内非视频域（菜单栏/进度行/控制行固定高度）。
-    // 若只扣外框，缩放分支会把视频域放到"工作区−外框"上限，
-    // 加上非视频域后整窗仍会撑破工作区（验收实测缺陷）
     const QSize frameChrome = frameGeometry().size() - geometry().size();
     const QSize clientReserve = geometry().size() - m_videoWidget->size();
     const QSize availVideo = work.size() - frameChrome - clientReserve;
     if (availVideo.width() > 0 && availVideo.height() > 0 &&
         (want.width() > availVideo.width() || want.height() > availVideo.height()))
         want.scale(availVideo, Qt::KeepAspectRatio);
-    // B16：迭代收敛——单步增量假设"非视频域宽度恒定"不成立（右侧 splitter/播放列表
-    // 会随窗口变宽吸收部分增量），故每步 resize 后强制布局落地、读真实 video 尺寸，
-    // 以残差 want−实际 再补增量，1~2 步收敛到精确 want；无进展（如受占位符最小尺寸
-    // 钳制无法再缩）即停，避免空转
     QSize target = size() + want - m_videoWidget->size();
     QSize lastAchieved;
     for (int i = 0; i < 4; ++i) {
@@ -2556,11 +2556,20 @@ void MainWindow::adaptWindowSizeToVideo(int videoW, int videoH) {
         lastAchieved = achieved;
         target = size() + want - achieved;
     }
-    // 最小移动收回：仅当外框越出工作区时钳回，不动原本合法的位置（A20 复用私有辅助）
     const QRect fr = frameGeometry();
     const QPoint tl = minimalMoveTopLeft(fr, work);
     if (tl != fr.topLeft())
         move(tl);
+}
+
+// N10：普通态按当前视频自适应——视频域物理像素 1:1（逻辑尺寸 = 像素 ÷ DPR，高 DPI 下
+// 不被系统缩放拉伸）；全屏 / 最大化 / 小窗 / 无视频流不动作，入参为 N110 有效尺寸
+void MainWindow::adaptWindowSizeToVideo(int videoW, int videoH) {
+    // m_mini 守卫（N68）：小窗几何单源在 toggleMini 与换片自适应，尺寸推送不得把它重排
+    if (videoW <= 0 || videoH <= 0 || m_fullscreen || m_mini || isMaximized())
+        return;
+    const qreal dpr = devicePixelRatioF();
+    resizeVideoAreaTo(QSize(qRound(videoW / dpr), qRound(videoH / dpr)));
 }
 
 // N68：小窗期换片自适应（videoSizeChanged 经 singleShot(0) 触发，等几何落定后
@@ -2605,6 +2614,58 @@ void MainWindow::clampMiniIntoWorkArea() {
     const QPoint tl = minimalMoveTopLeft(fr, screen()->availableGeometry());
     if (tl != fr.topLeft())
         move(tl); // 与既有普通态钳回同款：move 传外框左上角，Qt 按 frameMargins 折算
+}
+
+// N122：窗口尺寸倍率命令——以视频有效尺寸为基准的一次性定态尺寸，不记忆、不置勾选；
+// 无有效视频尺寸沿用 N10 早退。最大化先清 N40 还原重适配待办再 showNormal（否则还原
+// 落地的重适配按 1x 盖掉本命令），尺寸排到还原几何落地后的下一轮事件循环
+void MainWindow::applyWindowScale(double factor) {
+    if (m_fullscreen || m_pendingVideoW <= 0 || m_pendingVideoH <= 0)
+        return;
+    if (m_mini) {
+        applyMiniWindowScale(factor);
+        return;
+    }
+    const qreal dpr = devicePixelRatioF();
+    const QSize want(qRound(m_pendingVideoW * factor / dpr),
+                     qRound(m_pendingVideoH * factor / dpr));
+    if (isMaximized()) {
+        m_refitAfterMaximize = false;
+        showNormal();
+        QTimer::singleShot(0, this, [this, want] { resizeVideoAreaTo(want); });
+        return;
+    }
+    resizeVideoAreaTo(want);
+}
+
+// N122：倍率的小窗路径——客户区即视频区，宽按有效宽乘倍率、低于 miniMinWidth 覆盖放大
+// 到恰好覆盖（不套 N114 普通态下限，否则 0.25x 被抬回大窗尺寸），高恒由宽反推保比，
+// 故下限只需钳宽。工作区上限优先于下限：紧维钳上限、另维反推（同 WM_SIZING 手法）。
+// 不写 m_preMiniRect，退出小窗按进窗前快照恢复
+void MainWindow::applyMiniWindowScale(double factor) {
+    const qreal dpr = devicePixelRatioF();
+    const double ratio = double(m_pendingVideoW) / double(m_pendingVideoH);
+    int clientW = qRound(m_pendingVideoW * factor / dpr);
+    if (clientW < App::miniMinWidth())
+        clientW = App::miniMinWidth();
+    int clientH = qRound(clientW / ratio);
+    const QRect work = screen()->availableGeometry();
+    const QSize chrome = frameGeometry().size() - geometry().size();
+    const QSize availClient = work.size() - chrome;
+    if (availClient.width() > 0 && availClient.height() > 0 &&
+        (clientW > availClient.width() || clientH > availClient.height())) {
+        const double sW = double(availClient.width()) / clientW;
+        const double sH = double(availClient.height()) / clientH;
+        if (sW <= sH) { // 宽是紧维：钳宽反推高
+            clientW = availClient.width();
+            clientH = qRound(clientW / ratio);
+        } else { // 高是紧维：钳高反推宽
+            clientH = availClient.height();
+            clientW = qRound(clientH * ratio);
+        }
+    }
+    resize(clientW, clientH);
+    clampMiniIntoWorkArea();
 }
 
 #if !defined(Q_OS_WIN) || defined(OXBOW_PUREQT)

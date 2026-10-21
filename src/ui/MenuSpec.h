@@ -15,13 +15,14 @@ enum class HideIn { None, Fullscreen, Mini, Both };
 
 struct Item {
     enum class Kind {
-        Action,    // ActionManager 主实例
-        About,     // 主窗自建，不进登记表
-        Separator, // 分隔线
-        Filters,   // 视频 / 音频两个滤镜子菜单
-        Tracks,    // 四组轨道子菜单
-        Chapter,   // 章节 + 书签整段
-        Aspect,    // 画面比例子菜单
+        Action,     // ActionManager 主实例
+        About,      // 主窗自建，不进登记表
+        Separator,  // 分隔线
+        Filters,    // 视频 / 音频两个滤镜子菜单
+        Tracks,     // 四组轨道子菜单
+        Chapter,    // 章节 + 书签整段
+        Aspect,     // 画面比例子菜单
+        WindowSize, // 窗口尺寸子菜单（形态项 + 五档倍率）
     };
     Kind kind = Kind::Action;
     ActionManager::Id action = ActionManager::Id::Count; // 仅 Kind::Action 有意义
@@ -87,15 +88,15 @@ inline constexpr Item kPlayItems[] = {
 
 inline constexpr Item kChapterItems[] = {section(Item::Kind::Chapter)};
 
-// 覆盖态只留当前的退出口，其余形态项裁掉；五段恒在，不出现空子菜单
+// 覆盖态只留当前的退出口，其余形态项裁掉；段恒在，不出现空子菜单。窗口形态项收进
+// 窗口尺寸子菜单，其裁剪在装配时按内容判定（N122）
 inline constexpr Item kViewItems[] = {
     action(ActionManager::Id::Playlist, HideIn::Mini),
     action(ActionManager::Id::Navigator, HideIn::Both),
-    action(ActionManager::Id::Fullscreen, HideIn::Mini),
-    action(ActionManager::Id::MiniWindow, HideIn::Fullscreen),
     action(ActionManager::Id::MenuBar, HideIn::Both),
     action(ActionManager::Id::ToggleStats),
     separator(),
+    section(Item::Kind::WindowSize),
     section(Item::Kind::Aspect),
 };
 

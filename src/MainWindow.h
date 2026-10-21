@@ -212,9 +212,14 @@ class MainWindow : public QMainWindow {
     void applyMenuBarVisibility();
     // N121：尺寸事实的唯一入口——权威 videoSizeChanged 与 on_preloaded 预估值共用
     void applyVideoSize(int videoW, int videoH);
-    // N10：普通态窗口尺寸自适应视频（videoSizeChanged 直连触发，
-    // 物理像素 1:1、工作区钳制、最小移动收回；尺寸事实源经 N40 改滤镜后输出尺寸）
+    // N10：普通态窗口尺寸自适应视频（videoSizeChanged 直连触发，收口见 resizeVideoAreaTo）
     void adaptWindowSizeToVideo(int videoW, int videoH);
+    // N122：普通态视频区尺寸收口，N10 自适应与倍率命令共用（细节见定义处）
+    void resizeVideoAreaTo(const QSize &wantLogical);
+    // N122：窗口尺寸倍率命令（一次性、不记忆），最大化先还原再应用显式尺寸
+    void applyWindowScale(double factor);
+    // N122：倍率的小窗路径——定宽保比，下限钳宽、上限缩回
+    void applyMiniWindowScale(double factor);
     // N68：小窗期换片自适应——保持当前客户区宽不变、高按新比例重算
     // （尺寸与位置不回默认），保比在 refitMiniToAspect、越界收回在 clampMiniIntoWorkArea
     void refitMiniToVideo();
@@ -336,6 +341,9 @@ class MainWindow : public QMainWindow {
     // N110：比例动态段——Original + 五档 + Custom 当场新建，勾选按属性现读回填
     void buildAspectSection(QMenu &parent);
     void onCustomAspectRatio();
+
+    // N122：窗口尺寸动态段——形态项用主实例按当前形态装配，五档倍率当场新建
+    void buildWindowSizeSection(QMenu &parent);
 
     // N15：章节与书签
     // N119：章节动态段——填进本菜单本身（另三个填充函数往 parent 里建子菜单），
