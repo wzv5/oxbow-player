@@ -294,9 +294,17 @@ if(OXBOW_WITH_RCLONE_CRYPT)
                                  ${OXBOW_RCLONE_CRYPT_PLATFORM_SOURCES})
     target_compile_definitions(oxbowcore PRIVATE OXBOW_WITH_RCLONE_CRYPT)
 endif()
-# A19：全屏期 DWM 圆角裁切抑制（仅 Windows；dwmapi 为 Vista 起系统组件）
+# Windows 专属集成：源不入主列表，由本段构建条件决定（与 X11Util 同一纪律）。
+# A19 全屏期 DWM 圆角裁切抑制用 dwmapi（Vista 起系统组件）；N127 任务栏集成
+# （覆盖图标 / 进度 / 预览工具条）用 ole32（COM 装载）、uuid（CLSID_TaskbarList
+# 的符号，IID 走 __uuidof 不需库）、advapi32（读系统深浅色）
 if(WIN32)
-    target_link_libraries(oxbowcore PRIVATE dwmapi)
+    target_link_libraries(oxbowcore PRIVATE dwmapi ole32 uuid advapi32)
+    target_sources(oxbowcore PRIVATE
+        src/platform/TaskbarIntegration.cpp
+        src/platform/TaskbarIntegration.h
+        src/platform/TaskbarState.h
+    )
 endif()
 
 # N83：X11 专用小工具集（X11Util）——EWMH 直发置顶（小窗置顶，
@@ -561,6 +569,7 @@ if(OXBOW_BUILD_TESTS)
     oxbow_add_test(PlaybackReporterRegistry)
     oxbow_add_test(ReporterSwitchCatalog)
     oxbow_add_test(PlaybackSnapshot)
+    oxbow_add_test(TaskbarIntegration)
     # rclone crypt 的两套件与特性同进退（关掉就没有被测对象）；FileByteStream 是通用
     # L3 传输，不受本门禁影响
     if(OXBOW_WITH_RCLONE_CRYPT)

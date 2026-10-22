@@ -13,8 +13,10 @@
 #include <dwmapi.h>
 #include <qt_windows.h>
 #include <shlobj.h>
+#include <shobjidl.h> // N127：ITaskbarList3 / THUMBBUTTON / THBN_CLICKED
 #endif
 
+#include <QAbstractNativeEventFilter>
 #include <QAction>
 #include <QActionGroup>
 #include <QApplication>

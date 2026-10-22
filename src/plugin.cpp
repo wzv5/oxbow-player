@@ -28,6 +28,9 @@
 #include "Version.h"
 #include "mpvbridge/MpvController.h"
 #include "streams/StreamRelay.h"
+#ifdef Q_OS_WIN
+#include "platform/TaskbarIntegration.h"
+#endif
 
 // 本模块在 Windows 上通过 MPV_CPLUGIN_DYNAMIC_SYM 把 mpv_* 编译为指向 pfn_* 的
 // 指针：PE 加载器没有全局符号概念，本模块又是由壳动态加载的（mpv 不会填充这里的
@@ -302,6 +305,14 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle) {
     // N83：全平台统一先 show 再嵌入——xcb 下原生窗口链在 show 时才定型，此前取的
     // winId 可能被 Qt 随后重建/重挂而失效；Windows 统一到此时序后不再依赖「子 HWND
     // 平移保身份」的平台特性，两平台同一口径更稳健
+    // N127：任务栏集成（覆盖图标 / 进度 / 预览工具条）。只吃 controller 与宿主窗口，
+    // 自己接播放态与点击命令，主窗无需配合；父对象设为主窗，与进程同寿命。
+    // **必须早于 show()**：任务栏按钮就绪时系统会发 TaskbarButtonCreated，原生事件
+    // 过滤器要先就位才收得到，否则工具条会被静默丢弃。
+#ifdef Q_OS_WIN
+    new TaskbarIntegration(controller, window);
+#endif
+
     window->show();
 
     // 把视频渲染嵌入 Qt 窗口（与 libmpv 的 --wid 用法一致）。wid 不可 const：
