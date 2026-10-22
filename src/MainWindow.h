@@ -492,7 +492,7 @@ class MainWindow : public QMainWindow {
     // ---- N8：主窗口显示优化 ----
     QString playingDisplayName(); // 正播项显示名（与列表行同一字段，标题与 OSD 同源）
     // N25：标题与 OSD #2 同源刷新（B11 镜像取名）。playlist-pos 值不变不再推送，
-    // 回刷收编后的正播名错位须经此主动刷新
+    // 回刷收编后一律经此刷新一次（正播名错位与总数变化都在内）
     void updateNowPlayingUi();
 
     // ---- N3：单击/双击分流与覆盖式全屏 ----

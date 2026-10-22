@@ -1225,13 +1225,8 @@ void MainWindow::connectController() {
     connect(m_controller, &MpvController::playlistChanged, this,
             [this](const QVariantList &) { updateNavigationActions(); });
     // N25：回刷差异收编后镜像重新与 mpv 序列一致，但 playlist-pos 值不变不再推送，
-    // pos 推送时刻按旧镜像取的错名会挂到下一次切条目——仅错名时主动刷新标题/OSD
-    // （追加等不影响正播名的收编不弹 OSD）
-    connect(m_playlist, &PlaylistWidget::playingListAdopted, this, [this]() {
-        const QString f = playingDisplayName();
-        if (!f.isEmpty() && f != windowTitle())
-            updateNowPlayingUi();
-    });
+    // pos 推送时刻按旧镜像取的错名会挂到下一次切条目——收编即刷新一次标题与 OSD
+    connect(m_playlist, &PlaylistWidget::playingListAdopted, this, &MainWindow::updateNowPlayingUi);
     connect(m_controller, &MpvController::playlistPosChanged, this, [this](int pos) {
         const bool switchedItem = pos != m_playlistPos; // B9：实际换条目（值不变 mpv 不推送）
         m_playlistPos = pos;
@@ -3689,7 +3684,11 @@ void MainWindow::updateNowPlayingUi() {
     const int pt = m_playlist->playingTabIndex();
     const int total = pt >= 0 ? int(m_playlist->queueEntitiesOf(pt).size()) : m_playlistPos + 1;
     if (!name.isEmpty())
-        setWindowTitle(name); // N8 Part1：标题跟随正播项显示名
+        // N8 Part1：标题跟随正播项显示名；多项列表另带当前序号，与 OSD #2 同源
+        setWindowTitle(
+            total > 1 && m_playlistPos < total
+                ? QStringLiteral("[%1/%2] %3").arg(m_playlistPos + 1).arg(total).arg(name)
+                : name);
     else
         name = tr("Unknown File");
     m_osd->queue(OsdController::Priority::NowPlaying,
