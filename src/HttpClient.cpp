@@ -2,6 +2,8 @@
 
 #include "HttpClient.h"
 
+#include "Logging.h"
+
 // N34 实现。分两块，均在 .cpp 内、不上头文件：
 // 1. 共享传输（匿名命名空间）：专用网络线程 + 进程内唯一 QNAM + 缺陷表 + 等待原语。
 //    client 对象只是不可变缺省值的持有者，构造与析构均不碰传输层；
@@ -174,9 +176,9 @@ void streamingReadyRead(const std::shared_ptr<HttpClient::HttpJobState> &job,
             // 直接验证该限流是否兑现
             static std::atomic<int> s_gateHits{0};
             if (s_gateHits.fetch_add(1, std::memory_order_relaxed) % 256 == 0)
-                qDebug() << "[oxbow] probe watermark-full queue=" << job->chunksBytes
-                         << "qtBuf=" << reply->bytesAvailable()
-                         << "qtLimit=" << reply->readBufferSize();
+                OXBOW_LOG_DEBUG() << "probe watermark-full queue=" << job->chunksBytes
+                                  << "qtBuf=" << reply->bytesAvailable()
+                                  << "qtLimit=" << reply->readBufferSize();
             return; // 已到水位：留着让消费方取走后再续泵
         }
     }

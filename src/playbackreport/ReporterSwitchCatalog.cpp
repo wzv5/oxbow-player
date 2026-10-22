@@ -2,6 +2,7 @@
 
 #include "ReporterSwitchCatalog.h"
 
+#include "Logging.h"
 #include "providers/JellyfinProvider.h" // kJellyfinProviderKey：本文件是取具体种类键常量的唯一聚合点
 
 namespace {
@@ -11,7 +12,7 @@ namespace {
 constexpr ReporterSwitch kJellyfinRow{"reportJellyfin", kJellyfinProviderKey, true};
 
 // 登记表自检（ProviderCatalog::buildCatalog 同层）：行非空、iniKey 与 reporterKey 各自
-// 互不相同。空键与重复键一律 qWarning 显影、不阻断启动（同 ProviderCatalog 与 R4 数据
+// 互不相同。空键与重复键一律记一条警告显影、不阻断启动（同 ProviderCatalog 与 R4 数据
 // 目录自检的口径）；Debug 期另断言表非空——表为空即聚合点漏配，消费方处处拿到空表
 std::vector<ReporterSwitch> buildSwitches() {
     std::vector<ReporterSwitch> table = {kJellyfinRow};
@@ -21,13 +22,14 @@ std::vector<ReporterSwitch> buildSwitches() {
         const QString ini = QString::fromLatin1(table[i].iniKey);
         const QString reporter = QString::fromLatin1(table[i].reporterKey);
         if (ini.isEmpty())
-            qWarning("ReporterSwitchCatalog: row %zu carries an empty ini key", i);
+            OXBOW_LOG_WARNING() << "ReporterSwitchCatalog: row" << i << "carries an empty ini key";
         else if (iniKeys.contains(ini))
-            qWarning("ReporterSwitchCatalog: duplicate ini key \"%s\"", qPrintable(ini));
+            OXBOW_LOG_WARNING() << "ReporterSwitchCatalog: duplicate ini key" << ini;
         if (reporter.isEmpty())
-            qWarning("ReporterSwitchCatalog: row %zu carries an empty reporter key", i);
+            OXBOW_LOG_WARNING() << "ReporterSwitchCatalog: row" << i
+                                << "carries an empty reporter key";
         else if (reporterKeys.contains(reporter))
-            qWarning("ReporterSwitchCatalog: duplicate reporter key \"%s\"", qPrintable(reporter));
+            OXBOW_LOG_WARNING() << "ReporterSwitchCatalog: duplicate reporter key" << reporter;
         iniKeys.insert(ini);
         reporterKeys.insert(reporter);
     }

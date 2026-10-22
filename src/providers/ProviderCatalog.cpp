@@ -2,6 +2,8 @@
 
 #include "ProviderCatalog.h"
 
+#include "Logging.h"
+
 // 本文件是具体提供者的唯一聚合点（N44 §2.7）：登记表条目要引用各提供者的
 // 键常量、displayName 与工厂，故只有此处包含提供者头文件，其余源文件一律
 // 经 ProviderCatalog.h 取用
@@ -17,7 +19,7 @@
 
 namespace {
 // 登记表自检（N44 §2.7 第 ② 层守候）：键非空且互不相同、第 0 项 createDefault 非空。
-// 不符即 qWarning——沿用 R4 数据目录自检的路子，不因自检失败阻断启动；
+// 不符即记一条警告——沿用 R4 数据目录自检的路子，不因自检失败阻断启动；
 // Debug 期再叠 Q_ASSERT，把登记表漏配在第一时间炸出来
 QList<ProviderEntry> buildCatalog() {
     QList<ProviderEntry> table = {
@@ -42,9 +44,9 @@ QList<ProviderEntry> buildCatalog() {
     for (int i = 0; i < table.size(); ++i) {
         const QString key = QString::fromLatin1(table.at(i).typeKey);
         if (key.isEmpty())
-            qWarning("ProviderCatalog: entry %d carries an empty type key", i);
+            OXBOW_LOG_WARNING() << "ProviderCatalog: entry" << i << "carries an empty type key";
         else if (seen.contains(key))
-            qWarning("ProviderCatalog: duplicate type key \"%s\"", qPrintable(key));
+            OXBOW_LOG_WARNING() << "ProviderCatalog: duplicate type key" << key;
         seen.insert(key);
     }
     Q_ASSERT(!table.isEmpty());

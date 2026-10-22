@@ -23,6 +23,7 @@
 #include <QtSvg/QSvgRenderer>
 
 #include "Constants.h"
+#include "Logging.h"
 #include "MainWindow.h"
 #include "Version.h"
 #include "mpvbridge/MpvController.h"
@@ -82,9 +83,11 @@ static bool resolveMpvSymbols() {
 #undef RESOLVE
 
     if (missing) {
-        // 拼接后一次输出；missing 是 ASCII 符号名，fromLatin1 足够
-        const QString msg = QStringLiteral("[oxbow] 无法从宿主解析 mpv 符号: %1\n")
-                                .arg(QString::fromLatin1(missing));
+        // 拼接后一次输出；missing 是 ASCII 符号名，fromLatin1 足够。此处仍在日志层装配
+        // 之前（QApplication 尚未建立），只能直写调试器，前缀与日志层同取 App::nameAscii
+        const QString msg =
+            QStringLiteral("[%1] 无法从宿主解析 mpv 符号: %2\n")
+                .arg(QString::fromLatin1(App::nameAscii), QString::fromLatin1(missing));
         OutputDebugStringW(reinterpret_cast<const wchar_t *>(msg.utf16()));
         return false;
     }
@@ -135,12 +138,12 @@ static QString resolveConfigFilePath() {
 // 仅从 :/i18n 资源加载（qt_add_translations 嵌入），失败则静默回退英文原文。
 // 语言来源：oxbow.ini 的 language 键；空/"auto" 表示跟随系统， "en" 为英文原文，
 // 其余按 QLocale 对应 :/i18n/oxbow_<locale>.qm
-static void installTranslator() {
+static void installTranslator(const QString &configFile) {
     if (!qApp)
         return;
     QString lang;
     {
-        QSettings s(resolveConfigFilePath(), QSettings::IniFormat);
+        QSettings s(configFile, QSettings::IniFormat);
         lang = s.value(QStringLiteral("language")).toString().trimmed();
     }
     auto *translator = new QTranslator(qApp);
@@ -195,19 +198,6 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle) {
         Q_UNUSED(svgAnchor);
     }
 
-    // N84：启动诊断行——产物自报版本身份（版本 + 短 hash[-dirty]），逆向回答
-    // "手上这份产物是哪次提交、什么时候编的"。输出面与既有诊断一致：
-    // Windows 打调试器（OutputDebugStringW），Linux 打 stderr。串形为
-    // "[oxbow] 0.1.0 (cfaf552-dirty)"，与 About 对话框的 Version 行同源
-    {
-        const QString diag = QStringLiteral("[oxbow] %1\n").arg(App::versionInfo());
-#ifdef Q_OS_WIN
-        OutputDebugStringW(reinterpret_cast<const wchar_t *>(diag.utf16()));
-#else
-        fputs(diag.toUtf8().constData(), stderr);
-#endif
-    }
-
     // argc/argv 的生命周期必须覆盖整个进程
     static int argc = 1;
     static char *argv[] = {App::nameAscii, nullptr};
@@ -234,7 +224,17 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle) {
         QApplication::setQuitOnLastWindowClosed(false);
     }
 
-    installTranslator();
+    const QString configFile = resolveConfigFilePath();
+
+    // N126：统一日志出口在一切子系统出生前装配——模式只读一次，此后各线程同一条通道
+    Logging::install(configFile);
+
+    // N84：启动诊断行——产物自报版本身份（版本 + 短 hash[-dirty]），逆向回答
+    // "手上这份产物是哪次提交、什么时候编的"。串形 "[oxbow] [时间] [INFO] 0.1.0 (…)"，
+    // 与 About 对话框的 Version 行同源；0 档下不输出
+    OXBOW_LOG_INFO().noquote() << App::versionInfo();
+
+    installTranslator(configFile);
 
     auto *controller = new MpvController(handle);
 
@@ -247,8 +247,6 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle) {
     auto relay = std::make_shared<StreamRelay>();
     if (!relay->install(handle))
         return 1; // 协议注册失败：让 mpv 记为脚本加载失败，比静默残缺更可诊断
-
-    const QString configFile = resolveConfigFilePath();
 
     // N116：外观初始套用前移到入口——主窗构造（及其全部子控件）之前先按 ini 套样式与
     // 配色。AppearanceManager 构造期在此捕获平台默认样式（先于任何 setStyle，Auto 语义
@@ -310,13 +308,14 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle) {
     // mpv_set_property 的 data 形参是 void *，取 const 对象地址会丢 const 报错
     int64_t wid = int64_t(window->videoWidget()->winId());
     if (mpv_set_property(handle, "wid", MPV_FORMAT_INT64, &wid) < 0) {
-        fprintf(stderr, "[oxbow] wid 属性设置失败，视频嵌入将不可用\n");
+        OXBOW_LOG_WARNING() << "wid 属性设置失败，视频嵌入将不可用";
     } else {
 #ifndef Q_OS_WIN
         // N83：诊断日志——与 xwininfo -root -tree 的窗口 ID 比对，确认 vo 初始化时
         // 该窗口仍在（未被 Qt 重建/重挂）且与 mpv 实际处理的 ID 一致。判据：wid
         // 生效时 mpv 绝不自建顶层窗口，出现独立窗口即 wid 未生效
-        fprintf(stderr, "[oxbow] wid=0x%llx 已设置\n", static_cast<unsigned long long>(wid));
+        OXBOW_LOG_DEBUG().noquote()
+            << QStringLiteral("wid=0x%1 已设置").arg(static_cast<qulonglong>(wid), 0, 16);
 #endif
     }
 

@@ -2,6 +2,7 @@
 
 #include <mpv/client.h>
 
+#include "Logging.h"
 #include "streams/StreamRelay.h"
 #include "streams/StreamTransit.h"
 #include "thumb/ThumbEngine.h"
@@ -62,13 +63,13 @@ void ThumbEngine::startSession(quint64 seq, WId hostWid, const QString &path, do
 
     m_handle = mpv_create();
     if (!m_handle) {
-        qDebug() << "[oxbow] thumb mpv_create failed";
+        OXBOW_LOG_DEBUG() << "thumb mpv_create failed";
         m_seq = 0;
         emit sessionEnded(seq);
         return;
     }
-    qDebug() << "[oxbow] thumb core start path=" << m_path << "time=" << startTime
-             << "wid=" << (void *)hostWid;
+    OXBOW_LOG_DEBUG() << "thumb core start path=" << m_path << "time=" << startTime
+                      << "wid=" << (void *)hostWid;
 
     // wid 指向缩略图宿主窗（VO 直接渲染进它）
     setOptionOrIgnore(m_handle, "wid", QByteArray::number(static_cast<qint64>(hostWid)));
@@ -127,7 +128,7 @@ void ThumbEngine::startSession(quint64 seq, WId hostWid, const QString &path, do
         m_relay->install(m_handle);
 
     if (mpv_initialize(m_handle) != 0) {
-        qDebug() << "[oxbow] thumb mpv_initialize failed";
+        OXBOW_LOG_DEBUG() << "thumb mpv_initialize failed";
         mpv_terminate_destroy(m_handle);
         m_handle = nullptr;
         m_seq = 0;
@@ -142,7 +143,7 @@ void ThumbEngine::startSession(quint64 seq, WId hostWid, const QString &path, do
     }
     m_drainTimer->start();
     m_exactTimer->start(); // 首帧同样先 keyframes 后收敛（start 只到关键帧）
-    qDebug() << "[oxbow] thumb core ready";
+    OXBOW_LOG_DEBUG() << "thumb core ready";
 }
 
 bool ThumbEngine::loadFile(double startTime) {
@@ -205,7 +206,7 @@ bool ThumbEngine::loadFile(double startTime) {
     if (err == 0)
         mpv_free_node_contents(&result); // 节点内存按既有用法规还
     else
-        qDebug() << "[oxbow] thumb loadfile failed:" << err << mpv_error_string(err);
+        OXBOW_LOG_DEBUG() << "thumb loadfile failed:" << err << mpv_error_string(err);
     return err == 0;
 }
 

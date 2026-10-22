@@ -2,6 +2,8 @@
 
 #include "ActionManager.h"
 
+#include "Logging.h"
+
 ActionManager::ActionManager(QWidget *host) : m_host(host) {
     // 注册表 = 全部 UI 入口清单（A15）：稳定英文名 / 显示名 / 键位在此同点声明，
     // 顺序即头文件枚举声明顺序，新增动作须与枚举插入位置对齐
@@ -207,7 +209,8 @@ QKeySequence ActionManager::storedToKey(const QString &stored) {
     const QKeySequence seq = QKeySequence::fromString(stored, QKeySequence::PortableText);
     // 非 "--"、非空却解析为空 = ini 手写非法值：按空处理，但必须留痕
     if (seq.isEmpty())
-        qWarning() << "Unparsable shortcut value in oxbow.ini, treated as empty:" << stored;
+        OXBOW_LOG_WARNING() << "Unparsable shortcut value in oxbow.ini, treated as empty:"
+                            << stored;
     return seq;
 }
 
@@ -221,7 +224,8 @@ QHash<ActionManager::Id, QKeySequence> ActionManager::effectiveKeys(const QStrin
         if (!modifiable(id)) {
             // 不可改绑条目不进结果表：ini 覆盖防卫跳过并留痕
             if (!stored.isEmpty())
-                qWarning() << "Shortcut" << name(id) << "is not modifiable; ini override ignored";
+                OXBOW_LOG_WARNING()
+                    << "Shortcut" << name(id) << "is not modifiable; ini override ignored";
             continue;
         }
         keys.insert(id, stored.isEmpty() ? defaultKey(id) : storedToKey(stored));
@@ -230,7 +234,7 @@ QHash<ActionManager::Id, QKeySequence> ActionManager::effectiveKeys(const QStrin
     const auto reverse = nameId();
     for (const QString &key : ini.childKeys()) {
         if (!reverse.contains(key))
-            qWarning() << "Unknown shortcut id in oxbow.ini [shortcuts], skipped:" << key;
+            OXBOW_LOG_WARNING() << "Unknown shortcut id in oxbow.ini [shortcuts], skipped:" << key;
     }
     ini.endGroup();
     return keys;

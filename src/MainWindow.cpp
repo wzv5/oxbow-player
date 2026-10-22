@@ -6,6 +6,7 @@
 #include "BookmarkManager.h"
 #include "Constants.h"
 #include "HttpClient.h"
+#include "Logging.h"
 #include "ServiceRegistry.h"
 #include "TraversalPolicy.h"
 #include "Util.h"
@@ -498,7 +499,7 @@ class ThumbHoverWatch : public QObject {
             return QObject::eventFilter(watched, event);
         switch (event->type()) {
         case QEvent::Enter:
-            qDebug() << "[oxbow] thumb enter state=" << int(m_state);
+            OXBOW_LOG_DEBUG() << "thumb enter state=" << int(m_state);
             if (m_state == State::Active)
                 m_graceTimer->stop(); // 回到滑条即继续
             else if (m_state == State::Idle) {
@@ -544,10 +545,11 @@ class ThumbHoverWatch : public QObject {
     }
 
     void buildSession() {
-        // 诊断日志（[oxbow] thumb）：一次悬停一行，列全部闸口取值，失败定位用
-        qDebug() << "[oxbow] thumb build" << "enabled=" << m_enabled << "allowed=" << m_allowed
-                 << "path=" << m_sourcePath << "dur=" << m_duration
-                 << "slider=" << m_slider->isVisible() << m_slider->isEnabled();
+        // 诊断日志（thumb）：一次悬停一行，列全部闸口取值，失败定位用
+        OXBOW_LOG_DEBUG() << "thumb build"
+                          << "enabled=" << m_enabled << "allowed=" << m_allowed
+                          << "path=" << m_sourcePath << "dur=" << m_duration
+                          << "slider=" << m_slider->isVisible() << m_slider->isEnabled();
         if (!m_enabled || !m_allowed || m_sourcePath.isEmpty() || m_duration <= 0.0)
             return;
         if (!m_slider->isVisible() || !m_slider->isEnabled())
@@ -1756,7 +1758,7 @@ void MainWindow::saveScreenshotToFile() {
 
     QImageWriter writer(path, format);
     if (!writer.write(img)) {
-        qDebug() << "[oxbow] screenshot write failed:" << writer.errorString() << path;
+        OXBOW_LOG_DEBUG() << "screenshot write failed:" << writer.errorString() << path;
         m_osd->show(tr("Failed to save screenshot"));
         return;
     }

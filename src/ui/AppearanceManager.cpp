@@ -2,6 +2,8 @@
 
 #include "AppearanceManager.h"
 
+#include "Logging.h"
+
 QStringList AppearanceManager::availableStyles() { return QStyleFactory::keys(); }
 
 QString AppearanceManager::resolveStyle(const QString &raw, const QStringList &available,
@@ -34,9 +36,10 @@ void AppearanceManager::apply(const QString &styleRaw, const QString &colorSchem
         if (QStyle *created = QStyleFactory::create(target))
             QApplication::setStyle(created);
         else
-            qWarning("AppearanceManager: QStyleFactory::create(%s) failed, keeping current "
-                     "style",
-                     qPrintable(target));
+            OXBOW_LOG_WARNING().noquote()
+                << QStringLiteral("AppearanceManager: QStyleFactory::create(%1) failed, keeping "
+                                  "current style")
+                       .arg(target);
     }
 #if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
     QGuiApplication::styleHints()->setColorScheme(resolveColorScheme(colorSchemeRaw));

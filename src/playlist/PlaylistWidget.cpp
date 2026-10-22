@@ -3,6 +3,7 @@
 #include "PlaylistWidget.h"
 
 #include "Constants.h"
+#include "Logging.h"
 #include "MediaInfoHelper.h"
 #include "PlaylistDelegate.h"
 #include "PlaylistListView.h" // N57 §2.2：视图即状态载体，本页所有列表页由 createView 出生
@@ -1236,7 +1237,7 @@ void PlaylistWidget::endLocalPush(quint64 gen) {
     // 会自然到达并走正常判定。残余见规格 §2.2：该路径只在 mpv 正在退出 / 参数非法
     // 时出现，下一轮回显即自愈，不为此加超时兜底（否则世代泄漏成永久吞域）
     if (!m_mpv)
-        qDebug() << "[oxbow] push barrier skipped, no controller: gen" << gen; // 装配异常才到这
+        OXBOW_LOG_DEBUG() << "push barrier skipped, no controller: gen" << gen; // 装配异常才到这
     m_openPushGens.remove(gen);
 }
 
@@ -1255,7 +1256,7 @@ void PlaylistWidget::onPushBarrier(quint64 gen, bool ok, const QVariantList &ite
     // 观测点（§四.3）：摘除后在册规模须在下面对账**之前**取——对账的收编会就地
     // 再起会话，事后读到的集合规模不是这一瞬的
     const int stillOpen = int(m_openPushGens.size());
-    qDebug() << "[oxbow] push barrier gen" << gen << "ok" << ok << "still open" << stillOpen;
+    OXBOW_LOG_DEBUG() << "push barrier gen" << gen << "ok" << ok << "still open" << stillOpen;
     if (stillOpen > 0)
         return;
 
@@ -1266,7 +1267,7 @@ void PlaylistWidget::onPushBarrier(quint64 gen, bool ok, const QVariantList &ite
     // 世代的 ok 载荷——只递减返回（§2.3 第 2 条）
     if (settled.ok)
         setPlaylist(settled.items);
-    qDebug() << "[oxbow] push barrier settled with gen" << settled.gen << "ok" << settled.ok;
+    OXBOW_LOG_DEBUG() << "push barrier settled with gen" << settled.gen << "ok" << settled.ok;
 }
 
 // N11：主菜单"打开文件"固定落点——整体替换默认 tab 内容并作废其续播记忆
@@ -4958,7 +4959,7 @@ void PlaylistWidget::exportListAs(int tabIndex) {
         // 失败弹一次窗：首行固定文案，第二行模块给出的具体原因（诊断串不进翻译
         // 清单）——让用户看得出是权限不足、路径不可写还是格式不对；延后出口不在
         // 本栈 exec()（与 N79 跳过告知同款），日志留路径与错误
-        qWarning() << "Failed to export playlist file:" << path << result.error();
+        OXBOW_LOG_WARNING() << "Failed to export playlist file:" << path << result.error();
         queueDeferredNotice(tr("Failed to export playlist file") + QLatin1Char('\n') +
                             result.error());
     }
@@ -4988,7 +4989,7 @@ void PlaylistWidget::importFromFile() {
     if (!read) {
         // 失败弹一次窗（与导出同款：首行固定文案，第二行模块给出的具体原因，
         // 诊断串不进翻译清单；延后出口不在本栈 exec()），日志留路径与错误
-        qWarning() << "Failed to read playlist file:" << path << read.error();
+        OXBOW_LOG_WARNING() << "Failed to read playlist file:" << path << read.error();
         queueDeferredNotice(tr("Failed to read playlist file") + QLatin1Char('\n') + read.error());
         return;
     }

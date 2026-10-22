@@ -5,6 +5,7 @@
 #include "AppearanceManager.h" // N115：Style 候选唯一出处
 #include "Constants.h"
 #include "FilterListWidget.h"
+#include "Logging.h"
 #include "mpvbridge/MpvConf.h"
 #include "mpvbridge/MpvController.h"
 #include "playbackreport/ReporterSwitchCatalog.h" // N99：上报开关目录项同引账目行（键名与缺省单点）
@@ -538,52 +539,73 @@ const QList<SettingCategory> &settingCatalog() {
 void validateTwoStateCheckBox(const SettingItem &item, int ci, int ii) {
     const auto choices = item.choices ? item.choices() : QList<SettingChoice>{};
     if (item.mpvType != MpvType::String)
-        qWarning("SettingsDialog: two-state CheckBox item [%d/%d] must declare "
-                 "MpvType::String",
-                 ci, ii);
+        OXBOW_LOG_WARNING().noquote()
+            << QStringLiteral("SettingsDialog: two-state CheckBox item [%1/%2] must declare "
+                              "MpvType::String")
+                   .arg(ci)
+                   .arg(ii);
     if (item.mpvKeys.size() != 1)
-        qWarning("SettingsDialog: two-state CheckBox item [%d/%d] must govern exactly one "
-                 "key",
-                 ci, ii);
+        OXBOW_LOG_WARNING().noquote()
+            << QStringLiteral("SettingsDialog: two-state CheckBox item [%1/%2] must govern "
+                              "exactly one key")
+                   .arg(ci)
+                   .arg(ii);
     if (item.fallback.typeId() != QMetaType::Bool)
-        qWarning("SettingsDialog: two-state CheckBox item [%d/%d] fallback must be bool", ci, ii);
+        OXBOW_LOG_WARNING().noquote()
+            << QStringLiteral("SettingsDialog: two-state CheckBox item [%1/%2] fallback must be "
+                              "bool")
+                   .arg(ci)
+                   .arg(ii);
     if (choices.size() != 2) {
-        qWarning("SettingsDialog: two-state CheckBox item [%d/%d] needs exactly two "
-                 "choices, got %d",
-                 ci, ii, int(choices.size()));
+        OXBOW_LOG_WARNING().noquote()
+            << QStringLiteral("SettingsDialog: two-state CheckBox item [%1/%2] needs exactly two "
+                              "choices, got %3")
+                   .arg(ci)
+                   .arg(ii)
+                   .arg(choices.size());
         return; // 后续检查依赖"恰两项"
     }
     const bool v0 = choices[0].value.toBool();
     const bool v1 = choices[1].value.toBool();
     if (choices[0].value.typeId() != QMetaType::Bool ||
         choices[1].value.typeId() != QMetaType::Bool || v0 == v1)
-        qWarning("SettingsDialog: two-state CheckBox item [%d/%d] choices must carry one "
-                 "true and one false bool value",
-                 ci, ii);
+        OXBOW_LOG_WARNING().noquote()
+            << QStringLiteral("SettingsDialog: two-state CheckBox item [%1/%2] choices must carry "
+                              "one true and one false bool value")
+                   .arg(ci)
+                   .arg(ii);
     QString texts[2];
     for (int k = 0; k < 2; ++k) {
         const QMap<QString, QString> &a = choices[k].mpvAssignments;
         const bool shapeOk =
             a.size() == 1 && item.mpvKeys.size() == 1 && a.firstKey() == item.mpvKeys[0];
         if (!shapeOk) {
-            qWarning("SettingsDialog: two-state CheckBox item [%d/%d] choice %d must "
-                     "assign the single governed key",
-                     ci, ii, k);
+            OXBOW_LOG_WARNING().noquote()
+                << QStringLiteral("SettingsDialog: two-state CheckBox item [%1/%2] choice %3 must "
+                                  "assign the single governed key")
+                       .arg(ci)
+                       .arg(ii)
+                       .arg(k);
             continue;
         }
         texts[k] = a.first();
         if (texts[k].isEmpty())
-            qWarning("SettingsDialog: two-state CheckBox item [%d/%d] choice %d assigns "
-                     "empty text",
-                     ci, ii, k);
+            OXBOW_LOG_WARNING().noquote()
+                << QStringLiteral("SettingsDialog: two-state CheckBox item [%1/%2] choice %3 "
+                                  "assigns empty text")
+                       .arg(ci)
+                       .arg(ii)
+                       .arg(k);
     }
     if (!texts[0].isEmpty() && texts[0] == texts[1])
-        qWarning("SettingsDialog: two-state CheckBox item [%d/%d] choices must assign "
-                 "distinct texts",
-                 ci, ii);
+        OXBOW_LOG_WARNING().noquote()
+            << QStringLiteral("SettingsDialog: two-state CheckBox item [%1/%2] choices must assign "
+                              "distinct texts")
+                   .arg(ci)
+                   .arg(ii);
 }
 
-// 目录自检（构造期一次，仅 qWarning 不中断；R4 §4.3.6）
+// 目录自检（构造期一次，只记警告、不中断；R4 §4.3.6）
 void validateCatalog() {
     const auto &catalog = settingCatalog();
     QSet<QString> ids;
@@ -594,11 +616,17 @@ void validateCatalog() {
             const bool hasIni = !item.iniKey.isEmpty();
             const bool hasMpv = !item.mpvKeys.isEmpty();
             if (hasIni == hasMpv)
-                qWarning("SettingsDialog: catalog item [%d/%d] must have exactly "
-                         "one backend (iniKey xor mpvKeys)",
-                         ci, ii);
+                OXBOW_LOG_WARNING().noquote()
+                    << QStringLiteral("SettingsDialog: catalog item [%1/%2] must have exactly one "
+                                      "backend (iniKey xor mpvKeys)")
+                           .arg(ci)
+                           .arg(ii);
             if (item.widget == WidgetKind::Combo && !item.choices)
-                qWarning("SettingsDialog: Combo item [%d/%d] missing choices provider", ci, ii);
+                OXBOW_LOG_WARNING().noquote()
+                    << QStringLiteral("SettingsDialog: Combo item [%1/%2] missing choices "
+                                      "provider")
+                           .arg(ci)
+                           .arg(ii);
             if (hasMpv) {
                 // mpvType 与控件语义配套检查
                 if (item.widget == WidgetKind::CheckBox) {
@@ -606,29 +634,39 @@ void validateCatalog() {
                     if (item.choices)
                         validateTwoStateCheckBox(item, ci, ii);
                     else if (item.mpvType != MpvType::Flag)
-                        qWarning("SettingsDialog: mpv CheckBox item [%d/%d] must declare "
-                                 "MpvType::Flag when it carries no choices",
-                                 ci, ii);
+                        OXBOW_LOG_WARNING().noquote()
+                            << QStringLiteral("SettingsDialog: mpv CheckBox item [%1/%2] must "
+                                              "declare MpvType::Flag when it carries no choices")
+                                   .arg(ci)
+                                   .arg(ii);
                 }
                 if (item.widget == WidgetKind::SpinBox && item.mpvType != MpvType::Int &&
                     item.mpvType != MpvType::Double)
-                    qWarning("SettingsDialog: mpv SpinBox item [%d/%d] must declare "
-                             "MpvType::Int or Double",
-                             ci, ii);
+                    OXBOW_LOG_WARNING().noquote()
+                        << QStringLiteral("SettingsDialog: mpv SpinBox item [%1/%2] must declare "
+                                          "MpvType::Int or Double")
+                               .arg(ci)
+                               .arg(ii);
                 if (item.widget == WidgetKind::FilterList) {
                     // N42：滤镜列表恰管辖一个 key、String 型下发；INI 后端无意义
                     if (item.mpvKeys.size() != 1)
-                        qWarning("SettingsDialog: FilterList item [%d/%d] must govern "
-                                 "exactly one key",
-                                 ci, ii);
+                        OXBOW_LOG_WARNING().noquote()
+                            << QStringLiteral("SettingsDialog: FilterList item [%1/%2] must "
+                                              "govern exactly one key")
+                                   .arg(ci)
+                                   .arg(ii);
                     if (item.mpvType != MpvType::String)
-                        qWarning("SettingsDialog: FilterList item [%d/%d] must declare "
-                                 "MpvType::String",
-                                 ci, ii);
+                        OXBOW_LOG_WARNING().noquote()
+                            << QStringLiteral("SettingsDialog: FilterList item [%1/%2] must "
+                                              "declare MpvType::String")
+                                   .arg(ci)
+                                   .arg(ii);
                     if (!item.iniKey.isEmpty())
-                        qWarning("SettingsDialog: FilterList item [%d/%d] must be an mpv "
-                                 "item, not INI",
-                                 ci, ii);
+                        OXBOW_LOG_WARNING().noquote()
+                            << QStringLiteral("SettingsDialog: FilterList item [%1/%2] must be an "
+                                              "mpv item, not INI")
+                                   .arg(ci)
+                                   .arg(ii);
                 }
                 if (item.widget == WidgetKind::Combo) {
                     // mpv 枚举项必须有且仅有一个占位项（R3 §3.7 语义依赖）
@@ -638,9 +676,12 @@ void validateCatalog() {
                         if (c.mpvAssignments.isEmpty())
                             ++placeholders;
                     if (placeholders != 1)
-                        qWarning("SettingsDialog: mpv enum item [%d/%d] needs exactly one "
-                                 "placeholder choice, got %d",
-                                 ci, ii, placeholders);
+                        OXBOW_LOG_WARNING().noquote()
+                            << QStringLiteral("SettingsDialog: mpv enum item [%1/%2] needs exactly "
+                                              "one placeholder choice, got %3")
+                                   .arg(ci)
+                                   .arg(ii)
+                                   .arg(placeholders);
                     // 赋值按声明类型可解析（读回匹配依赖两侧同一规范形式）
                     for (const auto &c : choices)
                         for (auto it = c.mpvAssignments.cbegin(); it != c.mpvAssignments.cend();
@@ -661,31 +702,47 @@ void validateCatalog() {
                                 break;
                             }
                             if (!ok)
-                                qWarning("SettingsDialog: mpv enum item [%d/%d] assignment "
-                                         "'%s' not parseable as declared MpvType",
-                                         ci, ii, qPrintable(it.value()));
+                                OXBOW_LOG_WARNING().noquote()
+                                    << QStringLiteral(
+                                           "SettingsDialog: mpv enum item [%1/%2] assignment "
+                                           "'%3' not parseable as declared MpvType")
+                                           .arg(ci)
+                                           .arg(ii)
+                                           .arg(it.value());
                         }
                 }
             }
             // 两态映射仅属 mpv 后端：项级校验必须在 hasMpv 分支之外，
             // 否则 INI 项触达不到
             if (item.widget == WidgetKind::CheckBox && item.choices && !hasMpv)
-                qWarning("SettingsDialog: INI CheckBox item [%d/%d] must not carry "
-                         "choices",
-                         ci, ii);
+                OXBOW_LOG_WARNING().noquote()
+                    << QStringLiteral("SettingsDialog: INI CheckBox item [%1/%2] must not carry "
+                                      "choices")
+                           .arg(ci)
+                           .arg(ii);
             if (item.widget == WidgetKind::SpinBox) {
                 const int f = item.fallback.toInt();
                 if (f < item.range.min || f > item.range.max)
-                    qWarning("SettingsDialog: SpinBox fallback out of range [%d/%d]", ci, ii);
+                    OXBOW_LOG_WARNING().noquote()
+                        << QStringLiteral("SettingsDialog: SpinBox fallback out of range [%1/%2]")
+                               .arg(ci)
+                               .arg(ii);
             }
             if (!item.id.isEmpty()) {
                 if (item.widget != WidgetKind::CheckBox)
-                    qWarning("SettingsDialog: id '%s' on item [%d/%d] must be a "
-                             "CheckBox master",
-                             qPrintable(item.id), ci, ii);
+                    OXBOW_LOG_WARNING().noquote()
+                        << QStringLiteral("SettingsDialog: id '%1' on item [%2/%3] must be a "
+                                          "CheckBox master")
+                               .arg(item.id)
+                               .arg(ci)
+                               .arg(ii);
                 if (ids.contains(item.id))
-                    qWarning("SettingsDialog: duplicate master id '%s' on item [%d/%d]",
-                             qPrintable(item.id), ci, ii);
+                    OXBOW_LOG_WARNING().noquote()
+                        << QStringLiteral("SettingsDialog: duplicate master id '%1' on item "
+                                          "[%2/%3]")
+                               .arg(item.id)
+                               .arg(ci)
+                               .arg(ii);
                 ids.insert(item.id);
             }
             ++ii;
@@ -699,12 +756,17 @@ void validateCatalog() {
         for (const auto &item : cat.items) {
             if (!item.dependsOn.isEmpty()) {
                 if (item.widget == WidgetKind::CheckBox)
-                    qWarning("SettingsDialog: CheckBox item [%d/%d] must not depend "
-                             "on others (single-level dependency)",
-                             cj, jj);
+                    OXBOW_LOG_WARNING().noquote()
+                        << QStringLiteral("SettingsDialog: CheckBox item [%1/%2] must not depend "
+                                          "on others (single-level dependency)")
+                               .arg(cj)
+                               .arg(jj);
                 if (!ids.contains(item.dependsOn))
-                    qWarning("SettingsDialog: item [%d/%d] dependsOn '%s' unresolved", cj, jj,
-                             qPrintable(item.dependsOn));
+                    OXBOW_LOG_WARNING().noquote()
+                        << QStringLiteral("SettingsDialog: item [%1/%2] dependsOn '%3' unresolved")
+                               .arg(cj)
+                               .arg(jj)
+                               .arg(item.dependsOn);
             }
             ++jj;
         }

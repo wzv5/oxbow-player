@@ -101,6 +101,8 @@ endif()
 add_library(oxbowcore MODULE
     src/plugin.cpp
     src/Constants.h
+    src/Logging.cpp
+    src/Logging.h
     src/Version.cpp
     src/Version.h
     src/streams/StreamTransit.cpp
@@ -485,6 +487,8 @@ if(OXBOW_BUILD_TESTS)
         src/Util.h
         src/HttpClient.cpp
         src/HttpClient.h
+        src/Logging.cpp
+        src/Logging.h
         src/Version.cpp
         src/Version.h
     )
@@ -547,6 +551,7 @@ if(OXBOW_BUILD_TESTS)
     oxbow_add_test(WebDavProvider)
     oxbow_add_test(ExternalProvider)
     oxbow_add_test(Util)
+    oxbow_add_test(Logging)
     oxbow_add_test(BookmarkManager)
     oxbow_add_test(StreamTransit)
     oxbow_add_test(PlaylistRegistry)

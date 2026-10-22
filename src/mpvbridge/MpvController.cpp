@@ -3,6 +3,7 @@
 #include "MpvController.h"
 
 #include "Constants.h"
+#include "Logging.h"
 #include "Util.h" // N61 §2.3：回显整形（playlist 条目 filename 进判据前唯一一道加工）
 
 #include "ui/FilterListWidget.h"
@@ -362,7 +363,7 @@ MpvController::MpvController(mpv_handle *mpv, QObject *parent) : QObject(parent)
     // 注册失败只退化为既有 VIDEO_RECONFIG 异步适配，不阻断启动
     const int hookRc = mpv_hook_add(m_mpv, 0, "on_preloaded", 0);
     if (hookRc < 0)
-        qDebug() << "[oxbow] mpv_hook_add(on_preloaded) failed:" << hookRc;
+        OXBOW_LOG_DEBUG() << "mpv_hook_add(on_preloaded) failed:" << hookRc;
 }
 
 void MpvController::startEventThread() { m_eventThread->start(); }
@@ -528,7 +529,7 @@ void MpvController::handleHook(const mpv_event *event) {
     if (hook->name && qstrcmp(hook->name, "on_preloaded") == 0)
         requestPreloadResize();
     if (mpv_hook_continue(m_mpv, hook->id) < 0)
-        qDebug() << "[oxbow] mpv_hook_continue failed";
+        OXBOW_LOG_DEBUG() << "mpv_hook_continue failed";
 }
 
 // N121：当前文件的选项生效回显——先 file-local-options/<name>，空则退 <name>
@@ -638,7 +639,7 @@ void MpvController::requestPreloadResize() {
     const QSize hint = preloadSizeHint();
     if (hint.width() <= 0 || hint.height() <= 0)
         return;
-    qDebug() << "[oxbow] preload hint" << hint.width() << "x" << hint.height();
+    OXBOW_LOG_DEBUG() << "preload hint" << hint.width() << "x" << hint.height();
     auto done = std::make_shared<QSemaphore>();
     QMetaObject::invokeMethod(
         this,
@@ -648,7 +649,7 @@ void MpvController::requestPreloadResize() {
         },
         Qt::QueuedConnection);
     if (!done->tryAcquire(1, App::preloadResizeTimeoutMs()))
-        qDebug() << "[oxbow] preload resize wait timeout";
+        OXBOW_LOG_DEBUG() << "preload resize wait timeout";
 }
 
 // N96：返回 mpv_command_string 的错误码（0 成功）；空串不特判，mpv 自报参数错误
@@ -720,7 +721,7 @@ QString MpvController::commandResultString(const QStringList &args) const {
     mpv_node result;
     const int err = mpv_command_node(m_mpv, &argRoot, &result);
     if (err != 0) {
-        qDebug() << "[oxbow] commandResultString failed:" << err;
+        OXBOW_LOG_DEBUG() << "commandResultString failed:" << err;
         return QString();
     }
     QString out;
@@ -805,7 +806,7 @@ QImage MpvController::screenshotRaw() {
     const int err = mpv_command_node(m_mpv, &argRoot, &result);
     if (err != 0) {
         // 含空闲态无视频（命令即报错），空 QImage 交调用方出提示
-        qDebug() << "[oxbow] screenshot-raw failed:" << err;
+        OXBOW_LOG_DEBUG() << "screenshot-raw failed:" << err;
         return QImage();
     }
 
@@ -846,8 +847,8 @@ QImage MpvController::screenshotRaw() {
             std::memcpy(img.scanLine(y), base + qint64(y) * stride, size_t(w) * 4);
         out = img;
     } else {
-        qDebug() << "[oxbow] screenshot-raw unexpected payload:" << w << h << stride
-                 << (format ? format : "(null)");
+        OXBOW_LOG_DEBUG() << "screenshot-raw unexpected payload:" << w << h << stride
+                          << (format ? format : "(null)");
     }
 
     mpv_free_node_contents(&result); // 节点内存（含图像 data）按既有用法规还
@@ -933,7 +934,7 @@ int MpvController::loadFile(const QString &url, const QString &appendMode,
     if (err == 0)
         mpv_free_node_contents(&result); // 节点内存按既有用法规还
     else
-        qDebug() << "[oxbow] loadfile(node) failed:" << err << url;
+        OXBOW_LOG_DEBUG() << "loadfile(node) failed:" << err << url;
     return err; // N104：错误码透传给调用方（就地标红）
 }
 
@@ -944,7 +945,7 @@ bool MpvController::pushBarrier(quint64 gen) {
     // 非法时出现，故此处不重试也不排队；发射失败不产生 reply，调用方就地摘除
     const int err = mpv_get_property_async(m_mpv, gen, "playlist", MPV_FORMAT_NODE);
     if (err != 0)
-        qDebug() << "[oxbow] push barrier failed:" << err << "gen" << gen;
+        OXBOW_LOG_DEBUG() << "push barrier failed:" << err << "gen" << gen;
     return err == 0;
 }
 
