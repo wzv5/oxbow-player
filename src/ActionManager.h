@@ -42,10 +42,25 @@ class ActionManager : public QObject {
         Playlist,
         Navigator,
         Fullscreen,
-        MiniWindow,  // N68：小窗模式（勾选态由 toggleMini 收口回写）
+        MiniWindow, // N68：小窗模式（勾选态由 toggleMini 收口回写）
+        // N123：五档窗口尺寸倍率（一次性命令、不可勾选、默认无键；注释给动作名列表一个
+        // 能读的行名，稳定英文名带 x 后缀以免被读成"第 N 号窗口尺寸"）
+        WindowSize0_25x,
+        WindowSize0_5x,
+        WindowSize1x,
+        WindowSize1_5x,
+        WindowSize2x,
         MenuBar,     // N119：菜单栏开关（勾选态即偏好；默认无键，键位留改绑余地）
         ToggleStats, // 视图菜单：状态信息叠加层（由 mpv 侧 stats 脚本渲染）
-        Escape,      // 隐绑定：无菜单实体，仅键盘触发
+        // N123：画面比例七项（勾选态由菜单装配按 video-aspect-override 回填）
+        AspectOriginal,
+        Aspect4x3,
+        Aspect16x9,
+        Aspect16x10,
+        Aspect1_85,
+        Aspect2_35,
+        AspectCustom,
+        Escape, // 隐绑定：无菜单实体，仅键盘触发
         AddBookmark,
         BookmarkEditor,
 
@@ -70,7 +85,10 @@ class ActionManager : public QObject {
     // ---- N86：名称（声明期随 declare 落表）----
     // 稳定英文名：持久化键与日志识别用，绝不过 tr
     QString name(Id id) const;
-    // 显示名：动作 = QAction 文案原样（含助记符），隐绑定 = 声明的可翻译串
+    // N123：菜单文案原样（含助记符）；隐绑定无菜单实体，返回空。它是绕开注释的专用出口
+    QString menuText(Id id) const;
+    // N123：动作名列表的取名出口——注释非空即取注释，否则动作取菜单文案、隐绑定取显示名。
+    // 菜单渲染不经过它（菜单显示的是 QAction 自身文本），注释也永不进菜单
     QString displayText(Id id) const;
     // 不可改绑的条目不进编辑器，ini 覆盖被防卫跳过（恒用声明默认）
     bool modifiable(Id id) const;
@@ -88,10 +106,11 @@ class ActionManager : public QObject {
     // 存储值解读单点："--" 即显式空，其余按 PortableText 解析（解析不出得空序列
     // 并留痕）。私有以防外部自拼"判空 + 解读"再走一遍归一
     static QKeySequence storedToKey(const QString &stored);
-    // 声明动作：稳定英文名持久化用；text 即显示名（含助记符）
-    void declareAction(Id id, const QString &idName, const QString &text,
+    // 声明动作：稳定英文名持久化用；menuText 即菜单文案（含助记符）；comment 非空时
+    // 成为动作名列表的显示名（N123），不进菜单
+    void declareAction(Id id, const QString &idName, const QString &menuText,
                        const QKeySequence &key = QKeySequence(), bool checkable = false,
-                       bool modifiable = true);
+                       bool modifiable = true, const QString &comment = QString());
     // 声明隐绑定（QShortcut）：无菜单实体，显示名另行声明（可翻译英文源串）
     void declareShortcut(Id id, const QString &idName, const QString &displayText,
                          const QKeySequence &key, bool modifiable = true);
@@ -105,7 +124,9 @@ class ActionManager : public QObject {
         QShortcut *shortcut = nullptr; // 隐绑定形态（动作为空）
         QKeySequence defaultKey;       // 声明默认值
         QString name;                  // 稳定英文名（持久化键，绝不过 tr）
-        QString displayText;           // 显示名（动作 = QAction 文案；隐绑定 = 可翻译串）
+        QString menuText;              // 动作侧：菜单文案原样（含助记符）；隐绑定侧为空
+        QString displayText;           // 隐绑定侧：声明的可翻译显示名；动作侧为空
+        QString comment;               // N123：动作名列表的显示覆盖（非空即用），不进菜单、不落 ini
         bool modifiable = true;        // 不可改绑则不进编辑器，ini 覆盖被防卫跳过
     };
     QHash<Id, Entry> m_entries;

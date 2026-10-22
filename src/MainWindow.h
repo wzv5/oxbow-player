@@ -177,6 +177,8 @@ class MainWindow : public QMainWindow {
     void connectActions();
     // N119：按描述表装配一个菜单段，不连任何信号（菜单栏与右键菜单共用）
     void renderMenuGroup(QMenu &menu, const MenuSpec::Group &group);
+    // N123：条目循环本体，子菜单经它递归渲染（两个渲染面与子菜单共用同一份装配）
+    void renderMenuItems(QMenu &menu, std::span<const MenuSpec::Item> items);
     // N119：视频区右键菜单入口，弹出前按 N5 清焦
     void showVideoContextMenu(const QPoint &globalPos);
     QWidget *createLeftArea();
@@ -218,6 +220,8 @@ class MainWindow : public QMainWindow {
     void resizeVideoAreaTo(const QSize &wantLogical);
     // N122：窗口尺寸倍率命令（一次性、不记忆），最大化先还原再应用显式尺寸
     void applyWindowScale(double factor);
+    // N123：五档倍率的启用态跟随有效视频尺寸——快捷键与两个菜单渲染面同状态
+    void updateWindowScaleActions();
     // N122：倍率的小窗路径——定宽保比，下限钳宽、上限缩回
     void applyMiniWindowScale(double factor);
     // N68：小窗期换片自适应——保持当前客户区宽不变、高按新比例重算
@@ -338,12 +342,10 @@ class MainWindow : public QMainWindow {
     void buildFilterSection(QMenu &parent);
     void toggleFilterEntry(const QString &property, int index);
 
-    // N110：比例动态段——Original + 五档 + Custom 当场新建，勾选按属性现读回填
+    // N110：比例动态段——勾选按属性现读回填，故装配与回填同处；条目是 ActionManager
+    // 主实例（N123），不再当场新建
     void buildAspectSection(QMenu &parent);
     void onCustomAspectRatio();
-
-    // N122：窗口尺寸动态段——形态项用主实例按当前形态装配，五档倍率当场新建
-    void buildWindowSizeSection(QMenu &parent);
 
     // N15：章节与书签
     // N119：章节动态段——填进本菜单本身（另三个填充函数往 parent 里建子菜单），

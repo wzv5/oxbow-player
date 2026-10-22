@@ -39,11 +39,40 @@ ActionManager::ActionManager(QWidget *host) : m_host(host) {
     // N68：小窗模式（PiP）；勾选态由 toggleMini 收口回写
     declareAction(Id::MiniWindow, QStringLiteral("MiniWindow"), tr("Mini &Window"),
                   QStringLiteral("I"), true);
+    // N123：五档窗口尺寸倍率——默认无键、可改绑。菜单文案是数值 token（不翻译），
+    // 注释给动作名列表一个读得出的行名（前缀 + ": " + 文案，逐条手写）
+    const QString windowSizeComment = tr("Window Size") + QStringLiteral(": ");
+    declareAction(Id::WindowSize0_25x, QStringLiteral("WindowSize0_25x"), QStringLiteral("0.25x"),
+                  QKeySequence(), false, true, windowSizeComment + QStringLiteral("0.25x"));
+    declareAction(Id::WindowSize0_5x, QStringLiteral("WindowSize0_5x"), QStringLiteral("0.5x"),
+                  QKeySequence(), false, true, windowSizeComment + QStringLiteral("0.5x"));
+    declareAction(Id::WindowSize1x, QStringLiteral("WindowSize1x"), QStringLiteral("1x"),
+                  QKeySequence(), false, true, windowSizeComment + QStringLiteral("1x"));
+    declareAction(Id::WindowSize1_5x, QStringLiteral("WindowSize1_5x"), QStringLiteral("1.5x"),
+                  QKeySequence(), false, true, windowSizeComment + QStringLiteral("1.5x"));
+    declareAction(Id::WindowSize2x, QStringLiteral("WindowSize2x"), QStringLiteral("2x"),
+                  QKeySequence(), false, true, windowSizeComment + QStringLiteral("2x"));
     // N119：菜单栏开关——勾选态即偏好，可见性收口在主窗；默认无键，键位留改绑余地
     declareAction(Id::MenuBar, QStringLiteral("MenuBar"), tr("&Menu Bar"), QKeySequence(), true);
     // 无状态开关：显隐真相由 mpv 的 stats 脚本持有，插件侧不跟踪勾选态
     declareAction(Id::ToggleStats, QStringLiteral("ToggleStats"), tr("Toggle &Status Info"),
                   Qt::Key_T);
+    // N123：画面比例七项——默认无键、可改绑；勾选态由菜单装配按 video-aspect-override 回填
+    const QString aspectComment = tr("Aspect Ratio") + QStringLiteral(": ");
+    declareAction(Id::AspectOriginal, QStringLiteral("AspectOriginal"), tr("Original"),
+                  QKeySequence(), true, true, aspectComment + tr("Original"));
+    declareAction(Id::Aspect4x3, QStringLiteral("Aspect4x3"), QStringLiteral("4:3"), QKeySequence(),
+                  true, true, aspectComment + QStringLiteral("4:3"));
+    declareAction(Id::Aspect16x9, QStringLiteral("Aspect16x9"), QStringLiteral("16:9"),
+                  QKeySequence(), true, true, aspectComment + QStringLiteral("16:9"));
+    declareAction(Id::Aspect16x10, QStringLiteral("Aspect16x10"), QStringLiteral("16:10"),
+                  QKeySequence(), true, true, aspectComment + QStringLiteral("16:10"));
+    declareAction(Id::Aspect1_85, QStringLiteral("Aspect1_85"), QStringLiteral("1.85:1"),
+                  QKeySequence(), true, true, aspectComment + QStringLiteral("1.85:1"));
+    declareAction(Id::Aspect2_35, QStringLiteral("Aspect2_35"), QStringLiteral("2.35:1"),
+                  QKeySequence(), true, true, aspectComment + QStringLiteral("2.35:1"));
+    declareAction(Id::AspectCustom, QStringLiteral("AspectCustom"), tr("Custom"), QKeySequence(),
+                  true, true, aspectComment + tr("Custom"));
     // N6：Esc 闭环与 ±5 秒相对 seek，隐绑定无菜单实体（显示名可翻译，对话框用）。
     // Escape 不可改绑：改绑可能封死全屏 / 小窗 / 视频区的退出路径
     declareShortcut(Id::Escape, QStringLiteral("Escape"), tr("Escape"), Qt::Key_Escape, false);
@@ -61,16 +90,18 @@ bool ActionManager::nameTaken(const QString &idName) const {
                        [&](const Entry &e) { return e.name == idName; });
 }
 
-void ActionManager::declareAction(Id id, const QString &idName, const QString &text,
-                                  const QKeySequence &key, bool checkable, bool modifiable) {
+void ActionManager::declareAction(Id id, const QString &idName, const QString &menuText,
+                                  const QKeySequence &key, bool checkable, bool modifiable,
+                                  const QString &comment) {
     Entry &e = m_entries[id];
     Q_ASSERT(!e.action && !e.shortcut); // 重复声明显影
     Q_ASSERT(!nameTaken(idName));
     e.defaultKey = key;
     e.name = idName;
-    e.displayText = text;
+    e.menuText = menuText;
+    e.comment = comment;
     e.modifiable = modifiable;
-    auto *a = new QAction(text, m_host);
+    auto *a = new QAction(menuText, m_host);
     a->setCheckable(checkable);
     if (!key.isEmpty()) {
         a->setShortcut(key);
@@ -131,9 +162,19 @@ QString ActionManager::name(Id id) const {
     return it == m_entries.cend() ? QString() : it->name;
 }
 
+QString ActionManager::menuText(Id id) const {
+    const auto it = m_entries.constFind(id);
+    return it == m_entries.cend() ? QString() : it->menuText;
+}
+
 QString ActionManager::displayText(Id id) const {
     const auto it = m_entries.constFind(id);
-    return it == m_entries.cend() ? QString() : it->displayText;
+    if (it == m_entries.cend())
+        return QString();
+    // 注释非空即覆盖：动作名列表（快捷键编辑器、两处冲突提示）取它，菜单渲染不走这里
+    if (!it->comment.isEmpty())
+        return it->comment;
+    return it->action ? it->menuText : it->displayText;
 }
 
 bool ActionManager::modifiable(Id id) const {

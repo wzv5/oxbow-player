@@ -62,16 +62,29 @@ constexpr int kThumbBoxPx = 200;
 
 // N110 画面比例内建档：比值档常量表——value 与 mpv 对同一写法的解析同源（C 双
 // 精度直除，double 可精确比），勾选比对只认 double（读回串是归一化十进制，串
-// 比较完全不可用，含"no"在内）；token 即写入 mpv 的比值式字面量，mpv 归一化
-// 收账，写法不影响状态与勾选。档间最小间距 |16/9 − 1.85| = 0.0722，勾选容差
-// 0.01 远小于其半，至多命中一档
+// 比较完全不可用，含"no"在内）。N123：档名与写入 token 都归 ActionManager，本表
+// 只承担业务数值与身份，不复制文案。档间最小间距 |16/9 − 1.85| = 0.0722，勾选
+// 容差 0.01 远小于其半，至多命中一档
 struct AspectPreset {
-    const char *token;
+    ActionManager::Id id;
     double value;
 };
 constexpr AspectPreset kAspectPresets[] = {
-    {"4:3", 4.0 / 3.0}, {"16:9", 16.0 / 9.0}, {"16:10", 16.0 / 10.0},
-    {"1.85:1", 1.85},   {"2.35:1", 2.35},
+    {ActionManager::Id::Aspect4x3, 4.0 / 3.0},     {ActionManager::Id::Aspect16x9, 16.0 / 9.0},
+    {ActionManager::Id::Aspect16x10, 16.0 / 10.0}, {ActionManager::Id::Aspect1_85, 1.85},
+    {ActionManager::Id::Aspect2_35, 2.35},
+};
+
+// N123：窗口尺寸倍率档——Id 与倍率，供连接与启用态刷新；菜单文案与注释归登记表，
+// 此处不复制 token
+struct WindowScale {
+    ActionManager::Id id;
+    double factor;
+};
+constexpr WindowScale kWindowScales[] = {
+    {ActionManager::Id::WindowSize0_25x, 0.25}, {ActionManager::Id::WindowSize0_5x, 0.5},
+    {ActionManager::Id::WindowSize1x, 1.0},     {ActionManager::Id::WindowSize1_5x, 1.5},
+    {ActionManager::Id::WindowSize2x, 2.0},
 };
 
 // N119：菜单描述表在 ui/MenuSpec.h（唯一来源）；本文件只做渲染与两个入口
@@ -1039,6 +1052,24 @@ void MainWindow::connectActions() {
         m_controller->command({QStringLiteral("script-message-to"), QStringLiteral("stats"),
                                QStringLiteral("display-stats-toggle")});
     });
+    // N123：画面比例七项——写入形态取该档声明的菜单文案（"4:3" 等即合法写入形态，
+    // 原样交 mpv 归一化收账）；命中档的勾选态由下一次菜单装配按属性回填
+    connect(act(AM::Id::AspectOriginal), &QAction::triggered, this, [this] {
+        m_controller->setProperty(QStringLiteral("video-aspect-override"), QStringLiteral("no"));
+    });
+    for (const AspectPreset &p : kAspectPresets) {
+        connect(act(p.id), &QAction::triggered, this, [this, p] {
+            m_controller->setProperty(QStringLiteral("video-aspect-override"),
+                                      m_actions->menuText(p.id));
+        });
+    }
+    connect(act(AM::Id::AspectCustom), &QAction::triggered, this, &MainWindow::onCustomAspectRatio);
+    // N123：五档窗口尺寸倍率（一次性命令；全屏 / 无视频的早退在 applyWindowScale 内）
+    for (const WindowScale &s : kWindowScales) {
+        connect(act(s.id), &QAction::triggered, this, [this, s] { applyWindowScale(s.factor); });
+    }
+    // 收尾：首个尺寸推送前一律禁用，避免启动瞬间误启用
+    updateWindowScaleActions();
 
     // Esc 隐绑定经管理器取用，守卫逻辑留主窗口：全屏或小窗态退出（N68），
     // 弹出菜单打开时 Esc 由 popup 自行消费
@@ -1078,9 +1109,13 @@ void MainWindow::createMenuBar() {
 // N119：按描述表装配一个菜单段——先 clear 再逐条填，不连任何信号（动作的连接住
 // connectActions，动态段的连接随条目现连、随 clear() 消亡）。两个渲染面同一份判定
 void MainWindow::renderMenuGroup(QMenu &menu, const MenuSpec::Group &group) {
-    using Kind = MenuSpec::Item::Kind;
     menu.clear();
-    for (const MenuSpec::Item &item : group.items) {
+    renderMenuItems(menu, group.items);
+}
+
+void MainWindow::renderMenuItems(QMenu &menu, std::span<const MenuSpec::Item> items) {
+    using Kind = MenuSpec::Item::Kind;
+    for (const MenuSpec::Item &item : items) {
         if (item.hiddenIn(m_fullscreen, m_mini))
             continue;
         switch (item.kind) {
@@ -1105,8 +1140,9 @@ void MainWindow::renderMenuGroup(QMenu &menu, const MenuSpec::Group &group) {
         case Kind::Aspect:
             buildAspectSection(menu);
             break;
-        case Kind::WindowSize:
-            buildWindowSizeSection(menu);
+        case Kind::SubMenu:
+            // N123：条目全为主实例，递归只建容器；子菜单与父菜单共用同一套裁剪与渲染
+            renderMenuItems(*menu.addMenu(tr(item.title)), item.children);
             break;
         }
     }
@@ -2379,34 +2415,23 @@ void MainWindow::repositionFullscreenOverlays() {
     }
 }
 
-// N119：比例动态段——条目当场新建、无 QActionGroup 成员，勾选按 video-aspect-override
-// 现读回填。只认 double：读回的归一化十进制串不可用于比较（§三-3）；容差 0.01 内算同档
-// （档间最小间距 0.0722，容差远小于其半，至多命中一档）。不中档 → 全不勾、Custom 缀当前值；
-// -1 / 0 废弃哨兵 → 全不勾、Custom 不带值
+// N119：比例动态段——无 QActionGroup 成员，勾选按 video-aspect-override 现读回填。
+// 只认 double：读回的归一化十进制串不可用于比较（§三-3）；容差 0.01 内算同档（档间
+// 最小间距 0.0722，容差远小于其半，至多命中一档）。不中档 → 全不勾、Custom 缀当前值；
+// -1 / 0 废弃哨兵 → 全不勾、Custom 不带值。
+// N123：条目改引用 ActionManager 主实例——不再当场新建、不再逐次连接（连接住
+// connectActions，反复展开菜单不叠加），文案与注释的唯一来源随之前移到登记表
 void MainWindow::buildAspectSection(QMenu &parent) {
+    using AM = ActionManager;
     QMenu *aspectMenu = parent.addMenu(tr("Aspect Ratio"));
-    QAction *original = aspectMenu->addAction(tr("Original"));
-    original->setCheckable(true);
-    QList<QAction *> presets;
-    for (const AspectPreset &p : kAspectPresets) {
-        QAction *a = aspectMenu->addAction(QLatin1String(p.token));
-        a->setCheckable(true);
-        presets.append(a);
-    }
-    QAction *custom = aspectMenu->addAction(tr("Custom"));
-    custom->setCheckable(true);
-
-    connect(original, &QAction::triggered, this, [this] {
-        m_controller->setProperty(QStringLiteral("video-aspect-override"), QStringLiteral("no"));
-    });
-    for (int i = 0; i < presets.size(); ++i) {
-        connect(presets[i], &QAction::triggered, this, [this, i] {
-            // 写入 token 原样交 mpv 归一化收账；全部写值落在实测域 [-2, 10] 内，无拒收面
-            m_controller->setProperty(QStringLiteral("video-aspect-override"),
-                                      QLatin1String(kAspectPresets[i].token));
-        });
-    }
-    connect(custom, &QAction::triggered, this, &MainWindow::onCustomAspectRatio);
+    // 主实例指针先取再挂：QMenu::addAction(QAction *) 无返回值
+    QAction *original = m_actions->action(AM::Id::AspectOriginal);
+    aspectMenu->addAction(original);
+    for (const AspectPreset &p : kAspectPresets)
+        aspectMenu->addAction(m_actions->action(p.id));
+    QAction *custom = m_actions->action(AM::Id::AspectCustom);
+    aspectMenu->addAction(custom);
+    // 连接住 connectActions（N123）：装配只引用主实例，反复展开菜单不再叠加连接
 
     // 勾选回填（原 updateAspectCheckedStates 主体平移）
     const double v = m_controller->propertyDouble(QStringLiteral("video-aspect-override"), -2.0);
@@ -2415,42 +2440,26 @@ void MainWindow::buildAspectSection(QMenu &parent) {
     if (v == -2.0) {
         checked = original; // "no" 的哨兵，读回恒 -2（§三-3）
     } else if (v > 0.0) {
-        for (int i = 0; i < presets.size(); ++i) {
-            if (qAbs(v - kAspectPresets[i].value) <= 0.01) {
-                checked = presets[i];
+        for (const AspectPreset &p : kAspectPresets) {
+            if (qAbs(v - p.value) <= 0.01) {
+                checked = m_actions->action(p.id);
                 break;
             }
         }
+        // 基串取 menuText：displayText 返回的是注释，action()->text() 可能已是带值形态
         if (!checked)
-            customText =
-                tr("Custom") + QStringLiteral(" (") + QString::number(v) + QStringLiteral(")");
+            customText = m_actions->menuText(AM::Id::AspectCustom) + QStringLiteral(" (") +
+                         QString::number(v) + QStringLiteral(")");
     }
     // v == -1.0 / 0.0 落到此处：全部不勾、自定义条目不带值
     original->setChecked(checked == original);
-    for (QAction *a : presets)
+    for (const AspectPreset &p : kAspectPresets) {
+        QAction *a = m_actions->action(p.id);
         a->setChecked(a == checked);
+    }
     // 自定义档恒不勾：不中档时只把当前值缀在条目上（N110 口径），命中判据里没有它
     custom->setChecked(false);
-    custom->setText(customText.isEmpty() ? tr("Custom") : customText);
-}
-
-// N122：窗口尺寸动态段——形态项用 ActionManager 主实例按当前形态装配；五档倍率不进
-// 登记表、无快捷键、不翻译，当场新建（连接随 clear() 消亡），启用态按有效视频尺寸判定
-void MainWindow::buildWindowSizeSection(QMenu &parent) {
-    QMenu *menu = parent.addMenu(tr("Window Size"));
-    if (!m_mini)
-        menu->addAction(m_actions->action(ActionManager::Id::Fullscreen));
-    if (!m_fullscreen) {
-        menu->addAction(m_actions->action(ActionManager::Id::MiniWindow));
-        menu->addSeparator();
-        const bool hasVideo = m_pendingVideoW > 0 && m_pendingVideoH > 0;
-        static constexpr double kScales[] = {0.25, 0.5, 1.0, 1.5, 2.0};
-        for (const double s : kScales) {
-            QAction *a = menu->addAction(QString::number(s) + QLatin1Char('x'));
-            a->setEnabled(hasVideo);
-            connect(a, &QAction::triggered, this, [this, s] { applyWindowScale(s); });
-        }
-    }
+    custom->setText(customText.isEmpty() ? m_actions->menuText(AM::Id::AspectCustom) : customText);
 }
 
 // N110：自定义画面比例输入（自定义档条目触发）。循环到合法或取消：非法 → 警告
@@ -2510,6 +2519,8 @@ void MainWindow::onCustomAspectRatio() {
 void MainWindow::applyVideoSize(int videoW, int videoH) {
     m_pendingVideoW = videoW;
     m_pendingVideoH = videoH;
+    // N123：倍率启用态随尺寸事实刷新（先于形态分支早退，小窗 / 全屏同样成立）
+    updateWindowScaleActions();
     if (m_mini) {
         // N68：小窗期换片就地适配（与全屏"退出再适配"不同——小窗本身就该跟着
         // 视频走，无须 refit 标志）。停止进 idle 与换片至无流的 (0,0) 推送不动作：
@@ -2614,6 +2625,15 @@ void MainWindow::clampMiniIntoWorkArea() {
     const QPoint tl = minimalMoveTopLeft(fr, screen()->availableGeometry());
     if (tl != fr.topLeft())
         move(tl); // 与既有普通态钳回同款：move 传外框左上角，Qt 按 frameMargins 折算
+}
+
+// N123：五档倍率的启用态只看"有没有有效视频"——快捷键与两个菜单渲染面因此读到同一
+// 状态，不再依赖菜单是否展开。全屏态由描述表裁掉条目，命令入口的全屏 / 无视频早退
+// 另行守卫（启用态不表达窗口形态）
+void MainWindow::updateWindowScaleActions() {
+    const bool hasVideo = m_pendingVideoW > 0 && m_pendingVideoH > 0;
+    for (const WindowScale &s : kWindowScales)
+        m_actions->action(s.id)->setEnabled(hasVideo);
 }
 
 // N122：窗口尺寸倍率命令——以视频有效尺寸为基准的一次性定态尺寸，不记忆、不置勾选；
