@@ -3550,8 +3550,8 @@ void MainWindow::flushSeekToolTip() {
     QToolTip::showText(m_seekTipGlobal, tip, m_progressSlider);
 }
 
-// N97：视频区拖放。受理判据只有一条——`mimeData()->hasUrls()` 为真即受理（与播放列表
-// 既有拖放同形）：不看后缀、不看有无正播、不枚举目录，"这批放下会发生什么"一律推迟到
+// N97：视频区拖放。受理判据只有一条——`mimeData()` 有 urls 或有纯文本即受理（N132 起
+// 与播放列表同形）：不看后缀、不看有无正播、不枚举目录，"这批放下会发生什么"一律推迟到
 // 落下那一刻算一次。三类事件一律消费（Qt 的父链传播以 `isAccepted()` 为准，不受理又不
 // 消费，事件会沿控件链上溯到主窗）。`DragLeave` 不属本函数处理面：它携的是
 // `QDragLeaveEvent`，不属 `QDropEvent` 家族，取 `position()` / `mimeData()` 即读非法偏移

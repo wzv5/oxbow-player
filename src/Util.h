@@ -197,9 +197,11 @@ QString insertCredentials(const QString &url, const QString &encodedCredentials)
 // N56 收族更名 urlPathEnd → pathEnd。
 qsizetype pathEnd(const QString &url);
 
-// N131：手输 / 拖放文本的**条目切分**——按 ';' 与换行切分，逐段去首尾空白、丢空段，
-// 保序、不去重。**不做定形**：定形由调用方按各自来源的纪律施加（手输对话框补形态，
-// 拖放那两处只收已定形串）。三处消费点共用这一份，故收在此处。
+// N131：手输 / 拖放文本的**条目切分**——按换行切分（'\n' / '\r\n' / '\r' 等价），逐段去
+// 首尾空白、丢空段，保序、不去重。**不做定形**：定形由调用方按各自来源的纪律施加（手输
+// 对话框补形态，拖放那两处只收已定形串）。三处消费点共用这一份，故收在此处。
+// ';' 不作分隔符：它是单行输入时代的产物，多行框一行一条已无歧义，而 Windows 路径合法
+// 含 ';'、URL 的 query 也常含——认它会把一条串凭空切成两条
 QStringList splitEntryText(const QString &text);
 
 // N132：拖放的 QUrl 表 → 已定形串表，按原序；本地走 toLocalFile，其余按 URL 串定形；
@@ -209,8 +211,9 @@ QStringList splitEntryText(const QString &text);
 // 落点，留下来会撞"转接项必带 cache"的 Debug 断言（N65）
 QStringList entriesFromUrls(const QList<QUrl> &urls);
 
-// N133：拖放来源 → 已定形串表。urls 非空取 urls，否则取纯文本（只收已定形串，不补
-// 形态）；两条过滤同上。视频区与播放列表两处拖放共用这一份，故收在此处
+// N133：拖放来源 → 已定形串表。urls 非空取 urls，否则取纯文本（只收已定形串、不补形态，
+// 纯文本里的 file: 先折成本地串再判）；两条过滤同上。视频区与播放列表两处拖放共用这一份，
+// 故收在此处
 QStringList entriesFromDrop(const QMimeData &mime);
 
 // Qt 来源路径：本地路径转原生分隔符；http(s) URL 经 QUrl 规范化（FullyEncoded，

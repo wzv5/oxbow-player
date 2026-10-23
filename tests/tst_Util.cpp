@@ -99,13 +99,14 @@ class TestUtil : public QObject {
     // 漏掉、单文件 1.MKV 却能播"。钉住大写后缀照样被收
     void listFilesIgnoresSuffixCase();
     // ——N131：Util::Url::splitEntryText（手输对话框与两处拖放共用的条目切分）——
-    // ';' 与三种换行同为分隔符、逐段去空白、空段丢弃、保序不去重、不做定形
+    // 换行三种写法同为分隔符（';' 不算）、逐段去空白、空段丢弃、保序不去重、不做定形
     void splitEntryTextSplits();
     // ——N132：Util::Url::entriesFromUrls（两处拖放共用的 QUrl → 已定形串表）——
     // 本地折路径转分隔符、http 归一后保留原编码、其余协议原样、未定形者丢弃
     void entriesFromUrlsMixed();
     // ——N133：Util::Url::entriesFromDrop（两处拖放共用的来源出口）——
-    // urls 侧照 entriesFromUrls；文本侧只收已定形串；转接形态两侧都丢；两者皆无得空表
+    // urls 侧照 entriesFromUrls；文本侧只收已定形串（file: 折成本地串再判）；
+    // 转接形态两侧都丢；两者皆无得空表
     void entriesFromDropShapes();
 };
 
@@ -732,11 +733,11 @@ void TestUtil::splitEntryTextSplits() {
     const QStringList single{QStringLiteral("https://host/a.mp4")};
     QCOMPARE(Util::Url::splitEntryText(QStringLiteral("https://host/a.mp4")), single);
 
-    // ';' 与换行都是分隔符；逐段去首尾空白；空段与纯空白段一并丢掉
+    // 换行是唯一的分隔符；逐段去首尾空白；空段与纯空白段一并丢掉
     const QStringList wantMixed{QStringLiteral("a.mkv"), QStringLiteral("https://host/b.mp4"),
                                 QStringLiteral("C:/dir/c.mkv")};
     const QStringList mixed = Util::Url::splitEntryText(
-        QStringLiteral("  a.mkv ; \t\n\n https://host/b.mp4  ;  ;\n C:/dir/c.mkv \n;  "));
+        QStringLiteral("  a.mkv \n \t\n\n https://host/b.mp4  \n\n\n C:/dir/c.mkv \n"));
     QCOMPARE(mixed, wantMixed);
 
     // 三种换行写法等价（\r\n 不当两个分隔符）
@@ -748,11 +749,18 @@ void TestUtil::splitEntryTextSplits() {
 
     // 保序、不去重（重复条目由用户自己负责，与拖放 / 添加文件同）
     const QStringList wantDup{QStringLiteral("a"), QStringLiteral("a"), QStringLiteral("a")};
-    QCOMPARE(Util::Url::splitEntryText(QStringLiteral("a;a;a")), wantDup);
+    QCOMPARE(Util::Url::splitEntryText(QStringLiteral("a\na\na")), wantDup);
 
-    // 全空输入一律空表：空串、只含分隔符、只含空白
+    // 全空输入一律空表：空串、只含换行、只含空白
     QVERIFY(Util::Url::splitEntryText(QString()).isEmpty());
-    QVERIFY(Util::Url::splitEntryText(QStringLiteral(";;\n  ;\n")).isEmpty());
+    QVERIFY(Util::Url::splitEntryText(QStringLiteral("\n\n  \n\t\n")).isEmpty());
+
+    // ';' 不再是分隔符（多行框一行一条已无歧义，而 Windows 路径与 URL 的 query 合法含
+    // 它）：含分号的串整条保留，不被动切成两条
+    const QStringList wantSemicolon{QStringLiteral("https://host/a?x=1;y=2"),
+                                    QStringLiteral("C:/dir/a ;b.mkv")};
+    QCOMPARE(Util::Url::splitEntryText(QStringLiteral("https://host/a?x=1;y=2\nC:/dir/a ;b.mkv")),
+             wantSemicolon);
 
     // 只切分、不定形：段内原样保留（含空格的本地路径也不被动过）
     const QStringList wantSpaced{QStringLiteral("dir/a b.mkv")};
@@ -811,11 +819,19 @@ void TestUtil::entriesFromDropShapes() {
 
     // 纯文本侧：只收已定形串（相对串与转接串都丢），按原序
     QMimeData textMime;
-    textMime.setText(QStringLiteral("https://host/z.mp4\nnot-a-path\n") + transit +
-                     QStringLiteral("\n;D:/dir/w.mkv\n"));
+    textMime.setText(QStringLiteral("https://host/z.mp4\nnot-a-path\nD:/dir/w.mkv\n") + transit);
     const QStringList wantText{QStringLiteral("https://host/z.mp4"),
                                QDir::toNativeSeparators(QStringLiteral("D:/dir/w.mkv"))};
     QCOMPARE(Util::Url::entriesFromDrop(textMime), wantText);
+
+    // file: 文本形态折成本地路径收下——判据认它（含 "://"），而 toNative 按本地串加工会
+    // 把它毁成非定形态，那样的串落到工厂即撞 Debug 断言（N56 §2.6）；未编码的空格照样
+    // 认（TolerantMode，与 toNative 的 http 支同口径）
+    QMimeData fileMime;
+    fileMime.setText(QStringLiteral("file:///C:/dir/a%20b.mp4\nfile:///C:/dir/d e.mp4"));
+    const QStringList wantFile{QDir::toNativeSeparators(QStringLiteral("C:/dir/a b.mp4")),
+                               QDir::toNativeSeparators(QStringLiteral("C:/dir/d e.mp4"))};
+    QCOMPARE(Util::Url::entriesFromDrop(fileMime), wantFile);
 
     // urls 非空即不吃 text：浏览器拖链接同时给两种 mime，不该落下两份
     QMimeData bothMime;

@@ -532,13 +532,12 @@ bool isDefiniteForm(const QString &path) {
            (QFileInfo(path).isAbsolute() || path.contains(QStringLiteral("://")));
 }
 
-// N131（契约见声明处）：换行三种写法与 ';' 一并归一成 '\n'，分隔符因此只有一个字符、
-// 切分只一次；先 trim 再判空，纯空白段才能丢掉
+// N131（契约见声明处）：换行三种写法归一成 '\n'，分隔符因此只有一个字符、切分只一次；
+// 先 trim 再判空，纯空白段才能丢掉
 QStringList splitEntryText(const QString &text) {
     QString normalized = text;
     normalized.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
     normalized.replace(QLatin1Char('\r'), QLatin1Char('\n'));
-    normalized.replace(QLatin1Char(';'), QLatin1Char('\n'));
     QStringList out;
     for (const QString &seg : normalized.split(u'\n')) {
         const QString trimmed = seg.trimmed();
@@ -565,15 +564,22 @@ QStringList entriesFromUrls(const QList<QUrl> &urls) {
 
 // N133（契约见声明处）
 QStringList entriesFromDrop(const QMimeData &mime) {
-    if (!mime.urls().isEmpty())
-        return entriesFromUrls(mime.urls());
+    if (const QList<QUrl> urls = mime.urls(); !urls.isEmpty())
+        return entriesFromUrls(urls);
     if (!mime.hasText())
         return {};
     QStringList out;
-    for (const QString &seg : splitEntryText(mime.text())) {
-        // 只收已定形串：拖放是系统边界，不补形态（相对串不按 CWD 绝对化、不猜协议）
-        if (isDefiniteForm(seg) && !StreamTransit::isTransitUri(seg))
-            out.push_back(toNative(seg));
+    for (QString seg : splitEntryText(mime.text())) {
+        // file: 是唯一"看着是 URL 实为本地路径"的形态：判据认它（含 "://"），而 toNative
+        // 走本地支会把斜杠换成反斜杠毁掉它，故先折成本地串再加工。取 TolerantMode 与
+        // toNative 的 http 支同口径——拖来的文本常带未编码空格，严格解析判它非法
+        if (seg.startsWith(QStringLiteral("file:"), Qt::CaseInsensitive))
+            seg = QUrl(seg, QUrl::ParsingMode::TolerantMode).toLocalFile();
+        // 判据在加工之后（与 urls 支同形）：拖放是系统边界，只收已定形串——相对串不按
+        // CWD 绝对化、不猜协议，加工后仍非定形者一律丢，不交给工厂撞 Debug 断言
+        const QString entry = toNative(seg);
+        if (isDefiniteForm(entry) && !StreamTransit::isTransitUri(entry))
+            out.push_back(entry);
     }
     return out;
 }
