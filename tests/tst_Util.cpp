@@ -10,6 +10,7 @@
 #include <QtTest/QtTest>
 
 #include "Util.h"
+#include "streams/StreamTransit.h"
 
 // 中文片段统一经 fromUtf8 构造：窄字面量在 MSVC /utf-8 与 Clang 默认 UTF-8
 // 源码编码下均为 UTF-8，比 QStringLiteral 更不受编译器字面量编码影响
@@ -103,6 +104,9 @@ class TestUtil : public QObject {
     // ——N132：Util::Url::entriesFromUrls（两处拖放共用的 QUrl → 已定形串表）——
     // 本地折路径转分隔符、http 归一后保留原编码、其余协议原样、未定形者丢弃
     void entriesFromUrlsMixed();
+    // ——N133：Util::Url::entriesFromDrop（两处拖放共用的来源出口）——
+    // urls 侧照 entriesFromUrls；文本侧只收已定形串；转接形态两侧都丢；两者皆无得空表
+    void entriesFromDropShapes();
 };
 
 void TestUtil::emptyInputYieldsNoSegments() {
@@ -773,6 +777,16 @@ void TestUtil::entriesFromUrlsMixed() {
     QVERIFY(Util::Url::entriesFromUrls({QUrl()}).isEmpty());
     QVERIFY(Util::Url::entriesFromUrls({QUrl(QStringLiteral("a.mkv"))}).isEmpty());
 
+    // N133：转接形态一并丢（大小写不敏感）——外部来路的 oxbow:// 没有落点，留下来会
+    // 撞 Playlist::playTargets 那句"转接项必带 cache"的 Debug 断言
+    const QString transit =
+        StreamTransit::mint(QUuid::createUuid(), QStringLiteral("https://host/a.mkv"));
+    QVERIFY(StreamTransit::isTransitUri(transit));
+    QVERIFY(Util::Url::entriesFromUrls({QUrl(transit)}).isEmpty());
+    const QString upperScheme = QStringLiteral("OXBOW://") + transit.mid(8);
+    QVERIFY(StreamTransit::isTransitUri(upperScheme));
+    QVERIFY(Util::Url::entriesFromUrls({QUrl(upperScheme)}).isEmpty());
+
     // 原序、不去重；混合来源按入序交错
     const QStringList mixed{QDir::toNativeSeparators(QStringLiteral("C:/dir/x.mkv")),
                             QStringLiteral("https://host/y.mp4"),
@@ -781,6 +795,38 @@ void TestUtil::entriesFromUrlsMixed() {
                                          QUrl(QStringLiteral("https://host/y.mp4")),
                                          QUrl(QStringLiteral("file:///C:/dir/x.mkv"))}),
              mixed);
+}
+
+void TestUtil::entriesFromDropShapes() {
+    const QString transit =
+        StreamTransit::mint(QUuid::createUuid(), QStringLiteral("https://host/a.mkv"));
+
+    // urls 侧：本地与链接照收，按原序
+    QMimeData urlsMime;
+    urlsMime.setUrls(
+        {QUrl(QStringLiteral("file:///C:/dir/x.mkv")), QUrl(QStringLiteral("https://host/y.mp4"))});
+    const QStringList want{QDir::toNativeSeparators(QStringLiteral("C:/dir/x.mkv")),
+                           QStringLiteral("https://host/y.mp4")};
+    QCOMPARE(Util::Url::entriesFromDrop(urlsMime), want);
+
+    // 纯文本侧：只收已定形串（相对串与转接串都丢），按原序
+    QMimeData textMime;
+    textMime.setText(QStringLiteral("https://host/z.mp4\nnot-a-path\n") + transit +
+                     QStringLiteral("\n;D:/dir/w.mkv\n"));
+    const QStringList wantText{QStringLiteral("https://host/z.mp4"),
+                               QDir::toNativeSeparators(QStringLiteral("D:/dir/w.mkv"))};
+    QCOMPARE(Util::Url::entriesFromDrop(textMime), wantText);
+
+    // urls 非空即不吃 text：浏览器拖链接同时给两种 mime，不该落下两份
+    QMimeData bothMime;
+    bothMime.setUrls({QUrl(QStringLiteral("https://host/y.mp4"))});
+    bothMime.setText(transit);
+    const QStringList wantBoth{QStringLiteral("https://host/y.mp4")};
+    QCOMPARE(Util::Url::entriesFromDrop(bothMime), wantBoth);
+
+    // 两者皆无 → 空表
+    QMimeData emptyMime;
+    QVERIFY(Util::Url::entriesFromDrop(emptyMime).isEmpty());
 }
 
 // 一类一可执行（R5）：自带 main（QTEST_GUILESS_MAIN）

@@ -557,8 +557,23 @@ QStringList entriesFromUrls(const QList<QUrl> &urls) {
             url.isLocalFile()
                 ? toNative(url.toLocalFile())
                 : toNative(url.toString(QUrl::ComponentFormattingOption::FullyEncoded));
-        if (isDefiniteForm(entry))
+        if (isDefiniteForm(entry) && !StreamTransit::isTransitUri(entry)) // N133
             out.push_back(entry);
+    }
+    return out;
+}
+
+// N133（契约见声明处）
+QStringList entriesFromDrop(const QMimeData &mime) {
+    if (!mime.urls().isEmpty())
+        return entriesFromUrls(mime.urls());
+    if (!mime.hasText())
+        return {};
+    QStringList out;
+    for (const QString &seg : splitEntryText(mime.text())) {
+        // 只收已定形串：拖放是系统边界，不补形态（相对串不按 CWD 绝对化、不猜协议）
+        if (isDefiniteForm(seg) && !StreamTransit::isTransitUri(seg))
+            out.push_back(toNative(seg));
     }
     return out;
 }

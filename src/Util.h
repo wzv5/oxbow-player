@@ -204,8 +204,14 @@ QStringList splitEntryText(const QString &text);
 
 // N132：拖放的 QUrl 表 → 已定形串表，按原序；本地走 toLocalFile，其余按 URL 串定形；
 // isDefiniteForm 不过者丢（未定形串进工厂会撞 Debug 断言）。不做后缀过滤与可达性
-// 预检——链接常带 query 或根本没后缀，按后缀判会把大半链接拒掉
+// 预检——链接常带 query 或根本没后缀，按后缀判会把大半链接拒掉。
+// N133：转接形态（oxbow://）一并丢——它是插件内部铸造的传输包装，外部来路的它没有
+// 落点，留下来会撞"转接项必带 cache"的 Debug 断言（N65）
 QStringList entriesFromUrls(const QList<QUrl> &urls);
+
+// N133：拖放来源 → 已定形串表。urls 非空取 urls，否则取纯文本（只收已定形串，不补
+// 形态）；两条过滤同上。视频区与播放列表两处拖放共用这一份，故收在此处
+QStringList entriesFromDrop(const QMimeData &mime);
 
 // Qt 来源路径：本地路径转原生分隔符；http(s) URL 经 QUrl 规范化（FullyEncoded，
 // scheme/host 归小写、转义形态定型），解析失败退回原串；其余网络协议原样返回

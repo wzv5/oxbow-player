@@ -2,6 +2,7 @@
 
 #include "Constants.h"
 #include "Util.h"
+#include "streams/StreamTransit.h"
 
 namespace {
 // 输入区下限：宽够容一条长 URL，高 6 行——够贴一份多行链接，不占满屏
@@ -46,11 +47,16 @@ OpenUrlDialog::OpenUrlDialog(const QString &title, QWidget *parent) : QDialog(pa
 }
 
 // N131：定形在这里补形态（相对串按 CWD 绝对化 + 转原生分隔符 / 收敛 http 书写）——
-// 用户在对话框里明确输入，输什么算什么；拖放那两处只收已定形串，见 N132 §2.2
+// 用户在对话框里明确输入，输什么算什么；拖放那两处只收已定形串，见 N132 §2.2。
+// N133：转接串先丢再定形——toIdentity 首行会 unwrap，先定形就把 oxbow:// 折成直发
+// 身份落进列表，绕过提供者端点与凭据，播必败却看不出原因
 QStringList OpenUrlDialog::entries() const {
     QStringList out;
-    for (const QString &seg : Util::Url::splitEntryText(m_edit->toPlainText()))
+    for (const QString &seg : Util::Url::splitEntryText(m_edit->toPlainText())) {
+        if (StreamTransit::isTransitUri(seg))
+            continue;
         out.push_back(Util::Url::toNative(Util::Url::toIdentity(seg)));
+    }
     return out;
 }
 
@@ -68,6 +74,6 @@ void OpenUrlDialog::browse() {
 }
 
 void OpenUrlDialog::refreshOkState() {
-    m_buttons->button(QDialogButtonBox::Ok)
-        ->setEnabled(!Util::Url::splitEntryText(m_edit->toPlainText()).isEmpty());
+    // 判据必须与 entries() 同一套（含转接过滤），否则"只剩转接串"时确定可点却点了没反应
+    m_buttons->button(QDialogButtonBox::Ok)->setEnabled(!entries().isEmpty());
 }

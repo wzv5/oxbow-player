@@ -3565,18 +3565,9 @@ bool MainWindow::handleVideoDropEvent(QDropEvent *event) {
         event->acceptProposedAction();
         return true;
     }
-    // N132：来源 → 已定形串表。urls 非空即取（本地与链接一视同仁），否则退回纯文本；
-    // 文本侧只收已定形串、不补形态——拖一段普通文字不该造出一条 CWD 下的假路径。
-    // 与 PlaylistWidget::dropEvent 的同一段同码同序，改一处须同步另一处
-    QStringList entries;
-    if (!mime->urls().isEmpty()) {
-        entries = Util::Url::entriesFromUrls(mime->urls());
-    } else {
-        for (const QString &seg : Util::Url::splitEntryText(mime->text())) {
-            if (Util::Url::isDefiniteForm(seg))
-                entries << Util::Url::toNative(seg);
-        }
-    }
+    // N132/N133：来源 → 已定形串表（本地与链接一视同仁，纯文本只收已定形串，
+    // 转接形态与未定形串一并丢）
+    const QStringList entries = Util::Url::entriesFromDrop(*mime);
     if (entries.isEmpty())
         return true;
     const QStringList mediaExts = App::defaultMediaExtensions();

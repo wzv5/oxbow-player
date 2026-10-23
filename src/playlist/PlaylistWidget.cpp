@@ -1981,17 +1981,9 @@ void PlaylistWidget::dragMoveEvent(QDragMoveEvent *event) {
 }
 
 void PlaylistWidget::dropEvent(QDropEvent *event) {
-    // N132：与 MainWindow::handleVideoDropEvent 的同一段同码同序，改一处须同步另一处
-    const QMimeData *mime = event->mimeData();
-    QStringList files;
-    if (!mime->urls().isEmpty()) {
-        files = Util::Url::entriesFromUrls(mime->urls());
-    } else {
-        for (const QString &seg : Util::Url::splitEntryText(mime->text())) {
-            if (Util::Url::isDefiniteForm(seg))
-                files << Util::Url::toNative(seg);
-        }
-    }
+    // N132/N133：与 MainWindow::handleVideoDropEvent 同一出口（转接形态与未定形串
+    // 一并丢）
+    const QStringList files = Util::Url::entriesFromDrop(*event->mimeData());
     if (!files.isEmpty()) {
         addFiles(files);
         event->acceptProposedAction();
