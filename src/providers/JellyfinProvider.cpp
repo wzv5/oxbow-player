@@ -11,6 +11,7 @@
 #include "playbackreport/PlaybackReporter.h"
 #include "streams/HttpByteStream.h"
 #include "streams/StreamEndpoint.h"
+#include "ui/ExtensionFilterEdit.h"
 
 namespace {
 // 翻译取值（上下文归属本提供者，与 WebDavProvider::trText 同款）
@@ -956,25 +957,16 @@ class JellyfinSettingsPage : public ProviderSettingsPage {
         form->addRow(QString(), m_testButton);
 
         // 扩展名过滤（与本地目录表同款：空 = 不过滤；复位回全局默认清单）
-        m_extensionsEdit = new QLineEdit;
-        auto *extRow = new QHBoxLayout;
-        extRow->addWidget(m_extensionsEdit, 1);
-        auto *extResetBtn = new QPushButton(QStringLiteral("↺"));
-        extResetBtn->setToolTip(tr("Reset to default extension list"));
-        extResetBtn->setFixedWidth(28);
-        extRow->addWidget(extResetBtn);
+        m_extFilter = new ExtensionFilterEdit;
         auto *extNote =
             new QLabel(tr("Space-separated file extensions; leave empty for no filter"));
         // 不开 wordWrap：备注按单行计入宽度，由它把表单区（进而对话框）撑宽
         // （WebDAV 页同款口径）
         extNote->setEnabled(false); // 禁用态即取调色板的灰，跟随主题不硬编码颜色
         auto *extField = new QVBoxLayout;
-        extField->addLayout(extRow);
+        extField->addWidget(m_extFilter);
         extField->addWidget(extNote);
         form->addRow(tr("Filter"), extField);
-        connect(extResetBtn, &QPushButton::clicked, this, [this] {
-            m_extensionsEdit->setText(App::defaultMediaExtensions().join(QLatin1Char(' ')));
-        });
 
         layout->addLayout(form);
         // 转接行（Required = 底部说明行，无勾选框，N52 §2.8 契约）
@@ -988,9 +980,9 @@ class JellyfinSettingsPage : public ProviderSettingsPage {
             m_serverId = m_seed->serverId();
             m_token = m_seed->token();
             m_userId = m_seed->userId();
-            m_extensionsEdit->setText(m_seed->extensions().join(QLatin1Char(' ')));
+            m_extFilter->setText(m_seed->extensions().join(QLatin1Char(' ')));
         } else {
-            m_extensionsEdit->setText(App::defaultMediaExtensions().join(QLatin1Char(' ')));
+            m_extFilter->setText(App::defaultMediaExtensions().join(QLatin1Char(' ')));
         }
         updateAuthUi();
 
@@ -1091,7 +1083,7 @@ class JellyfinSettingsPage : public ProviderSettingsPage {
     // 取规范化参数值（hasChanges 与 build 共用同一出口）
     QString urlValue() const { return JellyfinProvider::normalizeServerUrl(m_urlEdit->text()); }
     QStringList extensionsValue() const {
-        return JellyfinProvider::parseExtensions(m_extensionsEdit->text());
+        return JellyfinProvider::parseExtensions(m_extFilter->text());
     }
 
     // 登录状态行与按钮文案（非动态判定：持有 token 即已登录）。绿 / 灰用 CSS
@@ -1112,7 +1104,7 @@ class JellyfinSettingsPage : public ProviderSettingsPage {
     QLabel *m_statusLabel = nullptr;
     QPushButton *m_authButton = nullptr;
     QPushButton *m_testButton = nullptr;
-    QLineEdit *m_extensionsEdit = nullptr;
+    ExtensionFilterEdit *m_extFilter = nullptr;
     // 页面持有的授权产物（对话框 accept 期经 build() 进入提供者实例）
     QString m_serverId;
     QString m_token;

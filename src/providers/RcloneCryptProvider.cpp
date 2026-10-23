@@ -11,6 +11,7 @@
 #include "streams/FileByteStream.h"
 #include "streams/RcloneCryptByteStream.h"
 #include "streams/StreamEndpoint.h"
+#include "ui/ExtensionFilterEdit.h"
 
 namespace {
 
@@ -413,13 +414,7 @@ class RcloneCryptSettingsPage : public ProviderSettingsPage {
             new QCheckBox(tr("Deliver zeroed block on MAC failure (pass bad blocks)"));
         form->addRow(QString(), m_passBadBlocksCheck);
 
-        m_extensionsEdit = new QLineEdit;
-        auto *extRow = new QHBoxLayout;
-        extRow->addWidget(m_extensionsEdit, 1);
-        auto *extResetBtn = new QPushButton(QStringLiteral("↺"));
-        extResetBtn->setToolTip(tr("Reset to default extension list"));
-        extResetBtn->setFixedWidth(28);
-        extRow->addWidget(extResetBtn);
+        m_extFilter = new ExtensionFilterEdit;
         auto *extNote =
             new QLabel(tr("Space-separated file extensions; leave empty for no filter"));
         extNote->setEnabled(false);
@@ -427,7 +422,7 @@ class RcloneCryptSettingsPage : public ProviderSettingsPage {
         noteRow->addWidget(extNote);
         noteRow->addSpacing(12);
         auto *extField = new QVBoxLayout;
-        extField->addLayout(extRow);
+        extField->addWidget(m_extFilter);
         extField->addLayout(noteRow);
         form->addRow(tr("Filter"), extField);
 
@@ -447,14 +442,14 @@ class RcloneCryptSettingsPage : public ProviderSettingsPage {
             m_suffixEdit->setText(m_seed->suffix());
             m_strictCheck->setChecked(m_seed->strictNames());
             m_passBadBlocksCheck->setChecked(m_seed->passBadBlocks());
-            m_extensionsEdit->setText(m_seed->extensions().join(QLatin1Char(' ')));
+            m_extFilter->setText(m_seed->extensions().join(QLatin1Char(' ')));
         } else {
             m_modeCombo->setCurrentIndex(int(RcloneCryptProvider::BrowseMode::Layered));
             m_nameModeCombo->setCurrentIndex(int(RcloneCrypt::NameMode::Standard));
             m_encodingCombo->setCurrentIndex(int(RcloneCrypt::NameEncoding::Base32));
             m_dirNamesCheck->setChecked(true);
             m_suffixEdit->setText(QStringLiteral(".bin"));
-            m_extensionsEdit->setText(App::defaultMediaExtensions().join(QLatin1Char(' ')));
+            m_extFilter->setText(App::defaultMediaExtensions().join(QLatin1Char(' ')));
         }
 
         connect(browseBtn, &QPushButton::clicked, this, [this] {
@@ -462,9 +457,6 @@ class RcloneCryptSettingsPage : public ProviderSettingsPage {
                                                                   m_rootEdit->text());
             if (!dir.isEmpty())
                 m_rootEdit->setText(dir);
-        });
-        connect(extResetBtn, &QPushButton::clicked, this, [this] {
-            m_extensionsEdit->setText(App::defaultMediaExtensions().join(QLatin1Char(' ')));
         });
     }
 
@@ -507,7 +499,7 @@ class RcloneCryptSettingsPage : public ProviderSettingsPage {
         return RcloneCryptProvider::browseModeFromInt(m_modeCombo->currentIndex());
     }
     QStringList extensionsValue() const {
-        return RcloneCryptProvider::parseExtensions(m_extensionsEdit->text());
+        return RcloneCryptProvider::parseExtensions(m_extFilter->text());
     }
 
     const RcloneCryptProvider *m_seed = nullptr;
@@ -522,7 +514,7 @@ class RcloneCryptSettingsPage : public ProviderSettingsPage {
     QLineEdit *m_suffixEdit = nullptr;
     QCheckBox *m_strictCheck = nullptr;
     QCheckBox *m_passBadBlocksCheck = nullptr;
-    QLineEdit *m_extensionsEdit = nullptr;
+    ExtensionFilterEdit *m_extFilter = nullptr;
 };
 
 ProviderSettingsPage *

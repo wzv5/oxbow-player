@@ -206,6 +206,8 @@ add_library(oxbowcore MODULE
     src/ui/ShortcutsDialog.h
     src/ui/MpvBindingDialog.cpp
     src/ui/MpvBindingDialog.h
+    src/ui/ExtensionFilterEdit.cpp
+    src/ui/ExtensionFilterEdit.h
     src/ui/FilterListWidget.cpp
     src/ui/FilterListWidget.h
     src/ui/ThumbWindow.cpp
@@ -480,6 +482,8 @@ if(OXBOW_BUILD_TESTS)
         src/TraversalPolicy.h
         src/MediaInfoHelper.cpp
         src/MediaInfoHelper.h
+        src/ui/ExtensionFilterEdit.cpp
+        src/ui/ExtensionFilterEdit.h
         src/ui/FilterListWidget.cpp
         src/ui/FilterListWidget.h
         src/ui/ThemedIconEngine.cpp
@@ -566,6 +570,7 @@ if(OXBOW_BUILD_TESTS)
     oxbow_add_test(PlaylistRegistry)
     oxbow_add_test(HttpByteStream)
     oxbow_add_test(FileByteStream)
+    oxbow_add_test(ExtensionFilterEdit)
     oxbow_add_test(FilterList)
     oxbow_add_test(PlaybackReporterRegistry)
     oxbow_add_test(ReporterSwitchCatalog)

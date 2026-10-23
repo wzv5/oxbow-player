@@ -10,6 +10,7 @@
 #include "entities/WebDavEntity.h"
 #include "streams/HttpByteStream.h"
 #include "streams/StreamEndpoint.h"
+#include "ui/ExtensionFilterEdit.h"
 
 namespace {
 // PROPFIND 请求体：只取本篇解释的四个属性（RFC 4918 子集）；前缀用 d: 惯例，
@@ -145,13 +146,7 @@ class WebDavSettingsPage : public ProviderSettingsPage {
         m_modeCombo->addItem(trText(kBrowseFilesRecursive));
         form->addRow(tr("Browse Mode"), m_modeCombo);
 
-        m_extensionsEdit = new QLineEdit;
-        auto *extRow = new QHBoxLayout;
-        extRow->addWidget(m_extensionsEdit, 1);
-        auto *extResetBtn = new QPushButton(QStringLiteral("↺"));
-        extResetBtn->setToolTip(tr("Reset to default extension list"));
-        extResetBtn->setFixedWidth(28);
-        extRow->addWidget(extResetBtn);
+        m_extFilter = new ExtensionFilterEdit;
         // 说明文字移到编辑框下方单独一行（原在标题的括号里），灰色显示：
         // 标题只写 Filter，扩展名这一层含义由本行说明承担
         auto *extNote =
@@ -164,7 +159,7 @@ class WebDavSettingsPage : public ProviderSettingsPage {
         noteRow->addWidget(extNote);
         noteRow->addSpacing(12);
         auto *extField = new QVBoxLayout;
-        extField->addLayout(extRow);
+        extField->addWidget(m_extFilter);
         extField->addLayout(noteRow);
         form->addRow(tr("Filter"), extField);
 
@@ -183,16 +178,11 @@ class WebDavSettingsPage : public ProviderSettingsPage {
             m_userEdit->setText(m_seed->user());
             m_passwordEdit->setText(m_seed->password());
             m_modeCombo->setCurrentIndex(int(m_seed->browseMode()));
-            m_extensionsEdit->setText(m_seed->extensions().join(QLatin1Char(' ')));
+            m_extFilter->setText(m_seed->extensions().join(QLatin1Char(' ')));
         } else {
             m_modeCombo->setCurrentIndex(int(WebDavProvider::BrowseMode::Layered));
-            m_extensionsEdit->setText(App::defaultMediaExtensions().join(QLatin1Char(' ')));
+            m_extFilter->setText(App::defaultMediaExtensions().join(QLatin1Char(' ')));
         }
-
-        // 复位：预填默认清单（不校验、可继续编辑）
-        connect(extResetBtn, &QPushButton::clicked, this, [this] {
-            m_extensionsEdit->setText(App::defaultMediaExtensions().join(QLatin1Char(' ')));
-        });
     }
 
     std::optional<QString> validate() const override {
@@ -221,7 +211,7 @@ class WebDavSettingsPage : public ProviderSettingsPage {
         return WebDavProvider::browseModeFromInt(m_modeCombo->currentIndex());
     }
     QStringList extensionsValue() const {
-        return WebDavProvider::parseExtensions(m_extensionsEdit->text());
+        return WebDavProvider::parseExtensions(m_extFilter->text());
     }
 
     const WebDavProvider *m_seed = nullptr;
@@ -230,7 +220,7 @@ class WebDavSettingsPage : public ProviderSettingsPage {
     QLineEdit *m_userEdit = nullptr;
     QLineEdit *m_passwordEdit = nullptr;
     QComboBox *m_modeCombo = nullptr;
-    QLineEdit *m_extensionsEdit = nullptr;
+    ExtensionFilterEdit *m_extFilter = nullptr;
 };
 
 ProviderSettingsPage *createWebDavSettingsPage(const PlaylistProvider *seed,

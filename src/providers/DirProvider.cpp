@@ -8,6 +8,7 @@
 #include "TraversalPolicy.h"
 #include "Util.h"
 #include "entities/LocalFileEntity.h"
+#include "ui/ExtensionFilterEdit.h"
 
 namespace {
 // 非 Q_OBJECT 类的用户可见串：英文源 + QT_TRANSLATE_NOOP 标注翻译上下文
@@ -81,13 +82,7 @@ class DirSettingsPage : public ProviderSettingsPage {
         m_modeCombo->addItem(trText(kBrowseFilesRecursive));
         form->addRow(tr("Browse Mode"), m_modeCombo);
 
-        m_extensionsEdit = new QLineEdit;
-        auto *extRow = new QHBoxLayout;
-        extRow->addWidget(m_extensionsEdit, 1);
-        auto *extResetBtn = new QPushButton(QStringLiteral("↺"));
-        extResetBtn->setToolTip(tr("Reset to default extension list"));
-        extResetBtn->setFixedWidth(28);
-        extRow->addWidget(extResetBtn);
+        m_extFilter = new ExtensionFilterEdit;
         // 说明文字移到编辑框下方单独一行（原在标题的括号里），灰色显示：
         // 标题只写 Filter，扩展名这一层含义由本行说明承担
         auto *extNote =
@@ -100,7 +95,7 @@ class DirSettingsPage : public ProviderSettingsPage {
         noteRow->addWidget(extNote);
         noteRow->addSpacing(12);
         auto *extField = new QVBoxLayout;
-        extField->addLayout(extRow);
+        extField->addWidget(m_extFilter);
         extField->addLayout(noteRow);
         form->addRow(tr("Filter"), extField);
 
@@ -116,17 +111,13 @@ class DirSettingsPage : public ProviderSettingsPage {
         if (m_seed) {
             m_rootEdit->setText(m_seed->rootPath());
             m_modeCombo->setCurrentIndex(int(m_seed->browseMode()));
-            m_extensionsEdit->setText(m_seed->extensions().join(QLatin1Char(' ')));
+            m_extFilter->setText(m_seed->extensions().join(QLatin1Char(' ')));
         } else {
             m_modeCombo->setCurrentIndex(int(DirProvider::BrowseMode::Layered));
-            m_extensionsEdit->setText(App::defaultMediaExtensions().join(QLatin1Char(' ')));
+            m_extFilter->setText(App::defaultMediaExtensions().join(QLatin1Char(' ')));
         }
 
         connect(browseBtn, &QPushButton::clicked, this, &DirSettingsPage::browseRoot);
-        // 复位：预填默认清单（不校验、可继续编辑）
-        connect(extResetBtn, &QPushButton::clicked, this, [this] {
-            m_extensionsEdit->setText(App::defaultMediaExtensions().join(QLatin1Char(' ')));
-        });
     }
 
     std::optional<QString> validate() const override {
@@ -150,7 +141,7 @@ class DirSettingsPage : public ProviderSettingsPage {
         return DirProvider::browseModeFromInt(m_modeCombo->currentIndex());
     }
     QStringList extensionsValue() const {
-        return DirProvider::parseExtensions(m_extensionsEdit->text());
+        return DirProvider::parseExtensions(m_extFilter->text());
     }
 
     void browseRoot() {
@@ -165,7 +156,7 @@ class DirSettingsPage : public ProviderSettingsPage {
     std::shared_ptr<ServiceRegistry> m_registry;
     QLineEdit *m_rootEdit = nullptr;
     QComboBox *m_modeCombo = nullptr;
-    QLineEdit *m_extensionsEdit = nullptr;
+    ExtensionFilterEdit *m_extFilter = nullptr;
 };
 
 ProviderSettingsPage *createDirSettingsPage(const PlaylistProvider *seed,
