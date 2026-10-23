@@ -97,6 +97,9 @@ class TestUtil : public QObject {
     // 是 suffix().toLower() 比对小写清单——两支口径必须一致，否则"目录里的 1.MKV
     // 漏掉、单文件 1.MKV 却能播"。钉住大写后缀照样被收
     void listFilesIgnoresSuffixCase();
+    // ——N131：Util::Url::splitEntryText（手输对话框与两处拖放共用的条目切分）——
+    // ';' 与三种换行同为分隔符、逐段去空白、空段丢弃、保序不去重、不做定形
+    void splitEntryTextSplits();
 };
 
 void TestUtil::emptyInputYieldsNoSegments() {
@@ -713,6 +716,40 @@ void TestUtil::listFilesIgnoresSuffixCase() {
     // 本身不敏感——大小写反过来的组合同样命中
     QCOMPARE(Util::listFiles(dir, {QStringLiteral("MKV")}).size(), 3);
     QCOMPARE(Util::listFiles(dir, {QStringLiteral("Mkv")}).size(), 3);
+}
+
+void TestUtil::splitEntryTextSplits() {
+    // 期望值一律先落 QStringList 变量：QCOMPARE 是宏，实参里的花括号初始化列表带
+    // 逗号会被当成多个实参（编译期报错，与被测代码无关）
+    // 单条：既不带分隔符也不带换行
+    const QStringList single{QStringLiteral("https://host/a.mp4")};
+    QCOMPARE(Util::Url::splitEntryText(QStringLiteral("https://host/a.mp4")), single);
+
+    // ';' 与换行都是分隔符；逐段去首尾空白；空段与纯空白段一并丢掉
+    const QStringList wantMixed{QStringLiteral("a.mkv"), QStringLiteral("https://host/b.mp4"),
+                                QStringLiteral("C:/dir/c.mkv")};
+    const QStringList mixed = Util::Url::splitEntryText(
+        QStringLiteral("  a.mkv ; \t\n\n https://host/b.mp4  ;  ;\n C:/dir/c.mkv \n;  "));
+    QCOMPARE(mixed, wantMixed);
+
+    // 三种换行写法等价（\r\n 不当两个分隔符）
+    const QStringList wantCrlf{QStringLiteral("x.mkv"), QStringLiteral("y.mkv"),
+                               QStringLiteral("z.mkv"), QStringLiteral("w.mkv")};
+    const QStringList crlf =
+        Util::Url::splitEntryText(QStringLiteral("x.mkv\r\ny.mkv\rz.mkv\nw.mkv"));
+    QCOMPARE(crlf, wantCrlf);
+
+    // 保序、不去重（重复条目由用户自己负责，与拖放 / 添加文件同）
+    const QStringList wantDup{QStringLiteral("a"), QStringLiteral("a"), QStringLiteral("a")};
+    QCOMPARE(Util::Url::splitEntryText(QStringLiteral("a;a;a")), wantDup);
+
+    // 全空输入一律空表：空串、只含分隔符、只含空白
+    QVERIFY(Util::Url::splitEntryText(QString()).isEmpty());
+    QVERIFY(Util::Url::splitEntryText(QStringLiteral(";;\n  ;\n")).isEmpty());
+
+    // 只切分、不定形：段内原样保留（含空格的本地路径也不被动过）
+    const QStringList wantSpaced{QStringLiteral("dir/a b.mkv")};
+    QCOMPARE(Util::Url::splitEntryText(QStringLiteral("dir/a b.mkv")), wantSpaced);
 }
 
 // 一类一可执行（R5）：自带 main（QTEST_GUILESS_MAIN）

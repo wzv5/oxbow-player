@@ -8,6 +8,7 @@ ActionManager::ActionManager(QWidget *host) : m_host(host) {
     // 注册表 = 全部 UI 入口清单（A15）：稳定英文名 / 显示名 / 键位在此同点声明，
     // 顺序即头文件枚举声明顺序，新增动作须与枚举插入位置对齐
     declareAction(Id::Open, QStringLiteral("Open"), tr("&Open File…"), QKeySequence::Open);
+    declareAction(Id::OpenUrl, QStringLiteral("OpenUrl"), tr("&Open URL…"));
     declareAction(Id::Settings, QStringLiteral("Settings"), tr("&Settings"));
     declareAction(Id::Shortcuts, QStringLiteral("Shortcuts"), tr("&Keyboard Shortcuts…"));
     declareAction(Id::MpvKeyBindings, QStringLiteral("MpvKeyBindings"), tr("Key &Bindings…"));

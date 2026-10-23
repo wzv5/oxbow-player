@@ -29,6 +29,7 @@
 #include "ui/FilterListWidget.h"
 #include "ui/MpvBindingDialog.h" // N89：mpv 键位编辑（input.conf）
 #include "ui/NavigatorPanel.h"
+#include "ui/OpenUrlDialog.h" // N131
 #include "ui/OsdController.h" // N113：三形态 OSD 控制器
 #include "ui/SettingsDialog.h"
 #include "ui/ShortcutsDialog.h" // N86
@@ -986,6 +987,7 @@ void MainWindow::connectActions() {
     auto act = [this](AM::Id id) { return m_actions->action(id); };
 
     connect(act(AM::Id::Open), &QAction::triggered, this, &MainWindow::openFiles);
+    connect(act(AM::Id::OpenUrl), &QAction::triggered, this, &MainWindow::openUrls);
     connect(act(AM::Id::Settings), &QAction::triggered, this, &MainWindow::ensureSettingsDialog);
     connect(act(AM::Id::Shortcuts), &QAction::triggered, this, &MainWindow::ensureShortcutsDialog);
     // N89：mpv 键位编辑器与 N86 并列相邻但完全独立——一个管 mpv 侧（input.conf），
@@ -1649,6 +1651,15 @@ void MainWindow::openFiles() {
     for (QString &f : files)
         f = Util::Url::toNative(f);
     playFilesFromPaths(files);
+}
+
+// N131：与 openFiles 共用尾部收口，差别只在来源——条目可以是本地路径也可以是任意
+// 链接 / 协议，故不按后缀过滤（输入的 .m3u、edl:// 之类要原样喂进去）
+void MainWindow::openUrls() {
+    OpenUrlDialog dlg(tr("Open URL"), this);
+    if (dlg.exec() != QDialog::Accepted)
+        return;
+    playFilesFromPaths(dlg.entries());
 }
 
 // N97：对话框入口与视频区拖放共用的播放收口（原 openFiles 尾部四步）。

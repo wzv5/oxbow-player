@@ -206,6 +206,8 @@ add_library(oxbowcore MODULE
     src/ui/ShortcutsDialog.h
     src/ui/MpvBindingDialog.cpp
     src/ui/MpvBindingDialog.h
+    src/ui/OpenUrlDialog.cpp
+    src/ui/OpenUrlDialog.h
     src/ui/ExtensionFilterEdit.cpp
     src/ui/ExtensionFilterEdit.h
     src/ui/FilterListWidget.cpp

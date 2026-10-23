@@ -96,6 +96,7 @@
 #include <QPair>
 #include <QPalette>
 #include <QPixmap>
+#include <QPlainTextEdit>
 #include <QPointer>
 #include <QPromise>
 #include <QPushButton>
@@ -128,6 +129,7 @@
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QTemporaryFile>
+#include <QTextCursor>
 #include <QTextEdit>
 #include <QTextOption>
 #include <QTextStream>

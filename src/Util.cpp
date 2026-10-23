@@ -532,6 +532,22 @@ bool isDefiniteForm(const QString &path) {
            (QFileInfo(path).isAbsolute() || path.contains(QStringLiteral("://")));
 }
 
+// N131（契约见声明处）：换行三种写法与 ';' 一并归一成 '\n'，分隔符因此只有一个字符、
+// 切分只一次；先 trim 再判空，纯空白段才能丢掉
+QStringList splitEntryText(const QString &text) {
+    QString normalized = text;
+    normalized.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+    normalized.replace(QLatin1Char('\r'), QLatin1Char('\n'));
+    normalized.replace(QLatin1Char(';'), QLatin1Char('\n'));
+    QStringList out;
+    for (const QString &seg : normalized.split(u'\n')) {
+        const QString trimmed = seg.trimmed();
+        if (!trimmed.isEmpty())
+            out.push_back(trimmed);
+    }
+    return out;
+}
+
 // N37：播放项显示文件名（自 HttpEntity 构造内的同名逻辑收编，供标题 / OSD
 // 取名共用，见头注）。percent-decode 仅对 http(s) 生效（isHttp，与
 // toNative / key 的网络分支同口径）。N56 收族更名 playUrlFileName → fileName

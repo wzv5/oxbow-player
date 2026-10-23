@@ -67,6 +67,8 @@ constexpr Item subMenu(const char *title, std::span<const Item> children) {
 
 inline constexpr Item kFileItems[] = {
     action(ActionManager::Id::Open),
+    action(ActionManager::Id::OpenUrl), // N131
+    separator(),
     action(ActionManager::Id::Settings),
     action(ActionManager::Id::Shortcuts),
     action(ActionManager::Id::MpvKeyBindings),

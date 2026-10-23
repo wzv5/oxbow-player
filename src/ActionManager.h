@@ -21,6 +21,7 @@ class ActionManager : public QObject {
   public:
     enum class Id {
         Open,
+        OpenUrl, // N131
         Settings,
         Shortcuts,      // 快捷键编辑器入口（默认无键）
         MpvKeyBindings, // N89：mpv 侧键位编辑器入口（默认无键，管 input.conf）

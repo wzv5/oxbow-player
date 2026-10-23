@@ -197,6 +197,11 @@ QString insertCredentials(const QString &url, const QString &encodedCredentials)
 // N56 收族更名 urlPathEnd → pathEnd。
 qsizetype pathEnd(const QString &url);
 
+// N131：手输 / 拖放文本的**条目切分**——按 ';' 与换行切分，逐段去首尾空白、丢空段，
+// 保序、不去重。**不做定形**：定形由调用方按各自来源的纪律施加（手输对话框补形态，
+// 拖放那两处只收已定形串）。三处消费点共用这一份，故收在此处。
+QStringList splitEntryText(const QString &text);
+
 // Qt 来源路径：本地路径转原生分隔符；http(s) URL 经 QUrl 规范化（FullyEncoded，
 // scheme/host 归小写、转义形态定型），解析失败退回原串；其余网络协议原样返回
 // ——绝不做 toNativeSeparators（'/'→'\' 对任何 URL 都是破坏性的）；均不做

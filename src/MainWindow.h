@@ -79,6 +79,7 @@ class MainWindow : public QMainWindow {
 
   private slots:
     void openFiles();
+    void openUrls(); // N131
     void togglePause();
     void stop();
     void playlistPrev();

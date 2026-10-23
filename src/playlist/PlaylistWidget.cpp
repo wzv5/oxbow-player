@@ -16,6 +16,7 @@
 #include "streams/StreamTransit.h"
 #include "ui/ListSettingsDialog.h"
 #include "ui/LoadingOverlay.h"
+#include "ui/OpenUrlDialog.h" // N131
 #include "ui/ThemedIconEngine.h"
 
 PlaylistWidget::PlaylistWidget(const QString &configFile, std::shared_ptr<ServiceRegistry> registry,
@@ -4367,6 +4368,7 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
     QMenu menu(window());
 
     QAction *addAction = menu.addAction(tr("Add Files…"));
+    QAction *addUrlAction = menu.addAction(tr("Add URL…")); // N131
     menu.addSeparator();
 
     QMenu *sortMenu = menu.addMenu(tr("Sort"));
@@ -4456,6 +4458,7 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
     // N45：失败口径 = 当前显示层的 loadError 非空
     const bool loadFailed = hasList && !list->levelErrorOf(list->browsePathIds()).isEmpty();
     addAction->setEnabled(modifiable && !loadFailed); // 不可修改的 tab 内容来自枚举，禁手工添加
+    addUrlAction->setEnabled(addAction->isEnabled()); // N131：同属手工添加，判据随"添加文件"
     auto *menuProvider =
         providerOfView(viewAt(tab)); // 排序能力遵从提供者（单项目录亦可持久化规则）
     sortMenu->setEnabled(hasList && menuProvider && menuProvider->supportsSort());
@@ -4532,6 +4535,11 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
             f = Util::Url::toNative(f);
         if (!files.isEmpty())
             addFiles(files);
+    } else if (chosen == addUrlAction) {
+        // N131：尾部与"添加文件"同一个 addFiles；父指针挂顶层窗（弹层一律挂 window()）
+        OpenUrlDialog dlg(tr("Add URL"), window());
+        if (dlg.exec() == QDialog::Accepted)
+            addFiles(dlg.entries());
     } else if (chosen == refreshAction) {
         refreshCurrentTab();
     } else if (chosen == copyContentsAction) {
