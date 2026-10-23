@@ -308,13 +308,26 @@ QList<SettingChoice> loopChoices() {
     };
 }
 
-// 硬件解码：标量项（可编辑下拉），choices 仅作快选预设，逻辑值即文本本身。
-// auto-copy（N42）：把解码帧拷回系统内存——视频滤镜（vf）在原生硬解下不可用
-// （硬件帧无法进 libavfilter 软件滤镜链），copy 模式是启用滤镜的标准解法
+// 硬件解码：标量项（可编辑下拉），choices 仅作快选预设，逻辑值即文本本身
 QList<SettingChoice> hwdecPresets() {
-    return {{QStringLiteral("auto")},      {QStringLiteral("auto-safe")},
-            {QStringLiteral("auto-copy")}, {QStringLiteral("d3d11va")},
-            {QStringLiteral("dxva2")},     {QStringLiteral("no")}};
+#ifdef Q_OS_WIN
+    return {{QStringLiteral("no")},           {QStringLiteral("auto")},
+            {QStringLiteral("auto-copy")},    {QStringLiteral("d3d11va")},
+            {QStringLiteral("d3d11va-copy")}, {QStringLiteral("nvdec")},
+            {QStringLiteral("nvdec-copy")},   {QStringLiteral("vulkan")},
+            {QStringLiteral("vulkan-copy")},  {QStringLiteral("dxva2")},
+            {QStringLiteral("dxva2-copy")},   {QStringLiteral("cuda")},
+            {QStringLiteral("cuda-copy")}};
+#else
+    return {{QStringLiteral("no")},          {QStringLiteral("auto")},
+            {QStringLiteral("auto-copy")},   {QStringLiteral("vaapi")},
+            {QStringLiteral("vaapi-copy")},  {QStringLiteral("nvdec")},
+            {QStringLiteral("nvdec-copy")},  {QStringLiteral("drm")},
+            {QStringLiteral("drm-copy")},    {QStringLiteral("vulkan")},
+            {QStringLiteral("vulkan-copy")}, {QStringLiteral("vdpau")},
+            {QStringLiteral("vdpau-copy")},  {QStringLiteral("cuda")},
+            {QStringLiteral("cuda-copy")}};
+#endif
 }
 
 // N42：滤镜预置（插入模板，一组条目整体追加为勾选态新条目；name 为可翻译的
@@ -481,11 +494,7 @@ const QList<SettingCategory> &settingCatalog() {
                       .widget = WidgetKind::EditableCombo,
                       .mpvKeys = {"hwdec"},
                       .choices = hwdecPresets,
-                      .fallback = "no"}, // 实测 mpv 默认即 no（fallback 兼默认回退）
-                                         // N42：视频滤镜列表（与音频页同构）。备注两条合一（原生硬解下
-                                         // CPU 滤镜不可用——mpv 非 copy 硬解不自动回读硬件帧，需
-                                         // copy 模式或 软解；尺寸类滤镜的导航器已知不一致——修正属
-                                         // N40，按已知项口径 如实告知，不承诺修好）
+                      .fallback = "no"},
                      {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Video Filters"),
                       .widget = WidgetKind::FilterList,
                       .mpvKeys = {"vf"},
