@@ -3557,7 +3557,7 @@ void MainWindow::flushSeekToolTip() {
 // `QDragLeaveEvent`，不属 `QDropEvent` 家族，取 `position()` / `mimeData()` 即读非法偏移
 bool MainWindow::handleVideoDropEvent(QDropEvent *event) {
     const QMimeData *mime = event->mimeData();
-    if (!mime->hasUrls())
+    if (!mime->hasUrls() && !mime->hasText())
         return true; // 不受理，也照常消费
     if (event->type() != QEvent::Drop) {
         // 拖动经过（DragEnter / DragMove）：只受理让光标显示可放，不触碰文件系统、
@@ -3565,43 +3565,55 @@ bool MainWindow::handleVideoDropEvent(QDropEvent *event) {
         event->acceptProposedAction();
         return true;
     }
-    // 落下：清洗出定形路径集合（只收本地文件；目录条目保留在其中，不在此步展开）
-    QStringList paths;
-    for (const QUrl &url : mime->urls()) {
-        if (url.isLocalFile())
-            paths << Util::Url::toNative(url.toLocalFile());
+    // N132：来源 → 已定形串表。urls 非空即取（本地与链接一视同仁），否则退回纯文本；
+    // 文本侧只收已定形串、不补形态——拖一段普通文字不该造出一条 CWD 下的假路径。
+    // 与 PlaylistWidget::dropEvent 的同一段同码同序，改一处须同步另一处
+    QStringList entries;
+    if (!mime->urls().isEmpty()) {
+        entries = Util::Url::entriesFromUrls(mime->urls());
+    } else {
+        for (const QString &seg : Util::Url::splitEntryText(mime->text())) {
+            if (Util::Url::isDefiniteForm(seg))
+                entries << Util::Url::toNative(seg);
+        }
     }
+    if (entries.isEmpty())
+        return true;
     const QStringList mediaExts = App::defaultMediaExtensions();
-    // 分派门：单文件才试字幕，其余一切形态（含"只拖一个目录"）走播放
-    if (paths.size() == 1) {
-        const QFileInfo fi(paths.first());
+    // 分派门：恰一条且是本地文件才试字幕——混入任何链接即整体走播放集合
+    if (entries.size() == 1 && !Util::Url::isNetworkStream(entries.first())) {
+        const QFileInfo fi(entries.first());
         if (fi.isFile()) {
             const QString suffix = fi.suffix().toLower();
             // 字幕判据与"添加字幕"对话框同一张表（每次现读 mpv），且有正播才成立；
             // 不区分在播的是本地文件还是远程流。先判正播，停止态不付那次属性往返
             if (playingEntity() && trackExtensions(true).contains(suffix)) {
-                applySubtitleFile(paths.first(), false);
+                applySubtitleFile(entries.first(), false);
                 event->acceptProposedAction(); // 确实执行了动作才受理
                 return true;
             }
             if (mediaExts.contains(suffix)) {
-                playFilesFromPaths(paths);
+                playFilesFromPaths(entries);
                 event->acceptProposedAction();
                 return true;
             }
             return true; // 两者都不是 → 静默忽略（落下后无事发生，不预示不报错）
         }
     }
-    // 播放集合：按 urls() 原序逐条处理，目录在其原位展开一层
+    // 播放集合：按原序逐条处理，目录在其原位展开一层，网络/流形态直接收下
     QStringList files;
-    for (const QString &path : paths) {
-        const QFileInfo fi(path);
+    for (const QString &entry : entries) {
+        if (Util::Url::isNetworkStream(entry)) {
+            files << entry;
+            continue;
+        }
+        const QFileInfo fi(entry);
         if (fi.isFile()) {
             if (mediaExts.contains(fi.suffix().toLower()))
-                files << path;
+                files << entry;
         } else if (fi.isDir()) {
-            for (const QFileInfo &entry : Util::listFiles(path, mediaExts))
-                files << Util::Url::toNative(entry.absoluteFilePath()); // 入口定形（B15）
+            for (const QFileInfo &found : Util::listFiles(entry, mediaExts))
+                files << Util::Url::toNative(found.absoluteFilePath()); // 入口定形（B15）
         }
     }
     if (files.isEmpty())

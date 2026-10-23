@@ -1971,20 +1971,26 @@ void PlaylistWidget::advanceLevelJump() {
 }
 
 void PlaylistWidget::dragEnterEvent(QDragEnterEvent *event) {
-    if (event->mimeData()->hasUrls())
+    if (event->mimeData()->hasUrls() || event->mimeData()->hasText())
         event->acceptProposedAction();
 }
 
 void PlaylistWidget::dragMoveEvent(QDragMoveEvent *event) {
-    if (event->mimeData()->hasUrls())
+    if (event->mimeData()->hasUrls() || event->mimeData()->hasText())
         event->acceptProposedAction();
 }
 
 void PlaylistWidget::dropEvent(QDropEvent *event) {
+    // N132：与 MainWindow::handleVideoDropEvent 的同一段同码同序，改一处须同步另一处
+    const QMimeData *mime = event->mimeData();
     QStringList files;
-    for (const QUrl &url : event->mimeData()->urls()) {
-        if (url.isLocalFile())
-            files.append(Util::Url::toNative(url.toLocalFile()));
+    if (!mime->urls().isEmpty()) {
+        files = Util::Url::entriesFromUrls(mime->urls());
+    } else {
+        for (const QString &seg : Util::Url::splitEntryText(mime->text())) {
+            if (Util::Url::isDefiniteForm(seg))
+                files << Util::Url::toNative(seg);
+        }
     }
     if (!files.isEmpty()) {
         addFiles(files);

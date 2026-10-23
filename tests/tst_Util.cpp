@@ -100,6 +100,9 @@ class TestUtil : public QObject {
     // ——N131：Util::Url::splitEntryText（手输对话框与两处拖放共用的条目切分）——
     // ';' 与三种换行同为分隔符、逐段去空白、空段丢弃、保序不去重、不做定形
     void splitEntryTextSplits();
+    // ——N132：Util::Url::entriesFromUrls（两处拖放共用的 QUrl → 已定形串表）——
+    // 本地折路径转分隔符、http 归一后保留原编码、其余协议原样、未定形者丢弃
+    void entriesFromUrlsMixed();
 };
 
 void TestUtil::emptyInputYieldsNoSegments() {
@@ -750,6 +753,34 @@ void TestUtil::splitEntryTextSplits() {
     // 只切分、不定形：段内原样保留（含空格的本地路径也不被动过）
     const QStringList wantSpaced{QStringLiteral("dir/a b.mkv")};
     QCOMPARE(Util::Url::splitEntryText(QStringLiteral("dir/a b.mkv")), wantSpaced);
+}
+
+void TestUtil::entriesFromUrlsMixed() {
+    // 本地：Qt 判 isLocalFile，折成本地路径并转原生分隔符（%20 解码为空格是本地文件名语义）
+    const QStringList local{QDir::toNativeSeparators(QStringLiteral("C:/dir/a b.mp4"))};
+    QCOMPARE(Util::Url::entriesFromUrls({QUrl(QStringLiteral("file:///C:/dir/a%20b.mp4"))}), local);
+
+    // http：host 归小写、默认端口剥离，而 %20 必须保住（PrettyDecoded 会解出空格）
+    const QStringList http{QStringLiteral("http://host/a%20b.mp4")};
+    QCOMPARE(Util::Url::entriesFromUrls({QUrl(QStringLiteral("http://Host:80/a%20b.mp4"))}), http);
+
+    // 其余协议：toNative 不再加工，但 QUrl 序列化这一层仍会归小写 scheme / host 并把
+    // 空格编成 %20（实测如此；喂 mpv 要的就是编码后的串）
+    const QStringList rtsp{QStringLiteral("rtsp://host/live/a%20b.mp4")};
+    QCOMPARE(Util::Url::entriesFromUrls({QUrl(QStringLiteral("rtsp://Host/live/a b.mp4"))}), rtsp);
+
+    // 未定形者丢：空 QUrl 与无 scheme 的相对 QUrl（未定形串进工厂会撞 Debug 断言）
+    QVERIFY(Util::Url::entriesFromUrls({QUrl()}).isEmpty());
+    QVERIFY(Util::Url::entriesFromUrls({QUrl(QStringLiteral("a.mkv"))}).isEmpty());
+
+    // 原序、不去重；混合来源按入序交错
+    const QStringList mixed{QDir::toNativeSeparators(QStringLiteral("C:/dir/x.mkv")),
+                            QStringLiteral("https://host/y.mp4"),
+                            QDir::toNativeSeparators(QStringLiteral("C:/dir/x.mkv"))};
+    QCOMPARE(Util::Url::entriesFromUrls({QUrl(QStringLiteral("file:///C:/dir/x.mkv")),
+                                         QUrl(QStringLiteral("https://host/y.mp4")),
+                                         QUrl(QStringLiteral("file:///C:/dir/x.mkv"))}),
+             mixed);
 }
 
 // 一类一可执行（R5）：自带 main（QTEST_GUILESS_MAIN）

@@ -548,6 +548,21 @@ QStringList splitEntryText(const QString &text) {
     return out;
 }
 
+// N132（契约见声明处）：FullyEncoded 而非默认的 PrettyDecoded——后者会把 %20 解成
+// 空格、%2F 解成 /，串的身份在入口就被改写（query 里的编码尤其不能解）
+QStringList entriesFromUrls(const QList<QUrl> &urls) {
+    QStringList out;
+    for (const QUrl &url : urls) {
+        const QString entry =
+            url.isLocalFile()
+                ? toNative(url.toLocalFile())
+                : toNative(url.toString(QUrl::ComponentFormattingOption::FullyEncoded));
+        if (isDefiniteForm(entry))
+            out.push_back(entry);
+    }
+    return out;
+}
+
 // N37：播放项显示文件名（自 HttpEntity 构造内的同名逻辑收编，供标题 / OSD
 // 取名共用，见头注）。percent-decode 仅对 http(s) 生效（isHttp，与
 // toNative / key 的网络分支同口径）。N56 收族更名 playUrlFileName → fileName
