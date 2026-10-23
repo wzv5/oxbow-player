@@ -31,8 +31,10 @@ class MpvConf {
     // 顶层裸 key（"global" 命名空间）
     QString getGlobal(const QString &key, const QString &defaultValue = {}) const;
     QStringList globalKeys() const;
-    void setGlobal(const QString &key, const QString &value);
-    void removeGlobal(const QString &key);
+    // 只落首条；现值与待写值相同则不改动并返回 false（调用方据此免掉内容未变的 commit）
+    bool setGlobal(const QString &key, const QString &value);
+    // 删除全部出现（重复顶层 key 全删），返回是否有删除；section 内同名 key 不动
+    bool removeGlobal(const QString &key);
 
     // section 内 key
     QString get(const QString &section, const QString &key, const QString &defaultValue = {}) const;
@@ -52,6 +54,6 @@ class MpvConf {
 
     void parse();
     QString serialize() const;
-    void applyChange(const QString &section, const QString &key, const QString &value,
+    bool applyChange(const QString &section, const QString &key, const QString &value,
                      bool isRemove);
 };

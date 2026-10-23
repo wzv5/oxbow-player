@@ -75,6 +75,8 @@ inline QString iconVolume() { return QStringLiteral("volume"); }
 inline QString iconVolumeMuted() { return QStringLiteral("volume-muted"); }
 inline QString iconFilterUp() { return QStringLiteral("filter-up"); }
 inline QString iconFilterDown() { return QStringLiteral("filter-down"); }
+// 设置项逐项重置（单色 24×24，经 Ui::themedIcon 染色）
+inline QString iconReset() { return QStringLiteral("reset"); }
 // 解析单点：语义键 → 资源路径。将来加"图标包"设置项时只改 defaultIconPack 的取值来源
 inline QString iconPath(const QString &key) {
     return QStringLiteral(":/icons/%1/%2.svg").arg(defaultIconPack(), key);
@@ -142,5 +144,17 @@ inline int miniRefitMaxAttempts() { return 3; }
 // 几毫秒内完成；上限只兜 GUI 无法处理投递事件的极端情形，超时即放行播放，
 // 预适配延后执行或交给 VIDEO_RECONFIG 校正
 inline int preloadResizeTimeoutMs() { return 100; }
+
+// ——插件 ini 设置项默认值单点——
+// 设置目录 fallback 与全部读取点（plugin.cpp / MainWindow）同引此处；键名与取值语义
+// 见 SettingsDialog 设置目录
+inline QString languageDefault() { return QString(); }       // 空 = Auto
+inline QString interfaceStyleDefault() { return QString(); } // 空 = Auto
+inline QString colorSchemeDefault() { return QStringLiteral("system"); }
+inline int volumeWheelStepDefault() { return 2; }
+inline int volumeKeyStepDefault() { return 5; }
+inline QString osdModeDefault() { return QStringLiteral("overlay"); }
+inline bool hoverThumbnailDefault() { return true; }
+inline bool quadraticVolumeCurveDefault() { return false; }
 
 } // namespace App

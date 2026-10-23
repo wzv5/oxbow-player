@@ -147,7 +147,7 @@ static void installTranslator(const QString &configFile) {
     QString lang;
     {
         QSettings s(configFile, QSettings::IniFormat);
-        lang = s.value(QStringLiteral("language")).toString().trimmed();
+        lang = s.value(QStringLiteral("language"), App::languageDefault()).toString().trimmed();
     }
     auto *translator = new QTranslator(qApp);
     bool loaded = false;
@@ -257,8 +257,9 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle) {
     AppearanceManager appearance;
     {
         QSettings s(configFile, QSettings::IniFormat);
-        appearance.apply(s.value(QStringLiteral("style")).toString(),
-                         s.value(QStringLiteral("colorScheme")).toString());
+        appearance.apply(
+            s.value(QStringLiteral("style"), App::interfaceStyleDefault()).toString(),
+            s.value(QStringLiteral("colorScheme"), App::colorSchemeDefault()).toString());
     }
 
     auto *window = new MainWindow(controller, &appearance, configFile, std::move(relay));

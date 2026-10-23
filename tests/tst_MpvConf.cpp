@@ -38,6 +38,12 @@ class TestMpvConf : public QObject {
     void missingTrailingNewlineHandled();
     // R3 循环模式复合写：双 key 写 conf 场景（应用层需写 loop-file + loop-playlist）
     void loopModeDualKeyWrite();
+    // 重复顶层 key 删除全部出现
+    void removeGlobalRemovesAllDuplicates();
+    // 删除不动 section 内同名 key
+    void removeGlobalLeavesSections();
+    // 同值写不记变更（setGlobal 返回 false）
+    void setGlobalSameValueShortCircuit();
 };
 
 // 工具：把内容写入临时文件并返回路径（UTF-8）
@@ -249,6 +255,42 @@ void TestMpvConf::loopModeDualKeyWrite() {
     auto c3 = MpvConf::open(path);
     QCOMPARE(c3->getGlobal("loop-file"), QStringLiteral("no"));
     QCOMPARE(c3->getGlobal("loop-playlist"), QStringLiteral("inf"));
+}
+
+void TestMpvConf::removeGlobalRemovesAllDuplicates() {
+    // 两条重复顶层 key 都在 section 头之前（section 内同名 key 属另一 namespace，
+    // 隔离性由 removeGlobalLeavesSections 覆盖）
+    const QString path =
+        writeTempFile(QStringLiteral("volume-max=200\nvolume-max=300\n[gpu]\nfoo=bar\n"));
+    auto c = MpvConf::open(path);
+    QVERIFY(c.has_value());
+    QVERIFY(c->removeGlobal("volume-max")); // 有删除 → true
+    QVERIFY(c->commit());
+    QCOMPARE(readAll(path), QStringLiteral("[gpu]\nfoo=bar\n"));
+    // 再删不存在的 key → false
+    QVERIFY(!c->removeGlobal("volume-max"));
+}
+
+void TestMpvConf::removeGlobalLeavesSections() {
+    const QString path = writeTempFile(QStringLiteral("hwdec=auto\n[gpu]\nhwdec=dxva2\n"));
+    auto c = MpvConf::open(path);
+    QVERIFY(c.has_value());
+    QVERIFY(c->removeGlobal("hwdec"));
+    QVERIFY(c->commit());
+    // 仅删顶层裸 key；section 内同名 key 原样
+    QCOMPARE(readAll(path), QStringLiteral("[gpu]\nhwdec=dxva2\n"));
+}
+
+void TestMpvConf::setGlobalSameValueShortCircuit() {
+    const QString path = writeTempFile(QStringLiteral("hwdec=auto\n"));
+    auto c = MpvConf::open(path);
+    QVERIFY(c.has_value());
+    QVERIFY(c->setGlobal("hwdec", "no"));  // 值变 → true
+    QVERIFY(!c->setGlobal("hwdec", "no")); // 同值 → false，不记变更
+    // 未存在的 key 写入仍算变更
+    QVERIFY(c->setGlobal("volume-max", "130"));
+    QVERIFY(c->commit());
+    QCOMPARE(readAll(path), QStringLiteral("hwdec=no\nvolume-max=130\n"));
 }
 
 // 一类一可执行（R5）：自带 main（QTEST_GUILESS_MAIN），无 GUI 依赖

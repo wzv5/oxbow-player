@@ -78,6 +78,11 @@ class MpvController : public QObject {
     // 实时读属性一族：纯读、不改本对象状态，故 const（mpv_get_property 线程安全，
     // 除 wait_event 外任意线程可调，与下方 filterEntries 同一口径）
     QString propertyString(const QString &name) const;
+    // 同上，但区分"读取失败"（nullopt）与"合法空串"——回读侧不得把失败当成空值
+    std::optional<QString> propertyStringOpt(const QString &name) const;
+    // 选项出厂默认值（option-info/<name>/default-value）：与当前运行值、conf 是否写了
+    // 这一行均无关；手册注明可能不可用 → 失败返 nullopt，调用方回落目录 fallback
+    std::optional<QString> optionDefaultValue(const QString &name) const;
     // 实时读属性（N3）：失败返 fallback；pause 等标志属性必须走 FLAG 格式
     double propertyDouble(const QString &name, double fallback) const;
     bool propertyFlag(const QString &name, bool fallback) const;
@@ -104,6 +109,9 @@ class MpvController : public QObject {
     // 规则见 FilterListWidget::quoteParamValue）；不可读 / 失败返回空列表。GUI 线程直读
     // （与 propertyString 同一线程口径，client API 除 wait_event 外线程安全）
     QList<FilterEntry> filterEntries(const QString &name);
+    // 同上，但区分"读取失败"（nullopt）与"合法空滤镜链"（空列表）——回读不得把失败
+    // 当成空链清空 conf
+    std::optional<QList<FilterEntry>> filterEntriesChecked(const QString &name);
 
     // N89：input-bindings 条目（字段语义见规格附录 A；owner / comment 可缺）
     struct InputBinding {

@@ -7,6 +7,8 @@
 #include "ui/AppearanceManager.h" // N115
 #include "ui/MenuSpec.h"          // N119：菜单描述表
 
+#include "Constants.h" // ini 默认值单点（成员初值引用访问器）
+
 // N54：两处接线要用到嵌套类型（PlaylistWidget::LevelJump / JumpFailure、
 // BookmarkManager::Origin），嵌套类型必须有完整类型可见
 #include "BookmarkManager.h"
@@ -439,12 +441,12 @@ class MainWindow : public QMainWindow {
     QPoint m_seekTipGlobal; // 最后一条 move 的全局坐标（换算来源 + tooltip 落点）
     QSlider *m_volumeSlider = nullptr;
     // N5：音量调节配置（INI 键 volumeMax / volumeWheelStep / volumeKeyStep）
-    int m_volumeMax = 130;     // R3：音量上限，mpv 默认 130；运行时由 applyVolumeMax 同步
-    int m_volumeWheelStep = 1; // 滚轮每格步长
-    int m_volumeKeyStep = 5;   // 方向键每格步长
+    int m_volumeMax = 130; // R3：音量上限，mpv 默认 130；运行时由 applyVolumeMax 同步
+    int m_volumeWheelStep = App::volumeWheelStepDefault(); // 滚轮每格步长（缺键 2）
+    int m_volumeKeyStep = App::volumeKeyStepDefault();     // 方向键每格步长
     // N108：音量曲线开关（INI 键 quadraticVolumeCurve）——勾选时滑条显示百分比按
     // MPC-HC 二次方听感标尺经 Util::Volume 换算为 mpv volume，量程随之取等价百分比
-    bool m_quadraticVolumeCurve = false;
+    bool m_quadraticVolumeCurve = App::quadraticVolumeCurveDefault();
     // N38：静音——菜单项与音量行图标按钮共用同一 QAction（勾选态由 mpv 推送驱动）
     QAction *m_muteAction = nullptr;
     QToolButton *m_muteButton = nullptr;
@@ -578,5 +580,5 @@ class MainWindow : public QMainWindow {
     ThumbEngine *m_thumbEngine = nullptr;    // 第二 mpv core 引擎（affine 引擎线程）
     ThumbWindow *m_thumbWindow = nullptr;    // 缩略图宿主窗（一套复用，hide/show 切换）
     ThumbHoverWatch *m_thumbWatch = nullptr; // 会话机（事件域 = 进度条控件）
-    bool m_hoverThumbnailEnabled = true;     // INI 键 hoverThumbnail（缺键开）
+    bool m_hoverThumbnailEnabled = App::hoverThumbnailDefault(); // INI 键 hoverThumbnail（缺键开）
 };

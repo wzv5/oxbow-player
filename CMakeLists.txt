@@ -345,6 +345,7 @@ qt_add_resources(oxbowcore "icons"
         icons/icons8/locate-playing.svg
         icons/icons8/search.svg
         icons/icons8/playlist.svg
+        icons/icons8/reset.svg
         icons/icons8/settings.svg
         icons/icons8/filter-add.svg
         icons/icons8/filter-remove.svg

@@ -6,6 +6,7 @@
 #include "Constants.h"
 #include "FilterListWidget.h"
 #include "Logging.h"
+#include "ThemedIconEngine.h" // N128：重置按钮染色
 #include "mpvbridge/MpvConf.h"
 #include "mpvbridge/MpvController.h"
 #include "playbackreport/ReporterSwitchCatalog.h" // N99：上报开关目录项同引账目行（键名与缺省单点）
@@ -79,11 +80,15 @@ namespace {
 // 读回：按类型提示取原生值后统一规范化为字符串。Flag/Int/Double 先经字符串读
 // 探测可读性（三者的合法值经 mpv 字符串化永不为空），不可读返回 false——调用方
 // 据此让枚举匹配落占位项（与"和任何 authored 赋值都不相等"同义）。
+// String 走 propertyStringOpt：读取失败与合法空串必须可分——回读写盘与缺键判定都靠它
 bool readCanonicalMpvValue(MpvController *c, const QString &key, MpvType type, QString &out) {
     switch (type) {
     case MpvType::String:
-        out = c->propertyString(key); // String 型：空串是合法值，失败同样表现为空
-        return true;
+        if (auto s = c->propertyStringOpt(key)) {
+            out = *s;
+            return true;
+        }
+        return false;
     case MpvType::Flag:
         if (c->propertyString(key).isEmpty())
             return false;
@@ -123,22 +128,86 @@ QString canonicalAuthoredMpvValue(MpvType type, const QString &raw) {
     return raw;
 }
 
-// 写路径：按类型提示走 typed set（消灭"数值当字符串下发再由 mpv 解析"环节）
-void setTypedMpvProperty(MpvController *c, const QString &key, MpvType type, const QString &raw) {
+// 写路径：按类型提示走 typed set（消灭"数值当字符串下发再由 mpv 解析"环节）。
+// 返回值判失败：任一 key 下发失败即整项不写 conf，避免持久配置被半截污染
+bool setTypedMpvProperty(MpvController *c, const QString &key, MpvType type, const QString &raw) {
     switch (type) {
     case MpvType::String:
-        c->setProperty(key, raw);
-        break;
+        return c->setProperty(key, raw);
     case MpvType::Flag:
-        c->setProperty(key, raw == QLatin1String("yes"));
-        break;
+        return c->setProperty(key, raw == QLatin1String("yes"));
     case MpvType::Int:
-        c->setProperty(key, int(raw.toLongLong()));
-        break;
+        return c->setProperty(key, int(raw.toLongLong()));
     case MpvType::Double:
-        c->setProperty(key, raw.toDouble());
-        break;
+        return c->setProperty(key, raw.toDouble());
     }
+    return false;
+}
+
+// 把"逐 key authored 串"（mpv.conf 保存值 / option-info 默认值两个来源共用）映射为
+// 控件同型值，分派结构与 fillItemFromBackend 同构。映射不了（两态未命中 / SpinBox 不可
+// 解析）返回 nullopt，由调用方落目录 fallback；Combo 占位恒命中（目录自检保证恰一个占位）
+std::optional<QVariant> controlValueFromAuthoredKeys(const SettingItem *item,
+                                                     const QMap<QString, QString> &authoredByKey) {
+    switch (item->widget) {
+    case WidgetKind::FilterList: {
+        // 空串是合法保存值（`vf=` 空行进这里，缺行根本不进来）→ 空列表
+        const QString raw = authoredByKey.value(item->mpvKeys[0]);
+        if (raw.isEmpty())
+            return QStringLiteral("");
+        return FilterListWidget::compileEntries(FilterListWidget::parseString(raw));
+    }
+    case WidgetKind::Combo: {
+        // 两侧同过 canonicalAuthoredMpvValue 再比（数值属性永不信任字符串化）；
+        // 组合不命中任何非占位 choice → 占位项值
+        QMap<QString, QString> current;
+        for (auto it = authoredByKey.cbegin(); it != authoredByKey.cend(); ++it)
+            current.insert(it.key(), canonicalAuthoredMpvValue(item->mpvType, it.value()));
+        const auto choices = item->choices ? item->choices() : QList<SettingChoice>{};
+        const SettingChoice *placeholder = nullptr;
+        for (const auto &c : choices) {
+            if (c.mpvAssignments.isEmpty()) {
+                placeholder = &c;
+                continue;
+            }
+            QMap<QString, QString> canon;
+            for (auto a = c.mpvAssignments.cbegin(); a != c.mpvAssignments.cend(); ++a)
+                canon.insert(a.key(), canonicalAuthoredMpvValue(item->mpvType, a.value()));
+            if (canon == current)
+                return c.value;
+        }
+        if (placeholder)
+            return placeholder->value;
+        return std::nullopt;
+    }
+    case WidgetKind::EditableCombo:
+    case WidgetKind::LineEdit:
+        return canonicalAuthoredMpvValue(item->mpvType, authoredByKey.value(item->mpvKeys[0]));
+    case WidgetKind::SpinBox: {
+        const QString raw =
+            canonicalAuthoredMpvValue(item->mpvType, authoredByKey.value(item->mpvKeys[0]));
+        bool ok = false;
+        const double d = raw.toDouble(&ok);
+        if (!ok)
+            return std::nullopt;
+        return qBound(item->range.min, qRound(d), item->range.max); // 同 fill：钳制后取整
+    }
+    case WidgetKind::CheckBox: {
+        const QString raw = authoredByKey.value(item->mpvKeys[0]);
+        if (item->choices) {
+            // 两态映射：保存串与两项赋值精确比对，未命中交调用方落 fallback
+            const auto choices = item->choices();
+            for (const auto &c : choices) {
+                if (c.mpvAssignments.value(item->mpvKeys[0]) == raw)
+                    return c.value.toBool();
+            }
+            return std::nullopt;
+        }
+        // Flag 直通两态
+        return canonicalAuthoredMpvValue(item->mpvType, raw) == QLatin1String("yes");
+    }
+    }
+    return std::nullopt;
 }
 
 // 音量步进四档（滚轮 / 方向键共用；INI 后端，写 int）
@@ -332,19 +401,20 @@ const QList<SettingCategory> &settingCatalog() {
                       .widget = WidgetKind::Combo,
                       .iniKey = "language",
                       .choices = languageChoices,
+                      .fallback = App::languageDefault(),
                       .note = QT_TRANSLATE_NOOP("SettingsDialog", "Takes effect after restart")},
                      // N115：Style 兜底空串 = 第 0 项 Auto；Color Scheme 仅 Qt ≥ 6.8
                      {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Interface Style"),
                       .widget = WidgetKind::Combo,
                       .iniKey = "style",
                       .choices = styleChoices,
-                      .fallback = QString() /* 空 = Auto（第 0 项） */},
+                      .fallback = App::interfaceStyleDefault() /* 空 = Auto（第 0 项） */},
 #if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
                      {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Color Scheme"),
                       .widget = WidgetKind::Combo,
                       .iniKey = "colorScheme",
                       .choices = colorSchemeChoices,
-                      .fallback = QStringLiteral("system"),
+                      .fallback = App::colorSchemeDefault(),
                       .note = QT_TRANSLATE_NOOP(
                           "SettingsDialog",
                           "Only some styles (such as Fusion) follow this setting; "
@@ -354,13 +424,13 @@ const QList<SettingCategory> &settingCatalog() {
                       .widget = WidgetKind::Combo,
                       .iniKey = "volumeWheelStep",
                       .choices = stepChoices,
-                      .fallback = 2, // 维护者指定：滚轮步进默认 2
+                      .fallback = App::volumeWheelStepDefault(),
                       .note = QT_TRANSLATE_NOOP("SettingsDialog", "For adjusting volume")},
                      {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Arrow Key Step"),
                       .widget = WidgetKind::Combo,
                       .iniKey = "volumeKeyStep",
                       .choices = stepChoices,
-                      .fallback = 5, // 对齐现版：miss 兜底 5 而非第 0 项
+                      .fallback = App::volumeKeyStepDefault(), // 对齐现版：miss 兜底 5 而非第 0 项
                       .note = QT_TRANSLATE_NOOP("SettingsDialog", "For adjusting volume")},
                      {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Recursive Depth Limit"),
                       .widget = WidgetKind::SpinBox,
@@ -376,7 +446,7 @@ const QList<SettingCategory> &settingCatalog() {
                       .widget = WidgetKind::Combo,
                       .iniKey = "osdMode",
                       .choices = osdModeChoices,
-                      .fallback = QStringLiteral("overlay"),
+                      .fallback = App::osdModeDefault(),
                       .note = QT_TRANSLATE_NOOP(
                           "SettingsDialog",
                           "Controls the plugin's own OSD only; mpv's built-in OSD is "
@@ -390,13 +460,15 @@ const QList<SettingCategory> &settingCatalog() {
                       .widget = WidgetKind::Combo,
                       .mpvKeys = {"loop-file", "loop-playlist"},
                       .choices = loopChoices,
-                      .fallback = QString() /*占位*/},
+                      // fallback 兼 mpv 默认回退（no/no → No Loop）；占位由"组合不命中任何
+                      // choice"的回填承担，两者职责不同
+                      .fallback = QStringLiteral("none")},
                      // N107：悬停缩略图开关（插件 INI 项与 mpv 项同分类混列，后端按项互斥，
                      // ignoreHttpsErrors 与 Audio 分类混列同先例）
                      {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Show thumbnail on hover"),
                       .widget = WidgetKind::CheckBox,
                       .iniKey = "hoverThumbnail",
-                      .fallback = true,
+                      .fallback = App::hoverThumbnailDefault(),
                       .note = QT_TRANSLATE_NOOP("SettingsDialog",
                                                 "Shows a preview frame while hovering the progress "
                                                 "bar; not available for remote sources")},
@@ -409,11 +481,11 @@ const QList<SettingCategory> &settingCatalog() {
                       .widget = WidgetKind::EditableCombo,
                       .mpvKeys = {"hwdec"},
                       .choices = hwdecPresets,
-                      .fallback = "auto"},
-                     // N42：视频滤镜列表（与音频页同构）。备注两条合一（原生硬解下 CPU
-                     // 滤镜不可用——mpv 非 copy 硬解不自动回读硬件帧，需 copy 模式或
-                     // 软解；尺寸类滤镜的导航器已知不一致——修正属 N40，按已知项口径
-                     // 如实告知，不承诺修好）
+                      .fallback = "no"}, // 实测 mpv 默认即 no（fallback 兼默认回退）
+                                         // N42：视频滤镜列表（与音频页同构）。备注两条合一（原生硬解下
+                                         // CPU 滤镜不可用——mpv 非 copy 硬解不自动回读硬件帧，需
+                                         // copy 模式或 软解；尺寸类滤镜的导航器已知不一致——修正属
+                                         // N40，按已知项口径 如实告知，不承诺修好）
                      {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Video Filters"),
                       .widget = WidgetKind::FilterList,
                       .mpvKeys = {"vf"},
@@ -440,7 +512,7 @@ const QList<SettingCategory> &settingCatalog() {
                      {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Louder Volume Curve"),
                       .widget = WidgetKind::CheckBox,
                       .iniKey = "quadraticVolumeCurve",
-                      .fallback = false,
+                      .fallback = App::quadraticVolumeCurveDefault(),
                       .note = QT_TRANSLATE_NOOP(
                           "SettingsDialog",
                           "Uses a quadratic volume curve instead of mpv's cubic one to match "
@@ -479,15 +551,15 @@ const QList<SettingCategory> &settingCatalog() {
                           "SettingsDialog",
                           "Applies to playlist and metadata requests only; "
                           "playback is governed by the mpv-side option below")},
-                     // N37：播放侧（mpv / ffmpeg 发请求）证书开关。fallback 为未勾选——
-                     // 只在属性不可读或取值未命中两项赋值时兜底；mpv 内置默认 tls-verify=no
-                     // 且可实时读写，首次打开呈现为已勾选，保持勾选不改变任何现状
+                     // N37：播放侧（mpv / ffmpeg 发请求）证书开关。fallback 兼 mpv 默认回退
+                     // （实测默认 no → Ignore 勾选），只在属性不可读或取值未命中两项赋值时
+                     // 兜底；可实时读写，正常运行落不到这里
                      {.label = QT_TRANSLATE_NOOP("SettingsDialog",
                                                  "Ignore HTTPS Certificate Errors (mpv side)"),
                       .widget = WidgetKind::CheckBox,
                       .mpvKeys = {"tls-verify"},
                       .choices = tlsVerifyChoices,
-                      .fallback = false,
+                      .fallback = true,
                       .mpvType = MpvType::String},
                      // mpv 侧 ytdl hook 开关（ytdl 选项，bool）：勾选 = ytdl=yes（mpv
                      // 内置默认即启用，可实时读写——ytdl hook 脚本逐文件加载时现读该
@@ -728,6 +800,28 @@ void validateCatalog() {
                                .arg(ci)
                                .arg(ii);
             }
+            // Combo 的 fallback 必须命中 choices 的 data：ini 项命中任意选项即可，mpv 项还须
+            // 命中非占位选项——fallback 兼默认回退与写盘期删除判定的比较源，落占位则默认串
+            // 为空 map，等默认删键永不触发
+            if (item.widget == WidgetKind::Combo && item.choices) {
+                bool hitAny = false;
+                bool hitAssigned = false;
+                for (const auto &c : item.choices()) {
+                    if (c.value != item.fallback)
+                        continue;
+                    hitAny = true;
+                    if (!c.mpvAssignments.isEmpty())
+                        hitAssigned = true;
+                }
+                if (!hitAny || (hasMpv && !hitAssigned))
+                    OXBOW_LOG_WARNING().noquote()
+                        << QStringLiteral("SettingsDialog: Combo fallback [%1/%2] does not match "
+                                          "%3 data")
+                               .arg(ci)
+                               .arg(ii)
+                               .arg(hasMpv ? QStringLiteral("an assigned choice")
+                                           : QStringLiteral("any choice"));
+            }
             if (!item.id.isEmpty()) {
                 if (item.widget != WidgetKind::CheckBox)
                     OXBOW_LOG_WARNING().noquote()
@@ -776,6 +870,85 @@ void validateCatalog() {
 
 } // namespace
 
+// ===================== 分类列表 delegate（N128 §2.4） =====================
+// 固定前导槽：未提交标记 "(*)" 画在槽内、底串从槽后起排并按剩余宽 elide——不改条目
+// 文本、底串起点不随标记出现移动。横坐标一律向样式索取（SE_ItemViewItemText 即它给
+// 这段文本安排的落点）：标记在该点右让一档、底串与右缘各让一整槽，于是标记不会压到
+// 样式画在条目左缘的选中边饰。sizeHint 另为右缘多留一档：标题列偏左，右侧观感更松。
+// 槽宽 = 让位档 + "(*)" 字宽 + 样式间距，构造期算一次；标记与 tooltip 走自定义 role，
+// 由 refreshDerivedState 写入。仅本翻译单元使用，无 Q_OBJECT
+namespace {
+constexpr int kCategoryMarkRole = Qt::UserRole + 1;
+// 标记相对样式文本落点的左让位——样式画在条目左缘的选中边饰占到这一档
+constexpr int kCategoryMarkInset = 4;
+
+class CategoryDelegate final : public QStyledItemDelegate {
+  public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+
+    void paint(QPainter *painter, const QStyleOptionViewItem &option,
+               const QModelIndex &index) const override {
+        const QWidget *ref = option.widget;
+        const QStyle *style = ref ? ref->style() : QApplication::style();
+
+        // 背景与选中态归样式：清空 text 后直接走 CE_ItemViewItem（**不得**调基类 paint，
+        // 它会再 initStyleOption 把模型文本灌回来，标题成重影）；下面只接管文本这一层
+        QStyleOptionViewItem bg = option;
+        initStyleOption(&bg, index);
+        const QString text = bg.text;
+        bg.text.clear();
+        bg.icon = QIcon();
+        style->drawControl(QStyle::CE_ItemViewItem, &bg, painter, ref);
+
+        // 样式为这段文本（带 text / decoration / 对齐的完整 option）算出的落点基准
+        QStyleOptionViewItem textOpt = option;
+        initStyleOption(&textOpt, index);
+        QRect base = style->subElementRect(QStyle::SE_ItemViewItemText, &textOpt, ref);
+        if (base.isEmpty())
+            base = option.rect; // 样式不实现该 subElement 时返回空矩形：退回条目矩形照画
+        const int slot = slotWidth(option, style);
+        const Qt::Alignment align =
+            QStyle::visualAlignment(option.direction, textOpt.displayAlignment);
+
+        // 字色随激活态取组：背景由样式按 Active / Inactive 画，自绘的字必须同组
+        const QPalette::ColorGroup group =
+            (option.state & QStyle::State_Active) ? QPalette::Active : QPalette::Inactive;
+        const bool selected = option.state & QStyle::State_Selected;
+        painter->save();
+        painter->setFont(option.font);
+        painter->setPen(
+            option.palette.color(group, selected ? QPalette::HighlightedText : QPalette::Text));
+        if (index.data(kCategoryMarkRole).toBool())
+            painter->drawText(QRect(base.left() + kCategoryMarkInset, base.top(),
+                                    slot - kCategoryMarkInset, base.height()),
+                              align, QStringLiteral("(*)"));
+        const QRect titleRect = base.adjusted(slot, 0, -slot, 0); // 左右各让一整槽
+        painter->drawText(
+            titleRect, align,
+            option.fontMetrics.elidedText(text, option.textElideMode, titleRect.width()));
+        painter->restore();
+    }
+
+    QSize sizeHint(const QStyleOptionViewItem &option, const QModelIndex &index) const override {
+        const QSize base = QStyledItemDelegate::sizeHint(option, index);
+        const QWidget *ref = option.widget;
+        const QStyle *style = ref ? ref->style() : QApplication::style();
+        // 画的是一整槽，预留三整槽：多出的那一档全落在右缘
+        return {base.width() + 3 * slotWidth(option, style), base.height()};
+    }
+
+  private:
+    // 前导槽 = 标记左让位 + "(*)" 字宽 + 样式的内容间距
+    static int slotWidth(const QStyleOptionViewItem &option, const QStyle *style) {
+        const int gap =
+            style->pixelMetric(QStyle::PM_FocusFrameHMargin, &option, option.widget) + 1;
+        return kCategoryMarkInset +
+               QFontMetrics(option.font).horizontalAdvance(QStringLiteral("(*)")) + gap;
+    }
+};
+
+} // namespace
+
 SettingsDialog::SettingsDialog(QWidget *parent, MpvController *controller,
                                const QString &pluginIniPath)
     : QDialog(parent), m_controller(controller), m_pluginIniPath(pluginIniPath) {
@@ -793,10 +966,10 @@ SettingsDialog::SettingsDialog(QWidget *parent, MpvController *controller,
     buildUi();
     applyToControls();
 
-    // 初始化快照：回填后的值即为初始已应用值。
-    m_appliedSnapshot = m_pending;
-    // 初始 Apply 按钮禁用；修改任一控件后 updateApplyButtonState() 启用
-    m_buttonBox->button(QDialogButtonBox::Apply)->setEnabled(false);
+    // 快照按持久值重建（mpv 取 conf 保存值；ini / 禁用取回填值）：打开即存在分歧
+    // （菜单临时启停造成 conf 与运行期不合）时，由分歧本身点亮 Apply
+    rebuildSnapshot();
+    refreshDerivedState();
 
     // 按钮接线（Apply / OK / Cancel）
     connect(m_buttonBox->button(QDialogButtonBox::Apply), &QPushButton::clicked, this,
@@ -813,11 +986,14 @@ void SettingsDialog::buildUi() {
 
     auto *root = new QHBoxLayout(this);
 
-    // 左侧分类列表（固定宽度 140，纯文本）
+    // 左侧分类列表：宽度一次预留——delegate sizeHint 已含前导槽，构造末尾按
+    // sizeHintForColumn 把宽度钉死（见下方注释）
     m_categoryList = new QListWidget(this);
-    m_categoryList->setFixedWidth(140);
+    m_categoryList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_categoryList->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
     m_categoryList->setIconSize(QSize(0, 0)); // 无图标
     m_categoryList->setSpacing(2);
+    m_categoryList->setItemDelegate(new CategoryDelegate(m_categoryList));
     root->addWidget(m_categoryList);
 
     // 右侧容器（堆栈 + 底部按钮）
@@ -834,12 +1010,20 @@ void SettingsDialog::buildUi() {
     // 目录文本字段（label/note/title）为 const char*：直接 tr()；
     // trS 仅供选项 label（QString，运行期构造）使用
     auto trS = [this](const QString &s) { return tr(s.toUtf8().constData()); };
+
+    // 行首槽度量：方形按钮边长按样式小图标尺寸推导（不写死像素），槽宽恰为按钮宽，
+    // 与内容之间的间距归各格外层布局的样式间距（标签行 / 整行 / 备注行同构，自动同列
+    // 对齐）。全页一次预留：干净行放同宽空槽，按钮出现 / 消失零位移
+    const int resetSide = style()->pixelMetric(QStyle::PM_SmallIconSize, nullptr, this) + 8;
+    const int resetGutter = resetSide;
+
     for (const auto &cat : settingCatalog()) {
         m_categoryList->addItem(tr(cat.title));
 
         auto *page = new QWidget(this);
         auto *layout = new QVBoxLayout(page);
-        layout->setContentsMargins(12, 12, 12, 12);
+        // 左边距收窄：行首槽贴分类面板，与右侧内容边距观感对称
+        layout->setContentsMargins(4, 12, 12, 12);
         layout->setSpacing(8);
 
         // 表单布局：标签列宽度自动对齐到本页最宽标签；控件占标签右侧剩余宽度
@@ -915,12 +1099,49 @@ void SettingsDialog::buildUi() {
             }
 
             m_controls.insert(item, control);
+
+            // 行首槽（resetCell）：所有行统一让出重置按钮位，保证各页按钮同列对齐；
+            // 干净行按钮隐藏、槽恒占位（空 QWidget，不进 Tab 链）
+            auto *resetCell = new QWidget(page);
+            resetCell->setFixedWidth(resetGutter);
+            auto *resetLayout = new QHBoxLayout(resetCell);
+            resetLayout->setContentsMargins(0, 0, 0, 0);
+            resetLayout->setSpacing(0); // 槽宽恰为按钮宽，格内不再另加间距（间距归外层）
+            auto *resetBtn = new QToolButton(resetCell);
+            resetBtn->setAutoRaise(true);
+            resetBtn->setFixedSize(resetSide, resetSide);
+            resetBtn->setIconSize(QSize(resetSide - 8, resetSide - 8));
+            resetBtn->setFocusPolicy(Qt::TabFocus); // 隐藏时 Qt 自动跳过，不占停靠点
+            resetBtn->setToolTip(tr("Reset this setting"));
+            resetBtn->setAccessibleName(tr("Reset this setting"));
+            resetBtn->hide();
+            resetLayout->addWidget(resetBtn, 0,
+                                   item->widget == WidgetKind::FilterList ? Qt::AlignTop
+                                                                          : Qt::AlignVCenter);
+            resetLayout->addStretch(1);
+            m_resetButtons.insert(item, resetBtn);
+            connect(resetBtn, &QToolButton::clicked, this,
+                    [this, item, resetBtn] { showResetMenu(item, resetBtn); });
+
             if (item->widget != WidgetKind::CheckBox && item->widget != WidgetKind::FilterList) {
-                // 标签与控件同行；QFormLayout 保证各标签列左对齐到最宽标签
-                form->addRow(new QLabel(tr(item->label)), control);
+                // 标签行：[行首槽][QLabel][stretch] 作标签列，控件列照旧——槽宽固定，
+                // 各页标签仍经 QFormLayout 对齐到最宽标签
+                auto *labelCell = new QWidget(page);
+                auto *cellLayout = new QHBoxLayout(labelCell);
+                cellLayout->setContentsMargins(0, 0, 0, 0);
+                cellLayout->addWidget(resetCell);
+                cellLayout->addWidget(new QLabel(tr(item->label)), 0, Qt::AlignVCenter);
+                cellLayout->addStretch(1);
+                form->addRow(labelCell, control);
             } else {
-                // 标签并入复选框 / 分组框标题，独占整行
-                form->addRow(control);
+                // 标签并入复选框 / 分组框标题：整行容器 [行首槽][控件]；FilterList
+                // 按钮顶对齐分组框标题行（resetCell 内已按项设对齐）
+                auto *row = new QWidget(page);
+                auto *rowLayout = new QHBoxLayout(row);
+                rowLayout->setContentsMargins(0, 0, 0, 0);
+                rowLayout->addWidget(resetCell, 0, Qt::AlignTop);
+                rowLayout->addWidget(control, 1);
+                form->addRow(row);
             }
 
             // 可选备注行：灰色小字（取 Disabled 文本色，随主题自适应），空则不占位；
@@ -935,7 +1156,15 @@ void SettingsDialog::buildUi() {
                 QFont nf = note->font();
                 nf.setPointSize(qMax(nf.pointSize() - 1, 1));
                 note->setFont(nf);
-                form->addRow(note);
+                // 备注行按行首槽宽缩进
+                auto *noteRow = new QWidget(page);
+                auto *noteLayout = new QHBoxLayout(noteRow);
+                noteLayout->setContentsMargins(0, 0, 0, 0);
+                auto *noteSpacer = new QWidget(noteRow);
+                noteSpacer->setFixedWidth(resetGutter);
+                noteLayout->addWidget(noteSpacer);
+                noteLayout->addWidget(note, 1);
+                form->addRow(noteRow);
             }
 
             m_pending.insert(item, {}); // 先占位，回填时覆写
@@ -955,6 +1184,14 @@ void SettingsDialog::buildUi() {
     connect(m_categoryList, &QListWidget::currentRowChanged, m_pageStack,
             &QStackedWidget::setCurrentIndex);
     m_categoryList->setCurrentRow(0);
+
+    // 分类列表宽度一次预留：按最宽条目把宽度钉死（最小 = 最大）。只给 minimumWidth
+    // 时布局取 max(minimumWidth, min(sizeHint, maximumWidth))，而 QListView::sizeHint
+    // 是按条目尺寸放大的启发值（上限约 360），内容度量挤不进去、面板恒被上限钉宽
+    const int frame = 2 * m_categoryList->frameWidth();
+    m_categoryList->setFixedWidth(qMin(m_categoryList->sizeHintForColumn(0) + frame + 4, 320));
+
+    retintResetIcons();
 }
 
 void SettingsDialog::fillItemFromBackend(const SettingItem *item) {
@@ -1118,6 +1355,7 @@ void SettingsDialog::fillItemFromBackend(const SettingItem *item) {
         }
         }
     }
+    m_fillValue[item] = m_pending[item];
 }
 
 void SettingsDialog::applyFallback(const SettingItem *item) {
@@ -1150,6 +1388,9 @@ void SettingsDialog::applyFallback(const SettingItem *item) {
         break;
     }
     m_pending[item] = readControlValue(w);
+    // 禁用不变式：三值同落 fallback，dirty 与按钮可见性判据对禁用项恒为净
+    m_fillValue[item] = m_pending[item];
+    m_appliedSnapshot[item] = m_pending[item];
 }
 
 void SettingsDialog::applyToControls() {
@@ -1200,10 +1441,12 @@ void SettingsDialog::refreshDependents(const QString &masterId) {
                 fillItemFromBackend(&item);
             } else {
                 // 禁用 + 复位 fallback + 丢弃该项未应用的修改；
-                // 由此维持不变式"禁用项 pending == fallback == snapshot"
+                // 由此维持不变式"禁用项 pending == fallback == 快照 == fill"
                 applyFallback(&item);
             }
         }
+    // 联动改写了依赖项的 fill / 快照，整表重建一次（兜底取 fill，不吸收未提交编辑）
+    rebuildSnapshot();
     m_blockApply = false;
 }
 
@@ -1237,22 +1480,285 @@ void SettingsDialog::onControlChanged(const SettingItem *item) {
     // 联动：主控 CheckBox 切换 → 刷新依赖项可用性与取值
     if (item->widget == WidgetKind::CheckBox && !item->id.isEmpty())
         refreshDependents(item->id);
-    updateApplyButtonState();
+    refreshDerivedState();
 }
 
-void SettingsDialog::updateApplyButtonState() {
-    // dirty：任一控件值与快照不同
-    bool anyDirty = false;
-    for (auto it = m_pending.cbegin(); it != m_pending.cend(); ++it) {
-        const auto snapIt = m_appliedSnapshot.find(it.key());
-        if (snapIt == m_appliedSnapshot.end() || snapIt.value() != it.value()) {
-            anyDirty = true;
-            break;
+void SettingsDialog::refreshDerivedState() {
+    // 三者不全等（pending != 快照 || fill != 快照）任一项成立即未提交；Apply 启用、
+    // 行内重置按钮可见性、分类标记与 tooltip 共用这一次重算
+    bool anyUncommitted = false;
+    int categoryIndex = 0;
+    for (const auto &cat : settingCatalog()) {
+        bool categoryMarked = false;
+        for (const auto &item : cat.items) {
+            QWidget *w = m_controls.value(&item);
+            const QVariant snap = m_appliedSnapshot.value(&item);
+            const bool uncommitted =
+                m_pending.value(&item) != snap || m_fillValue.value(&item) != snap;
+            if (uncommitted) {
+                anyUncommitted = true;
+                categoryMarked = true;
+            }
+            // 按钮只在未提交且控件启用时进 Tab 链；禁用依赖项永不显示
+            if (auto *btn = m_resetButtons.value(&item))
+                btn->setVisible(uncommitted && w && w->isEnabled());
         }
+        if (QListWidgetItem *catItem = m_categoryList->item(categoryIndex)) {
+            catItem->setData(kCategoryMarkRole, categoryMarked);
+            catItem->setToolTip(categoryMarked ? tr("This category has uncommitted changes")
+                                               : QString());
+        }
+        ++categoryIndex;
     }
-    m_dirty = anyDirty;
+    m_categoryList->viewport()->update();
+    m_dirty = anyUncommitted;
     if (m_buttonBox && m_buttonBox->button(QDialogButtonBox::Apply))
         m_buttonBox->button(QDialogButtonBox::Apply)->setEnabled(m_dirty);
+}
+
+void SettingsDialog::applyResetChoice(const SettingItem *item, const QVariant &target) {
+    QWidget *w = m_controls.value(item);
+    if (!w)
+        return;
+    // 只改控件值：setEntries 不发 changed，m_blockApply 仍作双保险
+    m_blockApply = true;
+    writeControlValue(item, target);
+    m_pending[item] = readControlValue(w);
+    m_blockApply = false;
+    refreshDerivedState();
+}
+
+void SettingsDialog::showResetMenu(const SettingItem *item, QToolButton *button) {
+    QMenu menu(this);
+    QAction *resetAction = menu.addAction(tr("Reset to Default"));
+    QAction *discardAction = menu.addAction(tr("Discard Changes"));
+    connect(resetAction, &QAction::triggered, this,
+            [this, item] { applyResetChoice(item, defaultControlValue(item)); });
+    connect(discardAction, &QAction::triggered, this, [this, item] {
+        applyResetChoice(item, m_appliedSnapshot.value(item)); // 控件 ← 快照（2.8）
+    });
+    menu.exec(button->mapToGlobal(QPoint(0, button->height())));
+}
+
+void SettingsDialog::retintResetIcons() {
+    const QColor tint = palette().color(QPalette::WindowText);
+    const QIcon icon = Ui::themedIcon(App::iconPath(App::iconReset()), tint);
+    for (auto *btn : m_resetButtons)
+        btn->setIcon(icon);
+}
+
+void SettingsDialog::changeEvent(QEvent *event) {
+    QDialog::changeEvent(event);
+    // 主题 / 样式切换当场重染（全仓无运行期改字体处，槽宽不重算）
+    if (event->type() == QEvent::PaletteChange || event->type() == QEvent::StyleChange)
+        retintResetIcons();
+}
+
+std::optional<QVariant> SettingsDialog::savedControlValue(const SettingItem *item) const {
+    if (item->mpvKeys.isEmpty() || !m_confCache)
+        return std::nullopt; // ini 项 / conf 不可用 → 无保存值
+    for (const QString &k : item->mpvKeys) {
+        if (!m_confCache->globalKeys().contains(k))
+            return std::nullopt; // 任一管辖 key 缺失 → 无保存值（复合项缺一同样处理）
+    }
+    QMap<QString, QString> authored;
+    for (const QString &k : item->mpvKeys)
+        authored.insert(k, m_confCache->getGlobal(k));
+    if (auto v = controlValueFromAuthoredKeys(item, authored))
+        return v;
+    return fallbackControlValue(item); // 两态未命中 / SpinBox 不可解析 → 目录兜底
+}
+
+QVariant SettingsDialog::fallbackControlValue(const SettingItem *item) const {
+    QWidget *w = m_controls.value(item);
+    switch (item->widget) {
+    case WidgetKind::Combo: {
+        // findData(fallback)，miss 落第 0 项 data——与 applyFallback 同型
+        auto *combo = static_cast<QComboBox *>(w);
+        const int idx = combo->findData(item->fallback);
+        const int hit = idx >= 0 ? idx : 0;
+        const QVariant d = combo->itemData(hit);
+        return d.isValid() ? d : QVariant(combo->itemText(hit));
+    }
+    case WidgetKind::EditableCombo:
+    case WidgetKind::LineEdit:
+        return item->fallback.toString();
+    case WidgetKind::SpinBox:
+        return qBound(item->range.min, item->fallback.toInt(), item->range.max);
+    case WidgetKind::CheckBox:
+        return item->fallback.toBool();
+    case WidgetKind::FilterList:
+        return QStringLiteral(""); // 空串 = 无滤镜
+    }
+    return {};
+}
+
+QVariant SettingsDialog::defaultControlValue(const SettingItem *item) {
+    if (auto it = m_defaultCache.constFind(item); it != m_defaultCache.cend())
+        return it.value();
+    QVariant result;
+    if (!item->iniKey.isEmpty()) {
+        result = fallbackControlValue(item); // ini 默认 = 目录 fallback
+        m_defaultAssignments[item] = {};
+    } else {
+        QMap<QString, QString> defaultsRaw;
+        bool allOk = true;
+        for (const QString &k : item->mpvKeys) {
+            if (auto v = m_controller->optionDefaultValue(k))
+                defaultsRaw.insert(k, *v);
+            else {
+                allOk = false; // 任一 key 不可用 → 整项回落目录 fallback
+                break;
+            }
+        }
+        // Flag 默认串形态非 yes/no 时与读回侧（propertyFlag 规范化）永不相等，写盘期
+        // 删键会静默失效：按不可用处理，整项回落目录 fallback
+        if (allOk && item->mpvType == MpvType::Flag) {
+            for (const QString &v : std::as_const(defaultsRaw)) {
+                if (v == QLatin1String("yes") || v == QLatin1String("no"))
+                    continue;
+                OXBOW_LOG_WARNING().noquote()
+                    << QStringLiteral("SettingsDialog: option-info default '%1' for [%2] is not "
+                                      "yes/no; falling back to catalog default")
+                           .arg(v, item->mpvKeys.join(QStringLiteral(", ")));
+                allOk = false;
+                break;
+            }
+        }
+        if (auto mapped = allOk ? controlValueFromAuthoredKeys(item, defaultsRaw) : std::nullopt) {
+            result = *mapped;
+            QMap<QString, QString> canon;
+            for (auto a = defaultsRaw.cbegin(); a != defaultsRaw.cend(); ++a)
+                canon.insert(a.key(), canonicalAuthoredMpvValue(item->mpvType, a.value()));
+            m_defaultAssignments[item] = canon;
+        } else {
+            // option-info 不可用或映射不了 → 回落 fallback；比较源取 fallback 命中
+            // 选项的逐 key 赋值（写盘期删除判定共用）
+            result = fallbackControlValue(item);
+            m_defaultAssignments[item] = mpvAssignmentsForValue(item, result);
+        }
+    }
+    m_defaultCache.insert(item, result);
+    return result;
+}
+
+QMap<QString, QString> SettingsDialog::mpvAssignmentsForValue(const SettingItem *item,
+                                                              const QVariant &value) const {
+    if (item->widget == WidgetKind::Combo) {
+        const auto choices = item->choices ? item->choices() : QList<SettingChoice>{};
+        for (const auto &c : choices) {
+            if (c.value == value)
+                return c.mpvAssignments; // 占位 → 空（调用方整项跳过）
+        }
+        return {};
+    }
+    if (item->widget == WidgetKind::CheckBox && item->choices) {
+        const auto choices = item->choices();
+        for (const auto &c : choices) {
+            if (c.value.toBool() == value.toBool())
+                return c.mpvAssignments;
+        }
+        return {};
+    }
+    // 标量（EditableCombo / SpinBox / 无 choices 的 CheckBox / LineEdit / FilterList）：
+    // 单 key authored 串（FilterList 的 pending 即编译串）
+    if (item->mpvKeys.isEmpty())
+        return {};
+    const QString k = item->mpvKeys[0];
+    switch (item->mpvType) {
+    case MpvType::Flag:
+        return {{k, value.toBool() ? QStringLiteral("yes") : QStringLiteral("no")}};
+    case MpvType::Int:
+        return {{k, QString::number(value.toInt())}};
+    case MpvType::Double:
+        return {{k, QString::number(value.toDouble(), 'g', 15)}};
+    case MpvType::String:
+        return {{k, value.toString()}};
+    }
+    return {};
+}
+
+bool SettingsDialog::dispatchMpvAssignments(const SettingItem *item,
+                                            const QMap<QString, QString> &assignments,
+                                            QStringList &failedKeys) {
+    bool ok = true;
+    for (auto a = assignments.cbegin(); a != assignments.cend(); ++a) {
+        if (!setTypedMpvProperty(m_controller, a.key(), item->mpvType, a.value())) {
+            failedKeys << a.key();
+            ok = false;
+        }
+    }
+    return ok;
+}
+
+QMap<QString, QString> SettingsDialog::runtimeMpvAssignments(const SettingItem *item) const {
+    // 任一 key 读取失败 → 空 map（调用方退回 pending assignments）；合法空值不与失败混同
+    QMap<QString, QString> result;
+    if (item->widget == WidgetKind::FilterList) {
+        auto entries = m_controller->filterEntriesChecked(item->mpvKeys[0]);
+        if (!entries)
+            return {};
+        result.insert(item->mpvKeys[0], FilterListWidget::compileEntries(*entries));
+        return result;
+    }
+    for (const QString &k : item->mpvKeys) {
+        QString v;
+        if (!readCanonicalMpvValue(m_controller, k, item->mpvType, v))
+            return {};
+        result.insert(k, v);
+    }
+    return result;
+}
+
+void SettingsDialog::writeControlValue(const SettingItem *item, const QVariant &value) {
+    QWidget *w = m_controls.value(item);
+    if (!w)
+        return;
+    switch (item->widget) {
+    case WidgetKind::Combo: {
+        auto *combo = static_cast<QComboBox *>(w);
+        const int idx = combo->findData(value);
+        combo->setCurrentIndex(idx >= 0 ? idx : 0);
+        break;
+    }
+    case WidgetKind::EditableCombo:
+        static_cast<QComboBox *>(w)->setCurrentText(value.toString());
+        break;
+    case WidgetKind::LineEdit:
+        static_cast<QLineEdit *>(w)->setText(value.toString());
+        break;
+    case WidgetKind::SpinBox:
+        static_cast<QSpinBox *>(w)->setValue(value.toInt()); // setValue 自动钳制
+        break;
+    case WidgetKind::CheckBox:
+        static_cast<QCheckBox *>(w)->setChecked(value.toBool());
+        break;
+    case WidgetKind::FilterList: {
+        const QString s = value.toString();
+        static_cast<FilterListWidget *>(w)->setEntries(
+            s.isEmpty() ? QList<FilterEntry>{} : FilterListWidget::parseString(s));
+        break;
+    }
+    }
+}
+
+void SettingsDialog::rebuildSnapshot() {
+    for (const auto &cat : settingCatalog()) {
+        for (const auto &item : cat.items) {
+            QWidget *w = m_controls.value(&item);
+            QVariant snapshot;
+            if (!item.iniKey.isEmpty()) {
+                snapshot = m_fillValue.value(&item); // ini：无运行期对应，快照即回填值
+            } else if (!w || !w->isEnabled()) {
+                snapshot =
+                    m_fillValue.value(&item); // 禁用不变式：pending == fallback == 快照 == fill
+            } else {
+                // mpv：conf 保存值优先；缺键 / conf 不可用落回填值
+                snapshot = savedControlValue(&item).value_or(m_fillValue.value(&item));
+            }
+            m_appliedSnapshot[&item] = snapshot;
+        }
+    }
 }
 
 bool SettingsDialog::applyAll() {
@@ -1261,107 +1767,68 @@ bool SettingsDialog::applyAll() {
     // N92：仅运行期——mpv 侧改动没进 conf 缓存（m_confCache 无值：配置目录不可用，或
     // mpv.conf 打不开），本轮发生过这类改动即置位，Apply 尾部如实告知不落盘
     bool mpvRuntimeOnly = false;
-    QStringList changedIniKeys; // N35：本轮实际写入的 ini 键（应用成功后随信号发出）
+    QStringList changedIniKeys; // N35：本轮实际写入 / 删除的 ini 键（应用成功后随信号发出）
     QStringList failedMpvKeys;  // N42：String 下发失败的 key（合并为一条提示）
     for (auto it = m_pending.begin(); it != m_pending.end(); ++it) {
         const SettingItem *item = it.key();
         if (!item)
             continue;
-        const QVariant &val = it.value();
-        // 禁用中的依赖项无条件跳过（防御性；正常禁用项 pending==fallback==
-        // snapshot，不产生 dirty）
+        // 禁用中的依赖项无条件跳过（不变式三值同落 fallback，恒净）
         QWidget *w = m_controls.value(item);
         if (!w || !w->isEnabled())
             continue;
-        // 与快照比对：未变则跳过下发与写盘
-        const auto snapIt = m_appliedSnapshot.find(item);
-        if (snapIt != m_appliedSnapshot.end() && snapIt.value() == val)
+        // 三者全等才跳过：pending == 快照但 fill != 快照（运行期分歧待收口）不跳过——
+        // 菜单临时态固化与 Discard 恢复运行期都走这条通道
+        const QVariant snap = m_appliedSnapshot.value(item);
+        if (it.value() == snap && m_fillValue.value(item) == snap)
             continue;
 
         if (!item->iniKey.isEmpty()) {
-            // === 插件本体选项：写 oxbow.ini ===
+            // === 插件本体选项：待写值等于默认 → 删键（读侧按缺键回落常量默认），
+            // 不等 → 照常写 pending；删除键同样计入变更集合 ===
             QSettings s(m_pluginIniPath, QSettings::IniFormat);
-            s.setValue(item->iniKey, val);
+            if (it.value() == defaultControlValue(item))
+                s.remove(item->iniKey);
+            else
+                s.setValue(item->iniKey, it.value());
             changedIniKeys << item->iniKey;
-        } else if (!item->mpvKeys.isEmpty() && item->widget == WidgetKind::Combo) {
-            // === mpv 枚举项：按 value 反查选项；占位（assignments 空）不下发不写 conf ===
-            const auto choices = item->choices ? item->choices() : QList<SettingChoice>{};
-            const SettingChoice *hit = nullptr;
-            for (const auto &c : choices) {
-                if (c.value == val) {
-                    hit = &c;
-                    break;
-                }
-            }
-            if (!hit || hit->mpvAssignments.isEmpty())
-                continue;
-            for (auto a = hit->mpvAssignments.cbegin(); a != hit->mpvAssignments.cend(); ++a) {
-                // 下发按 mpvType 走 typed set；conf 写保留 authored 字符串
-                // （mpv.conf 本就是文本格式）
-                setTypedMpvProperty(m_controller, a.key(), item->mpvType, a.value());
-                if (m_confCache) {
-                    m_confCache->setGlobal(a.key(), a.value());
-                    mpvConfDirty = true;
-                } else {
-                    mpvRuntimeOnly = true;
-                }
-            }
-        } else if (!item->mpvKeys.isEmpty() && item->widget == WidgetKind::CheckBox &&
-                   item->choices) {
-            // === mpv CheckBox 两态映射（N33 §2.1）：勾选态反查选项，写其赋值全集；
-            // 字符串下发（flag 属性由 mpv 自行解析文本），conf 写 authored 字符串 ===
-            const bool on = val.toBool();
-            const auto choices = item->choices();
-            for (const auto &c : choices) {
-                if (c.value.toBool() != on)
-                    continue;
-                for (auto a = c.mpvAssignments.cbegin(); a != c.mpvAssignments.cend(); ++a) {
-                    m_controller->setProperty(a.key(), a.value());
-                    if (m_confCache) {
-                        m_confCache->setGlobal(a.key(), a.value());
-                        mpvConfDirty = true;
-                    } else {
-                        mpvRuntimeOnly = true;
-                    }
-                }
-                break;
-            }
         } else if (!item->mpvKeys.isEmpty()) {
-            // === mpv 标量项（EditableCombo/SpinBox/无 choices 的 CheckBox/LineEdit）：
-            // 按 mpvType 走 typed set 下发；conf 写用字符串形式（mpv.conf 本就是文本格式） ===
-            const QString k = item->mpvKeys[0];
-            QString confValue;
-            bool setOk = true;
-            switch (item->mpvType) {
-            case MpvType::Flag:
-                confValue = val.toBool() ? QStringLiteral("yes") : QStringLiteral("no");
-                m_controller->setProperty(k, val.toBool());
-                break;
-            case MpvType::Int:
-                confValue = QString::number(val.toInt());
-                m_controller->setProperty(k, val.toInt());
-                break;
-            case MpvType::Double:
-                confValue = QString::number(val.toDouble(), 'g', 15);
-                m_controller->setProperty(k, val.toDouble());
-                break;
-            case MpvType::String:
-                confValue = val.toString();
-                setOk = m_controller->setProperty(k, confValue);
-                break;
-            }
-            // N42：String 下发失败按项级跳过——不写该项 conf（避免污染持久配置），
-            // key 记入合并提示；其余项照常，ok 仍以 conf 提交结果为准；N41 重读
-            // 随后把失败项控件拉回后端真值（重读后 pending == 快照，无假 dirty）
-            if (!setOk) {
-                failedMpvKeys << k;
+            // === mpv 选项：pending 反查逐 key 赋值（占位整项跳过，不干涉用户意图）→
+            // typed set 下发 → 逐 key 回读 → 写盘期默认值删除判定（2.9） ===
+            const QMap<QString, QString> assignments = mpvAssignmentsForValue(item, it.value());
+            if (assignments.isEmpty())
                 continue;
+            QStringList failedKeys;
+            if (!dispatchMpvAssignments(item, assignments, failedKeys)) {
+                failedMpvKeys << failedKeys;
+                continue; // 下发失败：不写 conf / 不删键（避免持久与运行期不一致）
             }
-            if (m_confCache) {
-                m_confCache->setGlobal(k, confValue);
-                mpvConfDirty = true;
-            } else {
-                mpvRuntimeOnly = true;
+            // 回读：以 mpv 实际生效值为写盘源——归一化后的表示与 conf 一致，重开不假脏
+            QMap<QString, QString> confValues = runtimeMpvAssignments(item);
+            if (confValues.isEmpty()) {
+                // 回读失败退回 pending 的 authored 串（赋值本身即规范形）并记日志；
+                // 不得把"读取失败"当成空串清空滤镜链
+                OXBOW_LOG_WARNING().noquote()
+                    << QStringLiteral("SettingsDialog: mpv readback failed for %1; writing "
+                                      "authored values")
+                           .arg(item->mpvKeys.join(QStringLiteral(", ")));
+                confValues = assignments;
+            }
+            defaultControlValue(item); // 确保逐 key 默认串缓存就绪（含回落路径）
+            const QMap<QString, QString> defaults = m_defaultAssignments.value(item);
+            for (const QString &k : item->mpvKeys) {
+                if (!m_confCache) {
+                    mpvRuntimeOnly = true;
+                    continue;
+                }
+                // 等默认 → 删键（全部出现；conf 缺键自然无操作、不新建行）；
+                // 不等 → 回读写盘，setGlobal 同值短路：现值相同不置脏、免空 commit
+                if (confValues.value(k) == defaults.value(k)) {
+                    if (m_confCache->removeGlobal(k))
+                        mpvConfDirty = true;
+                } else if (m_confCache->setGlobal(k, confValues.value(k))) {
+                    mpvConfDirty = true;
+                }
             }
         }
     }
@@ -1379,25 +1846,17 @@ bool SettingsDialog::applyAll() {
                                  tr("The mpv configuration directory is not writable, so these "
                                     "changes apply to this session only and are not saved."));
     }
-    // 应用完成：更新快照为当前已应用值；Apply 按钮随之禁用
+    // 应用完成：N41 重读回填后按后端实际状态重建快照并刷新派生态——重读后 pending
+    // 与快照恒等（mpv 项快照 = 回读归一后的保存值），不会出现"重读后立刻可应用"的抖动
     if (ok) {
-        m_appliedSnapshot = m_pending;
-        m_dirty = false;
-        if (m_buttonBox && m_buttonBox->button(QDialogButtonBox::Apply))
-            m_buttonBox->button(QDialogButtonBox::Apply)->setEnabled(false);
         // N35：携本轮实际写入的 ini 键集合通知视图层（注册表重装配的触发源）；
-        // 接收方按键过滤，无关 ini 变更零成本
+        // 接收方按键过滤，无关 ini 变更零成本。放在重读之前：接收方若也动了 INI，
+        // 重读正好一并收进来
         if (!changedIniKeys.isEmpty())
             emit pluginIniKeysChanged(changedIniKeys);
-
-        // N41：Apply 成功后立即重读回填，显示后端实际状态（mpv 归一化 / 下发
-        // 失败 / INI 写盘失败均如实呈现）。放在 ini 键变更信号之后：接收方若
-        // 也动了 INI，重读正好一并收进来。重读复用完整回填路径（内部自带
-        // m_blockApply 守卫），随后以重读结果重建已应用快照并刷新按钮状态——
-        // 重读后 pending 与快照恒等，不会出现"重读后立刻可应用"的抖动
         applyToControls();
-        m_appliedSnapshot = m_pending;
-        updateApplyButtonState();
+        rebuildSnapshot();
+        refreshDerivedState();
     }
     return ok;
 }

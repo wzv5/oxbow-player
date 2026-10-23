@@ -1496,8 +1496,9 @@ void MainWindow::applyAppearanceFromIni() {
     if (m_configFile.isEmpty())
         return;
     QSettings settings(m_configFile, QSettings::IniFormat);
-    m_appearance->apply(settings.value(QStringLiteral("style")).toString(),
-                        settings.value(QStringLiteral("colorScheme")).toString());
+    m_appearance->apply(
+        settings.value(QStringLiteral("style"), App::interfaceStyleDefault()).toString(),
+        settings.value(QStringLiteral("colorScheme"), App::colorSchemeDefault()).toString());
 }
 
 // N56：设置对话框 ini 键变更入口（自 PlaylistWidget 上移）——命中相关键时重读
@@ -1518,18 +1519,21 @@ void MainWindow::onPluginIniKeysChanged(const QStringList &keys) {
         if (keys.contains(QStringLiteral("volumeWheelStep")) ||
             keys.contains(QStringLiteral("volumeKeyStep"))) {
             m_volumeWheelStep =
-                settings.value(QStringLiteral("volumeWheelStep"), m_volumeWheelStep).toInt();
+                settings.value(QStringLiteral("volumeWheelStep"), App::volumeWheelStepDefault())
+                    .toInt();
             m_volumeKeyStep =
-                settings.value(QStringLiteral("volumeKeyStep"), m_volumeKeyStep).toInt();
+                settings.value(QStringLiteral("volumeKeyStep"), App::volumeKeyStepDefault())
+                    .toInt();
         }
         // N108：曲线开关——信号只带确有变化的键，仍先读值比对（读不到即保持当前态，
         // 零副作用）；套用后重算量程（越界由 setRange 钳制，那一格经 applyVolume 播报
         // 钳后值），再以钳后的当前显示值按新曲线直发（不经 applyVolume——曲线开关自身
         // 不播 OSD、不弹提示）
         if (keys.contains(QStringLiteral("quadraticVolumeCurve"))) {
-            const bool on =
-                settings.value(QStringLiteral("quadraticVolumeCurve"), m_quadraticVolumeCurve)
-                    .toBool();
+            const bool on = settings
+                                .value(QStringLiteral("quadraticVolumeCurve"),
+                                       App::quadraticVolumeCurveDefault())
+                                .toBool();
             if (on != m_quadraticVolumeCurve) {
                 m_quadraticVolumeCurve = on;
                 updateVolumeSliderRange();
@@ -1540,7 +1544,8 @@ void MainWindow::onPluginIniKeysChanged(const QStringList &keys) {
         // 开：下一次悬停即生效，无须重启。开关不参与主播放路径的任何判断
         if (keys.contains(QStringLiteral("hoverThumbnail"))) {
             const bool on =
-                settings.value(QStringLiteral("hoverThumbnail"), m_hoverThumbnailEnabled).toBool();
+                settings.value(QStringLiteral("hoverThumbnail"), App::hoverThumbnailDefault())
+                    .toBool();
             if (on != m_hoverThumbnailEnabled) {
                 m_hoverThumbnailEnabled = on;
                 m_thumbWatch->setEnabled(on);
@@ -1550,7 +1555,7 @@ void MainWindow::onPluginIniKeysChanged(const QStringList &keys) {
         // 形态的清除由控制器自管，立即生效、无须重启
         if (keys.contains(QStringLiteral("osdMode"))) {
             m_osd->setMode(OsdController::modeFromIniValue(
-                settings.value(QStringLiteral("osdMode"), QStringLiteral("overlay")).toString()));
+                settings.value(QStringLiteral("osdMode"), App::osdModeDefault()).toString()));
         }
         // N115：样式 / 配色即时生效（与启动期同一 helper；分支不设门禁——低版本
         // 触发后配色步不在编，无副作用）
@@ -4165,19 +4170,23 @@ void MainWindow::restoreSettings() {
     // 插件 INI 不再读写这三项；启动期经 MpvController::volumeMaxChanged 推送
     // 经 applyVolumeMax 同步滑条量程（见 connectController）。
 
-    // 音量步长（插件本体选项）
+    // 音量步长（插件本体选项，缺键回落常量默认）
     m_volumeWheelStep =
-        settings.value(QStringLiteral("volumeWheelStep"), m_volumeWheelStep).toInt();
-    m_volumeKeyStep = settings.value(QStringLiteral("volumeKeyStep"), m_volumeKeyStep).toInt();
+        settings.value(QStringLiteral("volumeWheelStep"), App::volumeWheelStepDefault()).toInt();
+    m_volumeKeyStep =
+        settings.value(QStringLiteral("volumeKeyStep"), App::volumeKeyStepDefault()).toInt();
 
     // N108：曲线开关先于音量块——恢复钳制与量程都须按曲线取等价百分比；缺键 false。
     // 此刻 m_volumeMax 尚为构造默认 130（volume-max 推送晚于恢复），推送到达后
     // 经 updateVolumeSliderRange 按同一曲线重算，自然对齐
-    m_quadraticVolumeCurve = settings.value(QStringLiteral("quadraticVolumeCurve"), false).toBool();
+    m_quadraticVolumeCurve =
+        settings.value(QStringLiteral("quadraticVolumeCurve"), App::quadraticVolumeCurveDefault())
+            .toBool();
     updateVolumeSliderRange();
     // N107：悬停缩略图开关（缺键开）；读法与音量族同形（先于任何装配动作——
     // 会话机已在构造期装配，此处置位即生效）
-    m_hoverThumbnailEnabled = settings.value(QStringLiteral("hoverThumbnail"), true).toBool();
+    m_hoverThumbnailEnabled =
+        settings.value(QStringLiteral("hoverThumbnail"), App::hoverThumbnailDefault()).toBool();
     m_thumbWatch->setEnabled(m_hoverThumbnailEnabled);
     if (settings.contains(QStringLiteral("volume"))) {
         // N108：INI 的 volume 键含义恒为"滑条显示值"——钳到当前量程（滑条上界，即
@@ -4226,9 +4235,9 @@ void MainWindow::restoreSettings() {
             m_playlist->requestTab(idx); // 空闲时逐字等价于 setCurrentIndex，忙时自动排队
     }
 
-    // N113：OSD 形态（缺键默认 overlay；非法值经 modeFromIniValue 落缺省形态）
+    // N113：OSD 形态（缺键回落常量默认；非法值经 modeFromIniValue 落缺省形态）
     m_osd->setMode(OsdController::modeFromIniValue(
-        settings.value(QStringLiteral("osdMode"), QStringLiteral("overlay")).toString()));
+        settings.value(QStringLiteral("osdMode"), App::osdModeDefault()).toString()));
 
     updateNavigationActions(); // A16：启动恢复完成后的初始启停状态
 }

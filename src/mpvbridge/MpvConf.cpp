@@ -117,23 +117,26 @@ QStringList MpvConf::keys(const QString &section) const {
     return result;
 }
 
-void MpvConf::setGlobal(const QString &key, const QString &value) {
-    applyChange(QString(), key, value, false);
+bool MpvConf::setGlobal(const QString &key, const QString &value) {
+    return applyChange(QString(), key, value, false);
 }
 
 void MpvConf::set(const QString &section, const QString &key, const QString &value) {
     applyChange(section, key, value, false);
 }
 
-void MpvConf::removeGlobal(const QString &key) { applyChange(QString(), key, QString(), true); }
+bool MpvConf::removeGlobal(const QString &key) {
+    return applyChange(QString(), key, QString(), true);
+}
 
 void MpvConf::remove(const QString &section, const QString &key) {
     applyChange(section, key, QString(), true);
 }
 
-void MpvConf::applyChange(const QString &section, const QString &key, const QString &value,
+bool MpvConf::applyChange(const QString &section, const QString &key, const QString &value,
                           bool isRemove) {
     bool changed = false;
+    bool found = false; // set 语义下区分"键不存在（须追加）"与"键存在但同值（不动）"
     for (int i = 0; i < m_lines.size(); ++i) {
         auto &line = m_lines[i];
         if (line.kind != MpvConfLine::Kind::KeyValue)
@@ -141,15 +144,21 @@ void MpvConf::applyChange(const QString &section, const QString &key, const QStr
         if (line.key != key || line.section != section)
             continue;
         if (isRemove) {
+            // 重复顶层 key 全部删除（不 break）
             m_lines.removeAt(i);
             --i;
+            changed = true;
         } else {
-            line.value = value;
+            found = true;
+            // 同值短路：现值与待写值相同则不记变更（调用方据此免空 commit）
+            if (line.value != value) {
+                line.value = value;
+                changed = true;
+            }
+            break; // set 仅落首条（既有语义）
         }
-        changed = true;
-        break; // 仅首个
     }
-    if (!changed && !isRemove) {
+    if (!found && !isRemove) {
         MpvConfLine kv;
         kv.kind = MpvConfLine::Kind::KeyValue;
         kv.section = section;
@@ -183,7 +192,9 @@ void MpvConf::applyChange(const QString &section, const QString &key, const QStr
                 m_lines.append(kv);
             }
         }
+        changed = true;
     }
+    return changed;
 }
 
 bool MpvConf::commit() {

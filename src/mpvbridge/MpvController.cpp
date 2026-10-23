@@ -184,8 +184,9 @@ QList<MpvController::ChapterInfo> parseChapterList(const mpv_node *node) {
 
 // N42：af / vf node 链表 → 条目列表。结构化读彻底绕开转义串解析（F4）；
 // text 序列化：[@label:] + name [+ "=" 参数串]——位置参数（键 @n）按 n 升序
-// 置于最前、命名参数随后按 key 排序（QMap 有序，F13），值经引号选择
-// （[...] 配平优先、不配平回退 %n%，FilterListWidget::quoteParamValue）
+// 置于最前、命名参数按 node 顺序原样输出（按字母序重排会让写出的 conf 与运行期
+// 读回串永久不合），值经引号选择（[...] 配平优先、不配平回退 %n%，
+// FilterListWidget::quoteParamValue）
 QList<FilterEntry> parseFilterNode(const mpv_node *node) {
     QList<FilterEntry> result;
     if (!node || node->format != MPV_FORMAT_NODE_ARRAY)
@@ -198,7 +199,7 @@ QList<FilterEntry> parseFilterNode(const mpv_node *node) {
         QString name;
         QString label;
         QList<QPair<int, QString>> positional; // 后缀 n → 值（键 "@0"/"@1"/...）
-        QMap<QString, QString> named;
+        QList<QPair<QString, QString>> named;  // 按 node 顺序保序
         bool enabled = true;
         mpv_node_list *map = entry->u.list;
         for (int j = 0; j < map->num; ++j) {
@@ -223,7 +224,7 @@ QList<FilterEntry> parseFilterNode(const mpv_node *node) {
                         // max 加括号：规避 windows.h 的 min/max 宏污染
                         positional.append({ok ? n : (std::numeric_limits<int>::max)(), pv});
                     } else {
-                        named.insert(pk, pv);
+                        named.append({pk, pv});
                     }
                 }
             }
@@ -242,8 +243,8 @@ QList<FilterEntry> parseFilterNode(const mpv_node *node) {
             QStringList params;
             for (const auto &p : positional)
                 params.append(FilterListWidget::quoteParamValue(p.second));
-            for (auto it = named.cbegin(); it != named.cend(); ++it)
-                params.append(it.key() + u'=' + FilterListWidget::quoteParamValue(it.value()));
+            for (const auto &p : named)
+                params.append(p.first + u'=' + FilterListWidget::quoteParamValue(p.second));
             text += u'=';
             text += params.join(u':');
         }
@@ -977,12 +978,34 @@ QString MpvController::propertyString(const QString &name) const {
     return result;
 }
 
+std::optional<QString> MpvController::propertyStringOpt(const QString &name) const {
+    char *s = mpv_get_property_string(m_mpv, name.toUtf8().constData());
+    if (!s)
+        return std::nullopt; // 属性不可读（含 MPV_FORMAT_NONE）；与合法空串区分
+    QString result = QString::fromUtf8(s);
+    mpv_free(s);
+    return result;
+}
+
+std::optional<QString> MpvController::optionDefaultValue(const QString &name) const {
+    return propertyStringOpt(QStringLiteral("option-info/%1/default-value").arg(name));
+}
+
 QList<FilterEntry> MpvController::filterEntries(const QString &name) {
     QList<FilterEntry> result;
     mpv_node node;
     if (mpv_get_property(m_mpv, name.toUtf8().constData(), MPV_FORMAT_NODE, &node) != 0)
         return result; // 失败 / 不可读 → 空列表（调用方按空滤镜链呈现）
     result = parseFilterNode(&node);
+    mpv_free_node_contents(&node);
+    return result;
+}
+
+std::optional<QList<FilterEntry>> MpvController::filterEntriesChecked(const QString &name) {
+    mpv_node node;
+    if (mpv_get_property(m_mpv, name.toUtf8().constData(), MPV_FORMAT_NODE, &node) != 0)
+        return std::nullopt; // 失败 / 不可读；与合法空链区分
+    QList<FilterEntry> result = parseFilterNode(&node);
     mpv_free_node_contents(&node);
     return result;
 }
