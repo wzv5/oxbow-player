@@ -2,15 +2,15 @@
 
 **English** · [简体中文](README.zh-CN.md)
 
-> A desktop front end for mpv: mpv does the playback, this project provides the Qt interface.
+> A desktop front end for mpv, Qt interface, focused on improving the everyday experience.
 
 ## Introduction
 
-Oxbow is a desktop video player for Windows and Linux. The playback engine is [mpv](https://mpv.io/), the interface is built with Qt. It runs as an mpv C plugin — place the plugin folder in mpv's scripts directory, and from then on starting mpv gives you the player with its full interface.
+Oxbow is a desktop video player for Windows and Linux. The playback engine is [mpv](https://mpv.io/), the interface is built with Qt. It runs as an mpv C plugin, so place the plugin folder in mpv's scripts directory and from then on starting mpv gives you the player with its full interface; the plugin interface is stable, so Oxbow is not re-released for each mpv version and you can pair it with the latest mpv.
 
-Oxbow aims for **a lean, efficient and unobtrusive interface** — no overlay-style interface, since anything covering the frame is a distraction while watching.
+Oxbow focuses on improving everyday use, with an interface that is **lean, efficient and unobtrusive** — no overlay-style interface, since anything covering the frame is a distraction while watching.
 
-![Oxbow main window: settings dialog and the multi-tab playlist](docs/screenshot-en.png)
+![Oxbow main window: multi-tab playlists and playback controls](docs/screenshots/en/main-window.png)
 
 ## Features
 
@@ -32,14 +32,24 @@ Oxbow aims for **a lean, efficient and unobtrusive interface** — no overlay-st
 - **Volume curve**: the volume mapping can be switched to MPC-HC's quadratic curve instead of mpv's default cubic one, which raises the loudness at low volume levels.
 - **mpv key bindings editor**: view and edit `input.conf` visually.
 - **Screenshots**: copy to clipboard or save to file.
+- **Custom tools**: put frequently used mpv commands in the menu bar; mpv script menus are supported too.
+- **Taskbar progress and overlay icon** (Windows only): shows the current playback progress and state in the taskbar.
+
+## Interface screenshots
+
+|  |  |
+| --- | --- |
+| ![Navigator and seek-bar thumbnails](docs/screenshots/en/navigator-thumbnail.png) | ![Quick track switching](docs/screenshots/en/track-switch.png) |
+| ![Settings and playlist configuration](docs/screenshots/en/settings.png) | ![mpv key bindings editor](docs/screenshots/en/key-bindings.png) |
 
 ## mpv compatibility
 
-Oxbow runs as a plugin inside mpv and has to coexist with other plugins while keeping mpv's own operating conventions intact. It follows three rules:
+Oxbow runs as a plugin inside mpv and has to coexist with other plugins while keeping mpv's own operating conventions intact. It follows these rules:
 
 - **It steps aside instead of fighting for the output window.** On load it reads mpv's `wid` property first; if a window is already assigned — either by the user's `--wid` or because another plugin got there first — Oxbow exits before any initialization, so the two never end up covering each other's output.
 - **Keyboard events pass through.** Shortcuts Oxbow claims are handled by itself; every other key is handed back to mpv, so bindings in `input.conf` and mpv's default key map keep working.
 - **Mouse events do not pass through.** The mouse is handled entirely by Oxbow's interface and never forwarded to mpv, so mpv-side mouse bindings do not take effect.
+- **Script menus are supported.** It reads mpv's `menu-data` property and renders the context menu a script provides into the **Tools** menu.
 
 ## Installation
 
