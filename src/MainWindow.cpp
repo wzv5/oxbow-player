@@ -4639,7 +4639,7 @@ static void appendMenuSeparator(QMenu &menu) {
         menu.addSeparator();
 }
 
-// 键为 " > " 连接的规范化前缀路径；调用方按列表序推进，父菜单尾恰为首个命中
+// 键为 joinPath 拼出的规范化前缀路径；调用方按列表序推进，父菜单尾恰为首个命中
 // 条目的落位，同前缀后续条目经缓存并入
 static QMenu *ensureToolSubmenu(QMenu &menu, QHash<QString, QMenu *> &submenus,
                                 const QString &prefixKey, const QString &title) {
@@ -4663,10 +4663,8 @@ void MainWindow::buildToolSection(QMenu &menu) {
         if (segments.isEmpty())
             continue;
         QMenu *parent = &menu;
-        QString prefixKey;
         for (int i = 0; i + 1 < segments.size(); ++i) {
-            prefixKey =
-                prefixKey.isEmpty() ? segments[i] : prefixKey + QStringLiteral(" > ") + segments[i];
+            const QString prefixKey = CustomToolManager::joinPath(segments.mid(0, i + 1));
             parent = ensureToolSubmenu(*parent, submenus, prefixKey, segments[i]);
         }
         QAction *act = parent->addAction(segments.constLast());
@@ -4686,12 +4684,22 @@ void MainWindow::runToolCommand(const QString &label, const QString &command) {
     m_osd->show(tr("Failed to run tool \"%1\": %2").arg(label, MpvController::errorString(err)));
 }
 
+// N135：menu-data 的 state → QAction——disabled 置灰、checked 原生勾选（菜单每次
+// 展开重建，点击造成的瞬时翻转不留存）、未知值忽略。子菜单条目施加在其 menuAction
+// 上，与命令条目同一条口径
+static void applyMenuDataState(QAction &action, const QStringList &state) {
+    action.setEnabled(!state.contains(QLatin1String("disabled")));
+    if (state.contains(QLatin1String("checked"))) {
+        action.setCheckable(true);
+        action.setChecked(true);
+    }
+}
+
 // N135：mpv menu-data 段的递归渲染。hidden 整条跳过（含子菜单）；separator 走
 // 防重助手（前导 / 连续分隔线由此折叠）；带非空 submenu 的条目按子菜单渲染（填完
 // 为空即摘除，避免空弹层；title 纯空白按坏数据跳过），否则按命令条目渲染（cmd
-// 非空白才连接执行，空命令条目照常显示、点击无动作）。state：disabled 置灰、
-// checked 原生勾选（菜单每次展开重建，瞬时翻转不留存）、未知值忽略。title 原样
-// 显示不转义 '&'，shortcut 字段完全忽略
+// 非空白才连接执行，空命令条目照常显示、点击无动作）。title 原样显示不转义 '&'，
+// shortcut 字段完全忽略
 void MainWindow::buildMpvMenuItems(QMenu &menu, const QList<MpvController::MenuDataItem> &items) {
     for (const MpvController::MenuDataItem &item : items) {
         if (item.state.contains(QLatin1String("hidden")))
@@ -4704,6 +4712,7 @@ void MainWindow::buildMpvMenuItems(QMenu &menu, const QList<MpvController::MenuD
             if (item.title.trimmed().isEmpty()) // 坏数据：无标题的子菜单
                 continue;
             QMenu *sub = menu.addMenu(item.title);
+            applyMenuDataState(*sub->menuAction(), item.state);
             buildMpvMenuItems(*sub, item.submenu);
             if (sub->isEmpty()) {
                 menu.removeAction(sub->menuAction());
@@ -4716,12 +4725,7 @@ void MainWindow::buildMpvMenuItems(QMenu &menu, const QList<MpvController::MenuD
         if (item.title.trimmed().isEmpty())
             continue;
         QAction *act = menu.addAction(item.title);
-        if (item.state.contains(QLatin1String("disabled")))
-            act->setEnabled(false);
-        if (item.state.contains(QLatin1String("checked"))) {
-            act->setCheckable(true);
-            act->setChecked(true);
-        }
+        applyMenuDataState(*act, item.state);
         if (!item.cmd.trimmed().isEmpty()) {
             connect(act, &QAction::triggered, this,
                     [this, label = item.title, cmd = item.cmd] { runToolCommand(label, cmd); });

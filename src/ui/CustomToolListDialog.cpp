@@ -181,63 +181,21 @@ void CustomToolListDialog::moveTool(int delta) {
     loadRow(target);
 }
 
+// 校验与规范化全数收口在 CustomToolManager::sanitize；对话框只管把违规摊到行上
 void CustomToolListDialog::accept() {
-    QList<CustomTool> trimmed;
-    trimmed.reserve(m_tools.size());
-    for (const CustomTool &tool : m_tools) {
-        // 名称规范化保存：切段 trim、丢空段后以 " > " 重组——> 前后统一单空格，
-        // 段首尾多余空格消失（空名即空串，占位条目不受影响）
-        trimmed.append({CustomToolManager::pathSegments(tool.name).join(QStringLiteral(" > ")),
-                        tool.command.trimmed(), tool.note});
+    using Problem = CustomToolManager::Problem;
+    CustomToolManager::Sanitized sanitized = CustomToolManager::sanitize(m_tools);
+    if (sanitized.problem != Problem::None) {
+        m_list->setCurrentRow(sanitized.row);
+        // 缺哪个字段聚焦哪个；无效路径与命名冲突都归名称一侧
+        (sanitized.problem == Problem::MissingCommand ? m_commandEdit : m_nameEdit)->setFocus();
+        QMessageBox::warning(
+            this, windowTitle(),
+            sanitized.problem == Problem::PrefixConflict
+                ? tr("\"%1\" cannot be both a tool and a submenu.").arg(sanitized.path)
+                : tr("Each tool needs both a name and a command."));
+        return;
     }
-
-    // 逐行按表序判定；拦截时选中该行、聚焦缺失字段，不关闭
-    const QString missingMsg = tr("Each tool needs both a name and a command.");
-    for (int i = 0; i < trimmed.size(); ++i) {
-        const CustomTool &tool = trimmed[i];
-        const bool nameEmpty = tool.name.isEmpty();
-        const bool cmdEmpty = tool.command.isEmpty();
-        if (nameEmpty && cmdEmpty)
-            continue; // 占位空条目，静默忽略
-        if (nameEmpty != cmdEmpty) {
-            m_list->setCurrentRow(i);
-            (nameEmpty ? m_nameEdit : m_commandEdit)->setFocus();
-            QMessageBox::warning(this, windowTitle(), missingMsg);
-            return;
-        }
-        if (CustomToolManager::pathSegments(tool.name).isEmpty()) { // 无效路径视同名称缺失
-            m_list->setCurrentRow(i);
-            m_nameEdit->setFocus();
-            QMessageBox::warning(this, windowTitle(), missingMsg);
-            return;
-        }
-    }
-    // 前缀冲突：既是工具又是子菜单
-    for (int i = 0; i < trimmed.size(); ++i) {
-        const QStringList prefix = CustomToolManager::pathSegments(trimmed[i].name);
-        for (int j = 0; j < trimmed.size(); ++j) {
-            if (i == j)
-                continue;
-            const QStringList other = CustomToolManager::pathSegments(trimmed[j].name);
-            if (other.size() > prefix.size() && other.mid(0, prefix.size()) == prefix) {
-                m_list->setCurrentRow(i);
-                m_nameEdit->setFocus();
-                QMessageBox::warning(this, windowTitle(),
-                                     tr("\"%1\" cannot be both a tool and a submenu.")
-                                         .arg(prefix.join(QStringLiteral(" > "))));
-                return;
-            }
-        }
-    }
-    QList<CustomTool> result;
-    result.reserve(trimmed.size());
-    for (const CustomTool &tool : trimmed) {
-        if (tool.name.isEmpty() && tool.command.isEmpty())
-            continue;
-        result.append(tool);
-    }
-    m_tools = result;
+    m_tools = std::move(sanitized.tools); // 全部为空条目时即空表，保存空列表
     QDialog::accept();
 }
-
-#include "CustomToolListDialog.moc"

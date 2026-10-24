@@ -184,13 +184,15 @@ class MainWindow : public QMainWindow {
     void renderMenuGroup(QMenu &menu, const MenuSpec::Group &group);
     // N123：条目循环本体，子菜单经它递归渲染（两个渲染面与子菜单共用同一份装配）
     void renderMenuItems(QMenu &menu, std::span<const MenuSpec::Item> items);
-    // N134：Tools 菜单的插件工具段，名称 > 分段自动建子菜单（段全空时无分隔线）
+    // N134：Tools 菜单的插件工具段（N135 起前置 mpv menu-data 段），名称 > 分段自动
+    // 建子菜单（两段皆空时只剩编辑入口、无前导分隔线）
     void buildToolSection(QMenu &menu);
     // N134：工具命令执行唯一收口——失败 OSD，日志不记命令原文；N135 的 mpv
     // menu-data 条目同走这里
     void runToolCommand(const QString &label, const QString &command);
-    // N135：mpv menu-data 段的递归渲染——hidden 整条跳过、空子菜单摘除、分隔线
-    // 走 appendMenuSeparator；命令条目经 runToolCommand 执行
+    // N135：mpv menu-data 段的递归渲染——hidden 整条跳过、disabled / checked 施加到
+    // 条目与其子菜单、空子菜单摘除、分隔线走 appendMenuSeparator；命令条目经
+    // runToolCommand 执行
     void buildMpvMenuItems(QMenu &menu, const QList<MpvController::MenuDataItem> &items);
     // N119：视频区右键菜单入口，弹出前按 N5 清焦
     void showVideoContextMenu(const QPoint &globalPos);

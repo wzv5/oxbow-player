@@ -1,5 +1,6 @@
 // CustomToolManager 单元测试（N134）：INI 往返、pathSegments 切段规则、写失败
-// 不回滚、坏行跳过、note 不 trim、名称命令两端 trim、size 缺失 / 非数字按 0。
+// 不回滚、坏行跳过、note 不 trim、名称命令两端 trim、size 缺失 / 非数字按 0，
+// 以及确定语义收口 sanitize 的规范化 / 占位条目 / 缺失字段 / 前缀冲突判定。
 // 一类一可执行（R5）：oxbow_tests_CustomToolManager <槽名> 跑单个用例。
 
 #include "pch.h"
@@ -23,6 +24,12 @@ class TestCustomToolManager : public QObject {
     void missingNoteIsEmpty();
     void trimsOnLoad();
     void invalidSize();
+    void normalizedPath();
+    void sanitizeNormalizesAndKeeps();
+    void sanitizeIgnoresPlaceholder();
+    void sanitizeReportsMissingField();
+    void sanitizeInvalidPathCountsAsMissingName();
+    void sanitizeReportsPrefixConflict();
 
   private:
     QString m_ini;
@@ -155,6 +162,121 @@ void TestCustomToolManager::invalidSize() {
     CustomToolManager reader(missing);
     reader.load();
     QCOMPARE(reader.tools().size(), 0);
+}
+
+void TestCustomToolManager::normalizedPath() {
+    using M = CustomToolManager;
+    QCOMPARE(M::normalizedPath(QStringLiteral("A >B")), QStringLiteral("A > B"));
+    QCOMPARE(M::normalizedPath(QStringLiteral("  A  >  B  ")), QStringLiteral("A > B"));
+    QCOMPARE(M::normalizedPath(QStringLiteral("A >> B")), QStringLiteral("A > B"));
+    QCOMPARE(M::normalizedPath(QStringLiteral("Solo")), QStringLiteral("Solo"));
+    QCOMPARE(M::joinPath({QStringLiteral("A"), QStringLiteral("B")}), QStringLiteral("A > B"));
+    QVERIFY(M::normalizedPath(QStringLiteral(" >  > ")).isEmpty());
+    QVERIFY(M::normalizedPath(QString()).isEmpty());
+}
+
+void TestCustomToolManager::sanitizeNormalizesAndKeeps() {
+    using M = CustomToolManager;
+    const QList<CustomTool> drafts = {
+        CustomTool{QStringLiteral("  Playback >Speed  "), QStringLiteral("\tcycle pause\t"),
+                   QStringLiteral("  keep  ")},
+        CustomTool{QStringLiteral("Show text"), QStringLiteral("show-text \"hi\""), QString()},
+    };
+    const M::Sanitized out = M::sanitize(drafts);
+    QVERIFY(out.problem == M::Problem::None);
+    QCOMPARE(out.tools.size(), 2);
+    QCOMPARE(out.tools[0].name, QStringLiteral("Playback > Speed"));
+    QCOMPARE(out.tools[0].command, QStringLiteral("cycle pause"));
+    QCOMPARE(out.tools[0].note, QStringLiteral("  keep  ")); // 备注原样保留，不 trim
+    QCOMPARE(out.tools[1].name, QStringLiteral("Show text"));
+}
+
+void TestCustomToolManager::sanitizeIgnoresPlaceholder() {
+    using M = CustomToolManager;
+    // 占位条目混在有效行之间：不判违规，也不作为空前缀把整表拦下
+    const QList<CustomTool> drafts = {
+        CustomTool{QStringLiteral("A"), QStringLiteral("cycle pause"), QString()},
+        CustomTool{QString(), QString(), QStringLiteral("只有备注的占位行")},
+        CustomTool{QStringLiteral("B > C"), QStringLiteral("set speed 1.5"), QString()},
+    };
+    const M::Sanitized out = M::sanitize(drafts);
+    QVERIFY(out.problem == M::Problem::None);
+    QCOMPARE(out.tools.size(), 2);
+    QCOMPARE(out.tools[0].name, QStringLiteral("A"));
+    QCOMPARE(out.tools[1].name, QStringLiteral("B > C"));
+
+    const QList<CustomTool> allPlaceholders = {
+        CustomTool{},
+        CustomTool{QString(), QString(), QStringLiteral("note")},
+    };
+    const M::Sanitized emptied = M::sanitize(allPlaceholders);
+    QVERIFY(emptied.problem == M::Problem::None);
+    QVERIFY(emptied.tools.isEmpty()); // 全表皆占位即空表，保存空列表
+}
+
+void TestCustomToolManager::sanitizeReportsMissingField() {
+    using M = CustomToolManager;
+    const QList<CustomTool> missingName = {
+        CustomTool{QStringLiteral("A"), QStringLiteral("cycle pause"), QString()},
+        CustomTool{QString(), QStringLiteral("cycle pause"), QString()},
+    };
+    const M::Sanitized nameOut = M::sanitize(missingName);
+    QVERIFY(nameOut.problem == M::Problem::MissingName);
+    QCOMPARE(nameOut.row, 1);
+    QVERIFY(nameOut.tools.isEmpty());
+
+    const QList<CustomTool> missingCommand = {
+        CustomTool{QStringLiteral("A"), QString(), QString()},
+        CustomTool{QStringLiteral("B"), QStringLiteral("cycle pause"), QString()},
+    };
+    const M::Sanitized commandOut = M::sanitize(missingCommand);
+    QVERIFY(commandOut.problem == M::Problem::MissingCommand);
+    QCOMPARE(commandOut.row, 0);
+    QVERIFY(commandOut.tools.isEmpty());
+}
+
+void TestCustomToolManager::sanitizeInvalidPathCountsAsMissingName() {
+    using M = CustomToolManager;
+    // 纯 '>' / 全空段：规范化后名称为空，视同缺名称（聚焦名称框那一侧）
+    const QList<CustomTool> drafts = {
+        CustomTool{QStringLiteral(" > "), QStringLiteral("cycle pause"), QString()},
+    };
+    const M::Sanitized out = M::sanitize(drafts);
+    QVERIFY(out.problem == M::Problem::MissingName);
+    QCOMPARE(out.row, 0);
+    QVERIFY(out.tools.isEmpty());
+}
+
+void TestCustomToolManager::sanitizeReportsPrefixConflict() {
+    using M = CustomToolManager;
+    const QList<CustomTool> drafts = {
+        CustomTool{QStringLiteral("X"), QStringLiteral("x"), QString()},
+        CustomTool{QStringLiteral("A > B"), QStringLiteral("b"), QString()},
+        CustomTool{QStringLiteral("A"), QStringLiteral("a"), QString()},
+    };
+    const M::Sanitized out = M::sanitize(drafts);
+    QVERIFY(out.problem == M::Problem::PrefixConflict);
+    QCOMPARE(out.row, 2); // 报短路径（既是工具又是子菜单）那一行，与表序无关
+    QCOMPARE(out.path, QStringLiteral("A"));
+    QVERIFY(out.tools.isEmpty());
+
+    // 逐段比而非字符串前缀：Ab 不是 A > B 的前缀
+    const QList<CustomTool> notConflict = {
+        CustomTool{QStringLiteral("Ab"), QStringLiteral("a"), QString()},
+        CustomTool{QStringLiteral("A > B"), QStringLiteral("b"), QString()},
+    };
+    const M::Sanitized ok = M::sanitize(notConflict);
+    QVERIFY(ok.problem == M::Problem::None);
+    QCOMPARE(ok.tools.size(), 2);
+
+    // 同路径两条（重名）不判冲突，照常保留
+    const QList<CustomTool> duplicates = {
+        CustomTool{QStringLiteral("A > B"), QStringLiteral("b1"), QString()},
+        CustomTool{QStringLiteral("A >B"), QStringLiteral("b2"), QString()},
+    };
+    const M::Sanitized twice = M::sanitize(duplicates);
+    QVERIFY(twice.problem == M::Problem::None);
+    QCOMPARE(twice.tools.size(), 2);
 }
 
 QTEST_GUILESS_MAIN(TestCustomToolManager)
