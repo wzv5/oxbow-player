@@ -133,6 +133,20 @@ class MpvController : public QObject {
     };
     InputBindingTiers inputBindings() const;
 
+    // N135：mpv menu-data 的单条目（字段语义见手册 Context Menu 节；shortcut 键
+    // 不解析不使用）
+    struct MenuDataItem {
+        QString type; // "separator" / "submenu" / 空
+        QString title;
+        QString cmd;
+        QStringList state; // checked / disabled / hidden 的原值集合，未知值由消费方忽略
+        QList<MenuDataItem> submenu;
+    };
+    // N135：menu-data 的一次性结构化读（MPV_FORMAT_NODE，形态照 filterEntries
+    // 先例）。不观察、不缓存——每次菜单展开现读。读失败 / 属性未设置 / 顶层非
+    // 数组一律交空表（未设置是正常状态，不刷日志）
+    QList<MenuDataItem> menuData() const;
+
     // N92（含变更记录 1）：mpv 配置路径的两个取值出口——一切位置问 mpv 自己，插件不再
     // 从任何目录自行推导。**取值以目录为单位**：expand-path ~~home/ 交配置目录，两个文件名
     // 由该目录词法拼接（两文件同处一目录，只问一次）。校验顺序即安全顺序，任一不过交空串，

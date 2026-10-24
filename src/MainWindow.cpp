@@ -4651,8 +4651,12 @@ static QMenu *ensureToolSubmenu(QMenu &menu, QHash<QString, QMenu *> &submenus,
 }
 
 // N134：名称经 pathSegments 分段，最后一段是叶子文本，前面的段依次找 / 建子菜单。
-// 条目与连接都是渲染期对象，随 clear() 消亡
+// 条目与连接都是渲染期对象，随 clear() 消亡。N135 起输出顺序为 mpv menu-data 段、
+// 分隔线、插件工具、分隔线——两段皆空时只剩描述表追加的编辑入口（前导分隔线由
+// 助手判据自然压住）
 void MainWindow::buildToolSection(QMenu &menu) {
+    buildMpvMenuItems(menu, m_controller->menuData());
+    appendMenuSeparator(menu);
     QHash<QString, QMenu *> submenus;
     for (const CustomTool &tool : m_toolMgr->tools()) {
         const QStringList segments = CustomToolManager::pathSegments(tool.name);
@@ -4680,6 +4684,49 @@ void MainWindow::runToolCommand(const QString &label, const QString &command) {
         return;
     OXBOW_LOG_WARNING() << "tool failed:" << label << "err =" << err;
     m_osd->show(tr("Failed to run tool \"%1\": %2").arg(label, MpvController::errorString(err)));
+}
+
+// N135：mpv menu-data 段的递归渲染。hidden 整条跳过（含子菜单）；separator 走
+// 防重助手（前导 / 连续分隔线由此折叠）；带非空 submenu 的条目按子菜单渲染（填完
+// 为空即摘除，避免空弹层；title 纯空白按坏数据跳过），否则按命令条目渲染（cmd
+// 非空白才连接执行，空命令条目照常显示、点击无动作）。state：disabled 置灰、
+// checked 原生勾选（菜单每次展开重建，瞬时翻转不留存）、未知值忽略。title 原样
+// 显示不转义 '&'，shortcut 字段完全忽略
+void MainWindow::buildMpvMenuItems(QMenu &menu, const QList<MpvController::MenuDataItem> &items) {
+    for (const MpvController::MenuDataItem &item : items) {
+        if (item.state.contains(QLatin1String("hidden")))
+            continue;
+        if (item.type == QLatin1String("separator")) {
+            appendMenuSeparator(menu);
+            continue;
+        }
+        if (!item.submenu.isEmpty()) {
+            if (item.title.trimmed().isEmpty()) // 坏数据：无标题的子菜单
+                continue;
+            QMenu *sub = menu.addMenu(item.title);
+            buildMpvMenuItems(*sub, item.submenu);
+            if (sub->isEmpty()) {
+                menu.removeAction(sub->menuAction());
+                delete sub;
+            }
+            continue;
+        }
+        if (item.type == QLatin1String("submenu"))
+            continue; // 坏数据：type 为 submenu 但 submenu 为空
+        if (item.title.trimmed().isEmpty())
+            continue;
+        QAction *act = menu.addAction(item.title);
+        if (item.state.contains(QLatin1String("disabled")))
+            act->setEnabled(false);
+        if (item.state.contains(QLatin1String("checked"))) {
+            act->setCheckable(true);
+            act->setChecked(true);
+        }
+        if (!item.cmd.trimmed().isEmpty()) {
+            connect(act, &QAction::triggered, this,
+                    [this, label = item.title, cmd = item.cmd] { runToolCommand(label, cmd); });
+        }
+    }
 }
 
 void MainWindow::customizeTools() {

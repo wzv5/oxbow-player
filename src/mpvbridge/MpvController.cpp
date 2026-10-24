@@ -1060,6 +1060,56 @@ MpvController::InputBindingTiers MpvController::inputBindings() const {
     return tiers;
 }
 
+// N135：menu-data 的 NODE 递归解析（数组套 map；type / title / cmd 为字符串，
+// state 为字符串数组，submenu 递归；shortcut 键不解析。字段类型不符按缺省处理，
+// 条目不是 map 即跳过，未知键忽略）
+namespace {
+QList<MpvController::MenuDataItem> parseMenuDataNode(const mpv_node *node) {
+    QList<MpvController::MenuDataItem> result;
+    if (!node || node->format != MPV_FORMAT_NODE_ARRAY)
+        return result;
+    for (int i = 0; i < node->u.list->num; ++i) {
+        const mpv_node &entry = node->u.list->values[i];
+        if (entry.format != MPV_FORMAT_NODE_MAP)
+            continue;
+        MpvController::MenuDataItem item;
+        for (int j = 0; j < entry.u.list->num; ++j) {
+            const char *key = entry.u.list->keys[j];
+            const mpv_node &v = entry.u.list->values[j];
+            if (qstrcmp(key, "type") == 0 && v.format == MPV_FORMAT_STRING)
+                item.type = QString::fromUtf8(v.u.string);
+            else if (qstrcmp(key, "title") == 0 && v.format == MPV_FORMAT_STRING)
+                item.title = QString::fromUtf8(v.u.string);
+            else if (qstrcmp(key, "cmd") == 0 && v.format == MPV_FORMAT_STRING)
+                item.cmd = QString::fromUtf8(v.u.string);
+            else if (qstrcmp(key, "state") == 0 && v.format == MPV_FORMAT_NODE_ARRAY) {
+                for (int k = 0; k < v.u.list->num; ++k) {
+                    const mpv_node &s = v.u.list->values[k];
+                    if (s.format == MPV_FORMAT_STRING)
+                        item.state.append(QString::fromUtf8(s.u.string));
+                }
+            } else if (qstrcmp(key, "submenu") == 0 && v.format == MPV_FORMAT_NODE_ARRAY) {
+                item.submenu = parseMenuDataNode(&v);
+            }
+        }
+        result.append(item);
+    }
+    return result;
+}
+} // namespace
+
+// N135：menu-data 现读单点——失败 / 属性未设置交空表（正常状态，不刷日志）；
+// 读成功但顶层非数组时同样得空表，节点内存照规还
+QList<MpvController::MenuDataItem> MpvController::menuData() const {
+    QList<MenuDataItem> result;
+    mpv_node node;
+    if (mpv_get_property(m_mpv, "menu-data", MPV_FORMAT_NODE, &node) != 0)
+        return result;
+    result = parseMenuDataNode(&node);
+    mpv_free_node_contents(&node);
+    return result;
+}
+
 double MpvController::propertyDouble(const QString &name, double fallback) const {
     double v = fallback;
     if (mpv_get_property(m_mpv, name.toUtf8().constData(), MPV_FORMAT_DOUBLE, &v) < 0)

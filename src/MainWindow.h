@@ -189,6 +189,9 @@ class MainWindow : public QMainWindow {
     // N134：工具命令执行唯一收口——失败 OSD，日志不记命令原文；N135 的 mpv
     // menu-data 条目同走这里
     void runToolCommand(const QString &label, const QString &command);
+    // N135：mpv menu-data 段的递归渲染——hidden 整条跳过、空子菜单摘除、分隔线
+    // 走 appendMenuSeparator；命令条目经 runToolCommand 执行
+    void buildMpvMenuItems(QMenu &menu, const QList<MpvController::MenuDataItem> &items);
     // N119：视频区右键菜单入口，弹出前按 N5 清焦
     void showVideoContextMenu(const QPoint &globalPos);
     QWidget *createLeftArea();
