@@ -8,7 +8,7 @@ ActionManager::ActionManager(QWidget *host) : m_host(host) {
     // 注册表 = 全部 UI 入口清单（A15）：稳定英文名 / 显示名 / 键位在此同点声明，
     // 顺序即头文件枚举声明顺序，新增动作须与枚举插入位置对齐
     declareAction(Id::Open, QStringLiteral("Open"), tr("&Open File…"), QKeySequence::Open);
-    declareAction(Id::OpenUrl, QStringLiteral("OpenUrl"), tr("&Open URL…"));
+    declareAction(Id::OpenUrl, QStringLiteral("OpenUrl"), tr("Open &URL…"));
     declareAction(Id::Settings, QStringLiteral("Settings"), tr("&Settings"));
     declareAction(Id::Shortcuts, QStringLiteral("Shortcuts"), tr("&Keyboard Shortcuts…"));
     declareAction(Id::MpvKeyBindings, QStringLiteral("MpvKeyBindings"), tr("Key &Bindings…"));
@@ -29,8 +29,8 @@ ActionManager::ActionManager(QWidget *host) : m_host(host) {
     declareAction(Id::VolumeDown, QStringLiteral("VolumeDown"), tr("Volume &Down"), Qt::Key_Down);
     // N38：静音开关；勾选态由 mpv 的 mute 属性推送驱动，命令不读勾选态
     declareAction(Id::Mute, QStringLiteral("Mute"), tr("&Mute"), Qt::Key_M, true);
-    // N6：速度控制三动作，助记符与快捷键同字母
-    declareAction(Id::SpeedUp, QStringLiteral("SpeedUp"), tr("&Speed Up"), Qt::Key_C);
+    // N6：速度控制三动作，速度由 C/X/Z 快捷键驱动，菜单文案不带助记符（&S 与 &Stop 冲突）
+    declareAction(Id::SpeedUp, QStringLiteral("SpeedUp"), tr("Speed Up"), Qt::Key_C);
     declareAction(Id::SpeedDown, QStringLiteral("SpeedDown"), tr("Speed Down"), Qt::Key_X);
     declareAction(Id::SpeedReset, QStringLiteral("SpeedReset"), tr("Reset Speed"), Qt::Key_Z);
     declareAction(Id::Playlist, QStringLiteral("Playlist"), tr("P&laylist"),
