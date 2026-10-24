@@ -1,0 +1,243 @@
+#include "pch.h"
+
+#include "Constants.h"
+#include "ThemedIconEngine.h"
+#include "ui/CustomToolListDialog.h"
+
+CustomToolListDialog::CustomToolListDialog(const QList<CustomTool> &tools, QWidget *parent)
+    : QDialog(parent), m_tools(tools) {
+    setWindowTitle(tr("Customize Tool List"));
+
+    m_list = new QListWidget(this);
+    m_list->setMinimumHeight(m_list->fontMetrics().height() * 6 + 2 * m_list->frameWidth());
+
+    m_addButton = new QToolButton(this);
+    m_addButton->setToolTip(tr("Add"));
+    m_deleteButton = new QToolButton(this);
+    m_deleteButton->setToolTip(tr("Delete"));
+    m_upButton = new QToolButton(this);
+    m_upButton->setToolTip(tr("Move Up"));
+    m_downButton = new QToolButton(this);
+    m_downButton->setToolTip(tr("Move Down"));
+    // 照主窗控制行按钮先例放大到 24px
+    for (QToolButton *tb : {m_addButton, m_deleteButton, m_upButton, m_downButton})
+        tb->setIconSize(QSize(24, 24));
+
+    // 弹性空白吃掉中段高度，列表底与 Move Down 底对齐
+    auto *buttonColumn = new QVBoxLayout;
+    buttonColumn->setSpacing(4);
+    buttonColumn->addWidget(m_addButton);
+    buttonColumn->addWidget(m_deleteButton);
+    buttonColumn->addStretch();
+    buttonColumn->addWidget(m_upButton);
+    buttonColumn->addWidget(m_downButton);
+    retintIcons();
+
+    auto *listArea = new QHBoxLayout;
+    listArea->addWidget(m_list, 1);
+    listArea->addLayout(buttonColumn);
+
+    m_nameEdit = new QLineEdit(this);
+    auto *nameHint = new QLabel(tr("Use > to create submenus, e.g. Playback > Speed."), this);
+    nameHint->setEnabled(false); // 取 Disabled 文本色，不硬编码灰
+    nameHint->setFocusPolicy(Qt::NoFocus);
+    m_commandEdit = new QLineEdit(this);
+    m_noteEdit = new QLineEdit(this);
+
+    auto *form = new QFormLayout;
+    form->addRow(tr("Name"), m_nameEdit);
+    form->addRow(QString(), nameHint);
+    form->addRow(tr("Command"), m_commandEdit);
+    form->addRow(tr("Note"), m_noteEdit);
+
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+    connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+
+    auto *main = new QVBoxLayout(this);
+    main->addLayout(listArea);
+    main->addLayout(form);
+    main->addWidget(buttons);
+
+    connect(m_list, &QListWidget::currentRowChanged, this, [this](int row) {
+        if (!m_updating)
+            loadRow(row);
+    });
+    connect(m_nameEdit, &QLineEdit::textChanged, this, [this](const QString &text) {
+        if (m_updating)
+            return;
+        m_tools[m_list->currentRow()].name = text;
+        m_list->currentItem()->setText(listText(text));
+    });
+    connect(m_commandEdit, &QLineEdit::textChanged, this, [this](const QString &text) {
+        if (m_updating)
+            return;
+        m_tools[m_list->currentRow()].command = text;
+    });
+    connect(m_noteEdit, &QLineEdit::textChanged, this, [this](const QString &text) {
+        if (m_updating)
+            return;
+        m_tools[m_list->currentRow()].note = text;
+    });
+    connect(m_addButton, &QAbstractButton::clicked, this, [this] { addTool(); });
+    connect(m_deleteButton, &QAbstractButton::clicked, this, [this] { deleteTool(); });
+    connect(m_upButton, &QAbstractButton::clicked, this, [this] { moveTool(-1); });
+    connect(m_downButton, &QAbstractButton::clicked, this, [this] { moveTool(+1); });
+
+    for (const CustomTool &tool : m_tools)
+        m_list->addItem(listText(tool.name));
+    if (m_tools.isEmpty()) {
+        m_tools.append(CustomTool{});
+        m_list->addItem(listText(QString()));
+    }
+    loadRow(0);
+    m_list->setCurrentRow(0);
+    m_nameEdit->setFocus();
+}
+
+QList<CustomTool> CustomToolListDialog::tools() const { return m_tools; }
+
+QString CustomToolListDialog::listText(const QString &name) {
+    return name.isEmpty() ? tr("(unnamed)") : name;
+}
+
+void CustomToolListDialog::retintIcons() {
+    const QColor tint = palette().color(QPalette::WindowText);
+    m_addButton->setIcon(Ui::themedIcon(App::iconPath(App::iconAdd()), tint));
+    m_deleteButton->setIcon(Ui::themedIcon(App::iconPath(App::iconRemove()), tint));
+    m_upButton->setIcon(Ui::themedIcon(App::iconPath(App::iconMoveUp()), tint));
+    m_downButton->setIcon(Ui::themedIcon(App::iconPath(App::iconMoveDown()), tint));
+}
+
+// m_addButton 为空即控件树尚未建成，无事可做
+void CustomToolListDialog::changeEvent(QEvent *event) {
+    QDialog::changeEvent(event);
+    if (event->type() != QEvent::PaletteChange && event->type() != QEvent::StyleChange)
+        return;
+    if (!m_addButton)
+        return;
+    retintIcons();
+}
+
+void CustomToolListDialog::loadRow(int row) {
+    if (row < 0 || row >= m_tools.size())
+        return;
+    m_updating = true;
+    m_nameEdit->setText(m_tools[row].name);
+    m_commandEdit->setText(m_tools[row].command);
+    m_noteEdit->setText(m_tools[row].note);
+    updateButtons();
+    m_updating = false;
+}
+
+void CustomToolListDialog::updateButtons() {
+    const int row = m_list->currentRow();
+    m_upButton->setEnabled(row > 0);
+    m_downButton->setEnabled(row >= 0 && row < m_tools.size() - 1);
+}
+
+void CustomToolListDialog::addTool() {
+    m_tools.append(CustomTool{});
+    m_list->addItem(listText(QString()));
+    m_list->setCurrentRow(m_list->count() - 1);
+    updateButtons();
+    m_nameEdit->setFocus();
+}
+
+void CustomToolListDialog::deleteTool() {
+    const int row = m_list->currentRow();
+    if (row < 0)
+        return;
+    m_updating = true;
+    delete m_list->takeItem(row);
+    m_tools.removeAt(row);
+    m_updating = false;
+    bool seeded = false;
+    if (m_tools.isEmpty()) {
+        m_tools.append(CustomTool{});
+        m_list->addItem(listText(QString()));
+        seeded = true;
+    }
+    m_list->setCurrentRow(qMin(row, m_list->count() - 1));
+    loadRow(m_list->currentRow()); // setCurrentRow 落在同行时不再发信号
+    if (seeded)
+        m_nameEdit->setFocus();
+}
+
+void CustomToolListDialog::moveTool(int delta) {
+    const int row = m_list->currentRow();
+    const int target = row + delta;
+    if (row < 0 || target < 0 || target >= m_tools.size())
+        return;
+    m_tools[row].name = m_nameEdit->text(); // 未提交的编辑随行带走
+    m_tools[row].command = m_commandEdit->text();
+    m_tools[row].note = m_noteEdit->text();
+    m_tools.swapItemsAt(row, target);
+    m_updating = true;
+    QListWidgetItem *item = m_list->takeItem(row);
+    m_list->insertItem(target, item);
+    m_updating = false;
+    m_list->setCurrentRow(target);
+    loadRow(target);
+}
+
+void CustomToolListDialog::accept() {
+    QList<CustomTool> trimmed;
+    trimmed.reserve(m_tools.size());
+    for (const CustomTool &tool : m_tools) {
+        // 名称规范化保存：切段 trim、丢空段后以 " > " 重组——> 前后统一单空格，
+        // 段首尾多余空格消失（空名即空串，占位条目不受影响）
+        trimmed.append({CustomToolManager::pathSegments(tool.name).join(QStringLiteral(" > ")),
+                        tool.command.trimmed(), tool.note});
+    }
+
+    // 逐行按表序判定；拦截时选中该行、聚焦缺失字段，不关闭
+    const QString missingMsg = tr("Each tool needs both a name and a command.");
+    for (int i = 0; i < trimmed.size(); ++i) {
+        const CustomTool &tool = trimmed[i];
+        const bool nameEmpty = tool.name.isEmpty();
+        const bool cmdEmpty = tool.command.isEmpty();
+        if (nameEmpty && cmdEmpty)
+            continue; // 占位空条目，静默忽略
+        if (nameEmpty != cmdEmpty) {
+            m_list->setCurrentRow(i);
+            (nameEmpty ? m_nameEdit : m_commandEdit)->setFocus();
+            QMessageBox::warning(this, windowTitle(), missingMsg);
+            return;
+        }
+        if (CustomToolManager::pathSegments(tool.name).isEmpty()) { // 无效路径视同名称缺失
+            m_list->setCurrentRow(i);
+            m_nameEdit->setFocus();
+            QMessageBox::warning(this, windowTitle(), missingMsg);
+            return;
+        }
+    }
+    // 前缀冲突：既是工具又是子菜单
+    for (int i = 0; i < trimmed.size(); ++i) {
+        const QStringList prefix = CustomToolManager::pathSegments(trimmed[i].name);
+        for (int j = 0; j < trimmed.size(); ++j) {
+            if (i == j)
+                continue;
+            const QStringList other = CustomToolManager::pathSegments(trimmed[j].name);
+            if (other.size() > prefix.size() && other.mid(0, prefix.size()) == prefix) {
+                m_list->setCurrentRow(i);
+                m_nameEdit->setFocus();
+                QMessageBox::warning(this, windowTitle(),
+                                     tr("\"%1\" cannot be both a tool and a submenu.")
+                                         .arg(prefix.join(QStringLiteral(" > "))));
+                return;
+            }
+        }
+    }
+    QList<CustomTool> result;
+    result.reserve(trimmed.size());
+    for (const CustomTool &tool : trimmed) {
+        if (tool.name.isEmpty() && tool.command.isEmpty())
+            continue;
+        result.append(tool);
+    }
+    m_tools = result;
+    QDialog::accept();
+}
+
+#include "CustomToolListDialog.moc"

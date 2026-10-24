@@ -17,6 +17,7 @@
 class NavigatorPanel;
 class BookmarkEditorDialog;
 class ShortcutsDialog;
+class CustomToolManager; // N134：自定义工具单表（定义于 CustomToolManager.h）
 class ChapterSlider;
 class MarkAggregator;           // N15：章节+书签标记聚合器（定义于 MainWindow.cpp）
 class PlaylistRegistry;         // N57：列表注册表（装配顶点创建并持有，注入 PlaylistWidget）
@@ -90,6 +91,7 @@ class MainWindow : public QMainWindow {
     void ensureSettingsDialog();   // R3：按需创建/唤起设置对话框（非模态）
     void ensureShortcutsDialog();  // N86：快捷键编辑对话框（非模态、按需创建）
     void ensureMpvBindingDialog(); // N89：mpv 键位编辑对话框（非模态、按需创建）
+    void customizeTools();         // N134
     void applyShortcutsLive();     // N86：落盘成功后的即时生效（从 ini 重载键位）
     // N90：console 开关驱动的键盘让位。开：一次性焦点收口到主窗并装窗口级过滤器；
     // 关：拆过滤器即完。键位表全程不动，让位期内键盘归属由焦点位置决定
@@ -182,6 +184,11 @@ class MainWindow : public QMainWindow {
     void renderMenuGroup(QMenu &menu, const MenuSpec::Group &group);
     // N123：条目循环本体，子菜单经它递归渲染（两个渲染面与子菜单共用同一份装配）
     void renderMenuItems(QMenu &menu, std::span<const MenuSpec::Item> items);
+    // N134：Tools 菜单的插件工具段，名称 > 分段自动建子菜单（段全空时无分隔线）
+    void buildToolSection(QMenu &menu);
+    // N134：工具命令执行唯一收口——失败 OSD，日志不记命令原文；N135 的 mpv
+    // menu-data 条目同走这里
+    void runToolCommand(const QString &label, const QString &command);
     // N119：视频区右键菜单入口，弹出前按 N5 清焦
     void showVideoContextMenu(const QPoint &globalPos);
     QWidget *createLeftArea();
@@ -557,6 +564,8 @@ class MainWindow : public QMainWindow {
     // ---- N15：章节与书签 ----
     BookmarkManager *m_bookmarkMgr = nullptr;
     BookmarkEditorDialog *m_bookmarkEditor = nullptr;
+    // N134：自定义工具单表
+    CustomToolManager *m_toolMgr = nullptr;
     // R3：设置对话框（非模态，按需创建）
     class SettingsDialog *m_settingsDialog = nullptr;
     // N86：快捷键编辑对话框（非模态，按需创建）

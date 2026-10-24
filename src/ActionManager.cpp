@@ -12,6 +12,8 @@ ActionManager::ActionManager(QWidget *host) : m_host(host) {
     declareAction(Id::Settings, QStringLiteral("Settings"), tr("&Settings"));
     declareAction(Id::Shortcuts, QStringLiteral("Shortcuts"), tr("&Keyboard Shortcuts…"));
     declareAction(Id::MpvKeyBindings, QStringLiteral("MpvKeyBindings"), tr("Key &Bindings…"));
+    declareAction(Id::CustomizeTools, QStringLiteral("CustomizeTools"),
+                  tr("&Customize Tool List…"));
     // N78：视频截图两动作——取图经 MpvController::screenshotRaw，逻辑归主窗口。
     // Ctrl+C 全仓无占用：焦点在文本控件时控件以 ShortcutOverride 认领（仍是
     // 文本复制），主窗体焦点下触发截图

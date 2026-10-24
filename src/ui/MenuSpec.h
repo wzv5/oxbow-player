@@ -24,6 +24,7 @@ struct Item {
         Tracks,    // 四组轨道子菜单
         Chapter,   // 章节 + 书签整段
         Aspect,    // 画面比例子菜单（N123：内容仍由填充函数装配，勾选需按属性回填）
+        Tools,     // N134：自定义工具段 + 编辑入口（buildToolSection 现填）
         SubMenu,   // N123：子菜单内容也由描述表定义（标题 + 子条目表）
     };
     Kind kind = Kind::Action;
@@ -128,11 +129,18 @@ inline constexpr Item kViewItems[] = {
 
 inline constexpr Item kHelpItems[] = {about()};
 
+// N134：Tools 组
+inline constexpr Item kToolsItems[] = {
+    section(Item::Kind::Tools),
+    action(ActionManager::Id::CustomizeTools),
+};
+
 inline constexpr Group kGroups[] = {
     {.title = QT_TRANSLATE_NOOP("MainWindow", "&File"), .items = kFileItems},
     {.title = QT_TRANSLATE_NOOP("MainWindow", "&Play"), .items = kPlayItems},
     {.title = QT_TRANSLATE_NOOP("MainWindow", "&Chapter"), .items = kChapterItems},
     {.title = QT_TRANSLATE_NOOP("MainWindow", "&View"), .items = kViewItems},
+    {.title = QT_TRANSLATE_NOOP("MainWindow", "&Tools"), .items = kToolsItems},
     {.title = QT_TRANSLATE_NOOP("MainWindow", "&Help"), .items = kHelpItems},
 };
 

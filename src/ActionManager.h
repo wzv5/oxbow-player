@@ -25,6 +25,7 @@ class ActionManager : public QObject {
         Settings,
         Shortcuts,      // 快捷键编辑器入口（默认无键）
         MpvKeyBindings, // N89：mpv 侧键位编辑器入口（默认无键，管 input.conf）
+        CustomizeTools, // N134：自定义工具列表编辑入口
         ScreenshotCopy, // N78：复制截图到剪贴板（Ctrl+C）
         ScreenshotSave, // N78：截图另存为（Ctrl+E）
         Quit,

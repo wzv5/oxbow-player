@@ -5,6 +5,7 @@
 #include "ActionManager.h"
 #include "BookmarkManager.h"
 #include "Constants.h"
+#include "CustomToolManager.h"
 #include "HttpClient.h"
 #include "Logging.h"
 #include "ServiceRegistry.h"
@@ -26,6 +27,7 @@
 #include "ui/AboutDialog.h"
 #include "ui/BookmarkEditorDialog.h"
 #include "ui/ChapterSlider.h"
+#include "ui/CustomToolListDialog.h"
 #include "ui/FilterListWidget.h"
 #include "ui/MpvBindingDialog.h" // N89：mpv 键位编辑（input.conf）
 #include "ui/NavigatorPanel.h"
@@ -748,6 +750,10 @@ MainWindow::MainWindow(MpvController *controller, AppearanceManager *appearance,
     m_bookmarkMgr = new BookmarkManager(configFile, this);
     m_bookmarkMgr->load();
 
+    // N134
+    m_toolMgr = new CustomToolManager(configFile, this);
+    m_toolMgr->load();
+
     m_marks = new MarkAggregator(m_bookmarkMgr); // N15：标记聚合器
 
     // N107：缩略图装配——引擎跑专属线程（无 parent，随 finished 的 deleteLater 收尾，
@@ -995,6 +1001,8 @@ void MainWindow::connectActions() {
     // 绑键、可改绑、禁用态处处生效），配置与键位仍互不共享
     connect(act(AM::Id::MpvKeyBindings), &QAction::triggered, this,
             &MainWindow::ensureMpvBindingDialog);
+    // N134：工具列表编辑入口
+    connect(act(AM::Id::CustomizeTools), &QAction::triggered, this, &MainWindow::customizeTools);
     // N78：截图组
     connect(act(AM::Id::ScreenshotCopy), &QAction::triggered, this,
             &MainWindow::copyScreenshotToClipboard);
@@ -1095,7 +1103,7 @@ void MainWindow::connectActions() {
     connect(m_aboutAction, &QAction::triggered, this, [this] { AboutDialog(this).exec(); });
 }
 
-// N119：菜单栏装配——五个顶级菜单是常驻实例（既有语义与 N85 的过滤都挂在实例上），
+// N119：菜单栏装配——六个顶级菜单是常驻实例（既有语义与 N85 的过滤都挂在实例上），
 // 只换内容不重建容器；内容挂 aboutToShow，打开时所见即当前状态
 void MainWindow::createMenuBar() {
     // N85：菜单栏按下清焦的过滤挂载——QMenuBar 自行消费按下事件，主窗
@@ -1143,6 +1151,9 @@ void MainWindow::renderMenuItems(QMenu &menu, std::span<const MenuSpec::Item> it
             break;
         case Kind::Aspect:
             buildAspectSection(menu);
+            break;
+        case Kind::Tools:
+            buildToolSection(menu);
             break;
         case Kind::SubMenu:
             // N123：条目全为主实例，递归只建容器；子菜单与父菜单共用同一套裁剪与渲染
@@ -4617,6 +4628,66 @@ void MainWindow::applySubtitleFile(const QString &path, bool secondary) {
     // 第二字幕此刻还只是条尚未归属槽位的字幕轨，播"字幕"而非"第二字幕"（要等用户点选、
     // 真占上 secondary-sid 时由那条路径播轨道名）
     m_osd->show(tr("Subtitle: ") + QFileInfo(path).fileName());
+}
+
+// ——N134：Tools 菜单——
+
+// 分隔线防重单点：菜单为空或上一条已是分隔线时不追加（N135 的 menu-data 段同用）
+static void appendMenuSeparator(QMenu &menu) {
+    const QList<QAction *> actions = menu.actions();
+    if (!actions.isEmpty() && !actions.constLast()->isSeparator())
+        menu.addSeparator();
+}
+
+// 键为 " > " 连接的规范化前缀路径；调用方按列表序推进，父菜单尾恰为首个命中
+// 条目的落位，同前缀后续条目经缓存并入
+static QMenu *ensureToolSubmenu(QMenu &menu, QHash<QString, QMenu *> &submenus,
+                                const QString &prefixKey, const QString &title) {
+    if (auto it = submenus.constFind(prefixKey); it != submenus.constEnd())
+        return it.value();
+    QMenu *sub = menu.addMenu(title);
+    submenus.insert(prefixKey, sub);
+    return sub;
+}
+
+// N134：名称经 pathSegments 分段，最后一段是叶子文本，前面的段依次找 / 建子菜单。
+// 条目与连接都是渲染期对象，随 clear() 消亡
+void MainWindow::buildToolSection(QMenu &menu) {
+    QHash<QString, QMenu *> submenus;
+    for (const CustomTool &tool : m_toolMgr->tools()) {
+        const QStringList segments = CustomToolManager::pathSegments(tool.name);
+        if (segments.isEmpty())
+            continue;
+        QMenu *parent = &menu;
+        QString prefixKey;
+        for (int i = 0; i + 1 < segments.size(); ++i) {
+            prefixKey =
+                prefixKey.isEmpty() ? segments[i] : prefixKey + QStringLiteral(" > ") + segments[i];
+            parent = ensureToolSubmenu(*parent, submenus, prefixKey, segments[i]);
+        }
+        QAction *act = parent->addAction(segments.constLast());
+        connect(act, &QAction::triggered, this,
+                [this, name = tool.name, cmd = tool.command] { runToolCommand(name, cmd); });
+    }
+    appendMenuSeparator(menu);
+}
+
+// N134：同步下发；失败走 OSD 与日志，日志只记 label 与错误码——不记命令原文
+// （可能含凭据）
+void MainWindow::runToolCommand(const QString &label, const QString &command) {
+    const int err = m_controller->command(command);
+    if (err == 0)
+        return;
+    OXBOW_LOG_WARNING() << "tool failed:" << label << "err =" << err;
+    m_osd->show(tr("Failed to run tool \"%1\": %2").arg(label, MpvController::errorString(err)));
+}
+
+void MainWindow::customizeTools() {
+    CustomToolListDialog dlg(m_toolMgr->tools(), this);
+    if (dlg.exec() != QDialog::Accepted)
+        return;
+    if (!m_toolMgr->replaceTools(dlg.tools()))
+        OXBOW_LOG_WARNING() << "failed to save custom tool list to ini";
 }
 
 // N43：滤镜动态段——两个子菜单按 af / vf 现读重建，勾选态即启用位；无条目则该子菜单

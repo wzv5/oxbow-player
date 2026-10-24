@@ -63,8 +63,8 @@ inline QString iconLocatePlaying() { return QStringLiteral("locate-playing"); }
 inline QString iconSearch() { return QStringLiteral("search"); }
 inline QString iconPlaylist() { return QStringLiteral("playlist"); }
 inline QString iconSettings() { return QStringLiteral("settings"); }
-inline QString iconFilterAdd() { return QStringLiteral("filter-add"); }
-inline QString iconFilterRemove() { return QStringLiteral("filter-remove"); }
+inline QString iconAdd() { return QStringLiteral("add"); }
+inline QString iconRemove() { return QStringLiteral("remove"); }
 inline QString iconPlay() { return QStringLiteral("play"); }
 inline QString iconPause() { return QStringLiteral("pause"); }
 inline QString iconStop() { return QStringLiteral("stop"); }
@@ -73,8 +73,8 @@ inline QString iconSkipForward() { return QStringLiteral("skip-forward"); }
 inline QString iconStream() { return QStringLiteral("stream"); }
 inline QString iconVolume() { return QStringLiteral("volume"); }
 inline QString iconVolumeMuted() { return QStringLiteral("volume-muted"); }
-inline QString iconFilterUp() { return QStringLiteral("filter-up"); }
-inline QString iconFilterDown() { return QStringLiteral("filter-down"); }
+inline QString iconMoveUp() { return QStringLiteral("move-up"); }
+inline QString iconMoveDown() { return QStringLiteral("move-down"); }
 // 设置项逐项重置（单色 24×24，经 Ui::themedIcon 染色）
 inline QString iconReset() { return QStringLiteral("reset"); }
 // 解析单点：语义键 → 资源路径。将来加"图标包"设置项时只改 defaultIconPack 的取值来源

@@ -186,6 +186,10 @@ add_library(oxbowcore MODULE
     src/playlist/PlaylistWidget.h
     src/BookmarkManager.cpp
     src/BookmarkManager.h
+    src/CustomToolManager.cpp
+    src/CustomToolManager.h
+    src/ui/CustomToolListDialog.cpp
+    src/ui/CustomToolListDialog.h
     src/ui/ChapterSlider.cpp
     src/ui/ChapterSlider.h
     src/ui/BookmarkEditorDialog.cpp
@@ -351,8 +355,8 @@ qt_add_resources(oxbowcore "icons"
         icons/icons8/playlist.svg
         icons/icons8/reset.svg
         icons/icons8/settings.svg
-        icons/icons8/filter-add.svg
-        icons/icons8/filter-remove.svg
+        icons/icons8/add.svg
+        icons/icons8/remove.svg
         icons/icons8/play.svg
         icons/icons8/pause.svg
         icons/icons8/stop.svg
@@ -361,8 +365,8 @@ qt_add_resources(oxbowcore "icons"
         icons/icons8/stream.svg
         icons/icons8/volume.svg
         icons/icons8/volume-muted.svg
-        icons/icons8/filter-up.svg
-        icons/icons8/filter-down.svg
+        icons/icons8/move-up.svg
+        icons/icons8/move-down.svg
 )
 
 qt_add_translations(oxbowcore MERGE_QT_TRANSLATIONS
@@ -457,6 +461,8 @@ if(OXBOW_BUILD_TESTS)
         src/mpvbridge/MpvKeyName.h
         src/BookmarkManager.cpp
         src/BookmarkManager.h
+        src/CustomToolManager.cpp
+        src/CustomToolManager.h
         src/entities/PlaylistEntity.cpp
         src/entities/PlaylistEntity.h
         src/playlist/Playlist.cpp
@@ -568,6 +574,7 @@ if(OXBOW_BUILD_TESTS)
     oxbow_add_test(Util)
     oxbow_add_test(Logging)
     oxbow_add_test(BookmarkManager)
+    oxbow_add_test(CustomToolManager)
     oxbow_add_test(StreamTransit)
     oxbow_add_test(PlaylistRegistry)
     oxbow_add_test(HttpByteStream)

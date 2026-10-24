@@ -406,10 +406,10 @@ void FilterListWidget::updateButtons() {
 // 四枚按钮图标的唯一赋值点——图标内容不随调色板自绘，初值与外观事件共用此出口（幂等）
 void FilterListWidget::retintIcons() {
     const QColor tint = palette().color(QPalette::WindowText);
-    m_addButton->setIcon(Ui::themedIcon(App::iconPath(App::iconFilterAdd()), tint));
-    m_removeButton->setIcon(Ui::themedIcon(App::iconPath(App::iconFilterRemove()), tint));
-    m_upButton->setIcon(Ui::themedIcon(App::iconPath(App::iconFilterUp()), tint));
-    m_downButton->setIcon(Ui::themedIcon(App::iconPath(App::iconFilterDown()), tint));
+    m_addButton->setIcon(Ui::themedIcon(App::iconPath(App::iconAdd()), tint));
+    m_removeButton->setIcon(Ui::themedIcon(App::iconPath(App::iconRemove()), tint));
+    m_upButton->setIcon(Ui::themedIcon(App::iconPath(App::iconMoveUp()), tint));
+    m_downButton->setIcon(Ui::themedIcon(App::iconPath(App::iconMoveDown()), tint));
 }
 
 // 本控件在设置对话框内常驻，主题切换发生时可能仍在屏上：当场重染四枚并重算条目前景。
