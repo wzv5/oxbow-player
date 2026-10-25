@@ -153,3 +153,7 @@ This project was started purely to test Ox Alpha's capabilities — the test wen
 - [MediaInfo](https://mediaarea.net/en/MediaInfo) — optional media metadata
 - [libsodium](https://libsodium.org/) · [OpenSSL](https://www.openssl.org/) — cryptographic primitives for the Rclone Crypt backend
 - [Icons8](https://icons8.com/) — the default icon pack
+
+## License
+
+[GNU General Public License v3.0 or later](LICENSE)

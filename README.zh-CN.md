@@ -153,3 +153,7 @@ cmake --build build
 - [MediaInfo](https://mediaarea.net/en/MediaInfo)——可选的媒体元数据
 - [libsodium](https://libsodium.org/) · [OpenSSL](https://www.openssl.org/)——Rclone Crypt 后端的加密原语
 - [Icons8](https://icons8.com/)——默认图标包
+
+## 开源协议
+
+[GNU 通用公共许可证第 3 版或更新版本](LICENSE)
