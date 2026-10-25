@@ -38,16 +38,20 @@ CustomToolListDialog::CustomToolListDialog(const QList<CustomTool> &tools, QWidg
     listArea->addLayout(buttonColumn);
 
     m_nameEdit = new QLineEdit(this);
-    auto *nameHint = new QLabel(tr("Use > to create submenus, e.g. Playback > Speed."), this);
-    nameHint->setEnabled(false); // 取 Disabled 文本色，不硬编码灰
+    auto *nameHint = new QLabel(tr("Use > to create submenus, e.g. Playback > Speed"), this);
+    nameHint->setEnabled(false);
     nameHint->setFocusPolicy(Qt::NoFocus);
     m_commandEdit = new QLineEdit(this);
+    auto *commandHint = new QLabel(tr("Same as in input.conf"), this);
+    commandHint->setEnabled(false);
+    commandHint->setFocusPolicy(Qt::NoFocus);
     m_noteEdit = new QLineEdit(this);
 
     auto *form = new QFormLayout;
     form->addRow(tr("Name"), m_nameEdit);
     form->addRow(QString(), nameHint);
     form->addRow(tr("Command"), m_commandEdit);
+    form->addRow(QString(), commandHint);
     form->addRow(tr("Note"), m_noteEdit);
 
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
