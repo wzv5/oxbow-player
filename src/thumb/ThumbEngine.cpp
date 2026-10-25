@@ -112,6 +112,9 @@ void ThumbEngine::startSession(quint64 seq, WId hostWid, const QString &path, do
     setOptionOrIgnore(m_handle, "vd-lavc-threads", "2");
     setOptionOrIgnore(m_handle, "demuxer-readahead-secs", "0");
     setOptionOrIgnore(m_handle, "demuxer-max-bytes", "128KiB");
+    // N137：辅助 core 不得注册系统媒体会话；libmpv profile 已默认 no，显式声明不随
+    // 上游变动（选项各平台可设，仅 Windows 生效）
+    setOptionOrIgnore(m_handle, "media-controls", "no");
 #ifndef Q_OS_WIN
     setOptionOrIgnore(m_handle, "input-cursor", "no");
     setOptionOrIgnore(m_handle, "cursor-autohide", "no");

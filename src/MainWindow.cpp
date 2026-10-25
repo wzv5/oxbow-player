@@ -2922,6 +2922,19 @@ void MainWindow::toggleFullscreen() {
 // DPI 纪律：消息的 RECT 均为物理像素，运算一律在物理域——逻辑常量与逻辑工作区
 // 统一按窗口 devicePixelRatioF 换算（同一标度），装饰差值现读、不读 Qt 缓存几何
 bool MainWindow::nativeEvent(const QByteArray &eventType, void *message, qintptr *result) {
+#ifdef Q_OS_WIN
+    // N137：吞掉键盘来源的 appcommand——不截则落 DefWindowProc 被系统转给同进程 mpv
+    // core 的 SMTC，与伴随 keydown 经回落注入的 keypress 各执行一次。判据与 Qt 同源
+    // （QTBUG-62838）：键盘来源且非 BROWSER_HOME 的命令必有 keydown，键事件仍走既有
+    // 回落单源；鼠标 / OEM 来源无 keydown 伴随，不落本判据。主窗不在前台时消息不达
+    // 本窗，媒体键仍由 SMTC 响应；OXBOW_PUREQT 不改媒体键处理，门禁只用 Q_OS_WIN
+    if (const MSG *m = static_cast<MSG *>(message);
+        m->message == WM_APPCOMMAND && GET_DEVICE_LPARAM(m->lParam) == FAPPCOMMAND_KEY &&
+        GET_APPCOMMAND_LPARAM(m->lParam) != APPCOMMAND_BROWSER_HOME) {
+        *result = TRUE;
+        return true;
+    }
+#endif
 #if defined(Q_OS_WIN) && !defined(OXBOW_PUREQT)
     auto *msg = static_cast<MSG *>(message);
     // 拖动/缩放模态循环的起点锚：只在此刻记一次，整轮拖动都以此为原始位置基准
