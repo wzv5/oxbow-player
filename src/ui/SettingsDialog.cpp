@@ -879,82 +879,14 @@ void validateCatalog() {
 
 } // namespace
 
-// ===================== 分类列表 delegate（N128 §2.4） =====================
-// 固定前导槽：未提交标记 "(*)" 画在槽内、底串从槽后起排并按剩余宽 elide——不改条目
-// 文本、底串起点不随标记出现移动。横坐标一律向样式索取（SE_ItemViewItemText 即它给
-// 这段文本安排的落点）：标记在该点右让一档、底串与右缘各让一整槽，于是标记不会压到
-// 样式画在条目左缘的选中边饰。sizeHint 另为右缘多留一档：标题列偏左，右侧观感更松。
-// 槽宽 = 让位档 + "(*)" 字宽 + 样式间距，构造期算一次；标记与 tooltip 走自定义 role，
-// 由 refreshDerivedState 写入。仅本翻译单元使用，无 Q_OBJECT
+// ===================== 分类列表条目文本（N136 §2.2） =====================
+// 条目文本 = 分类标题（tr 后），未提交时在末尾追加「空格 + ●」后缀。宽度预算与
+// refreshDerivedState 共用此拼接，保证预算串与实际显示串同源。仅本翻译单元使用
 namespace {
-constexpr int kCategoryMarkRole = Qt::UserRole + 1;
-// 标记相对样式文本落点的左让位——样式画在条目左缘的选中边饰占到这一档
-constexpr int kCategoryMarkInset = 4;
 
-class CategoryDelegate final : public QStyledItemDelegate {
-  public:
-    using QStyledItemDelegate::QStyledItemDelegate;
-
-    void paint(QPainter *painter, const QStyleOptionViewItem &option,
-               const QModelIndex &index) const override {
-        const QWidget *ref = option.widget;
-        const QStyle *style = ref ? ref->style() : QApplication::style();
-
-        // 背景与选中态归样式：清空 text 后直接走 CE_ItemViewItem（**不得**调基类 paint，
-        // 它会再 initStyleOption 把模型文本灌回来，标题成重影）；下面只接管文本这一层
-        QStyleOptionViewItem bg = option;
-        initStyleOption(&bg, index);
-        const QString text = bg.text;
-        bg.text.clear();
-        bg.icon = QIcon();
-        style->drawControl(QStyle::CE_ItemViewItem, &bg, painter, ref);
-
-        // 样式为这段文本（带 text / decoration / 对齐的完整 option）算出的落点基准
-        QStyleOptionViewItem textOpt = option;
-        initStyleOption(&textOpt, index);
-        QRect base = style->subElementRect(QStyle::SE_ItemViewItemText, &textOpt, ref);
-        if (base.isEmpty())
-            base = option.rect; // 样式不实现该 subElement 时返回空矩形：退回条目矩形照画
-        const int slot = slotWidth(option, style);
-        const Qt::Alignment align =
-            QStyle::visualAlignment(option.direction, textOpt.displayAlignment);
-
-        // 字色随激活态取组：背景由样式按 Active / Inactive 画，自绘的字必须同组
-        const QPalette::ColorGroup group =
-            (option.state & QStyle::State_Active) ? QPalette::Active : QPalette::Inactive;
-        const bool selected = option.state & QStyle::State_Selected;
-        painter->save();
-        painter->setFont(option.font);
-        painter->setPen(
-            option.palette.color(group, selected ? QPalette::HighlightedText : QPalette::Text));
-        if (index.data(kCategoryMarkRole).toBool())
-            painter->drawText(QRect(base.left() + kCategoryMarkInset, base.top(),
-                                    slot - kCategoryMarkInset, base.height()),
-                              align, QStringLiteral("(*)"));
-        const QRect titleRect = base.adjusted(slot, 0, -slot, 0); // 左右各让一整槽
-        painter->drawText(
-            titleRect, align,
-            option.fontMetrics.elidedText(text, option.textElideMode, titleRect.width()));
-        painter->restore();
-    }
-
-    QSize sizeHint(const QStyleOptionViewItem &option, const QModelIndex &index) const override {
-        const QSize base = QStyledItemDelegate::sizeHint(option, index);
-        const QWidget *ref = option.widget;
-        const QStyle *style = ref ? ref->style() : QApplication::style();
-        // 画的是一整槽，预留三整槽：多出的那一档全落在右缘
-        return {base.width() + 3 * slotWidth(option, style), base.height()};
-    }
-
-  private:
-    // 前导槽 = 标记左让位 + "(*)" 字宽 + 样式的内容间距
-    static int slotWidth(const QStyleOptionViewItem &option, const QStyle *style) {
-        const int gap =
-            style->pixelMetric(QStyle::PM_FocusFrameHMargin, &option, option.widget) + 1;
-        return kCategoryMarkInset +
-               QFontMetrics(option.font).horizontalAdvance(QStringLiteral("(*)")) + gap;
-    }
-};
+QString categoryDisplayText(const QString &title, bool marked) {
+    return marked ? title + QStringLiteral(" \u25CF") : title;
+}
 
 } // namespace
 
@@ -995,14 +927,12 @@ void SettingsDialog::buildUi() {
 
     auto *root = new QHBoxLayout(this);
 
-    // 左侧分类列表：宽度一次预留——delegate sizeHint 已含前导槽，构造末尾按
-    // sizeHintForColumn 把宽度钉死（见下方注释）
+    // 左侧分类列表：宽度一次预留，构造末尾按字体度量把宽度钉死（见下方注释）
     m_categoryList = new QListWidget(this);
     m_categoryList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_categoryList->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
     m_categoryList->setIconSize(QSize(0, 0)); // 无图标
     m_categoryList->setSpacing(2);
-    m_categoryList->setItemDelegate(new CategoryDelegate(m_categoryList));
     root->addWidget(m_categoryList);
 
     // 右侧容器（堆栈 + 底部按钮）
@@ -1194,11 +1124,18 @@ void SettingsDialog::buildUi() {
             &QStackedWidget::setCurrentIndex);
     m_categoryList->setCurrentRow(0);
 
-    // 分类列表宽度一次预留：按最宽条目把宽度钉死（最小 = 最大）。只给 minimumWidth
-    // 时布局取 max(minimumWidth, min(sizeHint, maximumWidth))，而 QListView::sizeHint
-    // 是按条目尺寸放大的启发值（上限约 360），内容度量挤不进去、面板恒被上限钉宽
+    // 分类列表宽度一次预算：字体直接量「最长标题 + 后缀」的 advance，不经样式的
+    // sizeFromContents（它报的尺寸与样式自绘的文本落点不同源，windows11 选中边饰的
+    // 额外缩进恰好吃光后缀宽度，最长条目会溢出成 "…"）；余量写死 48，覆盖常见样式
+    // 的文本缩进（含选中态额外缩进）。标记恒按后缀预留，出现 / 消失零宽度抖动。
+    // 不设上限（上限随预算制有意取消，译名较长时列表可比现状宽）
+    int maxTextWidth = 0;
+    for (int i = 0; i < m_categoryList->count(); ++i)
+        maxTextWidth = qMax(maxTextWidth, QFontMetrics(m_categoryList->font())
+                                              .horizontalAdvance(categoryDisplayText(
+                                                  m_categoryList->item(i)->text(), true)));
     const int frame = 2 * m_categoryList->frameWidth();
-    m_categoryList->setFixedWidth(qMin(m_categoryList->sizeHintForColumn(0) + frame + 4, 320));
+    m_categoryList->setFixedWidth(maxTextWidth + 48 + frame);
 
     retintResetIcons();
 }
@@ -1513,13 +1450,13 @@ void SettingsDialog::refreshDerivedState() {
                 btn->setVisible(uncommitted && w && w->isEnabled());
         }
         if (QListWidgetItem *catItem = m_categoryList->item(categoryIndex)) {
-            catItem->setData(kCategoryMarkRole, categoryMarked);
+            // 文本整体由目录标题现拼，不从旧文本追加（本函数一轮内被多次调用）
+            catItem->setText(categoryDisplayText(tr(cat.title), categoryMarked));
             catItem->setToolTip(categoryMarked ? tr("This category has uncommitted changes")
                                                : QString());
         }
         ++categoryIndex;
     }
-    m_categoryList->viewport()->update();
     m_dirty = anyUncommitted;
     if (m_buttonBox && m_buttonBox->button(QDialogButtonBox::Apply))
         m_buttonBox->button(QDialogButtonBox::Apply)->setEnabled(m_dirty);
@@ -1558,7 +1495,7 @@ void SettingsDialog::retintResetIcons() {
 
 void SettingsDialog::changeEvent(QEvent *event) {
     QDialog::changeEvent(event);
-    // 主题 / 样式切换当场重染（全仓无运行期改字体处，槽宽不重算）
+    // 主题 / 样式切换当场重染（全仓无运行期改字体处，分类列表宽度预算不重算）
     if (event->type() == QEvent::PaletteChange || event->type() == QEvent::StyleChange)
         retintResetIcons();
 }
