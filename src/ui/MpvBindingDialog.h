@@ -3,6 +3,7 @@
 #include "pch.h"
 
 #include "ActionManager.h"
+#include "CustomToolManager.h"
 #include "mpvbridge/InputConf.h"
 #include "mpvbridge/MpvController.h"
 
@@ -20,7 +21,7 @@ class MpvBindingDialog : public QDialog {
     Q_OBJECT
   public:
     explicit MpvBindingDialog(MpvController *mpv, ActionManager *actions,
-                              QWidget *parent = nullptr);
+                              const CustomToolManager *toolMgr, QWidget *parent = nullptr);
 
   protected:
     // 每次打开重读 input.conf 与 input-bindings（路径与两档数据各调一次），
@@ -93,6 +94,7 @@ class MpvBindingDialog : public QDialog {
 
     MpvController *m_mpv = nullptr;
     ActionManager *m_actions = nullptr;
+    const CustomToolManager *m_toolMgr = nullptr; // N138：冲突提示并入工具已装键；可空
 
     QString m_confPath; // inputConfPath() 的打开时一次取值；空 = 无可写目录
     bool m_noPath = false;

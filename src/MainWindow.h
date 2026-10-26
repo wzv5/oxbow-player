@@ -187,6 +187,8 @@ class MainWindow : public QMainWindow {
     // N134：Tools 菜单的插件工具段（N135 起前置 mpv menu-data 段），名称 > 分段自动
     // 建子菜单（两段皆空时只剩编辑入口、无前导分隔线）
     void buildToolSection(QMenu &menu);
+    // N138：常驻工具动作组重建——与 tools() 等长，装不装键由 planKeys 单点判定
+    void rebuildToolActions();
     // N134：工具命令执行唯一收口——失败 OSD，日志不记命令原文；N135 的 mpv
     // menu-data 条目同走这里
     void runToolCommand(const QString &label, const QString &command);
@@ -571,6 +573,8 @@ class MainWindow : public QMainWindow {
     BookmarkEditorDialog *m_bookmarkEditor = nullptr;
     // N134：自定义工具单表
     CustomToolManager *m_toolMgr = nullptr;
+    // N138：常驻工具动作组，与 tools() 等长；parent 是主窗，菜单 clear() 只摘除不销毁
+    QList<QAction *> m_toolActions;
     // R3：设置对话框（非模态，按需创建）
     class SettingsDialog *m_settingsDialog = nullptr;
     // N86：快捷键编辑对话框（非模态，按需创建）

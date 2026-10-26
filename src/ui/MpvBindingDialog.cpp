@@ -55,8 +55,9 @@ class GrayDelegate : public QStyledItemDelegate {
 
 } // namespace
 
-MpvBindingDialog::MpvBindingDialog(MpvController *mpv, ActionManager *actions, QWidget *parent)
-    : QDialog(parent), m_mpv(mpv), m_actions(actions) {
+MpvBindingDialog::MpvBindingDialog(MpvController *mpv, ActionManager *actions,
+                                   const CustomToolManager *toolMgr, QWidget *parent)
+    : QDialog(parent), m_mpv(mpv), m_actions(actions), m_toolMgr(toolMgr) {
     setWindowTitle(tr("mpv Key Bindings"));
     // 不设模态：行内捕获按键要窗口能收到事件（N86 同款）
     resize(640, 570);
@@ -824,19 +825,29 @@ bool MpvBindingDialog::apply() {
 
     // —— 第 1 步：键位冲突提示（只读、仅提示、不阻断；§4.1）——
     // 判据：本次将写盘的生效自定义行键集 ∩ 插件侧当前键位表（ActionManager 运行期
-    // 真值，不是声明默认）。不读不写 [shortcuts] 节、不改 ActionManager
+    // 真值，不是声明默认）。N138：键表走 claimedKeys 单点，工具实际安装的键一并并入
+    // （被 AM 盖住的不占 mpv 键位）；不读不写 [shortcuts] 节、不改 ActionManager
     QSet<QString> pluginKeys;
-    QMultiHash<QString, QString> pluginNames; // 归一键名 → 动作名
-    for (ActionManager::Id id : m_actions->orderedIds()) {
-        const QKeySequence seq = m_actions->key(id); // 运行期真值
-        if (seq.isEmpty())
-            continue;
+    QMultiHash<QString, QString> pluginNames; // 归一键名 → 占用者显示名
+    const auto claimKey = [&pluginKeys, &pluginNames](const QKeySequence &seq,
+                                                      const QString &owner) {
         const QString mpvName = MpvKey::nameFromSequence(seq);
         if (mpvName.isEmpty())
-            continue;
+            return;
         const QString norm = MpvKey::normalizedKeyName(mpvName);
         pluginKeys.insert(norm);
-        pluginNames.insert(norm, m_actions->displayText(id));
+        pluginNames.insert(norm, owner);
+    };
+    const QList<ActionManager::ClaimedKey> claimed = m_actions->claimedKeys();
+    for (const ActionManager::ClaimedKey &c : claimed)
+        claimKey(c.first, c.second);
+    if (m_toolMgr) {
+        const CustomToolManager::KeyPlan plan =
+            CustomToolManager::planKeys(m_toolMgr->tools(), claimed);
+        for (int i = 0; i < plan.installed.size(); ++i) {
+            if (!plan.installed.at(i).isEmpty())
+                claimKey(plan.installed.at(i), m_toolMgr->tools().at(i).name);
+        }
     }
     QStringList conflictLines;
     const QHash<QString, int> eff = effectiveCustomRows();

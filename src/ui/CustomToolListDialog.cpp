@@ -4,8 +4,9 @@
 #include "ThemedIconEngine.h"
 #include "ui/CustomToolListDialog.h"
 
-CustomToolListDialog::CustomToolListDialog(const QList<CustomTool> &tools, QWidget *parent)
-    : QDialog(parent), m_tools(tools) {
+CustomToolListDialog::CustomToolListDialog(const QList<CustomTool> &tools,
+                                           const ActionManager *actions, QWidget *parent)
+    : QDialog(parent), m_tools(tools), m_actions(actions) {
     setWindowTitle(tr("Customize Tool List"));
 
     m_list = new QListWidget(this);
@@ -45,6 +46,15 @@ CustomToolListDialog::CustomToolListDialog(const QList<CustomTool> &tools, QWidg
     auto *commandHint = new QLabel(tr("Same as in input.conf"), this);
     commandHint->setEnabled(false);
     commandHint->setFocusPolicy(Qt::NoFocus);
+    m_keyEdit = new QKeySequenceEdit(this);
+    // 只认单组合键：多段串与 AM 的单段键在 planKeys 里永不相等，会把歧义交回 Qt
+    // 裁决。Qt < 6.5 无此属性即降级——这只是录入体验，不是硬限制（手改 INI 收多段）
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+    m_keyEdit->setMaximumSequenceLength(1);
+#endif
+    if (auto *le = m_keyEdit->findChild<QLineEdit *>())
+        le->setContextMenuPolicy(Qt::NoContextMenu); // 内建右键菜单会遮住记录器自身
+    m_keyEdit->installEventFilter(this);
     m_noteEdit = new QLineEdit(this);
 
     auto *form = new QFormLayout;
@@ -52,6 +62,7 @@ CustomToolListDialog::CustomToolListDialog(const QList<CustomTool> &tools, QWidg
     form->addRow(QString(), nameHint);
     form->addRow(tr("Command"), m_commandEdit);
     form->addRow(QString(), commandHint);
+    form->addRow(tr("Key"), m_keyEdit);
     form->addRow(tr("Note"), m_noteEdit);
 
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
@@ -83,6 +94,12 @@ CustomToolListDialog::CustomToolListDialog(const QList<CustomTool> &tools, QWidg
             return;
         m_tools[m_list->currentRow()].note = text;
     });
+    connect(m_keyEdit, &QKeySequenceEdit::keySequenceChanged, this,
+            [this](const QKeySequence &seq) {
+                if (m_updating)
+                    return;
+                m_tools[m_list->currentRow()].key = seq;
+            });
     connect(m_addButton, &QAbstractButton::clicked, this, [this] { addTool(); });
     connect(m_deleteButton, &QAbstractButton::clicked, this, [this] { deleteTool(); });
     connect(m_upButton, &QAbstractButton::clicked, this, [this] { moveTool(-1); });
@@ -123,12 +140,29 @@ void CustomToolListDialog::changeEvent(QEvent *event) {
     retintIcons();
 }
 
+// N138：裸键 Del / 退格 / Esc 清空该键而非记作快捷键（KeypadModifier 不算修饰）
+bool CustomToolListDialog::eventFilter(QObject *watched, QEvent *event) {
+    if (event->type() == QEvent::KeyPress) {
+        auto *ke = static_cast<QKeyEvent *>(event);
+        if ((ke->modifiers() & ~Qt::KeypadModifier) == Qt::NoModifier &&
+            (ke->key() == Qt::Key_Delete || ke->key() == Qt::Key_Backspace ||
+             ke->key() == Qt::Key_Escape)) {
+            if (qobject_cast<QKeySequenceEdit *>(watched)) {
+                m_keyEdit->setKeySequence(QKeySequence());
+                return true;
+            }
+        }
+    }
+    return QDialog::eventFilter(watched, event);
+}
+
 void CustomToolListDialog::loadRow(int row) {
     if (row < 0 || row >= m_tools.size())
         return;
     m_updating = true;
     m_nameEdit->setText(m_tools[row].name);
     m_commandEdit->setText(m_tools[row].command);
+    m_keyEdit->setKeySequence(m_tools[row].key);
     m_noteEdit->setText(m_tools[row].note);
     updateButtons();
     m_updating = false;
@@ -175,6 +209,7 @@ void CustomToolListDialog::moveTool(int delta) {
         return;
     m_tools[row].name = m_nameEdit->text(); // 未提交的编辑随行带走
     m_tools[row].command = m_commandEdit->text();
+    m_tools[row].key = m_keyEdit->keySequence();
     m_tools[row].note = m_noteEdit->text();
     m_tools.swapItemsAt(row, target);
     m_updating = true;
@@ -185,12 +220,20 @@ void CustomToolListDialog::moveTool(int delta) {
     loadRow(target);
 }
 
-// 校验与规范化全数收口在 CustomToolManager::sanitize；对话框只管把违规摊到行上
+// 校验与规范化全数收口在 CustomToolManager::sanitize；对话框只管把违规摊到行上。
+// N138：工具间重键拦下，AM 占用只提示、照常保存
 void CustomToolListDialog::accept() {
     using Problem = CustomToolManager::Problem;
     CustomToolManager::Sanitized sanitized = CustomToolManager::sanitize(m_tools);
     if (sanitized.problem != Problem::None) {
         m_list->setCurrentRow(sanitized.row);
+        if (sanitized.problem == Problem::DuplicateKey) {
+            m_keyEdit->setFocus();
+            QMessageBox::warning(
+                this, windowTitle(),
+                tr("The key \"%1\" is already used by another tool.").arg(sanitized.key));
+            return;
+        }
         // 缺哪个字段聚焦哪个；无效路径与命名冲突都归名称一侧
         (sanitized.problem == Problem::MissingCommand ? m_commandEdit : m_nameEdit)->setFocus();
         QMessageBox::warning(
@@ -199,6 +242,21 @@ void CustomToolListDialog::accept() {
                 ? tr("\"%1\" cannot be both a tool and a submenu.").arg(sanitized.path)
                 : tr("Each tool needs both a name and a command."));
         return;
+    }
+    // 重键已被 sanitize 拦下，此处 conflict 只会是 AM 占用；提示不拦截
+    const CustomToolManager::KeyPlan plan =
+        CustomToolManager::planKeys(sanitized.tools, m_actions->claimedKeys());
+    if (!plan.conflicts.isEmpty()) {
+        QStringList lines;
+        for (const CustomToolManager::KeyConflict &c : plan.conflicts) {
+            lines << QStringLiteral("%1 (%2)").arg(c.key.toString(QKeySequence::PortableText),
+                                                   c.owner);
+        }
+        QMessageBox::information(
+            this, windowTitle(),
+            tr("These keys are already used by the application, so these shortcuts will "
+               "not trigger. The menu entries still work:\n%1")
+                .arg(lines.join(QLatin1Char('\n'))));
     }
     m_tools = std::move(sanitized.tools); // 全部为空条目时即空表，保存空列表
     QDialog::accept();

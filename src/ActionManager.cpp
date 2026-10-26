@@ -242,3 +242,14 @@ QHash<ActionManager::Id, QKeySequence> ActionManager::effectiveKeys(const QStrin
     ini.endGroup();
     return keys;
 }
+
+QList<ActionManager::ClaimedKey> ActionManager::claimedKeys() const {
+    QList<ClaimedKey> keys;
+    keys.reserve(int(Id::Count));
+    for (Id id : orderedIds()) {
+        const QKeySequence seq = key(id);
+        if (!seq.isEmpty())
+            keys.append({seq, displayText(id)});
+    }
+    return keys;
+}

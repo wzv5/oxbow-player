@@ -753,6 +753,7 @@ MainWindow::MainWindow(MpvController *controller, AppearanceManager *appearance,
     // N134
     m_toolMgr = new CustomToolManager(configFile, this);
     m_toolMgr->load();
+    rebuildToolActions(); // N138：AM 键位已在此前 applyShortcutOverrides 落定
 
     m_marks = new MarkAggregator(m_bookmarkMgr); // N15：标记聚合器
 
@@ -4025,8 +4026,12 @@ void MainWindow::applyShortcutOverrides() {
 }
 
 // N86：落盘成功后的即时生效——从 ini 重载键位（幂等）。N90：让位分支已删，运行期
-// 键位全程与 ini 一致，console 让位不再有"只落盘、关闭后才生效"的运行期中间态
-void MainWindow::applyShortcutsLive() { applyShortcutOverrides(); }
+// 键位全程与 ini 一致，console 让位不再有"只落盘、关闭后才生效"的运行期中间态。
+// N138：AM 键位改完后重建工具动作——被让出 / 新占用的键即刻易主
+void MainWindow::applyShortcutsLive() {
+    applyShortcutOverrides();
+    rebuildToolActions();
+}
 
 // N87：console 开 → 让出全部键盘；关 → 收回。N90 改判：让位期键盘归属由焦点位置决定，
 // 键位表全程不动——开时只做一次性焦点收口（console 一开即可打字，已定案 6）并装上
@@ -4108,7 +4113,7 @@ void MainWindow::ensureMpvBindingDialog() {
         m_bindingDialog->activateWindow();
         return;
     }
-    m_bindingDialog = new MpvBindingDialog(m_controller, m_actions, this);
+    m_bindingDialog = new MpvBindingDialog(m_controller, m_actions, m_toolMgr, this);
     m_bindingDialog->setAttribute(Qt::WA_DeleteOnClose, true);
     connect(m_bindingDialog, &QObject::destroyed, this, [this] { m_bindingDialog = nullptr; });
     m_bindingDialog->show();
@@ -4664,27 +4669,55 @@ static QMenu *ensureToolSubmenu(QMenu &menu, QHash<QString, QMenu *> &submenus,
 }
 
 // N134：名称经 pathSegments 分段，最后一段是叶子文本，前面的段依次找 / 建子菜单。
-// 条目与连接都是渲染期对象，随 clear() 消亡。N135 起输出顺序为 mpv menu-data 段、
-// 分隔线、插件工具、分隔线——两段皆空时只剩描述表追加的编辑入口（前导分隔线由
-// 助手判据自然压住）
+// 条目与连接都是渲染期对象，随 clear() 消亡——叶子除外：N138 起用常驻工具动作组，
+// clear() 只摘除不销毁。N135 起输出顺序为 mpv menu-data 段、分隔线、插件工具、
+// 分隔线——两段皆空时只剩描述表追加的编辑入口（前导分隔线由助手判据自然压住）
 void MainWindow::buildToolSection(QMenu &menu) {
     buildMpvMenuItems(menu, m_controller->menuData());
     appendMenuSeparator(menu);
     QHash<QString, QMenu *> submenus;
-    for (const CustomTool &tool : m_toolMgr->tools()) {
-        const QStringList segments = CustomToolManager::pathSegments(tool.name);
+    const QList<CustomTool> &tools = m_toolMgr->tools();
+    Q_ASSERT(m_toolActions.size() == tools.size()); // 等长由 rebuildToolActions 保证
+    for (int i = 0; i < tools.size(); ++i) {
+        const QStringList segments = CustomToolManager::pathSegments(tools.at(i).name);
         if (segments.isEmpty())
             continue;
         QMenu *parent = &menu;
-        for (int i = 0; i + 1 < segments.size(); ++i) {
-            const QString prefixKey = CustomToolManager::joinPath(segments.mid(0, i + 1));
-            parent = ensureToolSubmenu(*parent, submenus, prefixKey, segments[i]);
+        for (int j = 0; j + 1 < segments.size(); ++j) {
+            const QString prefixKey = CustomToolManager::joinPath(segments.mid(0, j + 1));
+            parent = ensureToolSubmenu(*parent, submenus, prefixKey, segments.at(j));
         }
-        QAction *act = parent->addAction(segments.constLast());
-        connect(act, &QAction::triggered, this,
-                [this, name = tool.name, cmd = tool.command] { runToolCommand(name, cmd); });
+        parent->addAction(m_toolActions.at(i));
     }
     appendMenuSeparator(menu);
+}
+
+// N138：工具键要有快捷键，动作就必须常驻——随菜单 clear() 消亡的渲染期对象留不住
+// QKeySequence。装不装键由 planKeys 单点判定（AM 占用与工具间重键都不装，菜单项照常
+// 存在）；动作双挂载主窗，快捷键才不随菜单栏隐藏失活
+void MainWindow::rebuildToolActions() {
+    const CustomToolManager::KeyPlan plan =
+        CustomToolManager::planKeys(m_toolMgr->tools(), m_actions->claimedKeys());
+    qDeleteAll(m_toolActions);
+    m_toolActions.clear();
+    const QList<CustomTool> &tools = m_toolMgr->tools();
+    m_toolActions.reserve(tools.size());
+    for (int i = 0; i < tools.size(); ++i) {
+        const QStringList segments = CustomToolManager::pathSegments(tools.at(i).name);
+        auto *act = new QAction(segments.value(segments.size() - 1), this);
+        const QKeySequence &key = plan.installed.at(i);
+        if (!key.isEmpty())
+            act->setShortcut(key);
+        addAction(act);
+        connect(act, &QAction::triggered, this,
+                [this, name = tools.at(i).name, cmd = tools.at(i).command] {
+                    runToolCommand(name, cmd);
+                });
+        m_toolActions.append(act);
+    }
+    for (const CustomToolManager::KeyConflict &c : plan.conflicts)
+        OXBOW_LOG_WARNING() << "tool shortcut" << c.key.toString(QKeySequence::PortableText)
+                            << "not installed; already claimed by" << c.owner;
 }
 
 // N134：同步下发；失败走 OSD 与日志，日志只记 label 与错误码——不记命令原文
@@ -4747,11 +4780,12 @@ void MainWindow::buildMpvMenuItems(QMenu &menu, const QList<MpvController::MenuD
 }
 
 void MainWindow::customizeTools() {
-    CustomToolListDialog dlg(m_toolMgr->tools(), this);
+    CustomToolListDialog dlg(m_toolMgr->tools(), m_actions, this);
     if (dlg.exec() != QDialog::Accepted)
         return;
     if (!m_toolMgr->replaceTools(dlg.tools()))
         OXBOW_LOG_WARNING() << "failed to save custom tool list to ini";
+    rebuildToolActions(); // 落盘失败时内存表仍生效，动作照常重建
 }
 
 // N43：滤镜动态段——两个子菜单按 af / vf 现读重建，勾选态即启用位；无条目则该子菜单

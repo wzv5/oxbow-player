@@ -25,6 +25,17 @@ void CustomToolManager::load() {
                                 << "skipped: empty command or invalid name path";
             continue;
         }
+        // 坏键判据落在回写串上：fromString 对认不出的键名给的是含 Key_unknown 的
+        // 非空序列，isEmpty() 判不出（见 pitfalls）
+        const QString storedKey = s.value(bp + QStringLiteral("/key")).toString();
+        if (!storedKey.isEmpty()) {
+            tool.key = QKeySequence::fromString(storedKey, QKeySequence::PortableText);
+            if (tool.key.toString(QKeySequence::PortableText).isEmpty()) {
+                tool.key = QKeySequence();
+                OXBOW_LOG_WARNING()
+                    << "custom tool entry" << i << "has unparsable key:" << storedKey;
+            }
+        }
         m_tools.append(tool);
     }
 }
@@ -63,7 +74,8 @@ CustomToolManager::Sanitized CustomToolManager::sanitize(const QList<CustomTool>
     kept.reserve(tools.size());
     for (int i = 0; i < tools.size(); ++i) {
         const QStringList segments = pathSegments(tools[i].name);
-        const CustomTool tool{joinPath(segments), tools[i].command.trimmed(), tools[i].note};
+        const CustomTool tool{joinPath(segments), tools[i].command.trimmed(), tools[i].note,
+                              tools[i].key};
         const bool nameEmpty = tool.name.isEmpty();
         const bool commandEmpty = tool.command.isEmpty();
         if (nameEmpty && commandEmpty)
@@ -86,11 +98,66 @@ CustomToolManager::Sanitized CustomToolManager::sanitize(const QList<CustomTool>
         }
     }
 
+    // 工具间重键：空占用表调 planKeys（纯数据判据），冲突行折回原表序
+    if (!kept.isEmpty()) {
+        QList<CustomTool> keyed;
+        keyed.reserve(kept.size());
+        for (const Kept &item : kept)
+            keyed.append(item.tool);
+        const KeyPlan plan = planKeys(keyed, {});
+        if (!plan.conflicts.isEmpty()) {
+            const KeyConflict &conflict = plan.conflicts.constFirst();
+            return {.problem = Problem::DuplicateKey,
+                    .row = kept.at(conflict.row).row,
+                    .key = conflict.key.toString(QKeySequence::PortableText)};
+        }
+    }
+
     Sanitized ok;
     ok.tools.reserve(kept.size());
     for (const Kept &item : kept)
         ok.tools.append(item.tool);
     return ok;
+}
+
+// N138：键位规划单点。比对的是 installed 而非原键——前一条自身被 AM 盖住时不挡后一条
+CustomToolManager::KeyPlan
+CustomToolManager::planKeys(const QList<CustomTool> &tools,
+                            const QList<QPair<QKeySequence, QString>> &occupied) {
+    KeyPlan plan;
+    plan.installed.reserve(tools.size());
+    for (int i = 0; i < tools.size(); ++i) {
+        const QKeySequence &key = tools.at(i).key;
+        if (key.isEmpty()) {
+            plan.installed.append(QKeySequence());
+            continue;
+        }
+        bool blocked = false;
+        QString owner;
+        for (const auto &claimed : occupied) {
+            if (claimed.first == key) {
+                blocked = true;
+                owner = claimed.second;
+                break;
+            }
+        }
+        if (!blocked) {
+            for (int j = 0; j < i; ++j) {
+                if (plan.installed.at(j) == key) {
+                    blocked = true;
+                    owner = tools.at(j).name;
+                    break;
+                }
+            }
+        }
+        if (blocked) {
+            plan.installed.append(QKeySequence());
+            plan.conflicts.append({i, key, owner});
+        } else {
+            plan.installed.append(key);
+        }
+    }
+    return plan;
 }
 
 bool CustomToolManager::save() const {
@@ -104,6 +171,8 @@ bool CustomToolManager::save() const {
         s.setValue(bp + QStringLiteral("/name"), m_tools[i].name);
         s.setValue(bp + QStringLiteral("/command"), m_tools[i].command);
         s.setValue(bp + QStringLiteral("/note"), m_tools[i].note);
+        s.setValue(bp + QStringLiteral("/key"),
+                   m_tools[i].key.toString(QKeySequence::PortableText));
     }
     s.sync();
     return s.status() == QSettings::NoError;

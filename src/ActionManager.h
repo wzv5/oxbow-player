@@ -104,6 +104,13 @@ class ActionManager : public QObject {
     // 此处之外不得再有第二份归一遍历
     QHash<Id, QKeySequence> effectiveKeys(const QString &iniPath) const;
 
+    // ---- N138：占用键查询 ----
+    // 已占用键的只读出口（first = 键，second = displayText）：取运行期真值、空键跳过，
+    // 含 Escape 这类隐绑定，不看 modifiable 与禁用态。键表遍历收在本类，与
+    // effectiveKeys 同为读取单点，外部不得再自行遍历 orderedIds 拼键表
+    using ClaimedKey = QPair<QKeySequence, QString>; // 仅为本类签名可读
+    QList<ClaimedKey> claimedKeys() const;
+
   private:
     // 存储值解读单点："--" 即显式空，其余按 PortableText 解析（解析不出得空序列
     // 并留痕）。私有以防外部自拼"判空 + 解读"再走一遍归一
