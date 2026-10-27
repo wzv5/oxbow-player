@@ -5,6 +5,7 @@
 #include "Constants.h"
 #include "Logging.h"
 #include "Util.h" // N61 §2.3：回显整形（playlist 条目 filename 进判据前唯一一道加工）
+#include "Version.h"
 
 #include "ui/FilterListWidget.h"
 
@@ -326,6 +327,9 @@ class MpvController::EventThread : public QThread {
 };
 
 MpvController::MpvController(mpv_handle *mpv, QObject *parent) : QObject(parent), m_mpv(mpv) {
+    // N102：版本串在此注入一次，消费者（AboutDialog 等）只读 App::mpvVersion()
+    App::setMpvVersion(propertyString(QStringLiteral("mpv-version")));
+
     // 事件线程只创建不启动：启动时机由宿主在嵌入属性就绪后经
     // startEventThread() 控制（见该函数注释的启动门控说明）
     m_eventThread = new EventThread(this, m_mpv);

@@ -23,10 +23,8 @@ QDateTime buildDateTime();
 // 发行版打包的 Qt，与开发机头文件版本本就不是同一份，报运行库版本才对得上诊断
 QString qtVersion();
 
-// 宿主 mpv 版本串（N102）：主窗口初始化阶段经 MpvController 读 mpv-version 属性
-// 后 set 一次（属性形如 "mpv v0.41.0-…"，入库即剥 "mpv " 前缀与版本 tag 的 `v`
-// 引导），此后消费者（AboutDialog）只经 get 取值、不再认识 MpvController。未填充
-// 即为空串。全程 GUI 线程读写，无并发问题
+// 宿主 mpv 版本串（N102）：MpvController 构造期读 mpv-version 后 set 一次（入库即剥
+// "mpv " 前缀与 tag 的 `v`），消费者只经 get 取值。未填充即空串
 void setMpvVersion(const QString &v);
 QString mpvVersion();
 

@@ -27,7 +27,7 @@ QDateTime buildDateTime() {
 QString qtVersion() { return QString::fromLatin1(qVersion()); }
 
 namespace {
-QString s_mpvVersion; // N102：主窗口初始化期填充一次，GUI 线程读写
+QString s_mpvVersion; // N102：MpvController 构造期填充一次，GUI 线程读写
 } // namespace
 
 void setMpvVersion(const QString &v) {

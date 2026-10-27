@@ -11,7 +11,6 @@
 #include "ServiceRegistry.h"
 #include "TraversalPolicy.h"
 #include "Util.h"
-#include "Version.h" // N84：版本身份口（构造期填 App::setMpvVersion；本文件只许 include 此口，不得 include revision.h）
 #include "mpvbridge/MpvController.h"
 #include "mpvbridge/MpvKeyName.h"                    // N87：未认领按键的 mpv 键名翻译
 #include "playbackreport/PlaybackReportDriver.h"     // N74：上报驱动器装配与退出序
@@ -624,9 +623,6 @@ MainWindow::MainWindow(MpvController *controller, AppearanceManager *appearance,
     : QMainWindow(parent), m_controller(controller), m_configFile(configFile),
       m_relay(std::move(relay)), m_appearance(appearance) {
     setWindowTitle(App::name());
-
-    // N102：mpv 版本一次性填充，About 对话框等消费者此后不依赖 MpvController
-    App::setMpvVersion(m_controller->propertyString(QStringLiteral("mpv-version")));
 
     m_actions = new ActionManager(this); // A15：先于任何容器构建
     // 启动装配期收口：菜单创建前把 ini 覆盖应用到键位
