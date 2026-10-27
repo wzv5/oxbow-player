@@ -23,10 +23,8 @@ class AppearanceManager {
     // trim 后精确匹配（auto 不分大小写），空串与未命中落 fallbackName
     static QString resolveStyle(const QString &raw, const QStringList &available,
                                 const QString &fallbackName);
-#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
     // trim 后精确匹配 system / light / dark，空串与未识别落 Unknown
     static Qt::ColorScheme resolveColorScheme(const QString &raw);
-#endif
 
     QString m_platformDefaultStyle; // 构造时捕获的平台默认样式名
 };

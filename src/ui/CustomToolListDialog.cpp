@@ -48,10 +48,8 @@ CustomToolListDialog::CustomToolListDialog(const QList<CustomTool> &tools,
     commandHint->setFocusPolicy(Qt::NoFocus);
     m_keyEdit = new QKeySequenceEdit(this);
     // 只认单组合键：多段串与 AM 的单段键在 planKeys 里永不相等，会把歧义交回 Qt
-    // 裁决。Qt < 6.5 无此属性即降级——这只是录入体验，不是硬限制（手改 INI 收多段）
-#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+    // 裁决。录入器限长 1 只是录入体验，不是硬限制（手改 INI 收多段）
     m_keyEdit->setMaximumSequenceLength(1);
-#endif
     if (auto *le = m_keyEdit->findChild<QLineEdit *>())
         le->setContextMenuPolicy(Qt::NoContextMenu); // 内建右键菜单会遮住记录器自身
     m_keyEdit->installEventFilter(this);

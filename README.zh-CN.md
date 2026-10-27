@@ -57,7 +57,8 @@ Oxbow 以插件形式运行在 mpv 中，需要与其他插件共存，同时保
 
 - Windows 10（1809+）及以上，64 位——该下限来自 Qt 6
 - Linux：X11 会话，或带 XWayland 的 Wayland 会话
-- [mpv](https://mpv.io/) 任意较新版本——各发行版打包的 mpv 均带有本插件所需的插件接口
+- [mpv](https://mpv.io/) 0.39 及以上
+- Qt 6.8 及以上运行库——Windows 随插件分发，无需单独安装；Linux 依赖系统 Qt
 
 视频区通过 mpv 的 `wid` 嵌入，该属性只在 X11 一侧存在，因此无 XWayland 的纯 Wayland 会话不受支持。
 
@@ -93,7 +94,7 @@ Linux 上媒体元数据补全依赖系统 `libmediainfo`；缺失时该功能�
 - 支持 C++23 的工具链（Windows 目标已完整验证，Linux（X11 / XWayland）受支持，其他组合未测试）
 - CMake
 - Ninja
-- Qt 6.x
+- Qt 6.8 及以上
 - 无需 mpv 开发包——`mpv/client.h` 已内置于仓库
 - 仅 Linux：X11 开发头文件
 

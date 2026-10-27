@@ -14,7 +14,6 @@ QString AppearanceManager::resolveStyle(const QString &raw, const QStringList &a
     return available.contains(value) ? value : fallbackName;
 }
 
-#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
 Qt::ColorScheme AppearanceManager::resolveColorScheme(const QString &raw) {
     const QString value = raw.trimmed();
     if (value == QLatin1String("system"))
@@ -25,7 +24,6 @@ Qt::ColorScheme AppearanceManager::resolveColorScheme(const QString &raw) {
         return Qt::ColorScheme::Dark;
     return Qt::ColorScheme::Unknown;
 }
-#endif
 
 AppearanceManager::AppearanceManager()
     : m_platformDefaultStyle(QApplication::style()->objectName()) {}
@@ -41,7 +39,5 @@ void AppearanceManager::apply(const QString &styleRaw, const QString &colorSchem
                                   "current style")
                        .arg(target);
     }
-#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
     QGuiApplication::styleHints()->setColorScheme(resolveColorScheme(colorSchemeRaw));
-#endif
 }

@@ -79,7 +79,7 @@ if(OXBOW_WITH_RCLONE_CRYPT)
 endif()
 
 # Svg：把 QtSvg 模块写进 oxbowcore 的导入表（用法见下面 oxbowcore 的链接处）
-find_package(Qt6 REQUIRED COMPONENTS Widgets LinguistTools Concurrent Network Svg)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets LinguistTools Concurrent Network Svg)
 
 # ---------------------------------------------------------------------------
 # 目标 1：加载壳 main.dll（纯 Win32，无 Qt 依赖）
@@ -460,7 +460,7 @@ endif()
 # 插件构建图（oxbowcore / 翻译 / 部署）不受影响。
 # ---------------------------------------------------------------------------
 if(OXBOW_BUILD_TESTS)
-    find_package(Qt6 REQUIRED COMPONENTS Test)
+    find_package(Qt6 6.8 REQUIRED COMPONENTS Test)
     enable_testing()
 
     # 被测源码进测试静态库，各测试 exe 链接复用（静态归档只拉被引用 object）

@@ -57,7 +57,8 @@ Oxbow runs as a plugin inside mpv and has to coexist with other plugins while ke
 
 - Windows 10 (1809+) or later, 64-bit — this floor comes from Qt 6
 - Linux with an X11 session, or a Wayland session with XWayland
-- [mpv](https://mpv.io/) — any recent version (all distro builds ship the plugin interface Oxbow needs)
+- [mpv](https://mpv.io/) — 0.39 or later
+- Qt 6.8 or later runtime libraries — bundled with the plugin on Windows, no separate install needed; on Linux the system Qt is used
 
 The video area is embedded through mpv's `wid`, which only exists on the X11 side; pure-Wayland sessions without XWayland are therefore not supported.
 
@@ -93,7 +94,7 @@ On Linux, media metadata enrichment depends on the system `libmediainfo`. Withou
 - Any toolchain with C++23 support (the Windows target is fully verified, Linux (X11 / XWayland) is supported, other combinations are untested)
 - CMake
 - Ninja
-- Qt 6.x
+- Qt 6.8 or later
 - No mpv dev package needed — `mpv/client.h` is bundled in the repo
 - Linux only: X11 development headers
 

@@ -276,8 +276,7 @@ QList<SettingChoice> styleChoices() {
     return l;
 }
 
-#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
-// N115：配色方案三态——与目录项同受版本门禁（setColorScheme 自 Qt 6.8 引入）
+// N115：配色方案三态
 QList<SettingChoice> colorSchemeChoices() {
     return {
         {QT_TRANSLATE_NOOP("SettingsDialog", "System"), QStringLiteral("system"), {}},
@@ -285,7 +284,6 @@ QList<SettingChoice> colorSchemeChoices() {
         {QT_TRANSLATE_NOOP("SettingsDialog", "Dark"), QStringLiteral("dark"), {}},
     };
 }
-#endif
 
 // 循环模式：复合项示例——一个 UI 项管辖两个 mpv key（R3 §3.7 语义的数据化）。
 // 第 0 项为占位（assignments 为空）：用户手改 conf 产生的非预设组合回填到该项，
@@ -416,13 +414,12 @@ const QList<SettingCategory> &settingCatalog() {
                       .choices = languageChoices,
                       .fallback = App::languageDefault(),
                       .note = QT_TRANSLATE_NOOP("SettingsDialog", "Takes effect after restart")},
-                     // N115：Style 兜底空串 = 第 0 项 Auto；Color Scheme 仅 Qt ≥ 6.8
+                     // N115：Style 兜底空串 = 第 0 项 Auto
                      {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Interface Style"),
                       .widget = WidgetKind::Combo,
                       .iniKey = "style",
                       .choices = styleChoices,
                       .fallback = App::interfaceStyleDefault() /* 空 = Auto（第 0 项） */},
-#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
                      {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Color Scheme"),
                       .widget = WidgetKind::Combo,
                       .iniKey = "colorScheme",
@@ -432,7 +429,6 @@ const QList<SettingCategory> &settingCatalog() {
                           "SettingsDialog",
                           "Only some styles (such as Fusion) follow this setting; "
                           "others ignore it silently")},
-#endif
                      {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Wheel Step"),
                       .widget = WidgetKind::Combo,
                       .iniKey = "volumeWheelStep",

@@ -63,10 +63,8 @@ ShortcutsDialog::ShortcutsDialog(ActionManager *actions, const QString &iniPath,
 
         auto *edit = new QKeySequenceEdit(m_table);
         // 只认单组合键：原生可录 4 键序列（如 "S, S, S, S"），限长 1 后按下第一个
-        // 组合键即结束捕获。Qt < 6.5 无此属性，降级为原生行为
-#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+        // 组合键即结束捕获
         edit->setMaximumSequenceLength(1);
-#endif
         disableInternalLineEditMenu(edit);
         // Del / 退格 / Esc 清空，见 eventFilter
         edit->installEventFilter(this);
