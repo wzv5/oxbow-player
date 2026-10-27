@@ -1,24 +1,17 @@
-// 加载壳（loader shell）。
-//
-// mpv 加载本 DLL（scripts/oxbow/main.dll）并调用 mpv_open_cplugin。
-// 本文件刻意保持为纯 Win32、零 Qt 依赖：这样编译产物没有任何 Qt 导入，
-// 也就不会在加载时要求 Qt 运行库能被搜索到（避免之前“Qt 必须放在 mpv.exe 旁”
-// 的限制，以及 MSVC 延迟加载对 Qt moc 数据符号 staticMetaObject 的 LNK1194 报错）。
-//
-// 壳的工作：
-//   1. 取得自身所在目录（即 scripts/oxbow/）；
-//   2. 设置 Qt 插件搜索环境变量，指向共置的 Qt 插件子目录；
-//   3. 以 LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR 精确加载真正带 Qt 的插件
-//      oxbowcore.dll（同目录），其依赖的 Qt 运行库从该目录解析；
-//      不改动进程级默认搜索行为，避免影响 mpv 自身的延迟 DLL 加载；
-//   4. 把 mpv 的入口调用转发给 oxbowcore.dll 导出的 mpv_open_cplugin。
-//
-// 这样 Qt 运行库随插件一起放在 scripts/oxbow/ 下即可，无需污染 mpv.exe 目录。
+// 加载壳（main.dll，纯 Win32、零 Qt 导入）：mpv 加载它并调用导出的 mpv_open_cplugin。
+// 没有导入就无需 Qt 运行库可被全局搜索到；Qt 运行库随核心共置在 scripts/oxbow/ 下，
+// 由本壳加载核心时精确解析。核心对 mpv 不可见，其 pfn_* 表由本壳代填（复刻 mpv
+// 对脚本 DLL 的填表动作），随后把入口调用转发给核心。
 
 #define _WIN32_WINNT 0x0A00
 #include <windows.h>
 
+#include <cstring>
 #include <string>
+
+// 生成文件由构建期扫 mpv/ 目录产出（CMakeLists 的 oxbow_mpv_syms 步骤），自带
+// MPV_CPLUGIN_DYNAMIC_SYM 定义。壳只持有指针，不调用任何 mpv 函数。
+#include "mpv_cplugin_syms.h"
 
 typedef int (*MpvOpenCpluginFunc)(void *handle);
 
@@ -26,7 +19,7 @@ static HMODULE g_core = nullptr;
 static MpvOpenCpluginFunc g_entry = nullptr;
 static bool g_tried = false;
 
-// 通过本函数自身地址取得当前模块句柄（不依赖模块名）。
+// 经自身地址取当前模块句柄，不依赖模块名。
 static HMODULE ThisModule() {
     HMODULE h = nullptr;
     GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
@@ -35,7 +28,7 @@ static HMODULE ThisModule() {
     return h;
 }
 
-// 取模块完整路径：返回值等于缓冲大小时视为截断，倍增重试直至容纳（B4）。
+// 完整路径，缓冲不够则倍增重试（B4）。
 static std::wstring ModuleFilePath(HMODULE h) {
     std::wstring buf(MAX_PATH, L'\0');
     DWORD len = 0;
@@ -45,7 +38,7 @@ static std::wstring ModuleFilePath(HMODULE h) {
     return buf;
 }
 
-// 取模块所在目录（含末尾反斜杠）。
+// 模块所在目录，含末尾反斜杠。
 static std::wstring ModuleDir(HMODULE h) {
     const std::wstring path = ModuleFilePath(h);
     const size_t pos = path.find_last_of(L"\\/");
@@ -62,11 +55,7 @@ static bool LoadCore() {
         return false;
 
 #ifndef OXBOW_STATIC
-    // 让 Qt 在运行时能定位到共置的插件（平台插件/样式/图像格式等）。
-    // windeployqt 默认把这些插件类型目录直接部署在插件目录下
-    // （platforms/qwindows.dll、styles/、imageformats/ …），因此：
-    //   - QT_PLUGIN_PATH 指向插件根目录（Qt 会去 <path>/platforms、<path>/styles 等下找）；
-    //   - QT_QPA_PLATFORM_PLUGIN_PATH 精确指向 platforms 目录。
+    // Qt 插件目录与运行库同在插件目录下，指给 Qt
     SetEnvironmentVariableW(L"QT_PLUGIN_PATH", pluginDir.c_str());
 
     const std::wstring platformPath = pluginDir + L"platforms";
@@ -75,27 +64,23 @@ static bool LoadCore() {
 
     const std::wstring corePath = pluginDir + L"oxbowcore.dll";
 
-    // DLL_LOAD_DIR：加载期间把 oxbowcore.dll 自身目录临时置于依赖搜索序之首，
-    // 共置的 Qt 运行库借此解析；DEFAULT_DIRS 保留系统目录与应用程序目录。
-    // 相比改写进程级默认搜索（SetDefaultDllDirectories），此处作用域仅限本次
-    // 加载，不影响 mpv 之后按 PATH/CWD 的延迟 DLL 加载。
+    // DLL_LOAD_DIR：核心目录临时居依赖搜索序之首，共置的 Qt 运行库借此解析；
+    // 不改进程级默认搜索，不影响 mpv 的延迟 DLL 加载
     g_core = LoadLibraryExW(corePath.c_str(), nullptr,
                             LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
     if (!g_core) {
-        OutputDebugStringW(L"[oxbow] 加载 oxbowcore.dll 失败\n");
+        OutputDebugStringW(L"[oxbow] failed to load oxbowcore.dll\n");
         return false;
     }
 
-    // N18：预先显式加载共置的 MediaInfo.dll（DLL_LOAD_DIR + DEFAULT_DIRS），
-    // 不关心返回值。MediaInfoHelper 经 shim 内 MediaInfoDLL_Load() 调用的
-    // LoadLibrary("MediaInfo.dll") 会命中此已加载模块，复用同一句柄——从而
-    // 绕过 shim 的 GetProcAddress 在进程默认搜索序下找不到同目录 dll 的问题。
-    // 失败时由 MediaInfoHelper::available() 返回 false、UI 优雅降级
+    // N18：预加载共置 MediaInfo.dll，shim 的 LoadLibrary 即命中同一模块；
+    // 失败由 MediaInfoHelper::available() 降级
     LoadLibraryExW((pluginDir + L"MediaInfo.dll").c_str(), nullptr,
                    LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
 
     g_entry = reinterpret_cast<MpvOpenCpluginFunc>(GetProcAddress(g_core, "mpv_open_cplugin"));
     if (!g_entry) {
+        OutputDebugStringW(L"[oxbow] mpv_open_cplugin not found in oxbowcore.dll\n");
         FreeLibrary(g_core);
         g_core = nullptr;
         return false;
@@ -103,8 +88,25 @@ static bool LoadCore() {
     return true;
 }
 
+// 把 mpv 填进壳槽的函数入口逐条搬进核心的同名导出变量；槽为空（宿主无此符号）
+// 按 mpv 的形态跳过，必需性由核心入口校验
+static void ForwardSymTable(HMODULE core) {
+    for (const MpvSymSlot &e : kMpvSyms) {
+        void **dst = reinterpret_cast<void **>(GetProcAddress(core, e.name));
+        void *fn;
+        memcpy(&fn, e.slot, sizeof fn);
+        if (dst && fn)
+            memcpy(dst, &fn, sizeof fn);
+    }
+}
+
 extern "C" __declspec(dllexport) int mpv_open_cplugin(void *handle) {
     if (!LoadCore() || !g_entry)
-        return 1; // 非 0 表示加载失败
-    return g_entry(handle);
+        return -1; // 任何非零都被 mpv 记为脚本加载失败
+    ForwardSymTable(g_core);
+    if (g_entry(handle) != 0) {
+        OutputDebugStringW(L"[oxbow] oxbowcore entry returned non-zero\n");
+        return -1;
+    }
+    return 0;
 }

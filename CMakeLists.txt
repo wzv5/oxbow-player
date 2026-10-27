@@ -262,6 +262,34 @@ add_custom_target(oxbow_revision
 add_dependencies(oxbowcore oxbow_revision)
 target_include_directories(oxbowcore PRIVATE "${OXBOW_GENERATED_DIR}")
 
+# ---------------------------------------------------------------------------
+# N140：构建期扫 mpv/ 头目录生成 cplugin 符号转发表，唯一消费者是加载壳。
+# 提取行首 MPV_DEFINE_SYM_PTR 实例，产出 generated/mpv_cplugin_syms.h：
+# include 段让壳声明全目录 pfn_* 导出变量（mpv 的填表落点），表段供壳把
+# mpv 填好的函数入口逐条搬进核心的同名导出变量。oxbowcore 不读生成物、
+# 不挂依赖、生成目录也不进它的包含路径——核心可脱离壳独立构建。
+# CONFIGURE_DEPENDS 管头文件增删时重 configure；内容变化由 custom_command
+# 的 DEPENDS 直接触发重生成，两条路都不必人工记得。脚本自身也进 DEPENDS，
+# 改脚本即重生成。生成物内容与配置无关，两种配置共用同一路径。
+# -D 值按 N84 的教训传裸路径（不加引号），含空格路径不受支持——与全仓口径一致。
+# ---------------------------------------------------------------------------
+if(WIN32)
+    file(GLOB _mpv_headers CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/mpv/*.h")
+    add_custom_command(
+        OUTPUT "${OXBOW_GENERATED_DIR}/mpv_cplugin_syms.h"
+        COMMAND ${CMAKE_COMMAND}
+            -DMPV_HEADER_DIR=${CMAKE_CURRENT_SOURCE_DIR}/mpv
+            -DMPV_SYM_LIST_OUTPUT=${OXBOW_GENERATED_DIR}/mpv_cplugin_syms.h
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/GenMpvSymList.cmake
+        DEPENDS ${_mpv_headers} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/GenMpvSymList.cmake
+        COMMENT "扫 mpv 头生成 cplugin 符号转发表"
+        VERBATIM)
+    add_custom_target(oxbow_mpv_syms DEPENDS "${OXBOW_GENERATED_DIR}/mpv_cplugin_syms.h")
+    add_dependencies(oxbow_loader oxbow_mpv_syms)
+    target_include_directories(oxbow_loader PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                                                    "${OXBOW_GENERATED_DIR}")
+endif()
+
 # C 插件不链接 libmpv，符号由 mpv 在加载时动态解析。
 # 注意：不要定义 MPV_ENABLE_DEPRECATED=0，内置 client.h 的动态符号段
 # 无条件引用已弃用的 mpv_get_wakeup_pipe，关掉弃用声明会编译失败。
