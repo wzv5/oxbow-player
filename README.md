@@ -111,7 +111,6 @@ libsodium and OpenSSL are not needed with `-DOXBOW_WITH_RCLONE_CRYPT=OFF`.
 Windows:
 
 ```bash
-cd public
 cmake -B build -G "Ninja Multi-Config" -DQt6_ROOT="D:/Qt/6.11.2/msvc2022_64" -DMPV_BIN_DIR="D:/path/to/mpv" -DLIBSODIUM_ROOT="D:/path/to/libsodium"
 cmake --build build --config Release
 ```
@@ -124,7 +123,6 @@ cmake --build build --config Release
 Linux (single-config generator; set the build type explicitly, the default is empty):
 
 ```bash
-cd public
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```

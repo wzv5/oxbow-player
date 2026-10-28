@@ -111,7 +111,6 @@ Linux 上媒体元数据补全依赖系统 `libmediainfo`；缺失时该功能�
 Windows：
 
 ```bash
-cd public
 cmake -B build -G "Ninja Multi-Config" -DQt6_ROOT="D:/Qt/6.11.2/msvc2022_64" -DMPV_BIN_DIR="D:/path/to/mpv" -DLIBSODIUM_ROOT="D:/path/to/libsodium"
 cmake --build build --config Release
 ```
@@ -124,7 +123,6 @@ cmake --build build --config Release
 Linux（单配置生成器；构建类型须显式指定，默认为空）：
 
 ```bash
-cd public
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
