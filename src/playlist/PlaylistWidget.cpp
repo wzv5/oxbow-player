@@ -2684,10 +2684,6 @@ void PlaylistWidget::startMetaScan(JobContext ctx, MetaCategory cat) {
     PlaylistListView *list = ctx.list;
     if (!list || cat == MetaCategory::None)
         return;
-    // MediaInfo 进线程池的前提①：显式预载一次（shim 的模块加载惰性且无锁）。
-    // 此调用必在 GUI 线程、必在起任务之前——此后任务线程对 shim 只剩只读
-    if (cat == MetaCategory::Media)
-        MediaInfoHelper::available();
 
     auto pending = std::make_shared<PlaylistEntity::List>(); // 待求值者（共享计数快照）
     int baseline = 0; // 已求值 / 不支持者：无需计算，但计入进度分母（现状口径）

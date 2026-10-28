@@ -2,11 +2,93 @@
 
 #include "MediaInfoHelper.h"
 
+#include "ExternalTool.h"
+#include "Logging.h"
 #include "Util.h"
+
+#ifndef Q_OS_WIN
+#include <dlfcn.h> // dlopen / dladdr
+#endif
 
 #include "thirdparty/mediainfo/MediaInfoDLL.h"
 
 namespace {
+
+// ——N142 库状态单点——
+// 就绪位是 GUI 线程 preload 写、工作线程纯读的可变状态，用原子量发布；
+// 已加载路径只在 GUI 线程的 preload 内触碰，无需加锁
+enum class LibState { NotTried, Failed, Ready };
+std::atomic<LibState> g_libState{LibState::NotTried};
+QString g_loadedPath; // 已加载模块的加载目标（POSIX 按名回退时为目标名本身）
+
+// 路径等同判定：跟随平台文件系统语义（Windows 大小写不敏感）；空串按原样比较
+bool samePath(const QString &a, const QString &b) {
+    if (a.isEmpty() || b.isEmpty())
+        return a == b;
+#ifdef Q_OS_WIN
+    return QString::compare(QDir::cleanPath(a), QDir::cleanPath(b), Qt::CaseInsensitive) == 0;
+#else
+    return QDir::cleanPath(a) == QDir::cleanPath(b);
+#endif
+}
+
+// 基名等同判定：shim 只按目标名解析，改名副本不接受
+bool sameTargetName(const QString &name, const QString &target) {
+#ifdef Q_OS_WIN
+    return name.compare(target, Qt::CaseInsensitive) == 0;
+#else
+    return name == target;
+#endif
+}
+
+// preload 的加载目标。两个分支共用这一份解析口径，"已加载"分支要比的就是这次会加载什么
+struct LoadTarget {
+    QString path;                    // 交加载、也与 g_loadedPath 比对的目标；空 = 无目标
+    bool unusableConfigured = false; // 显式路径无效（不存在或基名不符）：判不可用，不回落自动
+};
+
+// configured 为空 = 自动态：取候选表首项，POSIX 候选全空时退回目标名本身（与 shim 同参的按
+// 名 dlopen）。非空 = 显式路径：相对写法以配置文件目录为基准（进程 CWD 随 mpv 从哪儿启动而
+// 变，不可控），且一律绝对化——LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR 对相对路径不可靠
+LoadTarget resolveLoadTarget(const ExternalToolSpec &spec, const QString &configured,
+                             const QString &configDir) {
+    LoadTarget out;
+    if (configured.isEmpty()) {
+        const QStringList candidates = externalToolCandidates(spec, configDir);
+        if (!candidates.isEmpty())
+            // 候选表出表是给人看的形态（Windows 原生分隔符），加载目标这一侧统一归回正斜杠
+            out.path = QDir::cleanPath(candidates.first());
+#ifndef Q_OS_WIN
+        else
+            out.path = spec.targetFileName;
+#endif
+        return out;
+    }
+
+    const QFileInfo raw(configured);
+    const QString absolute =
+        raw.isAbsolute() || configDir.isEmpty()
+            ? raw.absoluteFilePath()
+            : QFileInfo(QDir(configDir).absoluteFilePath(configured)).absoluteFilePath();
+    const QFileInfo info(absolute);
+    if (!info.isFile() || !sameTargetName(info.fileName(), spec.targetFileName)) {
+        out.unusableConfigured = true;
+        return out;
+    }
+    out.path = QDir::cleanPath(info.absoluteFilePath());
+    return out;
+}
+
+// 一次性读数：须在加载调用失败的紧后一步取，中间的任何 Win32 调用都会覆掉错误码
+QString platformLoadError() {
+#ifdef Q_OS_WIN
+    return QStringLiteral("system error %1").arg(GetLastError());
+#else
+    const char *message = dlerror();
+    return message ? QStringLiteral("dlopen: %1").arg(QString::fromUtf8(message))
+                   : QStringLiteral("dlopen failed");
+#endif
+}
 
 // toDouble/toLongLong 容错包装：空串 / 非数字视作未读到
 bool toDouble(const std::wstring &ws, double *out) {
@@ -81,18 +163,113 @@ MediaInfoHelper::Stream makeStream(MediaInfoDLL::MediaInfo &MI, MediaInfoDLL::st
 } // namespace
 
 bool MediaInfoHelper::available() {
-    // shim 内 MediaInfo_Module 是 static HMODULE；构造临时实例触发
-    // MediaInfoDLL_Load
-    static const bool kLoaded = [] {
-        MediaInfoDLL::MediaInfo probe;
-        return probe.IsReady();
-    }();
-    return kLoaded;
+    // acquire：与 preload 的 release store 配对，工作线程读到就绪即看得到库已加载
+    return g_libState.load(std::memory_order_acquire) == LibState::Ready;
+}
+
+void MediaInfoHelper::preload(const QString &configuredPath, const QString &configDir) {
+    const ExternalToolSpec &spec = externalToolSpec(ExternalTool::MediaInfo);
+    const QString configured = configuredPath.trimmed();
+    const LoadTarget target = resolveLoadTarget(spec, configured, configDir);
+
+    if (g_libState.load(std::memory_order_acquire) == LibState::Ready) {
+        // 已加载：不卸载、不清状态，只在加载目标确有变化（含"发现不到了"）时提示下次启动
+        if (target.unusableConfigured)
+            OXBOW_LOG_WARNING().noquote()
+                << QStringLiteral("Configured MediaInfo library is not usable (missing or not "
+                                  "named %1); the loaded one stays in use. loaded: %2, "
+                                  "requested: %3")
+                       .arg(spec.targetFileName, g_loadedPath, configured);
+        else if (!samePath(target.path, g_loadedPath))
+            OXBOW_LOG_WARNING().noquote()
+                << QStringLiteral("MediaInfo library is already loaded; this request takes "
+                                  "effect on next start. loaded: %1, next: %2")
+                       .arg(g_loadedPath, target.path.isEmpty()
+                                              ? QStringLiteral("(none discovered)")
+                                              : target.path);
+        return;
+    }
+
+    if (target.unusableConfigured) {
+        OXBOW_LOG_WARNING().noquote()
+            << QStringLiteral("Configured MediaInfo library is not usable (missing or not named "
+                              "%1): %2")
+                   .arg(spec.targetFileName, configured);
+        g_libState.store(LibState::Failed, std::memory_order_relaxed);
+        return;
+    }
+    if (target.path.isEmpty()) {
+        OXBOW_LOG_INFO() << "MediaInfo library not found in plugin dir, config dir or PATH";
+        g_libState.store(LibState::Failed, std::memory_order_relaxed);
+        return;
+    }
+
+    // 加载：句柄永久保留，任何路径都不卸载（同名 DLL 不能并存，卸载即换不回）
+#ifdef Q_OS_WIN
+    const std::wstring widePath = target.path.toStdWString();
+    HMODULE handle =
+        LoadLibraryExW(widePath.c_str(), nullptr,
+                       LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+#else
+    void *handle = dlopen(target.path.toUtf8().constData(), RTLD_LAZY);
+#endif
+    if (!handle) {
+        const QString why = platformLoadError();
+        OXBOW_LOG_WARNING().noquote()
+            << QStringLiteral("Failed to load MediaInfo library: %1 (%2)").arg(target.path, why);
+        g_libState.store(LibState::Failed, std::memory_order_relaxed);
+        return;
+    }
+
+    // 探针：触发 shim 的按名解析，以 IsReady 判定最终可用
+    MediaInfoDLL::MediaInfo probe;
+    if (!probe.IsReady()) {
+        OXBOW_LOG_WARNING().noquote()
+            << QStringLiteral("MediaInfo shim cannot resolve the loaded library by name: %1")
+                   .arg(target.path);
+        g_libState.store(LibState::Failed, std::memory_order_relaxed);
+        return;
+    }
+
+    // shim 实际命中的模块与加载目标比对：不一致 = 同进程已有同名模块先占了按名解析
+    if (QFileInfo(target.path).isAbsolute()) {
+        QString shimPath;
+#ifdef Q_OS_WIN
+        // shim 内 MediaInfo_Module 是 static HMODULE（extern "C" 全局区，不在
+        // MediaInfoDLL 命名空间）
+        if (MediaInfo_Module) {
+            std::wstring buf(MAX_PATH, L'\0');
+            DWORD n = 0;
+            while ((n = GetModuleFileNameW(MediaInfo_Module, buf.data(),
+                                           static_cast<DWORD>(buf.size()))) == buf.size())
+                buf.resize(buf.size() * 2);
+            shimPath = QString::fromWCharArray(buf.data(), static_cast<int>(n));
+        }
+#else
+        Dl_info info{};
+        // MediaInfo_New 在探针构造期已被解析，指向库内函数
+        if (MediaInfo_New && dladdr(reinterpret_cast<void *>(MediaInfo_New), &info) &&
+            info.dli_fname)
+            shimPath = QString::fromUtf8(info.dli_fname);
+#endif
+        if (!shimPath.isEmpty() && !samePath(shimPath, target.path))
+            OXBOW_LOG_WARNING().noquote()
+                << QStringLiteral("MediaInfo shim resolved to a different module than requested;"
+                                  " shim: %1, requested: %2")
+                       .arg(QDir::cleanPath(shimPath), target.path);
+    }
+
+    g_loadedPath = target.path;
+    g_libState.store(LibState::Ready, std::memory_order_release);
 }
 
 MediaInfoHelper::Data MediaInfoHelper::parse(const QString &path) {
     Data out;
     if (path.isEmpty())
+        return out;
+
+    // N142：未就绪直接放弃——绝不让 shim 的按名加载在工作线程被惰性触发
+    if (g_libState.load(std::memory_order_acquire) != LibState::Ready)
         return out;
 
     // N18：仅对本地路径解析；网络/流路径（http:// / rtmp:// / ...）无本地文件

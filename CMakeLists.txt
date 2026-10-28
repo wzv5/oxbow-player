@@ -196,6 +196,8 @@ add_library(oxbowcore MODULE
     src/ui/BookmarkEditorDialog.h
     src/Util.cpp
     src/Util.h
+    src/ExternalTool.cpp
+    src/ExternalTool.h
     src/MediaInfoHelper.cpp
     src/MediaInfoHelper.h
     src/mpvbridge/MpvConf.cpp
@@ -214,6 +216,8 @@ add_library(oxbowcore MODULE
     src/ui/OpenUrlDialog.h
     src/ui/ExtensionFilterEdit.cpp
     src/ui/ExtensionFilterEdit.h
+    src/ui/ExternalToolPathCombo.cpp
+    src/ui/ExternalToolPathCombo.h
     src/ui/FilterListWidget.cpp
     src/ui/FilterListWidget.h
     src/ui/ThumbWindow.cpp
@@ -409,7 +413,7 @@ qt_add_translations(oxbowcore MERGE_QT_TRANSLATIONS
 #   portable_config/scripts/oxbow/*.dll + plugins/ （Qt 运行库，随插件目录分发）
 # Qt 运行库用 windeployqt 部署到插件所在目录，而不是 mpv 主程序目录。
 # OXBOW_STATIC=ON 时 Qt 已静态链接进 oxbowcore.dll，跳过 windeployqt；
-# 加载壳 main.dll 仍照常部署——MediaInfo.dll 依赖壳预加载才能被解析。
+# 加载壳 main.dll 仍照常部署——MediaInfo.dll 由核心在启动时自行预载。
 # ---------------------------------------------------------------------------
 # N83：部署为 Windows 专属（windeployqt 与 DLL 语义；Linux 不自动部署，只编译产物）
 set(MPV_BIN_DIR "" CACHE PATH "mpv.exe 所在目录（仅 Windows）；设置后构建完毕自动部署")
@@ -516,6 +520,8 @@ if(OXBOW_BUILD_TESTS)
         src/playbackreport/ReporterSwitchCatalog.cpp
         src/playbackreport/ReporterSwitchCatalog.h
         src/TraversalPolicy.h
+        src/ExternalTool.cpp
+        src/ExternalTool.h
         src/MediaInfoHelper.cpp
         src/MediaInfoHelper.h
         src/ui/ExtensionFilterEdit.cpp

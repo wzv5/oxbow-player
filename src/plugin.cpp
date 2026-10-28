@@ -16,8 +16,10 @@
 #include <QtSvg/QSvgRenderer>
 
 #include "Constants.h"
+#include "ExternalTool.h"
 #include "Logging.h"
 #include "MainWindow.h"
+#include "MediaInfoHelper.h"
 #include "Version.h"
 #include "mpvbridge/MpvController.h"
 #include "streams/StreamRelay.h"
@@ -199,6 +201,14 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle) {
     OXBOW_LOG_INFO().noquote() << App::versionInfo();
 
     installTranslator(configFile);
+
+    // N142：MediaInfo 库在入口预载——GUI 线程、先于任何元数据扫描，此后工作线程对 shim
+    // 只剩只读
+    {
+        QSettings s(configFile, QSettings::IniFormat);
+        MediaInfoHelper::preload(s.value(externalToolIniKey(ExternalTool::MediaInfo)).toString(),
+                                 QFileInfo(configFile).absolutePath());
+    }
 
     auto *controller = new MpvController(handle);
 

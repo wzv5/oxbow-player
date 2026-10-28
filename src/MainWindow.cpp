@@ -6,8 +6,10 @@
 #include "BookmarkManager.h"
 #include "Constants.h"
 #include "CustomToolManager.h"
+#include "ExternalTool.h" // N142：MediaInfo 条目的 ini 键名单点
 #include "HttpClient.h"
 #include "Logging.h"
+#include "MediaInfoHelper.h"
 #include "ServiceRegistry.h"
 #include "TraversalPolicy.h"
 #include "Util.h"
@@ -1519,6 +1521,14 @@ void MainWindow::onPluginIniKeysChanged(const QStringList &keys) {
         provideHttpServices();
     if (keys.contains(QStringLiteral("recursiveDepthLimit")))
         provideTraversalPolicy();
+    // N142：库路径变更——未加载则当场生效（失败重试也走这一遍），已加载由 preload 自己
+    // 判要不要提示下次启动生效
+    const QString mediaInfoKey = externalToolIniKey(ExternalTool::MediaInfo);
+    if (keys.contains(mediaInfoKey) && !m_configFile.isEmpty()) {
+        QSettings settings(m_configFile, QSettings::IniFormat);
+        MediaInfoHelper::preload(settings.value(mediaInfoKey).toString(),
+                                 QFileInfo(m_configFile).absolutePath());
+    }
     // 上报开关不再逐键枚举（N99）：账目行命中的键在同步通路内过滤，新增行零改动
     syncReporterSwitches(keys);
     // 音量族这两项都只读 ini：配置文件为空串即整段跳过（与同函数邻居

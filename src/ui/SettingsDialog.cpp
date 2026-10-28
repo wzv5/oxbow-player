@@ -4,6 +4,8 @@
 
 #include "AppearanceManager.h" // N115：Style 候选唯一出处
 #include "Constants.h"
+#include "ExternalTool.h"
+#include "ExternalToolPathCombo.h"
 #include "FilterListWidget.h"
 #include "Logging.h"
 #include "ThemedIconEngine.h" // N128：重置按钮染色
@@ -22,7 +24,8 @@ enum class WidgetKind {
     SpinBox,
     CheckBox,
     LineEdit,
-    FilterList
+    FilterList,
+    ToolPath // N142：外部工具路径选择（容器控件，非裸 QComboBox）
 }; // CheckBox 预留
 
 // mpv 属性类型提示（仅 mpv 后端有意义，INI 后端忽略）。决定读回路径取原生值的
@@ -62,6 +65,8 @@ struct SettingItem {
                                        // 带 choices 的 CheckBox 固定 String）
     // FilterList 专用（N42）：预设菜单数据源；其余控件忽略
     std::function<QList<FilterPreset>()> filterPresets;
+    // N142：外部工具（仅 ToolPath 使用；定义与 ini 键名以它为准，串形态不再存在）
+    std::optional<ExternalTool> tool;
 };
 
 struct SettingCategory {
@@ -206,6 +211,8 @@ std::optional<QVariant> controlValueFromAuthoredKeys(const SettingItem *item,
         // Flag 直通两态
         return canonicalAuthoredMpvValue(item->mpvType, raw) == QLatin1String("yes");
     }
+    case WidgetKind::ToolPath:
+        break; // 仅 INI 后端（validateCatalog 保证），mpv 读回不触达
     }
     return std::nullopt;
 }
@@ -590,6 +597,19 @@ const QList<SettingCategory> &settingCatalog() {
                           "Sends watch position to the signed-in Jellyfin server so resume "
                           "points and watched marks stay up to date")},
                  }},
+            // ⑦ 外部工具 —— N142：工具的路径设置。空串 = 自动态（写盘期按"等于默认即删
+            // 键"口径从 ini 移除）
+            {.title = QT_TRANSLATE_NOOP("SettingsDialog", "External Tools"),
+             .items =
+                 {
+                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "MediaInfo Library"),
+                      .widget = WidgetKind::ToolPath,
+                      .iniKey = "mediaInfoPath",
+                      .fallback = QString(),
+                      .note = QT_TRANSLATE_NOOP("SettingsDialog",
+                                                "Path changes take effect after restart"),
+                      .tool = ExternalTool::MediaInfo},
+                 }},
     };
     return catalog;
 }
@@ -797,6 +817,35 @@ void validateCatalog() {
                                       "choices")
                            .arg(ci)
                            .arg(ii);
+            // N142：外部工具路径项——必须走 INI 后端、指定工具，且 iniKey 与该工具的定义
+            // 一致；工具只许出现在该控件上
+            if (item.widget == WidgetKind::ToolPath) {
+                if (!hasIni || hasMpv)
+                    OXBOW_LOG_WARNING().noquote()
+                        << QStringLiteral("SettingsDialog: ToolPath item [%1/%2] must be an INI "
+                                          "item")
+                               .arg(ci)
+                               .arg(ii);
+                if (!item.tool)
+                    OXBOW_LOG_WARNING().noquote()
+                        << QStringLiteral("SettingsDialog: ToolPath item [%1/%2] names no tool")
+                               .arg(ci)
+                               .arg(ii);
+                else if (const ExternalToolSpec &spec = externalToolSpec(*item.tool);
+                         item.iniKey != QLatin1String(spec.iniKey))
+                    OXBOW_LOG_WARNING().noquote()
+                        << QStringLiteral("SettingsDialog: ToolPath item [%1/%2] iniKey '%3' "
+                                          "does not match tool definition '%4'")
+                               .arg(ci)
+                               .arg(ii)
+                               .arg(item.iniKey, QString::fromLatin1(spec.iniKey));
+            } else if (item.tool) {
+                OXBOW_LOG_WARNING().noquote()
+                    << QStringLiteral("SettingsDialog: item [%1/%2] names a tool but is not a "
+                                      "ToolPath item")
+                           .arg(ci)
+                           .arg(ii);
+            }
             if (item.widget == WidgetKind::SpinBox) {
                 const int f = item.fallback.toInt();
                 if (f < item.range.min || f > item.range.max)
@@ -1031,7 +1080,24 @@ void SettingsDialog::buildUi() {
                 control = fl;
                 break;
             }
+            case WidgetKind::ToolPath: {
+                // N142：路径选择控件；候选发现要 ini 所在目录——与启动侧取配置文件
+                // 父目录同一语义
+                if (item->tool) {
+                    auto *tool =
+                        new ExternalToolPathCombo(externalToolSpec(*item->tool),
+                                                  QFileInfo(m_pluginIniPath).absolutePath(), page);
+                    connect(tool, &ExternalToolPathCombo::changed, this,
+                            [this, item] { onControlChanged(item); });
+                    control = tool;
+                }
+                break;
             }
+            }
+            // 目录没指定工具（validateCatalog 已记警告）：整行不建——控件、候选发现与
+            // 过滤器都拿的是工具定义，没有定义就没有这一行
+            if (!control)
+                continue;
 
             m_controls.insert(item, control);
 
@@ -1177,6 +1243,9 @@ void SettingsDialog::fillItemFromBackend(const SettingItem *item) {
             const QString v = ini.value(item->iniKey, item->fallback).toString();
             edit->setText(v);
             m_pending[item] = v;
+        } else if (item->widget == WidgetKind::ToolPath) {
+            writeControlValue(item, ini.value(item->iniKey, item->fallback));
+            m_pending[item] = readControlValue(w);
         }
     } else if (!item->mpvKeys.isEmpty()) {
         // === mpv 选项（铁律）：仅从 MpvController 取，不读 mpv.conf ===
@@ -1295,6 +1364,8 @@ void SettingsDialog::fillItemFromBackend(const SettingItem *item) {
             m_pending[item] = fl->compiledString();
             break;
         }
+        case WidgetKind::ToolPath:
+            break; // 仅 INI 后端（validateCatalog 保证），mpv 读回不触达
         }
     }
     m_fillValue[item] = m_pending[item];
@@ -1327,6 +1398,10 @@ void SettingsDialog::applyFallback(const SettingItem *item) {
     case WidgetKind::FilterList:
         // 禁用落兜底：空列表 = 无滤镜（空值语义，与 mpv 属性空值口径一致）
         static_cast<FilterListWidget *>(w)->setEntries({});
+        break;
+    case WidgetKind::ToolPath:
+        // N142：路径项落兜底 = 自动项
+        static_cast<ExternalToolPathCombo *>(w)->setPath(item->fallback.toString());
         break;
     }
     m_pending[item] = readControlValue(w);
@@ -1393,6 +1468,8 @@ void SettingsDialog::refreshDependents(const QString &masterId) {
 }
 
 QVariant SettingsDialog::readControlValue(QWidget *control) const {
+    if (auto *tool = qobject_cast<ExternalToolPathCombo *>(control))
+        return tool->value();
     if (auto *combo = qobject_cast<QComboBox *>(control)) {
         // 可编辑下拉：值取文本语义（用户可能输入自定义值）
         if (combo->isEditable())
@@ -1531,6 +1608,8 @@ QVariant SettingsDialog::fallbackControlValue(const SettingItem *item) const {
         return item->fallback.toBool();
     case WidgetKind::FilterList:
         return QStringLiteral(""); // 空串 = 无滤镜
+    case WidgetKind::ToolPath:
+        return item->fallback.toString(); // 空 = 自动
     }
     return {};
 }
@@ -1681,6 +1760,9 @@ void SettingsDialog::writeControlValue(const SettingItem *item, const QVariant &
             s.isEmpty() ? QList<FilterEntry>{} : FilterListWidget::parseString(s));
         break;
     }
+    case WidgetKind::ToolPath:
+        static_cast<ExternalToolPathCombo *>(w)->setPath(value.toString());
+        break;
     }
 }
 

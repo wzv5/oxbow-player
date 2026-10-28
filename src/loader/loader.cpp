@@ -73,11 +73,6 @@ static bool LoadCore() {
         return false;
     }
 
-    // N18：预加载共置 MediaInfo.dll，shim 的 LoadLibrary 即命中同一模块；
-    // 失败由 MediaInfoHelper::available() 降级
-    LoadLibraryExW((pluginDir + L"MediaInfo.dll").c_str(), nullptr,
-                   LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
-
     g_entry = reinterpret_cast<MpvOpenCpluginFunc>(GetProcAddress(g_core, "mpv_open_cplugin"));
     if (!g_entry) {
         OutputDebugStringW(L"[oxbow] mpv_open_cplugin not found in oxbowcore.dll\n");
