@@ -2800,13 +2800,12 @@ void MainWindow::toggleFullscreen() {
         m_fullscreen = true;
         applyMenuBarVisibility();       // 幂等复算（菜单栏已在上方按原位先藏）
         m_refitAfterFullscreen = false; // 进全屏清空：仅记录"本次全屏期内是否换片"
-        // A18 无框手动几何全屏（Windows 口径；Linux 不走手动几何——flags 切换后经
-        // showFullScreen 走状态机，见下方 #else）：绕开 WindowFullScreen 状态机（其进出必经
+        // A18 无框手动几何全屏（Windows 口径）：绕开 WindowFullScreen 状态机（其进出必经
         // 普通几何中间帧并回放最大化动画）。flags 切换触发平台窗口重建并
         // 隐式隐藏，子原生 HWND 经 SetParent 平移保身份，wid 不失效（原型实测）
+#ifdef Q_OS_WIN
         m_preFsFlags = windowFlags();
         setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
-#ifdef Q_OS_WIN
         // A19：无框 NoState 窗口不被认定为全屏，Win11 DWM 会按普通浮窗施加
         // 圆角裁切（四角透明缺口+边缘透明环）。强制方角；属性须作用于重建后
         // 的新 HWND 故紧随 flags 切换。退出无需处理——再次重建回归系统默认，
@@ -2823,8 +2822,16 @@ void MainWindow::toggleFullscreen() {
         // 收起任务栏"的启发式。走全屏态：Qt 发 _NET_WM_STATE_FULLSCREEN，实测经
         // showFullScreen 原地生效、不重建平台窗口，wid 与 mpv 嵌入不受连坐（会崩的
         // 那条只发生在 Qt flags 通道上的 StaysOnTop 变更，见 §8）；几何交由 WM 按
-        // 整屏定，不再自己 setGeometry 与 strut 拉扯
-        showFullScreen();
+        // 整屏定，不再自己 setGeometry 与 strut 拉扯。
+        // N141：全程不碰 flags——setWindowFlags 经 setParent 先 withdraw 窗口，其后的 EWMH
+        // 状态请求无人受理（Qt 侧记账照改），全屏态时有时无；无框 hint 在 GNOME 上本就不
+        // 生效，切它只剩副作用。最大化态改走 EWMH 直发（见 X11Util），免掉 Qt 分条发状态差
+        // 所导致的"缩回普通几何"中间步
+        m_fsStateDirect = m_preFsMaximized;
+        if (m_fsStateDirect)
+            setWindowFullscreenEwmh(winId(), true);
+        else
+            showFullScreen();
 #endif
         syncVideoGeometry(); // 铺满后视频区对位；随后的 resizeEvent 幂等兜底
         // N66 §二-2：主窗落定后装配浮窗（A18 flags 重建已收敛，owned 浮窗可安全
@@ -2845,20 +2852,32 @@ void MainWindow::toggleFullscreen() {
         setOverlayShown(Overlay::Playlist, false);
         restoreOriginalParent(m_bottomBar);
         restoreOriginalParent(m_playlist);
+#ifdef Q_OS_WIN
         // A18：恢复有框样式触发重建（自动隐藏），新窗口几何继承自全屏矩形。
         // 趁隐藏期植入快照几何——它随即成为最大化"还原位置"，取消最大化
         // 时精确回到进全屏前的尺寸；再按快照分流显示
         setWindowFlags(m_preFsFlags);
-#ifndef Q_OS_WIN
-        // N83：与进入侧 showFullScreen 成对——show() 不清窗口状态（只有
-        // showNormal/showMaximized 会），全屏态若残留，WM 继续按整屏摆窗、面板不回归
-        setWindowState(Qt::WindowNoState);
-#endif
-        setGeometry(m_preFsRect);
+        setGeometry(m_preFsRect); // 趁隐藏期植入快照几何（见上）
         if (m_preFsMaximized)
             showMaximized();
         else
             show();
+#else
+        // N83：与进入侧 showFullScreen 成对——show() 不清窗口状态，全屏态若残留，WM 继续
+        // 按整屏摆窗、面板不回归。N141：不切 flags，切了就先 withdraw，这句清理随即打在
+        // 无人受理的窗口上、WM 侧的全屏态撤不掉；窗口保持已映射，REMOVE 才发得出去
+        if (m_fsStateDirect) {
+            // 与进入侧对称，只发 REMOVE FULLSCREEN（MAXIMIZED 全程未离开）。此处不得再调
+            // setWindowState / showMaximized——那会连 MAXIMIZED 一起撤掉，退回两步
+            m_fsStateDirect = false;
+            setWindowFullscreenEwmh(winId(), false);
+        } else {
+            // 一行几何都不发：窗口管理器记得进全屏前的几何并会分两拍恢复（第一拍只回尺寸、
+            // 装饰仍读 0，第二拍装饰与位置才回位），按活体尺寸的下发都会抢在中间帧上把它钉歪
+            setWindowState(Qt::WindowNoState);
+            show();
+        }
+#endif
         applyMenuBarVisibility(); // 按偏好恢复——隐藏偏好不得被退出全屏推翻
         syncVideoGeometry();
         // N66 §二-2 ④：主窗几何落定后按窗口态恢复面板可见性与宽度。锚点用进全屏前
@@ -2867,8 +2886,12 @@ void MainWindow::toggleFullscreen() {
         // 矩形上算出的目标宽度是错的）。最大化分支经既有 isMaximized 守卫早退，
         // 与 A20 窗口态语义一致
         m_playlist->setVisible(m_playlistVisibleTruth);
+#ifdef Q_OS_WIN
+        // 只有 Windows 需要补：flags 重建丢了客户区矩形，按锚点补回宽度。非 Windows 的几何
+        // 由窗口管理器精确恢复，而本函数"只改宽、高度原样带走"，抢在恢复中间跑即钉歪
         if (m_playlistVisibleTruth)
             applyPlaylistGeometry(true, m_preFsLeftWidth);
+#endif
         // B16：全屏期内若切换过视频，当前尺寸与"进全屏前的小窗"已不一致；
         // 恢复普通态后按当前视频尺寸重新适配（最大化分支不走此路，保持全屏宽度）
         if (m_refitAfterFullscreen) {
@@ -3191,8 +3214,19 @@ void MainWindow::toggleMini() {
 #ifdef Q_OS_WIN
         miniFlags |= Qt::WindowStaysOnTopHint;
 #endif
+#ifdef Q_OS_WIN
+        // 与下侧顺序相反是有意的：这里的 flags 切换销毁重建平台窗口并隐式隐藏，撤最大化
+        // 落在隐藏期、中间不出可见帧（Windows 的还原带动画）；先撤最大化就会在可见态多
+        // 一次"还原"再重建，白冒闪烁风险
         setWindowFlags(miniFlags);
         setWindowState(Qt::WindowNoState);
+#else
+        // N141：撤最大化必须排在切 flags 之前——切 flags 会 withdraw 窗口，此后发出的
+        // EWMH 状态请求无人受理，MAXIMIZED 残留到下一次映射，WM 按最大化摆窗、与自家的
+        // 去抖收口来回拉锯（最大化态进小窗实测为窗口剧烈跳动）
+        setWindowState(Qt::WindowNoState);
+        setWindowFlags(miniFlags);
+#endif
         // 目标客户区：宽 400 逻辑 px，高按视频比例（无流按 16:9 成 400×225）
         const int clientW = App::miniDefaultWidth();
         const double ratio = (m_pendingVideoW > 0 && m_pendingVideoH > 0)
@@ -3271,10 +3305,16 @@ void MainWindow::toggleMini() {
         // 再按快照分流显示
         setWindowFlags(m_preMiniFlags);
         setGeometry(m_preMiniRect);
-        if (m_preMiniMaximized)
-            showMaximized();
-        else
+        if (m_preMiniMaximized) {
+#ifndef Q_OS_WIN
+            // N141：先 show 再 maximize——ADD MAXIMIZED 必须落在已映射的窗口上，
+            // 否则时灵时不灵（表现为退出小窗回不到最大化）
             show();
+#endif
+            showMaximized();
+        } else {
+            show();
+        }
         applyMenuBarVisibility(); // 按偏好恢复——隐藏偏好不得被退出小窗推翻
         m_bottomBar->show();
         m_playlist->setVisible(m_playlistVisibleTruth);

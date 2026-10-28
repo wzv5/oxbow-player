@@ -558,11 +558,14 @@ class MainWindow : public QMainWindow {
     double m_savedZoom = 0.0; // 进全屏前 zoom/pan 快照（先存后写零）
     double m_savedPanX = 0.0;
     double m_savedPanY = 0.0;
-    bool m_preFsMaximized = false; // 进全屏前是否最大化（退出分流依据）
+    bool m_preFsMaximized = false; // 进全屏前是否最大化（Win 退出分流 / 非 Win 走不走直发）
     // A18 无框全屏：进全屏前完整几何快照（含位置，普通态恢复用）+ 窗口样式快照；
     // 落盘守卫与退出恢复共用
     QRect m_preFsRect;
     Qt::WindowFlags m_preFsFlags;
+    // N141：置真 ⟹ 本轮全屏走的是 EWMH 直发（不进 Qt 的 WindowFullScreen 状态机），
+    // Qt 侧窗口态全程记作最大化、全屏的真相只在 m_fullscreen；退出侧据此对称收口
+    bool m_fsStateDirect = false;
 
     // ---- N13：轨道选择 ----
     QList<MpvController::TrackInfo> m_tracks;

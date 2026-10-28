@@ -25,3 +25,22 @@ void setWindowAboveEwmh(unsigned long long win, bool on) {
                SubstructureRedirectMask | SubstructureNotifyMask, &xev);
     XFlush(dpy);
 }
+
+// N141：与 setWindowAboveEwmh 同一条通道，只换 atom（用途与代价见头文件）
+void setWindowFullscreenEwmh(unsigned long long win, bool on) {
+    static Display *dpy = XOpenDisplay(nullptr);
+    if (!dpy)
+        return;
+    XEvent xev{};
+    xev.xclient.type = ClientMessage;
+    xev.xclient.window = static_cast<Window>(win);
+    xev.xclient.message_type = XInternAtom(dpy, "_NET_WM_STATE", False);
+    xev.xclient.format = 32;
+    xev.xclient.data.l[0] = on ? 1 : 0; // _NET_WM_STATE_ADD / _NET_WM_STATE_REMOVE
+    xev.xclient.data.l[1] = static_cast<long>(XInternAtom(dpy, "_NET_WM_STATE_FULLSCREEN", False));
+    xev.xclient.data.l[2] = 0;
+    xev.xclient.data.l[3] = 1; // source indication: 1 = application
+    XSendEvent(dpy, DefaultRootWindow(dpy), False,
+               SubstructureRedirectMask | SubstructureNotifyMask, &xev);
+    XFlush(dpy);
+}
