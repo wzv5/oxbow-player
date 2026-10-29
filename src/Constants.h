@@ -70,6 +70,9 @@ inline QString iconPause() { return QStringLiteral("pause"); }
 inline QString iconStop() { return QStringLiteral("stop"); }
 inline QString iconSkipBackward() { return QStringLiteral("skip-backward"); }
 inline QString iconSkipForward() { return QStringLiteral("skip-forward"); }
+// N143 字幕浏览器工具栏：偏移步进（快进 / 倒带）
+inline QString iconFastForward() { return QStringLiteral("fast-forward"); }
+inline QString iconRewind() { return QStringLiteral("rewind"); }
 inline QString iconStream() { return QStringLiteral("stream"); }
 inline QString iconVolume() { return QStringLiteral("volume"); }
 inline QString iconVolumeMuted() { return QStringLiteral("volume-muted"); }

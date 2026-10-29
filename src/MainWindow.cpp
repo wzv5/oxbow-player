@@ -36,6 +36,7 @@
 #include "ui/OsdController.h" // N113：三形态 OSD 控制器
 #include "ui/SettingsDialog.h"
 #include "ui/ShortcutsDialog.h" // N86
+#include "ui/SubtitleBrowserDialog.h"
 #include "ui/ThemedIconEngine.h"
 #include "ui/ThumbWindow.h" // N107：缩略图宿主窗
 #ifndef Q_OS_WIN
@@ -787,6 +788,9 @@ MainWindow::MainWindow(MpvController *controller, AppearanceManager *appearance,
 }
 
 MainWindow::~MainWindow() {
+    // 未经 destroySubtitleBrowser 收口就退出时，在飞的 ffmpeg 由这里击杀
+    if (m_subtitleExtractor)
+        m_subtitleExtractor->cancel();
     // N107：N103 销毁顺序——先阻塞拆缩略图 core 再停引擎线程，子控件（宿主窗）
     // 随基类析构在其后销毁。常规退出已由 onMpvShutdown 收口（幂等），本处兜底
     if (m_thumbEngine)
@@ -1040,6 +1044,34 @@ void MainWindow::connectActions() {
 
     m_navigatorAction = act(AM::Id::Navigator);
     connect(m_navigatorAction, &QAction::toggled, this, &MainWindow::setNavigatorVisible);
+
+    // N143：字幕浏览器面板开关——勾选态即可见性，收口与导航器同款
+    m_subtitleBrowserAction = act(AM::Id::SubtitleBrowser);
+    connect(m_subtitleBrowserAction, &QAction::toggled, this, [this](bool on) {
+        if (on)
+            ensureSubtitleBrowser();
+        else
+            destroySubtitleBrowser();
+    });
+    // 播放态与 ffmpeg 路径推给面板（存在才推；面板不可见时它只存态不取数）。
+    // 切文件不单列触发点：轨道表推两趟（卸载时空表管清空、装载后新表管重取）已带上新路径
+    connect(m_controller, &MpvController::tracksChanged, this,
+            [this](const QString &path, const QList<MpvController::TrackInfo> &tracks) {
+                if (m_subtitleBrowser)
+                    m_subtitleBrowser->setTracks(path, tracks);
+            });
+    connect(m_controller, &MpvController::idleActive, this, [this](bool active) {
+        if (m_subtitleBrowser && active)
+            m_subtitleBrowser->setMediaIdle();
+    });
+    connect(m_controller, &MpvController::subDelayChanged, this, [this](double delay) {
+        if (m_subtitleBrowser)
+            m_subtitleBrowser->setSubDelay(delay);
+    });
+    connect(m_controller, &MpvController::timePosChanged, this, [this](double seconds) {
+        if (m_subtitleBrowser)
+            m_subtitleBrowser->setTimePos(seconds);
+    });
 
     // 全屏（N3）：F11/视图菜单/Esc/双击四路共用 toggleFullscreen 收口
     m_fullscreenAction = act(AM::Id::Fullscreen);
@@ -1529,6 +1561,9 @@ void MainWindow::onPluginIniKeysChanged(const QStringList &keys) {
         MediaInfoHelper::preload(settings.value(mediaInfoKey).toString(),
                                  QFileInfo(m_configFile).absolutePath());
     }
+    // N143：ffmpeg 路径变更——重解析并推送取数模块，下一次取数即按新路径
+    if (keys.contains(externalToolIniKey(ExternalTool::Ffmpeg)) && m_subtitleExtractor)
+        m_subtitleExtractor->setFfmpegPath(resolvedFfmpegPath());
     // 上报开关不再逐键枚举（N99）：账目行命中的键在同步通路内过滤，新增行零改动
     syncReporterSwitches(keys);
     // 音量族这两项都只读 ini：配置文件为空串即整段跳过（与同函数邻居
@@ -2166,6 +2201,52 @@ void MainWindow::destroyNavigator() {
     }
     m_navigator->deleteLater();
     m_navigator = nullptr;
+}
+
+// N143：字幕浏览器面板按需创建（勾选态即可见性），关闭统一经 destroySubtitleBrowser
+// 回写勾选态并销毁（对话框 finished / Esc / 标题栏关闭都落到 finished 信号）
+void MainWindow::ensureSubtitleBrowser() {
+    if (m_subtitleBrowser) {
+        m_subtitleBrowser->show();
+        m_subtitleBrowser->raise();
+        m_subtitleBrowser->activateWindow();
+        return;
+    }
+    // 取数模块的寿命不随面板开关：条目表缓存因此跨开关存活，重开面板按缓存重建
+    if (!m_subtitleExtractor) {
+        m_subtitleExtractor = new SubtitleExtractor(this);
+        m_subtitleExtractor->setFfmpegPath(resolvedFfmpegPath());
+    }
+    m_subtitleBrowser = new SubtitleBrowserDialog(m_controller, m_subtitleExtractor, this);
+    connect(m_subtitleBrowser, &QDialog::finished, this, [this] { destroySubtitleBrowser(); });
+    // 打开即按当前播放态取一次数（面板 showEvent 亦会 refresh，这里补种子状态）
+    m_subtitleBrowser->setTracks(m_controller->currentPlayingPath(), m_tracks);
+    m_subtitleBrowser->show();
+}
+
+// 统一关闭收口（幂等）：取消菜单勾选 → 取消在飞取数（关 = 取消）→ 销毁置 null。
+// QSignalBlocker 防止取消勾选递归回 toggle 槽
+void MainWindow::destroySubtitleBrowser() {
+    if (!m_subtitleBrowser)
+        return;
+    {
+        QSignalBlocker blocker(m_subtitleBrowserAction);
+        m_subtitleBrowserAction->setChecked(false);
+    }
+    m_subtitleExtractor->cancel();
+    m_subtitleBrowser->deleteLater();
+    m_subtitleBrowser = nullptr;
+}
+
+// N143：ffmpeg 路径解析单点——ini 显式值优先，空则取候选表第一项，都没有判不可用。
+// 设置面路径项变更经 onPluginIniKeysChanged 重解析推送，下一次取数即按新路径
+QString MainWindow::resolvedFfmpegPath() const {
+    if (m_configFile.isEmpty())
+        return {};
+    QSettings settings(m_configFile, QSettings::IniFormat);
+    return SubtitleExtractor::resolveFfmpegPath(
+        settings.value(externalToolIniKey(ExternalTool::Ffmpeg)).toString(),
+        QFileInfo(m_configFile).absolutePath());
 }
 
 // 浮窗不随属主联动，主窗口移动/缩放时手动跟随并刷新映射。
@@ -2807,6 +2888,9 @@ void MainWindow::toggleFullscreen() {
         if (m_navigator)
             m_navigator->hide();
         m_navigatorAction->setEnabled(false);
+        // N143：字幕浏览器同款收口——收起并回写勾选态（覆盖态不复原，退出后重开）
+        destroySubtitleBrowser();
+        m_subtitleBrowserAction->setEnabled(false);
         m_fullscreen = true;
         applyMenuBarVisibility();       // 幂等复算（菜单栏已在上方按原位先藏）
         m_refitAfterFullscreen = false; // 进全屏清空：仅记录"本次全屏期内是否换片"
@@ -2919,6 +3003,7 @@ void MainWindow::toggleFullscreen() {
             repositionNavigator();
         }
         m_navigatorAction->setEnabled(true);
+        m_subtitleBrowserAction->setEnabled(true);
         // N66 §二-7：全屏期动作未禁用，退出无需恢复可用态（原 A20 恢复行随之作废）
         // N117：激活指派晚于本分支的显示序列，兜底会把焦点落进已重新可见的播放
         // 列表——预置视频区为顶层 focus_child 抢在指派前，FocusIn 处自清归 null。
@@ -3166,6 +3251,9 @@ void MainWindow::toggleMini() {
         if (m_navigator)
             m_navigator->hide();
         m_navigatorAction->setEnabled(false);
+        // N143：字幕浏览器同款收口——收起并回写勾选态
+        destroySubtitleBrowser();
+        m_subtitleBrowserAction->setEnabled(false);
         // zoom/pan 先存后写零（复用全屏快照成员：两态互斥不并存，无冲突）——
         // 小窗与全屏同为"视频铺满客户区"的覆盖形态，复位 = 保持比例填充
         m_savedZoom = m_controller->propertyDouble(QStringLiteral("video-zoom"), 0.0);
@@ -3333,6 +3421,7 @@ void MainWindow::toggleMini() {
             repositionNavigator();
         }
         m_navigatorAction->setEnabled(true);
+        m_subtitleBrowserAction->setEnabled(true);
         // zoom/pan 快照回写（与全屏退出同序）
         m_controller->setProperty(QStringLiteral("video-zoom"), m_savedZoom);
         m_controller->setProperty(QStringLiteral("video-pan-x"), m_savedPanX);

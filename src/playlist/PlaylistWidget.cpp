@@ -8,12 +8,12 @@
 #include "PlaylistDelegate.h"
 #include "PlaylistListView.h" // N57 §2.2：视图即状态载体，本页所有列表页由 createView 出生
 #include "PlaylistRegistry.h" // N57 §2.3：默认 tab 的列表与默认名出口
-#include "PlaylistTheme.h"
 #include "ServiceRegistry.h"
 #include "Util.h"
 #include "mpvbridge/MpvController.h"
 #include "providers/StaticProvider.h" // N79：新表提供者经 createDefault 出生
 #include "streams/StreamTransit.h"
+#include "ui/AppearanceManager.h"
 #include "ui/ListSettingsDialog.h"
 #include "ui/LoadingOverlay.h"
 #include "ui/OpenUrlDialog.h" // N131
@@ -3855,11 +3855,11 @@ void PlaylistWidget::showPropertiesDialog(const PlaylistEntity::Ptr &entityPtr) 
         // 配色与播放列表三色体系对齐（维护者指定）：属性名=正播项蓝、
         // 属性值=普通未选灰、组标题浅灰；随主题派生（构建期现取，无跟随接线）
         QTextCharFormat nameFmt;
-        nameFmt.setForeground(PlaylistTheme::accentColor(view->palette()));
+        nameFmt.setForeground(AppearanceManager::accentColor(view->palette()));
         QTextCharFormat valueFmt;
-        valueFmt.setForeground(PlaylistTheme::propValueForeground(view->palette()));
+        valueFmt.setForeground(AppearanceManager::propValueForeground(view->palette()));
         QTextCharFormat headFmt; // 分组标题：浅灰
-        headFmt.setForeground(PlaylistTheme::groupHeadForeground(view->palette()));
+        headFmt.setForeground(AppearanceManager::groupHeadForeground(view->palette()));
 
         auto appendRow = [&cur, &nameFmt, &valueFmt](const Row &row) {
             cur.setCharFormat(nameFmt);
@@ -4203,9 +4203,9 @@ void PlaylistWidget::showContainerPropertiesDialog(const PlaylistProvider::Conta
     QTextCursor cur(view->document());
     // 配色与实体属性对话框一致：属性名蓝、属性值灰；随主题派生（构建期现取）
     QTextCharFormat nameFmt;
-    nameFmt.setForeground(PlaylistTheme::accentColor(view->palette()));
+    nameFmt.setForeground(AppearanceManager::accentColor(view->palette()));
     QTextCharFormat valueFmt;
-    valueFmt.setForeground(PlaylistTheme::propValueForeground(view->palette()));
+    valueFmt.setForeground(AppearanceManager::propValueForeground(view->palette()));
     for (const Row &row : rows) {
         cur.setCharFormat(nameFmt);
         cur.insertText(row.prop + QStringLiteral(":"));

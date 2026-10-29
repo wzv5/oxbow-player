@@ -210,6 +210,25 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle) {
                                  QFileInfo(configFile).absolutePath());
     }
 
+    // N143：sub-delay 追加进 --reset-on-next-file——手册载明该选项默认不重置任何项，
+    // 不追加则上一个文件调过的字幕偏移会串到下一个文件；复位语义由 mpv 承担。
+    // 写只走 change-list append 单条，用户既有项不经插件的手；append 不去重
+    // （实测重复调用即累加），故按读回的现值判重后跳过
+    {
+        char *raw = mpv_get_property_string(handle, "reset-on-next-file");
+        const QString current = raw ? QString::fromUtf8(raw) : QString();
+        mpv_free(raw);
+        const QStringList items = current.split(u',', Qt::SkipEmptyParts);
+        const bool already = items.contains(QStringLiteral("all"), Qt::CaseInsensitive) ||
+                             items.contains(QStringLiteral("sub-delay"));
+        if (!already) {
+            const char *args[] = {"change-list", "reset-on-next-file", "append", "sub-delay",
+                                  nullptr};
+            if (mpv_command(handle, args) < 0)
+                OXBOW_LOG_WARNING() << "failed to append sub-delay to reset-on-next-file";
+        }
+    }
+
     auto *controller = new MpvController(handle);
 
     // N52：装配硬顺序——install 须早于 startEventThread（首次 wait_event 解除启动

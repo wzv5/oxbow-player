@@ -88,6 +88,9 @@ ActionManager::ActionManager(QWidget *host) : m_host(host) {
     // N15：添加书签
     declareAction(Id::AddBookmark, QStringLiteral("AddBookmark"), tr("Add &Bookmark"), Qt::Key_P);
     declareAction(Id::BookmarkEditor, QStringLiteral("BookmarkEditor"), tr("Bookmark &Editor…"));
+    // N143：字幕浏览器面板开关——勾选态即可见性，收口在主窗；默认无键，键位留改绑余地
+    declareAction(Id::SubtitleBrowser, QStringLiteral("SubtitleBrowser"), tr("&Subtitle Browser"),
+                  QKeySequence(), true);
 }
 
 bool ActionManager::nameTaken(const QString &idName) const {

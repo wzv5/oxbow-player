@@ -15,6 +15,8 @@
 #include "playlist/PlaylistWidget.h"
 
 class NavigatorPanel;
+class SubtitleBrowserDialog;
+class SubtitleExtractor;
 class BookmarkEditorDialog;
 class ShortcutsDialog;
 class CustomToolManager; // N134：自定义工具单表（定义于 CustomToolManager.h）
@@ -280,6 +282,10 @@ class MainWindow : public QMainWindow {
     // N3：导航器按需创建生命周期收口（关闭即销毁，null=未打开）
     void ensureNavigator();
     void destroyNavigator();
+    // N143：字幕浏览器面板按需创建生命周期收口（关闭即销毁，null=未打开）
+    void ensureSubtitleBrowser();
+    void destroySubtitleBrowser();
+    QString resolvedFfmpegPath() const; // N143：ffmpeg 路径解析单点（ini 显式值优先）
     // 持久化：关闭时保存 / 启动时恢复
     void saveSettings();
     void restoreSettings();
@@ -481,9 +487,12 @@ class MainWindow : public QMainWindow {
     bool m_firstShowDone = false;           // showEvent 一次性守卫（最小化恢复/全屏退出也会触发）
     QAction *m_navigatorAction = nullptr;   // 视图菜单"导航器"勾选项（N1）
     NavigatorPanel *m_navigator = nullptr;  // 导航器浮窗（N3 按需创建）：null=未打开
-    QAction *m_fullscreenAction = nullptr;  // 视图菜单"全屏"勾选项（N3）
-    QAction *m_miniAction = nullptr;        // 视图菜单"小窗"勾选项（N68）
-    QAction *m_aboutAction = nullptr;       // About 动作（不进登记表，两个菜单共用一份）
+    QAction *m_subtitleBrowserAction = nullptr;         // 视图菜单"字幕浏览器"勾选项（N143）
+    SubtitleBrowserDialog *m_subtitleBrowser = nullptr; // N143：按需创建，null=未打开
+    SubtitleExtractor *m_subtitleExtractor = nullptr;   // N143：取数模块，寿命不随面板开关
+    QAction *m_fullscreenAction = nullptr;              // 视图菜单"全屏"勾选项（N3）
+    QAction *m_miniAction = nullptr;                    // 视图菜单"小窗"勾选项（N68）
+    QAction *m_aboutAction = nullptr; // About 动作（不进登记表，两个菜单共用一份）
 
     double m_duration = 0.0;
     double m_timePos = 0.0;

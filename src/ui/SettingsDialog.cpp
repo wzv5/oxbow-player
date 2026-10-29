@@ -609,6 +609,12 @@ const QList<SettingCategory> &settingCatalog() {
                       .note = QT_TRANSLATE_NOOP("SettingsDialog",
                                                 "Path changes take effect after restart"),
                       .tool = ExternalTool::MediaInfo},
+                     // N143：ffmpeg 是外部进程，路径改动无需重启，下一次取数即按新路径
+                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "FFmpeg Executable"),
+                      .widget = WidgetKind::ToolPath,
+                      .iniKey = "ffmpegPath",
+                      .fallback = QString(),
+                      .tool = ExternalTool::Ffmpeg},
                  }},
     };
     return catalog;

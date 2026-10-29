@@ -6,7 +6,7 @@
 // 常驻库、ffmpeg 是外部进程，生命周期不同，两者共用的只有"定义 + 发现 + 路径选择"，
 // "加载"概念不进这一层。
 // 外部工具：新增一种即加一个枚举值，并在 externalToolSpec 补它那一份定义
-enum class ExternalTool { MediaInfo };
+enum class ExternalTool { MediaInfo, Ffmpeg };
 
 struct ExternalToolSpec {
     const char *iniKey = nullptr;      // oxbow.ini 的路径设置键名

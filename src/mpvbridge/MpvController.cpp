@@ -36,6 +36,8 @@ enum ObservedProperty {
     // N93：track-list 重回观察（仍居末尾纪律之内）——运行期增删轨道只有 observe
     // 覆盖得到，FILE_LOADED 主动读只管装载时刻
     PropTrackList,
+    // N143：字幕偏移推送，面板显示与有效时间列重算由它驱动（仍居末尾纪律之内）
+    PropSubDelay,
     // B18：metadata / file-format / chapter-list 三项文件级属性不 observe，
     // 改由 FILE_LOADED 主动读（见 handleFileLoaded）
 };
@@ -115,6 +117,11 @@ QList<MpvController::TrackInfo> parseTrackList(const mpv_node *node) {
                 info.selected = v->u.flag != 0;
             else if (key == QLatin1String("main-selection") && v->format == MPV_FORMAT_INT64)
                 info.mainSelection = int(v->u.int64);
+            // N143：字幕浏览器取数用（ff-index 语义与缺席口径见 TrackInfo 字段注释）
+            else if (key == QLatin1String("ff-index") && v->format == MPV_FORMAT_INT64)
+                info.ffIndex = int(v->u.int64);
+            else if (key == QLatin1String("image") && v->format == MPV_FORMAT_FLAG)
+                info.image = v->u.flag != 0;
             else if (key == QLatin1String("demux-w") && v->format == MPV_FORMAT_INT64)
                 info.demuxW = int(v->u.int64);
             else if (key == QLatin1String("demux-h") && v->format == MPV_FORMAT_INT64)
@@ -360,6 +367,8 @@ MpvController::MpvController(mpv_handle *mpv, QObject *parent) : QObject(parent)
     // 改 sid 等）；手册未声明该属性不支持变更通知（反例是 input-bindings：明写
     // not supported，故它只在对话框打开时读一次、不观察）
     mpv_observe_property(m_mpv, PropTrackList, "track-list", MPV_FORMAT_NODE);
+    // N143：字幕偏移。普通属性，注册即推初值；停止期属性消失按 NONE 推 0（分发处）
+    mpv_observe_property(m_mpv, PropSubDelay, "sub-delay", MPV_FORMAT_DOUBLE);
     // B18：metadata / file-format / chapter-list 改 FILE_LOADED 主动读
     // （见 handleFileLoaded），不 observe；track-list 见上
 
@@ -1267,6 +1276,13 @@ void MpvController::handlePropertyChange(const mpv_event *event) {
             emit tracksChanged(m_currentFile, parseTrackList(static_cast<mpv_node *>(prop->data)));
         else
             emit tracksChanged(m_currentFile, QList<TrackInfo>());
+        break;
+    case PropSubDelay:
+        // N143：NONE（停止期属性消失）按 0 归位，与 time-pos 的 NONE 分支同形
+        if (prop->format == MPV_FORMAT_DOUBLE && prop->data)
+            emit subDelayChanged(*static_cast<double *>(prop->data));
+        else if (prop->format == MPV_FORMAT_NONE)
+            emit subDelayChanged(0.0);
         break;
     // N40：PropWidth / PropHeight 分支已随 observe 移除，视频尺寸改由
     // publishVideoSize 统一取值发布；B18：PropMetadata / PropFileFormat /

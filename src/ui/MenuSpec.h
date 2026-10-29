@@ -120,6 +120,7 @@ inline constexpr Item kWindowSizeItems[] = {
 inline constexpr Item kViewItems[] = {
     action(ActionManager::Id::Playlist, HideIn::Mini),
     action(ActionManager::Id::Navigator, HideIn::Both),
+    action(ActionManager::Id::SubtitleBrowser, HideIn::Both),
     action(ActionManager::Id::MenuBar, HideIn::Both),
     action(ActionManager::Id::ToggleStats),
     separator(),

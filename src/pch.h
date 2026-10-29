@@ -2,7 +2,7 @@
 // 由 CMake target_precompile_headers 启用（见 CMakeLists.txt oxbowcore 目标），
 // 各源文件只需包含本文件，不再散落系统头包含，显著加快编译。
 // 不入此文件：mpv 头（mpv/client.h、mpv/stream_cb.h）、第三方头（MediaInfoDLL.h）
-// 与单元测试独有头（QtTest/QtTest、QProcess、QTemporaryDir 等）。
+// 与单元测试独有头（QtTest/QtTest、QTemporaryDir 等）。
 // 平台专属头收在文件最前：守卫用 `_WIN32` 而非 `Q_OS_WIN`（此处 qglobal.h 尚未进来，
 // 宏还没被定义）；`WIN32_LEAN_AND_MEAN` 与 `NOMINMAX` 必须排在 dwmapi.h 拉起的
 // windows.h 之前，才拦得住它的 min/max 宏。
@@ -98,6 +98,8 @@
 #include <QPixmap>
 #include <QPlainTextEdit>
 #include <QPointer>
+#include <QProcess>
+#include <QProgressBar>
 #include <QPromise>
 #include <QPushButton>
 #include <QRadioButton>
@@ -127,6 +129,7 @@
 #include <QStyledItemDelegate>
 #include <QTabBar>
 #include <QTabWidget>
+#include <QTableView>
 #include <QTableWidget>
 #include <QTemporaryFile>
 #include <QTextCursor>

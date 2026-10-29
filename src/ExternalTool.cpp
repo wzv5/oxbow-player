@@ -31,9 +31,20 @@ const ExternalToolSpec &externalToolSpec(ExternalTool tool) {
         QStringLiteral("libmediainfo.so.0"),
 #endif
     };
+    static const ExternalToolSpec ffmpeg{
+        "ffmpegPath",
+        QT_TRANSLATE_NOOP("ExternalTool", "FFmpeg Executable"),
+#ifdef Q_OS_WIN
+        QStringLiteral("ffmpeg.exe"),
+#else
+        QStringLiteral("ffmpeg"),
+#endif
+    };
     switch (tool) {
     case ExternalTool::MediaInfo:
         return mediaInfo;
+    case ExternalTool::Ffmpeg:
+        return ffmpeg;
     }
     // 加了枚举值却没补 case 属编程错误：Debug 撞断言，设置目录的 iniKey 交叉校验也会报
     // （拿到的键名与声明不符）；release 按 MediaInfo 兜底——没有任何定义能代表不存在的工具

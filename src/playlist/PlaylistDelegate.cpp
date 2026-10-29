@@ -2,9 +2,9 @@
 
 #include "PlaylistDelegate.h"
 
-#include "PlaylistTheme.h"
 #include "Util.h"
 #include "entities/PlaylistEntity.h"
+#include "ui/AppearanceManager.h"
 
 namespace {
 constexpr int kIconSize = 16;
@@ -43,7 +43,7 @@ void PlaylistDelegate::paint(QPainter *painter, const QStyleOptionViewItem &opti
 
     // 选中背景：派生浅灰平铺（维护者裁决，替代过重的系统高亮色；随主题派生）
     if (option.state & QStyle::State_Selected)
-        painter->fillRect(option.rect, PlaylistTheme::selectionBackground(option.palette));
+        painter->fillRect(option.rect, AppearanceManager::selectionBackground(option.palette));
 
     int x = option.rect.left() + kMarginH;
     const int cy = option.rect.center().y();
@@ -58,8 +58,8 @@ void PlaylistDelegate::paint(QPainter *painter, const QStyleOptionViewItem &opti
     // 四色规则：播放失败红 / 正在播放蓝 / 选中 / 其余灰，随主题派生；一律不用粗体
     // （N104：错误优先于正播——两真同帧是"这条刚报 error、PlayingRole 还没等回显
     // 回落"，此刻 mpv 已跳走，红比蓝贴近事实）
-    const QColor textColor = PlaylistTheme::rowForeground(option.palette, failed, playing,
-                                                          option.state & QStyle::State_Selected);
+    const QColor textColor = AppearanceManager::rowForeground(
+        option.palette, failed, playing, option.state & QStyle::State_Selected);
     painter->setFont(option.font);
     painter->setPen(textColor);
 

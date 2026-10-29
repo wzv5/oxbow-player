@@ -181,6 +181,12 @@ class MpvController : public QObject {
         // 0 = sid、1 = secondary-sid；未选中或由 lavfi-complex 选中时该键缺席，
         // 取 -1。非字幕轨也可以有值，但本仓只在字幕上使用
         int mainSelection = -1;
+        // N143：ffmpeg 全局流下标（track-list/N/ff-index）——该轨在其所在输入
+        // 文件内的流下标（内嵌轨指主媒体文件、外部轨指外部字幕文件自身），
+        // ffmpeg -map 按它抽流。键缺席取 -1，判不可用，不猜下标
+        int ffIndex = -1;
+        // N143：位图字幕轨（track-list/N/image），文本字幕可用性判据用
+        bool image = false;
         int demuxW = 0;
         int demuxH = 0;
         // N121：on_preloaded 预适配的选轨与尺寸估算（demux 级字段）
@@ -207,6 +213,8 @@ class MpvController : public QObject {
     // B18：首参为归属键——START_FILE 时缓存、FILE_LOADED/observe 推送当刻
     // 的当前文件路径（快照），接收方不得再向控制器现读
     void durationChanged(const QString &path, double seconds);
+    // N143：字幕偏移推送；NONE（停止期）按 0 归位
+    void subDelayChanged(double delay);
     void pauseChanged(bool paused);
     void volumeChanged(double volume);
     // N38：静音开关（mute 属性，FLAG）

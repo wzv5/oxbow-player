@@ -130,7 +130,6 @@ add_library(oxbowcore MODULE
     src/ui/NavigatorPanel.h
     src/playlist/PlaylistDelegate.cpp
     src/playlist/PlaylistDelegate.h
-    src/playlist/PlaylistTheme.h
     src/entities/PlaylistEntity.cpp
     src/entities/PlaylistEntity.h
     src/playlist/Playlist.cpp
@@ -200,6 +199,10 @@ add_library(oxbowcore MODULE
     src/ExternalTool.h
     src/MediaInfoHelper.cpp
     src/MediaInfoHelper.h
+    src/SubtitleExtractor.cpp
+    src/SubtitleExtractor.h
+    src/ui/SubtitleBrowserDialog.cpp
+    src/ui/SubtitleBrowserDialog.h
     src/mpvbridge/MpvConf.cpp
     src/mpvbridge/MpvConf.h
     src/mpvbridge/InputConf.cpp
@@ -394,6 +397,8 @@ qt_add_resources(oxbowcore "icons"
         icons/icons8/stop.svg
         icons/icons8/skip-backward.svg
         icons/icons8/skip-forward.svg
+        icons/icons8/fast-forward.svg
+        icons/icons8/rewind.svg
         icons/icons8/stream.svg
         icons/icons8/volume.svg
         icons/icons8/volume-muted.svg
@@ -524,6 +529,8 @@ if(OXBOW_BUILD_TESTS)
         src/ExternalTool.h
         src/MediaInfoHelper.cpp
         src/MediaInfoHelper.h
+        src/SubtitleExtractor.cpp
+        src/SubtitleExtractor.h
         src/ui/ExtensionFilterEdit.cpp
         src/ui/ExtensionFilterEdit.h
         src/ui/FilterListWidget.cpp
@@ -610,6 +617,7 @@ if(OXBOW_BUILD_TESTS)
     oxbow_add_test(BookmarkManager)
     oxbow_add_test(CustomToolManager)
     oxbow_add_test(StreamTransit)
+    oxbow_add_test(SubtitleExtractor)
     oxbow_add_test(PlaylistRegistry)
     oxbow_add_test(HttpByteStream)
     oxbow_add_test(FileByteStream)

@@ -65,6 +65,7 @@ class ActionManager : public QObject {
         Escape, // 隐绑定：无菜单实体，仅键盘触发
         AddBookmark,
         BookmarkEditor,
+        SubtitleBrowser, // N143：字幕浏览器面板开关（默认无键，键位留改绑余地）
 
         // 哨兵：枚举计数与 orderedIds 的遍历上界，不是动作；新动作插在本行之前
         Count
