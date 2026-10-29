@@ -68,14 +68,22 @@ Oxbow 以插件形式运行在 mpv 中，需要与其他插件共存，同时保
 
 下载最新预编译包：<https://github.com/wzv5/oxbow-player/releases/latest>；或从[源码构建](#从源码构建)。
 
-插件是 mpv 脚本目录下的一个文件夹：
+插件是 mpv 脚本目录下的一个文件夹：便携版 mpv 为 `<mpv>/portable_config/scripts/oxbow/`，安装版为 `%APPDATA%/mpv/scripts/oxbow/`。静态链接版（发布包）只有一个文件：
 
 ```text
-<mpv>/portable_config/scripts/oxbow/     # 便携版 mpv（Windows）
-%APPDATA%/mpv/scripts/oxbow/             # 安装版 mpv（Windows）
-├── main.dll        # 插件入口
-├── oxbowcore.dll   # 插件本体
+scripts/oxbow/
+├── main.dll        # 插件本体——一个文件就够
 └── MediaInfo.dll   # 可选，启用媒体元数据补全
+```
+
+动态链接版（自建，`OXBOW_STATIC=OFF`）另带加载壳与 Qt 运行库：
+
+```text
+scripts/oxbow/
+├── main.dll          # 加载壳（由 loader.dll 部署时改名）
+├── oxbowcore.dll     # 插件本体
+├── Qt6*.dll, plugins/
+└── MediaInfo.dll     # 可选
 ```
 
 ```text
@@ -137,7 +145,7 @@ cmake --build build
 
 | 选项 | 默认 | 说明 |
 | --- | --- | --- |
-| `OXBOW_STATIC` | `OFF` | 静态链接 Qt 与加密依赖（libsodium）。减小体积、加快启动，建议开启——需要静态版 Qt 与预编译包中的静态 libsodium。**仅 Windows。** |
+| `OXBOW_STATIC` | `OFF` | 静态链接 Qt 与加密依赖（libsodium）。减小体积、加快启动，建议开启——需要静态版 Qt 与预编译包中的静态 libsodium。**仅 Windows。** 自动部署只拷核心并改名为 `main.dll`，加载壳照常构建但不部署。 |
 | `OXBOW_WITH_RCLONE_CRYPT` | `ON` | 是否构建 Rclone Crypt 后端（rclone `crypt` 加密目录的只读提供者）。置 `OFF` 时整条撤除：不再查找 libsodium 与 OpenSSL，也不需要 `LIBSODIUM_ROOT`。 |
 | `OXBOW_BUILD_TESTS` | `OFF` | 构建单元测试可执行文件。 |
 | `OXBOW_PUREQT` | `OFF` | 强制部分功能（如小窗）走纯 Qt 降级路径（开发辅助）。 |

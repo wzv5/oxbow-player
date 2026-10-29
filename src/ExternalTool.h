@@ -24,7 +24,7 @@ const ExternalToolSpec &externalToolSpec(ExternalTool tool);
 // 设置目录那侧按自己的声明写、由 validateCatalog 对着定义校验
 QString externalToolIniKey(ExternalTool tool);
 
-// 核心模块所在目录（与加载壳同目录）。不读配置文件路径——ini 位置由
+// 核心模块所在目录（即插件目录；动态部署下与加载壳同目录）。不读配置文件路径——ini 位置由
 // plugin.cpp 的 resolveConfigFilePath 决定（可写回落语义），两者不可互相替代
 QString externalToolPluginDir();
 

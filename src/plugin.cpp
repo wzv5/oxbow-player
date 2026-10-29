@@ -1,7 +1,7 @@
-// mpv C 插件本体（oxbowcore）：两平台都导出标准入口 mpv_open_cplugin。Windows 上
-// mpv 只加载加载壳 main.dll，本模块由壳加载并代填 pfn_* 表（mpv 不会直接加载本模块，
-// 导出标准名安全）；Linux / 静态单一 DLL 下 mpv 直接加载。mpv 在独立线程调用入口，
-// 可在此建 QApplication 跑事件循环，阻塞本线程不碍 mpv 核心。
+// mpv C 插件本体（target oxbowcore）：两平台都导出标准入口 mpv_open_cplugin。
+// Windows 动态形态下 mpv 加载部署为 main.dll 的加载壳，本模块由壳加载并代填 pfn_* 表；
+// 静态形态下本模块自身就部署为 main.dll，由 mpv 直接加载并填表；Linux 同样直接加载。
+// mpv 在独立线程调用入口，可在此建 QApplication 跑事件循环，阻塞本线程不碍 mpv 核心。
 
 #include "pch.h"
 

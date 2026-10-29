@@ -1,7 +1,9 @@
-// 加载壳（main.dll，纯 Win32、零 Qt 导入）：mpv 加载它并调用导出的 mpv_open_cplugin。
-// 没有导入就无需 Qt 运行库可被全局搜索到；Qt 运行库随核心共置在 scripts/oxbow/ 下，
-// 由本壳加载核心时精确解析。核心对 mpv 不可见，其 pfn_* 表由本壳代填（复刻 mpv
-// 对脚本 DLL 的填表动作），随后把入口调用转发给核心。
+// 加载壳（构建产物 loader.dll，部署时改名为 main.dll）：mpv 加载它并调用导出的
+// mpv_open_cplugin。动态 Qt 形态下本壳把插件目录指给 Qt、按 DLL_LOAD_DIR 加载核心，
+// 让共置的 Qt 运行库能被精确解析。核心对 mpv 不可见，其 pfn_* 表由本壳代填（复刻
+// mpv 对脚本 DLL 的填表动作），随后把入口调用转发给核心。
+// 静态形态下核心不依赖同置运行库，自动部署不走壳——壳仍照常构建，供手工两件式部署
+// 与后续形态复用；OXBOW_STATIC 下不设 Qt 插件环境变量。
 
 #define _WIN32_WINNT 0x0A00
 #include <windows.h>

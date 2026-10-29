@@ -68,14 +68,22 @@ The video area is embedded through mpv's `wid`, which only exists on the X11 sid
 
 Download the latest prebuilt package: <https://github.com/wzv5/oxbow-player/releases/latest>; or [build from source](#building-from-source).
 
-The plugin is a folder placed under mpv's script directory:
+The plugin is a folder placed under mpv's script directory on Windows — `<mpv>/portable_config/scripts/oxbow/` for portable mpv, `%APPDATA%/mpv/scripts/oxbow/` for an installed one. A statically linked build (the release package) is a single file:
 
 ```text
-<mpv>/portable_config/scripts/oxbow/     # portable mpv (Windows)
-%APPDATA%/mpv/scripts/oxbow/             # installed mpv (Windows)
-├── main.dll        # plugin entry
-├── oxbowcore.dll   # the plugin itself
+scripts/oxbow/
+├── main.dll        # the plugin — one file does it all
 └── MediaInfo.dll   # optional, enables media metadata enrichment
+```
+
+A build linked against the shared Qt runtime (from source with `OXBOW_STATIC=OFF`) carries the loader shim and the Qt runtime alongside:
+
+```text
+scripts/oxbow/
+├── main.dll          # loader shim (loader.dll renamed at deploy time)
+├── oxbowcore.dll     # the plugin itself
+├── Qt6*.dll, plugins/
+└── MediaInfo.dll     # optional
 ```
 
 ```text
@@ -137,7 +145,7 @@ The version number is defined solely in `project(oxbow-player VERSION …)` at t
 
 | Option | Default | Description |
 | --- | --- | --- |
-| `OXBOW_STATIC` | `OFF` | Link Qt and crypto dependencies (libsodium) statically. Smaller footprint, faster startup; recommended — requires a static Qt build and the static libsodium library. **Windows only.** |
+| `OXBOW_STATIC` | `OFF` | Link Qt and crypto dependencies (libsodium) statically. Smaller footprint, faster startup; recommended — requires a static Qt build and the static libsodium library. **Windows only.** Automatic deployment then ships a single `main.dll` (the core); the loader still gets built but is not deployed. |
 | `OXBOW_WITH_RCLONE_CRYPT` | `ON` | Build the Rclone Crypt backend (the rclone `crypt` read-only folder provider). Set to `OFF` to drop it entirely: libsodium and OpenSSL are then not looked for at all and `LIBSODIUM_ROOT` is not needed. |
 | `OXBOW_BUILD_TESTS` | `OFF` | Build the unit-test executables. |
 | `OXBOW_PUREQT` | `OFF` | Force some features (e.g. the mini window) onto the pure-Qt fallback path (development aid). |

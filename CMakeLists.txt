@@ -82,21 +82,27 @@ endif()
 find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets LinguistTools Concurrent Network Svg)
 
 # ---------------------------------------------------------------------------
-# 目标 1：加载壳 main.dll（纯 Win32，无 Qt 依赖）
-# mpv 启动时会加载 scripts/oxbow/main.dll 并调用其导出的 mpv_open_cplugin。
-# 壳仅负责把插件目录加入 DLL 搜索路径，再动态加载真正带 Qt 的 oxbowcore.dll，
-# 从而让 Qt 运行库能与插件共置、随插件目录分发。
+# 目标 1：加载壳 loader.dll（纯 Win32，无 Qt 依赖，两种链接形态都编）
+# 部署时由部署段改名为 main.dll——mpv 只认目录式脚本里的这个名字。
+# 壳负责把插件目录加入 DLL 搜索路径，再按 DLL_LOAD_DIR 加载带 Qt 的核心，从而让 Qt
+# 运行库能与插件共置、随插件目录分发；静态形态下核心不依赖任何同置运行库，自动部署
+# 不走壳，但壳照常构建，供手工两件式部署与后续形态复用。
 # ---------------------------------------------------------------------------
 if(WIN32)
     add_library(oxbow_loader MODULE src/loader/loader.cpp)
-    set_target_properties(oxbow_loader PROPERTIES PREFIX "" OUTPUT_NAME "main")
+    set_target_properties(oxbow_loader PROPERTIES PREFIX "" OUTPUT_NAME "loader")
     if(MSVC)
         target_compile_options(oxbow_loader PRIVATE /utf-8)
+    endif()
+    # 静态形态下 Qt 插件已在链接期编进核心，壳不必也不该设 Qt 插件环境变量；
+    # 宏与 loader.cpp 的 #ifndef 守卫成对（N144）
+    if(OXBOW_STATIC)
+        target_compile_definitions(oxbow_loader PRIVATE OXBOW_STATIC)
     endif()
 endif()
 
 # ---------------------------------------------------------------------------
-# 目标 2：真正的插件 oxbowcore.dll（Qt + mpv 逻辑）
+# 目标 2：插件核心 oxbowcore.dll（Qt + mpv 逻辑；静态形态部署时改名为 main.dll）
 # ---------------------------------------------------------------------------
 add_library(oxbowcore MODULE
     src/plugin.cpp
@@ -369,9 +375,9 @@ endif()
 
 # 预编译头：Qt 与标准库集中进 src/pch.h，加快编译
 target_precompile_headers(oxbowcore PRIVATE src/pch.h)
-# N83：产物名分平台——Windows oxbowcore.dll（加载壳按名查找，不得改名）；其余平台
-# main.so（与 Windows 的 main.dll 命名对称，mpv 对脚本 .so 文件名无要求；PREFIX ""
-# 在 UNIX 下同时去掉 lib 前缀）
+# N83：产物名分平台——Windows 恒为 oxbowcore.dll（加载壳按名查找，不得改名；部署名
+# main.dll 由部署段在拷贝时给出），其余平台 main.so（mpv 对脚本 .so 文件名无要求；
+# PREFIX "" 在 UNIX 下同时去掉 lib 前缀）
 set_target_properties(oxbowcore PROPERTIES PREFIX "")
 if(WIN32)
     set_target_properties(oxbowcore PROPERTIES OUTPUT_NAME "oxbowcore")
@@ -412,13 +418,13 @@ qt_add_translations(oxbowcore MERGE_QT_TRANSLATIONS
 )
 
 # ---------------------------------------------------------------------------
-# 部署：把插件建成独立脚本目录
-#   portable_config/scripts/oxbow/main.dll        （加载壳）
-#   portable_config/scripts/oxbow/oxbowcore.dll    （真插件）
-#   portable_config/scripts/oxbow/*.dll + plugins/ （Qt 运行库，随插件目录分发）
-# Qt 运行库用 windeployqt 部署到插件所在目录，而不是 mpv 主程序目录。
-# OXBOW_STATIC=ON 时 Qt 已静态链接进 oxbowcore.dll，跳过 windeployqt；
-# 加载壳 main.dll 仍照常部署——MediaInfo.dll 由核心在启动时自行预载。
+# 部署：把插件建成独立脚本目录（部署名由本段给定，产物名不参与）
+#   静态形态   oxbowcore.dll -> scripts/oxbow/main.dll   单文件；mpv 直接加载核心
+#                            （pfn_* 由 mpv 亲自填），加载壳照常构建但不部署
+#   动态形态   loader.dll    -> scripts/oxbow/main.dll   加载壳
+#              oxbowcore.dll -> scripts/oxbow/oxbowcore.dll  真插件
+#              windeployqt 的 Qt 运行库与插件目录随插件目录分发
+# 两种形态都可选随件拷 MediaInfo.dll——该库由核心在启动时按全路径自行预载。
 # ---------------------------------------------------------------------------
 # N83：部署为 Windows 专属（windeployqt 与 DLL 语义；Linux 不自动部署，只编译产物）
 set(MPV_BIN_DIR "" CACHE PATH "mpv.exe 所在目录（仅 Windows）；设置后构建完毕自动部署")
@@ -432,12 +438,15 @@ if(WIN32 AND MPV_BIN_DIR)
         message(FATAL_ERROR "windeployqt 未找到：请确认 CMAKE_PREFIX_PATH 指向 Qt 安装目录（其 bin 下含 windeployqt）")
     endif()
     set(OXBOW_SCRIPT_DIR "${MPV_BIN_DIR}/portable_config/scripts/oxbow")
-    add_custom_command(TARGET oxbowcore POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${OXBOW_SCRIPT_DIR}"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:oxbow_loader> "${OXBOW_SCRIPT_DIR}/main.dll"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:oxbowcore> "${OXBOW_SCRIPT_DIR}/oxbowcore.dll")
-    if(NOT OXBOW_STATIC)
+    if(OXBOW_STATIC)
         add_custom_command(TARGET oxbowcore POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${OXBOW_SCRIPT_DIR}"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:oxbowcore> "${OXBOW_SCRIPT_DIR}/main.dll")
+    else()
+        add_custom_command(TARGET oxbowcore POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${OXBOW_SCRIPT_DIR}"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:oxbow_loader> "${OXBOW_SCRIPT_DIR}/main.dll"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:oxbowcore> "${OXBOW_SCRIPT_DIR}/oxbowcore.dll"
             COMMAND ${WINDEPLOYQT_EXE} --no-translations --compiler-runtime "${OXBOW_SCRIPT_DIR}/oxbowcore.dll")
     endif()
     # N98：动态形态随插件目录分发 libsodium.dll（$<TARGET_FILE:> 对导入目标给出
