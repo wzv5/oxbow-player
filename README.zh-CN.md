@@ -28,6 +28,7 @@ Oxbow 专注于改善日常使用体验，界面**精简、高效、不打扰**�
 - **悬停缩略图**：光标停在进度条上时显示该时刻的画面预览。支持本地文件与 Rclone Crypt；远端源不提供，取帧开销过大。
 - **小窗模式**：置顶小窗，等比缩放，靠近屏幕边缘时自动吸附。
 - **导航器**：类似 Photoshop 的导航器，以视口矩形示意当前可见范围，支持点击跳转、拖拽平移、滚轮缩放。
+- **字幕浏览器**：浏览当前使用的字幕轨，双击跳转到选中句。
 - **滤镜编辑器**：音频 / 视频滤镜逐条增删，改动即时生效。
 - **音量曲线**：可将音量映射切换为与 MPC-HC 一致的二次曲线，代替 mpv 默认的三次曲线，低音量下的响度更高。
 - **mpv 键位编辑器**：以可视化方式查看与编辑 `input.conf`。
@@ -41,6 +42,7 @@ Oxbow 专注于改善日常使用体验，界面**精简、高效、不打扰**�
 | --- | --- |
 | ![导航器与进度条缩略图](docs/screenshots/zh/navigator-thumbnail.png) | ![快速切换轨道](docs/screenshots/zh/track-switch.png) |
 | ![设置与播放列表配置](docs/screenshots/zh/settings.png) | ![mpv 键位编辑器](docs/screenshots/zh/key-bindings.png) |
+| ![字幕浏览器](docs/screenshots/zh/subtitle-browser.png) | |
 
 ## mpv 兼容性
 

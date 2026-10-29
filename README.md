@@ -28,6 +28,7 @@ Oxbow focuses on improving everyday use, with an interface that is **lean, effic
 - **Hover thumbnails**: resting the cursor on the seek bar shows the frame at that moment. Supported for local files and Rclone Crypt; remote sources are not supported, as fetching a frame costs too much.
 - **Mini window mode**: an always-on-top mini window with aspect-locked resizing and automatic edge snapping.
 - **Navigator**: like Photoshop's navigator — a viewport rectangle shows what is currently visible; click to jump, drag to pan, scroll to zoom.
+- **Subtitle browser**: browse the subtitle track in use — double-click a line to jump to it.
 - **Filter editor**: add or remove audio / video filters one by one, taking effect immediately.
 - **Volume curve**: the volume mapping can be switched to MPC-HC's quadratic curve instead of mpv's default cubic one, which raises the loudness at low volume levels.
 - **mpv key bindings editor**: view and edit `input.conf` visually.
@@ -41,6 +42,7 @@ Oxbow focuses on improving everyday use, with an interface that is **lean, effic
 | --- | --- |
 | ![Navigator and seek-bar thumbnails](docs/screenshots/en/navigator-thumbnail.png) | ![Quick track switching](docs/screenshots/en/track-switch.png) |
 | ![Settings and playlist configuration](docs/screenshots/en/settings.png) | ![mpv key bindings editor](docs/screenshots/en/key-bindings.png) |
+| ![Subtitle browser](docs/screenshots/en/subtitle-browser.png) | |
 
 ## mpv compatibility
 
