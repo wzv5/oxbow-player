@@ -103,7 +103,7 @@ int openCb(void *user_data, char *uri, mpv_stream_cb_info *info) {
 
     if (listUuid.isNull() || identity == path)
         return fail(QStringLiteral("malformed transit uri"));
-    const std::shared_ptr<StreamEndpoint> endpoint = relay->takeEndpoint(listUuid);
+    const std::shared_ptr<StreamEndpoint> endpoint = relay->endpointFor(listUuid);
     if (!endpoint)
         return fail(QStringLiteral(
             "no endpoint for list (deleted, or stale uri from a previous session?)"));
@@ -148,7 +148,7 @@ void StreamRelay::publish(const QUuid &listUuid, const std::shared_ptr<StreamEnd
     m_endpoints.insert(listUuid, endpoint);
 }
 
-std::shared_ptr<StreamEndpoint> StreamRelay::takeEndpoint(const QUuid &listUuid) {
+std::shared_ptr<StreamEndpoint> StreamRelay::endpointFor(const QUuid &listUuid) const {
     QMutexLocker l(&m_mutex);
     const auto it = m_endpoints.constFind(listUuid);
     if (it == m_endpoints.constEnd())

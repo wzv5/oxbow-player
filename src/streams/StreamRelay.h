@@ -50,13 +50,14 @@ class StreamRelay final : public StreamRelayIf {
     // 指针比对"的问题。GUI 线程调用。
     void publish(const QUuid &listUuid, const std::shared_ptr<StreamEndpoint> &endpoint) override;
 
-    // —— 以下仅 .cpp 内的 mpv 回调桩使用，勿在适配层之外调用 ——
-    // 端点表取用（demux 线程）：键为 QUuid，判等全在代码侧（N57 §2.4 删去两侧 toLower
-    // 归一——大小写与花括号自本版起归一命中）。命中已失效表项（提供者已析构）顺手
-    // erase 并返空。
-    std::shared_ptr<StreamEndpoint> takeEndpoint(const QUuid &listUuid);
+    // 端点表取用（任意线程）：键为 QUuid，判等全在代码侧（N57 删去两侧 toLower 归一
+    // ——大小写与花括号自此归一命中）。命中已失效表项（提供者已析构）顺手
+    // erase 并返空；命中有效项只 lock 不摘——注销只发生在端点寿命终点，本出口没有
+    // 消费语义。两个消费者共用：mpv 的 open 回调桩（demux 线程）与字幕取数
+    // （N145：GUI 线程解析、服务线程起流）。逻辑上只读（清垃圾属表自维护），故 const。
+    std::shared_ptr<StreamEndpoint> endpointFor(const QUuid &listUuid) const;
 
   private:
-    mutable QMutex m_mutex;                                  // 只保护端点表这一瞬间
-    QHash<QUuid, std::weak_ptr<StreamEndpoint>> m_endpoints; // 键即身份，无字面形态
+    mutable QMutex m_mutex;                                          // 只保护端点表这一瞬间
+    mutable QHash<QUuid, std::weak_ptr<StreamEndpoint>> m_endpoints; // 键即身份，无字面形态
 };

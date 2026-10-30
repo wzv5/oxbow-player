@@ -190,9 +190,11 @@ SubtitleBrowserDialog::SubtitleBrowserDialog(MpvController *controller,
     buildToolbar(layout);
     layout->addWidget(m_view, 1);
 
-    // 遮罩最后创建并置顶；几何在 resizeEvent 跟随
+    // 遮罩最后创建并置顶；只盖列表区，几何由列表自身的 Resize 事件驱动
     m_mask = new QWidget(this);
+    m_mask->setAutoFillBackground(true); // 半透明底由 updateMaskTint 供色
     m_mask->setVisible(false);
+    m_view->installEventFilter(this);
     auto *maskLayout = new QVBoxLayout(m_mask);
     maskLayout->addStretch(1);
     m_maskLabel = new QLabel(m_mask);
@@ -255,6 +257,10 @@ void SubtitleBrowserDialog::buildToolbar(QVBoxLayout *layout) {
             [this] { m_controller->setProperty(QStringLiteral("sub-delay"), 0.0); });
     m_locateButton = makeButton(tr("Scroll to the current subtitle line"));
     connect(m_locateButton, &QToolButton::clicked, this, &SubtitleBrowserDialog::locateCurrentRow);
+    // 刷新：跳过同请求短路并丢同键缓存，完整重取一遍。图标复用 reset 那枚（图形即
+    // 环形箭头，不另立素材也不新造常量）——语义靠 tooltip 与槽名认，别看图标名
+    m_reloadButton = makeButton(tr("Reload subtitles"));
+    connect(m_reloadButton, &QToolButton::clicked, this, [this] { runFetch(true); });
 
     m_searchBox = new QLineEdit(this);
     m_searchBox->setPlaceholderText(tr("Search"));
@@ -273,39 +279,59 @@ bool SubtitleBrowserDialog::event(QEvent *event) {
     return QDialog::event(event);
 }
 
+// 遮罩几何由列表自身的 Resize 驱动：不在对话框 resizeEvent 里依赖布局激活时序读子
+// 几何；遮罩隐藏期间不必跟随，下次 showMask 自会取新几何
+bool SubtitleBrowserDialog::eventFilter(QObject *watched, QEvent *event) {
+    if (watched == m_view && event->type() == QEvent::Resize && m_mask && m_mask->isVisible())
+        m_mask->setGeometry(m_view->geometry());
+    return QDialog::eventFilter(watched, event);
+}
+
 void SubtitleBrowserDialog::retintIcons() {
-    // 五枚图标的唯一赋值点（外观事件重染与初值共用，与播放列表底栏同款）
+    // 六枚图标的唯一赋值点（外观事件重染与初值共用，与播放列表底栏同款）
     QColor tint = palette().color(QPalette::Text);
     m_earlierButton->setIcon(Ui::themedIcon(App::iconPath(App::iconRewind()), tint));
     m_laterButton->setIcon(Ui::themedIcon(App::iconPath(App::iconFastForward()), tint));
-    m_resetButton->setIcon(Ui::themedIcon(App::iconPath(App::iconReset()), tint));
+    m_resetButton->setIcon(Ui::themedIcon(App::iconPath(App::iconTimeRollback()), tint));
     m_locateButton->setIcon(Ui::themedIcon(App::iconPath(App::iconLocatePlaying()), tint));
+    m_reloadButton->setIcon(Ui::themedIcon(App::iconPath(App::iconReset()), tint));
     tint.setAlpha(128);
     m_searchAction->setIcon(Ui::themedIcon(App::iconPath(App::iconSearch()), tint));
+    updateMaskTint();
+}
+
+// 遮罩半透明：底 = Base 色 + alpha，列表内容透出（遮罩内的文字与控件要保持不透明，
+// 故三件各钉一份不透明调色板——带 alpha 的 Window 刷会随 setPalette 传播给子控件）
+void SubtitleBrowserDialog::updateMaskTint() {
+    QPalette pal = m_mask->palette();
+    QColor base = palette().color(QPalette::Base);
+    base.setAlpha(170);
+    pal.setBrush(QPalette::Window, base);
+    m_mask->setPalette(pal);
+    const QPalette opaque = palette();
+    m_maskLabel->setPalette(opaque);
+    m_maskProgress->setPalette(opaque);
+    m_maskCancel->setPalette(opaque);
 }
 
 void SubtitleBrowserDialog::showEvent(QShowEvent *event) {
     QDialog::showEvent(event);
-    refresh(); // 打开面板那一刻按当前状态立即走一遍取数流程（缓存命中即复用）
-}
-
-void SubtitleBrowserDialog::resizeEvent(QResizeEvent *event) {
-    QDialog::resizeEvent(event);
-    if (m_mask)
-        m_mask->setGeometry(rect());
+    runFetch(false); // 打开面板那一刻按当前状态立即走一遍取数流程（缓存命中即复用）
 }
 
 void SubtitleBrowserDialog::setTracks(const QString &mediaPath,
-                                      const QList<MpvController::TrackInfo> &tracks) {
+                                      const QList<MpvController::TrackInfo> &tracks,
+                                      const SubtitleRequestContext &context) {
     m_mediaPath = mediaPath;
     m_tracks = tracks;
+    m_context = context;
     m_idle = false;
-    refresh();
+    runFetch(false);
 }
 
 void SubtitleBrowserDialog::setMediaIdle() {
     m_idle = true;
-    refresh();
+    runFetch(false);
 }
 
 void SubtitleBrowserDialog::setTimePos(double seconds) {
@@ -321,9 +347,11 @@ void SubtitleBrowserDialog::setSubDelay(double delay) {
     computeCurrentRow(m_pendingTimePos); // 暂停期没有心跳推送，换行判定就地重算
 }
 
-// 重取触发点的统一收口：面板不可见一律只存态不取数；停止态清空列表
-// 只留原因串；有媒体则选当前主选文本字幕轨，同一请求已在飞或已出表即不动
-void SubtitleBrowserDialog::refresh() {
+// 重取触发点的统一收口：面板不可见一律只存态不取数；停止态清空列表只留原因串；
+// 有媒体则选当前主选文本字幕轨，force 为假时同一请求已在飞或已出表即不动。force 为真
+// 走刷新语义（工具栏那枚按钮唯一的入口）：跳过同请求短路并丢同键缓存完整重取——
+// 加载中点即取消当前这次并重来（start 先 cancel），错误终态点即重试（失败已清请求键）
+void SubtitleBrowserDialog::runFetch(bool force) {
     if (!isVisible())
         return;
     const MpvController::TrackInfo *current = nullptr;
@@ -335,22 +363,30 @@ void SubtitleBrowserDialog::refresh() {
             }
         }
     }
-    if (!current) {
+    // 媒体不可取时内嵌轨压根不该发出去（外部轨只看自身，不受此判）；与"没有可用
+    // 文本轨"同走清空收口，只是原因串不同
+    const bool blocked =
+        current && !current->external && m_context.access == SubtitleSourceAccess::NotFetchable;
+    if (!current || blocked) {
         m_extractor->cancel();
         m_model->setEntries({});
         m_currentRow = -1;
         m_entriesGeneration++;
         m_searchAnchor = -1;
-        // 停止态与"选中的不是文本字幕轨"同提示：此刻没有可浏览的文本字幕轨
-        showMask(tr("No usable text subtitle track"), false);
+        showMask(current ? tr("Only local media and local subtitle files are supported")
+                         : tr("No usable text subtitle track"),
+                 false);
         return;
     }
-    if (m_extractor->isCurrentRequest(*current, m_mediaPath))
+    SubtitleRequestOptions options;
+    options.version = m_context.version;
+    options.skipCache = force;
+    if (!force && m_extractor->isCurrentRequest(*current, m_mediaPath, options))
         return;
     // 缓存命中与直读路径会同步发 finished（applyEntries 在本调用栈内执行），
     // 故先把遮罩切到加载态再发起；总时长由 ffmpeg 自己报，报不出就保持忙碌态
     showLoadingMask();
-    m_extractor->start(*current, m_mediaPath);
+    m_extractor->start(*current, m_mediaPath, options);
 }
 
 void SubtitleBrowserDialog::showLoadingMask() {
@@ -360,16 +396,31 @@ void SubtitleBrowserDialog::showLoadingMask() {
 }
 
 void SubtitleBrowserDialog::showMask(const QString &message, bool cancelable) {
+    const bool hidden = !m_mask->isVisible();
     m_maskLabel->setText(message);
     m_maskCancel->setVisible(cancelable);
     m_maskCancel->setEnabled(true);
     m_maskProgress->setVisible(false); // 进度只属加载态，由 showLoadingMask 单独打开
-    m_mask->setGeometry(rect());
+    m_mask->setGeometry(m_view->geometry());
+    // 遮罩期列表拒绝获焦：清掉已有焦点 + 收缴焦点策略，Tab 循环不得把焦点移进遮罩下的
+    // 列表。基线在"隐→显"这一拍现捕而非构造期快照（本类别处也可能改这条策略），且重复
+    // showMask 不得把已收缴的 NoFocus 存成基线
+    if (hidden) {
+        m_viewFocusPolicy = m_view->focusPolicy();
+        if (m_view->hasFocus())
+            m_view->clearFocus();
+        m_view->setFocusPolicy(Qt::NoFocus);
+    }
     m_mask->raise();
     m_mask->setVisible(true);
 }
 
-void SubtitleBrowserDialog::hideMask() { m_mask->setVisible(false); }
+void SubtitleBrowserDialog::hideMask() {
+    if (!m_mask->isVisible())
+        return; // 没显示过就没有基线可还；重复调用不得拿基线覆写当前策略
+    m_mask->setVisible(false);
+    m_view->setFocusPolicy(m_viewFocusPolicy);
+}
 
 void SubtitleBrowserDialog::applyEntries(const QList<SubtitleExtractor::SubtitleEntry> &entries) {
     m_entriesGeneration++;
@@ -397,6 +448,9 @@ void SubtitleBrowserDialog::applyFailure(SubtitleExtractor::Failure reason) {
         break;
     case SubtitleExtractor::Failure::FetchFailed:
         showMask(tr("Failed to extract subtitles"), false);
+        break;
+    case SubtitleExtractor::Failure::SourceUnavailable:
+        showMask(tr("This source is not available"), false);
         break;
     }
 }
@@ -455,6 +509,8 @@ void SubtitleBrowserDialog::computeCurrentRow(double timePos) {
 }
 
 void SubtitleBrowserDialog::locateCurrentRow() {
+    if (m_mask->isVisible())
+        return; // 遮罩期静默无效：不滚动、不选中
     const int count = m_model->entryCount();
     if (count == 0)
         return; // 空表无行可定位
@@ -504,6 +560,8 @@ void SubtitleBrowserDialog::copySelectedTexts() {
 // 条目表代数未变）才续搜，否则从头起搜；回绕命中与全表无命中都 beep 一次；
 // 命中后选中并居中滚动，不夺焦、不触发 seek
 void SubtitleBrowserDialog::searchNext() {
+    if (m_mask->isVisible())
+        return; // 遮罩期静默无效：不 beep、不改搜索锚点
     const QString query = m_searchBox->text();
     if (query.isEmpty()) {
         m_searchQuery.clear();

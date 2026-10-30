@@ -121,6 +121,8 @@ add_library(oxbowcore MODULE
     src/streams/FileByteStream.h
     src/streams/StreamRelay.cpp
     src/streams/StreamRelay.h
+    src/streams/StreamRangeServer.cpp
+    src/streams/StreamRangeServer.h
     src/ActionManager.cpp
     src/ActionManager.h
     src/MainWindow.cpp
@@ -395,6 +397,7 @@ qt_add_resources(oxbowcore "icons"
         icons/icons8/search.svg
         icons/icons8/playlist.svg
         icons/icons8/reset.svg
+        icons/icons8/time-rollback.svg
         icons/icons8/settings.svg
         icons/icons8/add.svg
         icons/icons8/remove.svg
@@ -554,6 +557,8 @@ if(OXBOW_BUILD_TESTS)
         src/streams/HttpByteStream.h
         src/streams/FileByteStream.cpp
         src/streams/FileByteStream.h
+        src/streams/StreamRangeServer.cpp
+        src/streams/StreamRangeServer.h
         src/Util.cpp
         src/Util.h
         src/HttpClient.cpp
@@ -630,6 +635,7 @@ if(OXBOW_BUILD_TESTS)
     oxbow_add_test(PlaylistRegistry)
     oxbow_add_test(HttpByteStream)
     oxbow_add_test(FileByteStream)
+    oxbow_add_test(StreamRangeServer)
     oxbow_add_test(ExtensionFilterEdit)
     oxbow_add_test(FilterList)
     oxbow_add_test(PlaybackReporterRegistry)

@@ -221,6 +221,12 @@ class PlaylistEntity {
     // 或令牌限制而被拒访；缺缩略图只是少一个预览。后续新增协议默认安全，不必记得补覆写。
     // 例外：RcloneCryptEntity 底层是本地文件解密流，随机 seek 零成本——它看着像远端
     // （身份串经转接），判据却与远端相反。
+    // N145：字幕取数同判——它也是在播放之外另起一路解码（经端点解密流起回环服务喂
+    // ffmpeg），不另设能力位。
+    // 这一位隐含两条来源事实（两个消费者都建立在它们之上，覆写者必须同时满足）：
+    // 端点起出的 ByteStream 可寻位、且总长已知。缩略图按偏移 seek 出画面，字幕回环桥
+    // 靠 Range 请求把 seek 还给 ffmpeg（总长未知连响应头都写不出）；两位缺一，放行即
+    // 是一条取不干净的来源。
     virtual bool supportsSecondaryDecode() const { return false; }
 
   protected:

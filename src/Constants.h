@@ -80,6 +80,9 @@ inline QString iconMoveUp() { return QStringLiteral("move-up"); }
 inline QString iconMoveDown() { return QStringLiteral("move-down"); }
 // 设置项逐项重置（单色 24×24，经 Ui::themedIcon 染色）
 inline QString iconReset() { return QStringLiteral("reset"); }
+// 时间回退语义（N145：字幕偏移重置）——是 time-rollback，不是通用 rollback，
+// 不得挪作刷新等其它语义使用
+inline QString iconTimeRollback() { return QStringLiteral("time-rollback"); }
 // 解析单点：语义键 → 资源路径。将来加"图标包"设置项时只改 defaultIconPack 的取值来源
 inline QString iconPath(const QString &key) {
     return QStringLiteral(":/icons/%1/%2.svg").arg(defaultIconPack(), key);

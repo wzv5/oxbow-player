@@ -149,6 +149,11 @@ class MainWindow : public QMainWindow {
     // 返回空 Ptr。返回 Ptr 而非 optional<Ptr>：shared_ptr 本身就是可空句柄，
     // 再包一层 optional 只会引入语义上不存在区分的第二重空态
     PlaylistEntity::Ptr playingEntity() const;
+    // 现读版：行号与 tab 都当场问 mpv / 列表，不取镜像。只给"载荷与行号必须同拍"的
+    // 读点用——事件随 queued 信号进 GUI 线程，其间 mpv 可能已换行，取晚了即认错条目
+    // 归属（宁漏不串，N104 / N107 口径）。坐标对的取法仍在此收口，两处只差行号来源；
+    // 调用方拿到条目后仍须自证它就是要的那一条（matches 键级判等）
+    PlaylistEntity::Ptr livePlayingEntity() const;
     // N77 §2.3：正播 tab 的列表身份——凡书签读点（聚合器三查询 / 取号 / 编辑器聚焦）
     // 与 key 一并传给消费方；停止态或无列表返回 nil（nil 键组照常参与严格口径）
     QUuid playingListUuid() const;

@@ -131,6 +131,8 @@
 #include <QTabWidget>
 #include <QTableView>
 #include <QTableWidget>
+#include <QTcpServer>
+#include <QTcpSocket>
 #include <QTemporaryFile>
 #include <QTextCursor>
 #include <QTextEdit>

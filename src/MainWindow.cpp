@@ -101,6 +101,33 @@ constexpr WindowScale kWindowScales[] = {
 // showText 立即回落）。窗口内的多条 move 只按最后一条位置算一次
 constexpr int kSeekTipCoalesceMs = 30;
 
+// 字幕浏览器要的取数许可与版本对，从现读在播条目得出（条目由 livePlayingEntity 现读，
+// mpv 先更新 playlist-pos 再装载新文件，track-list 推送到达时行号已就位）。
+// 许可判据就用 supportsSecondaryDecode 这一条白名单——它说的正是"允许在播放之外另起
+// 一路解码"，缩略图与字幕取数同源，不另设位。认不出条目按不可取处理，是安全缺省：
+// 宁可回绝一条本可取的本地片，也不放行一条要整片扫描的网络来源——转接串本身不认来源，
+// WebDAV / Jellyfin 与 crypt 的 oxbow:// 在取数模块侧同形，这一位因此是唯一的门。
+// 版本对取实体 fileMeta 的 modified / size——crypt 由提供者枚举期注入（size = 明文长度、
+// mtime = 密文文件 mtime），读的是已注入缓存；本地实体首次读触发单次 stat。
+// 条目必先自证它就是要的那一条：信号载荷是事件当时的那条串，现读行号说的是"此刻"，
+// GUI 被占住期间 mpv 已换行即错配（N104 的"宁漏不串"在此同形）——判据用键级 matches，
+// 形态漂移认得出同一条内容，认错条目则连许可带版本对一并回落默认值。
+// 仅本文件两个调用点使用，不入头文件
+SubtitleRequestContext subtitleRequestContext(const PlaylistEntity::Ptr &entity,
+                                              const QString &mediaPath) {
+    SubtitleRequestContext ctx;
+    if (!entity || !entity->matches(StreamTransit::unwrap(mediaPath)))
+        return ctx;
+    ctx.access = entity->supportsSecondaryDecode() ? SubtitleSourceAccess::Fetchable
+                                                   : SubtitleSourceAccess::NotFetchable;
+    const FileMeta &meta = entity->fileMeta();
+    if (meta.modified)
+        ctx.version.mtimeSecs = meta.modified->toSecsSinceEpoch();
+    if (meta.size)
+        ctx.version.bytes = *meta.size;
+    return ctx;
+}
+
 } // namespace
 
 // N15：章节+书签数据与合并规则的唯一持有者（MainWindow.cpp 文件内实现，
@@ -1057,8 +1084,10 @@ void MainWindow::connectActions() {
     // 切文件不单列触发点：轨道表推两趟（卸载时空表管清空、装载后新表管重取）已带上新路径
     connect(m_controller, &MpvController::tracksChanged, this,
             [this](const QString &path, const QList<MpvController::TrackInfo> &tracks) {
-                if (m_subtitleBrowser)
-                    m_subtitleBrowser->setTracks(path, tracks);
+                if (!m_subtitleBrowser)
+                    return;
+                m_subtitleBrowser->setTracks(path, tracks,
+                                             subtitleRequestContext(livePlayingEntity(), path));
             });
     connect(m_controller, &MpvController::idleActive, this, [this](bool active) {
         if (m_subtitleBrowser && active)
@@ -1364,9 +1393,7 @@ void MainWindow::connectController() {
     connect(m_controller, &MpvController::fileLoaded, this, [this] {
         // N107 §4：装载完成查条目能力位并一次性下发，此后该文件生命周期内不再查询。
         // 行号与 tab 现读（镜像时序不可靠，与 forwardReportSegment 同款口径）
-        const int pos = int(m_controller->propertyInt64(QStringLiteral("playlist-pos"), -1));
-        const int tab = m_playlist->playingTabIndex();
-        const PlaylistEntity::Ptr e = pos >= 0 ? m_playlist->playingEntityOf(tab, pos) : nullptr;
+        const PlaylistEntity::Ptr e = livePlayingEntity();
         m_thumbWatch->setSource(m_controller->currentPlayingPath(),
                                 e && e->supportsSecondaryDecode());
     });
@@ -1649,9 +1676,8 @@ void MainWindow::syncReporterSwitches(const QStringList &changedKeys) {
 // 谓词，随注册表进测试库（N99），本函数只剩取数与投递
 void MainWindow::forwardReportSegment(const QString &path) {
     const QString identity = StreamTransit::unwrap(path);
-    const int pos = int(m_controller->propertyInt64(QStringLiteral("playlist-pos"), -1));
     const int tab = m_playlist->playingTabIndex();
-    const PlaylistEntity::Ptr entity = pos >= 0 ? m_playlist->playingEntityOf(tab, pos) : nullptr;
+    const PlaylistEntity::Ptr entity = livePlayingEntity();
     const Playlist *playing = m_playlist->listOf(tab);
     const QUuid listUuid = PlaybackReporterRegistry::resolveSourceUuid(
         entity, identity, playing ? playing->uuid() : QUuid());
@@ -2216,11 +2242,18 @@ void MainWindow::ensureSubtitleBrowser() {
     if (!m_subtitleExtractor) {
         m_subtitleExtractor = new SubtitleExtractor(this);
         m_subtitleExtractor->setFfmpegPath(resolvedFfmpegPath());
+        // 端点解析器注入：取数模块不认识列表与提供者，只认"uuid → 端点"这一条通道
+        // （服务线程内起流，满足端点的起流契约）
+        m_subtitleExtractor->setEndpointResolver([this](const QUuid &listUuid) {
+            return m_relay ? m_relay->endpointFor(listUuid) : nullptr;
+        });
     }
     m_subtitleBrowser = new SubtitleBrowserDialog(m_controller, m_subtitleExtractor, this);
     connect(m_subtitleBrowser, &QDialog::finished, this, [this] { destroySubtitleBrowser(); });
-    // 打开即按当前播放态取一次数（面板 showEvent 亦会 refresh，这里补种子状态）
-    m_subtitleBrowser->setTracks(m_controller->currentPlayingPath(), m_tracks);
+    // 打开即按当前播放态取一次数（面板 showEvent 亦会重走，这里补种子状态）
+    const QString playingPath = m_controller->currentPlayingPath();
+    m_subtitleBrowser->setTracks(playingPath, m_tracks,
+                                 subtitleRequestContext(livePlayingEntity(), playingPath));
     m_subtitleBrowser->show();
 }
 
@@ -5314,6 +5347,15 @@ PlaylistEntity::Ptr MainWindow::playingEntity() const {
     if (m_playlistPos < 0)
         return nullptr;
     return m_playlist->playingEntityOf(m_playlist->playingTabIndex(), m_playlistPos);
+}
+
+// 行号现读、不取镜像：调用点拿着的是事件载荷（某条串 / 某次推送），镜像可能已随
+// mpv 换行而前移，两者不同拍即认错条目。tab 同样现读，与 playingEntity 共用一条坐标对
+PlaylistEntity::Ptr MainWindow::livePlayingEntity() const {
+    const int pos = int(m_controller->propertyInt64(QStringLiteral("playlist-pos"), -1));
+    if (pos < 0)
+        return nullptr;
+    return m_playlist->playingEntityOf(m_playlist->playingTabIndex(), pos);
 }
 
 QUuid MainWindow::playingListUuid() const {

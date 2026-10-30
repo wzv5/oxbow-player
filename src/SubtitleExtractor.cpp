@@ -5,6 +5,7 @@
 #include "ExternalTool.h"
 #include "Logging.h"
 #include "Util.h"
+#include "streams/StreamRangeServer.h"
 #include "streams/StreamTransit.h"
 
 namespace {
@@ -182,64 +183,132 @@ QList<SubtitleExtractor::SubtitleEntry> SubtitleExtractor::parseSrt(const QStrin
     return entries;
 }
 
-SubtitleExtractor::Resolved SubtitleExtractor::resolveRequest(const MpvController::TrackInfo &track,
-                                                              const QString &mediaPath) const {
+SubtitleExtractor::Resolved
+SubtitleExtractor::resolveRequest(const MpvController::TrackInfo &track, const QString &mediaPath,
+                                  const SubtitleRequestOptions &options) const {
     const bool external = track.external && !track.externalFilename.isEmpty();
-    const QString mediaIdentity = Util::Url::toIdentity(mediaPath);
-    const QString externalIdentity =
-        external ? Util::Url::toIdentity(track.externalFilename) : QString();
+    Resolved resolved;
+    resolved.external = external;
 
-    // 本地性判据：先转接（不做折叠还原），后本地可读。判据对象是取数的输入文件——
-    // 内嵌轨是正播文件、外部轨是外部字幕文件自身
+    // 判据对象是取数的输入文件：内嵌轨是正播文件，外部轨是外部字幕文件自身
     auto localReadable = [](const QString &identity) {
         return Util::Url::isLocal(identity) && !Util::Url::isMissingLocal(identity);
     };
-    if (StreamTransit::isTransitUri(mediaPath) ||
-        (external && StreamTransit::isTransitUri(track.externalFilename)) ||
-        !localReadable(mediaIdentity) || (external && !localReadable(externalIdentity)))
-        return {};
 
-    const QFileInfo input(external ? externalIdentity : mediaIdentity);
-    Resolved resolved;
-    resolved.external = external;
+    if (external) {
+        // 外部字幕不看正播来源：正播是转接、是远端、还是根本读不了，都不影响读这个
+        // 本地文件；但外部串自身是转接形态则仍然读不了
+        if (StreamTransit::isTransitUri(track.externalFilename))
+            return {};
+        const QString externalIdentity = Util::Url::toIdentity(track.externalFilename);
+        if (!localReadable(externalIdentity))
+            return {};
+        const QFileInfo input(externalIdentity);
+        resolved.input = input;
+        resolved.key =
+            QStringLiteral("%1|%2|%3|%4|%5")
+                .arg(QStringLiteral("ext"), input.filePath(), QString::number(track.ffIndex),
+                     QString::number(quint64(input.lastModified().toSecsSinceEpoch())),
+                     QString::number(input.size()));
+        return resolved;
+    }
+
+    if (StreamTransit::isTransitUri(mediaPath)) {
+        // 转接形态的正播读不了文件本身，取数输入改为端点解密流上的回环服务。这一支
+        // 是否该走由调用方判过（认得在播条目的只有它），走到这里就当允许
+        resolved.transit = true;
+        resolved.listUuid = StreamTransit::listUuidOfUri(mediaPath);
+        resolved.entryIdentity = StreamTransit::unwrap(mediaPath);
+        if (resolved.listUuid.isNull() || resolved.entryIdentity.isEmpty() ||
+            resolved.entryIdentity == mediaPath) {
+            resolved.reason = Failure::SourceUnavailable;
+            return resolved; // 转接形态在，身份却解不出来
+        }
+        // 键用原始转接 URI 而不是 unwrap 后的身份：两个不同根的 crypt 库可以有同一条
+        // 相对路径身份，用身份做键会把两库条目错并进同一份缓存。版本对不可得时退化
+        // 为不含版本位的键，陈旧由面板的刷新兜底
+        const bool versioned = options.version.mtimeSecs >= 0 && options.version.bytes >= 0;
+        resolved.key = QStringLiteral("tr|%1|%2%3")
+                           .arg(mediaPath, QString::number(track.ffIndex),
+                                versioned ? QStringLiteral("|%1|%2")
+                                                .arg(options.version.mtimeSecs)
+                                                .arg(options.version.bytes)
+                                          : QStringLiteral());
+        return resolved;
+    }
+
+    const QString mediaIdentity = Util::Url::toIdentity(mediaPath);
+    if (!localReadable(mediaIdentity))
+        return {};
+    const QFileInfo input(mediaIdentity);
     resolved.input = input;
-    // 外部轨按外部文件 + ffIndex（不含正播文件——换片不重取），内嵌轨按正播文件 +
-    // 轨 id，两者都附修改时间与大小（外部编辑即未命中）
     resolved.key = QStringLiteral("%1|%2|%3|%4|%5")
-                       .arg(external ? QStringLiteral("ext") : QStringLiteral("emb"),
-                            input.filePath(), QString::number(external ? track.ffIndex : track.id),
+                       .arg(QStringLiteral("emb"), input.filePath(), QString::number(track.id),
                             QString::number(quint64(input.lastModified().toSecsSinceEpoch())),
                             QString::number(input.size()));
     return resolved;
 }
 
 bool SubtitleExtractor::isCurrentRequest(const MpvController::TrackInfo &track,
-                                         const QString &mediaPath) const {
-    const Resolved resolved = resolveRequest(track, mediaPath);
+                                         const QString &mediaPath,
+                                         const SubtitleRequestOptions &options) const {
+    const Resolved resolved = resolveRequest(track, mediaPath, options);
     return !resolved.key.isEmpty() && resolved.key == m_requestKey;
 }
 
-void SubtitleExtractor::start(const MpvController::TrackInfo &track, const QString &mediaPath) {
+void SubtitleExtractor::setEndpointResolver(EndpointResolver resolver) {
+    m_endpointResolver = std::move(resolver);
+}
+
+void SubtitleExtractor::start(const MpvController::TrackInfo &track, const QString &mediaPath,
+                              const SubtitleRequestOptions &options) {
     cancel();
     const qint64 generation = ++m_generation;
 
-    const Resolved resolved = resolveRequest(track, mediaPath);
+    const Resolved resolved = resolveRequest(track, mediaPath, options);
     if (resolved.key.isEmpty()) {
-        failFetch(generation, Failure::NotLocal);
+        failFetch(generation, resolved.reason);
         return;
     }
     m_requestKey = resolved.key;
-    const QString inputPath = resolved.input.absoluteFilePath();
-    const bool directRead =
-        resolved.external && track.codec == QLatin1String("subrip") &&
-        resolved.input.suffix().compare(QLatin1String("srt"), Qt::CaseInsensitive) == 0;
-
-    if (m_cache.contains(resolved.key)) {
+    if (options.skipCache) {
+        // 刷新先丢同键缓存再完整重取：失败后不残留旧表，下一次切轨 / 重开面板也
+        // 不会命中陈旧条目
+        m_cache.remove(resolved.key);
+        m_cacheOrder.removeAll(resolved.key);
+    } else if (m_cache.contains(resolved.key)) {
         m_cacheOrder.removeAll(resolved.key);
         m_cacheOrder.append(resolved.key);
         finishFetch(generation, m_cache.value(resolved.key));
         return;
     }
+
+    // 直读只可能是外部轨的事：一份 srt 文本自己就是结果，不起进程、不需要 ffmpeg。
+    // 其余一切（内嵌轨、外部 ass / webvtt、容器型外部字幕、转接来源）都要 ffmpeg 转取，
+    // 于是转取的前置判据全仓只有这一处——ffmpeg 在不在，以及这条轨的 ff-index 拿没
+    // 拿到（内嵌轨缺席即"这条轨抽不出来"，不猜下标；外部轨缺席才允许退回不带 -map）
+    const bool directRead =
+        resolved.external && track.codec == QLatin1String("subrip") &&
+        resolved.input.suffix().compare(QLatin1String("srt"), Qt::CaseInsensitive) == 0;
+    if (!directRead) {
+        if (m_ffmpegPath.isEmpty()) {
+            failFetch(generation, Failure::FfmpegMissing);
+            return;
+        }
+        if (track.ffIndex < 0 && !resolved.external) {
+            OXBOW_LOG_WARNING().noquote()
+                << "SubtitleExtractor: embedded track without ff-index, id" << track.id;
+            failFetch(generation, Failure::FetchFailed);
+            return;
+        }
+    }
+
+    if (resolved.transit) {
+        startTransitFetch(generation, resolved, track.ffIndex);
+        return;
+    }
+
+    const QString inputPath = resolved.input.absoluteFilePath();
     if (directRead) {
         QFile file(inputPath);
         if (!file.open(QIODevice::ReadOnly)) {
@@ -259,63 +328,96 @@ void SubtitleExtractor::start(const MpvController::TrackInfo &track, const QStri
         finishFetch(generation, entries);
         return;
     }
+    launchFfmpeg(generation, resolved.key, inputPath, track.ffIndex);
+}
 
-    // 转取：ffmpeg 缺席只影响这一条路径；内嵌轨拿不到 ff-index 判不可用（不猜下标），
-    // 外部轨缺席才允许退回不带 -map
-    if (m_ffmpegPath.isEmpty()) {
-        failFetch(generation, Failure::FfmpegMissing);
+// 转接分支的发起：解析端点 → 起回环服务 → 服务就绪后把 URL 交给 ffmpeg。本函数只接线，
+// 起流与协议面全在服务线程；实例退役由线程结束信号收口（摘位 + 排队自毁），不占下一次
+// 请求的路。这一支的失败除来源事实（端点取不到 / 起流失败 / 服务启动失败 →
+// SourceUnavailable）外，只有 ffmpeg 非零退出码那一条，由 launchFfmpeg 的收口归类
+void SubtitleExtractor::startTransitFetch(qint64 generation, const Resolved &resolved,
+                                          int ffIndex) {
+    if (!m_endpointResolver) {
+        failFetch(generation, Failure::SourceUnavailable);
         return;
     }
-    if (track.ffIndex < 0 && !resolved.external) {
-        OXBOW_LOG_WARNING().noquote()
-            << "SubtitleExtractor: embedded track without ff-index, id" << track.id;
-        failFetch(generation, Failure::FetchFailed);
+    const auto endpoint = m_endpointResolver(resolved.listUuid);
+    if (!endpoint) {
+        OXBOW_LOG_WARNING() << "SubtitleExtractor: no endpoint for transit list";
+        failFetch(generation, Failure::SourceUnavailable);
         return;
     }
+    auto *server = new StreamRangeServer(this);
+    connect(server, &QThread::finished, this, [this, server] {
+        if (m_server == server)
+            m_server = nullptr; // 已被新请求换上来的那份不动
+        server->deleteLater();
+    });
+    connect(server, &StreamRangeServer::ready, this,
+            [this, generation, cacheKey = resolved.key, ffIndex](const QUrl &url, qint64) {
+                if (generation != m_generation)
+                    return; // 在飞期被取消 / 新请求顶替：旧结果静默丢弃
+                launchFfmpeg(generation, cacheKey, url.toString(), ffIndex);
+            });
+    connect(server, &StreamRangeServer::failed, this, [this, generation](const QString &why) {
+        if (generation != m_generation)
+            return;
+        OXBOW_LOG_WARNING().noquote() << "SubtitleExtractor: range server failed:" << why;
+        failFetch(generation, Failure::SourceUnavailable);
+    });
+    m_server = server;
+    server->launch(endpoint, resolved.entryIdentity);
+}
 
+void SubtitleExtractor::launchFfmpeg(qint64 generation, const QString &cacheKey,
+                                     const QString &inputArg, int ffIndex) {
     QProcess *process = new QProcess(this);
     m_process = process;
     // loglevel 提到 info：input 头的 Duration 行是进度的分母（报 N/A 即落不定态）；
-    // hide_banner 只去横幅，header dump 留着
+    // hide_banner 只去横幅，header dump 留着。inputArg 为本地路径或回环服务 URL
     QStringList args{QStringLiteral("-hide_banner"), QStringLiteral("-loglevel"),
-                     QStringLiteral("info"), QStringLiteral("-i"), inputPath};
-    if (track.ffIndex >= 0)
-        args << QStringLiteral("-map") << QStringLiteral("0:%1").arg(track.ffIndex);
+                     QStringLiteral("info"), QStringLiteral("-i"), inputArg};
+    if (ffIndex >= 0)
+        args << QStringLiteral("-map") << QStringLiteral("0:%1").arg(ffIndex);
     args << QStringLiteral("-f") << QStringLiteral("srt") << QStringLiteral("-map_metadata")
          << QStringLiteral("-1") << QStringLiteral("-fflags") << QStringLiteral("+bitexact")
          << QStringLiteral("-progress") << QStringLiteral("pipe:2") << QStringLiteral("-");
 
-    QObject::connect(
-        process, &QProcess::finished, this,
-        [this, generation, cacheKey = resolved.key](int exitCode, QProcess::ExitStatus) {
-            QProcess *process = m_process;
-            m_process = nullptr;
-            if (generation != m_generation) {
-                if (process)
-                    process->deleteLater();
-                return;
-            }
-            const QByteArray out = process ? process->readAllStandardOutput() : QByteArray();
-            if (process) {
-                appendErrorTail(process->readAllStandardError());
-                process->deleteLater();
-            }
-            if (exitCode != 0) {
-                OXBOW_LOG_WARNING().noquote() << "SubtitleExtractor: ffmpeg exited" << exitCode
-                                              << QString::fromUtf8(m_errorTail).simplified();
-                failFetch(generation, Failure::FetchFailed);
-                return;
-            }
-            bool ok = false;
-            const QString text = decodeText(out, &ok);
-            if (!ok) {
-                failFetch(generation, Failure::FetchFailed);
-                return;
-            }
-            const QList<SubtitleEntry> entries = parseSrt(text);
-            storeCache(cacheKey, entries);
-            finishFetch(generation, entries);
-        });
+    QObject::connect(process, &QProcess::finished, this,
+                     [this, generation, cacheKey](int exitCode, QProcess::ExitStatus) {
+                         QProcess *process = m_process;
+                         m_process = nullptr;
+                         // ffmpeg
+                         // 退出即成败已定：服务就地收口，监听最迟一拍关闭，不留挂着的临时端口
+                         stopServer();
+                         if (generation != m_generation) {
+                             if (process)
+                                 process->deleteLater();
+                             return;
+                         }
+                         const QByteArray out =
+                             process ? process->readAllStandardOutput() : QByteArray();
+                         if (process) {
+                             appendErrorTail(process->readAllStandardError());
+                             process->deleteLater();
+                         }
+                         if (exitCode != 0) {
+                             OXBOW_LOG_WARNING().noquote()
+                                 << "SubtitleExtractor: ffmpeg exited" << exitCode
+                                 << QString::fromUtf8(m_errorTail).simplified();
+                             failFetch(generation, Failure::FetchFailed);
+                             return;
+                         }
+                         bool ok = false;
+                         const QString text = decodeText(out, &ok);
+                         if (!ok) {
+                             failFetch(generation, Failure::FetchFailed);
+                             return;
+                         }
+                         const QList<SubtitleEntry> entries = parseSrt(text);
+                         storeCache(cacheKey, entries);
+                         finishFetch(generation, entries);
+                     });
     QObject::connect(process, &QProcess::readyReadStandardError, this, [this, generation] {
         if (generation != m_generation || !m_process)
             return;
@@ -356,12 +458,20 @@ void SubtitleExtractor::start(const MpvController::TrackInfo &track, const QStri
     process->start(m_ffmpegPath, args);
 }
 
+void SubtitleExtractor::stopServer() {
+    if (!m_server)
+        return;
+    m_server->stop(); // 非阻塞：置取消旗 + 流 cancel；线程退出后经 finished 钩子自毁
+    m_server = nullptr;
+}
+
 void SubtitleExtractor::cancel() {
     ++m_generation;
     m_requestKey.clear();
     m_progressLine.clear();
     m_errorTail.clear();
     m_totalSeconds = 0.0;
+    stopServer();
     if (!m_process)
         return;
     QProcess *process = m_process;
@@ -386,6 +496,7 @@ void SubtitleExtractor::finishFetch(qint64 generation, const QList<SubtitleEntry
 void SubtitleExtractor::failFetch(qint64 generation, Failure reason) {
     if (generation != m_generation)
         return;
+    stopServer();         // 失败终局与成功、取消同一条收口
     m_requestKey.clear(); // 终态：下一次触发重试
     emit failed(reason);
 }
