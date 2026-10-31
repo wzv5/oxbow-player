@@ -61,7 +61,8 @@ class PlaylistWidget : public QTabWidget {
     // TraversalPolicy 的注册与更新同样在装配顶点完成
     // N57 §2.3：lists 同为装配顶点注入——注册表是列表模型的唯一所有者，本类只持
     // tab 到视图的对应关系（即 tab 栏本身）；默认 tab 取 registry->defaultList() 建
-    explicit PlaylistWidget(const QString &configFile, std::shared_ptr<ServiceRegistry> registry,
+    // N147：配置路径不注入，ini 读写一律取 App::paths().iniFile()
+    explicit PlaylistWidget(std::shared_ptr<ServiceRegistry> registry,
                             std::shared_ptr<PlaylistRegistry> lists, QWidget *parent = nullptr);
     ~PlaylistWidget() override; // N32：非阻塞收尾——作废并取消在途任务后立即返回（不再等待）
 
@@ -722,7 +723,7 @@ class PlaylistWidget : public QTabWidget {
     // N62 §2.2：当前停留的表的身份——onTabChanged 的重激活判据。nil 初值保证首次切换
     // 走完整激活；"索引变了、页面没变"的事件（如改序移动当前表）在此判等收编为无操作
     QUuid m_currentListUuid;
-    QString m_configFile;
+
     MpvController *m_mpv = nullptr; // 借用的裸指针（不随控制器销毁归零），attachController 注入
     // N35：服务注册表（初始化列表创建，此后恒非空；设置变更时只覆盖其内部实例，
     // 注册表身份恒定——收编 / 拖放 / 打开 URL 经工厂注入实体，实体每次求值现查）

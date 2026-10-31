@@ -107,6 +107,8 @@ endif()
 add_library(oxbowcore MODULE
     src/plugin.cpp
     src/Constants.h
+    src/AppPaths.cpp
+    src/AppPaths.h
     src/Logging.cpp
     src/Logging.h
     src/Version.cpp
@@ -539,6 +541,8 @@ if(OXBOW_BUILD_TESTS)
         src/TraversalPolicy.h
         src/ExternalTool.cpp
         src/ExternalTool.h
+        src/AppPaths.cpp
+        src/AppPaths.h
         src/MediaInfoHelper.cpp
         src/MediaInfoHelper.h
         src/SubtitleExtractor.cpp

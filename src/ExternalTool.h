@@ -24,14 +24,13 @@ const ExternalToolSpec &externalToolSpec(ExternalTool tool);
 // 设置目录那侧按自己的声明写、由 validateCatalog 对着定义校验
 QString externalToolIniKey(ExternalTool tool);
 
-// 核心模块所在目录（即插件目录；动态部署下与加载壳同目录）。不读配置文件路径——ini 位置由
-// plugin.cpp 的 resolveConfigFilePath 决定（可写回落语义），两者不可互相替代
-QString externalToolPluginDir();
+// 核心模块所在目录（即插件目录；动态部署下与加载壳同目录）由 App::paths().pluginDir()
+// 单点持有（N147），本层不重复反查
 
-// 候选路径：插件目录 → 配置文件目录 → PATH 各目录 →（Linux）shim 同款标准库目录。
-// 只返回存在的文件，按规范化后的完整路径去重（Windows 下大小写不敏感），保持发现顺序；
-// 出表按平台原生分隔符呈现（这些串直接进下拉框与 ini）；configDir 由调用方传入
-// （设置对话框取 ini 所在目录，启动侧取配置文件路径的父目录）
+// 候选路径：插件目录（App::paths().pluginDir()）→ 配置文件目录 → PATH 各目录 →
+// （Linux）shim 同款标准库目录。只返回存在的文件，按规范化后的完整路径去重（Windows
+// 下大小写不敏感），保持发现顺序；出表按平台原生分隔符呈现（这些串直接进下拉框与 ini）；
+// configDir 由调用方传入（设置对话框取 ini 所在目录，启动侧取 App::paths().iniDir()）
 QStringList externalToolCandidates(const ExternalToolSpec &spec, const QString &configDir);
 
 // 文件对话框过滤器：显示名 + 目标文件名，只此一个（不提供 All files——浏览面

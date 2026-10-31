@@ -96,7 +96,7 @@ class MpvBindingDialog : public QDialog {
     ActionManager *m_actions = nullptr;
     const CustomToolManager *m_toolMgr = nullptr; // N138：冲突提示并入工具已装键；可空
 
-    QString m_confPath; // inputConfPath() 的打开时一次取值；空 = 无可写目录
+    QString m_confPath; // 控制器构造期一次求值的 input.conf 路径（N147）；空 = 无可写目录
     bool m_noPath = false;
     std::optional<InputConf> m_conf;
     QList<Row> m_rows;

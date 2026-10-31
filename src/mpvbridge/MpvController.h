@@ -147,10 +147,12 @@ class MpvController : public QObject {
     // 数组一律交空表（未设置是正常状态，不刷日志）
     QList<MenuDataItem> menuData() const;
 
-    // N92（含变更记录 1）：mpv 配置路径的两个取值出口——一切位置问 mpv 自己，插件不再
-    // 从任何目录自行推导。**取值以目录为单位**：expand-path ~~home/ 交配置目录，两个文件名
-    // 由该目录词法拼接（两文件同处一目录，只问一次）。校验顺序即安全顺序，任一不过交空串，
-    // 调用方据空串报错，绝不猜目录、绝不 mkpath、绝不降级：
+    // N92（含变更记录 1）+ N147：mpv 配置路径的两个取值出口——一切位置问 mpv 自己，
+    // 插件不从任何目录自行推导。构造期对 mpv 同步求值一次并缓存，此后只读返回（显式
+    // --input-conf 的可读性只在构造期判定：会话内新建 / 删除该文件不切换，重启后重新
+    // 解析；命令失败按空串 / 回落结果填定）。取值以目录为单位：expand-path ~~home/ 交
+    // 配置目录，两个文件名由该目录词法拼接（两文件同处一目录，只问一次）。校验顺序即
+    // 安全顺序，任一不过交空串，调用方据空串报错，绝不猜目录、绝不 mkpath、绝不降级：
     //   目录非空——~~home/ 为空 ⇔ mpv 确实没有配置目录（--no-config，或显式 --config-dir=）；
     //     判空必须落在目录上而非文件路径上：--no-config 下 expand-path ~~/input.conf 交回的是
     //     非空的裸串 "input.conf"，对它判空等于没判；
@@ -160,8 +162,8 @@ class MpvController : public QObject {
     //   目录存在——mpv 不校验目录存在性，QSaveFile 又不建目录，留到写盘炸成一坨系统错误
     //     不如在这里说清。只查不创建，"写到别处等于配置无效"（T10）不变
     QString mpvConfPath() const;
-    // N89：扩展 --input-conf 判读（判读四步表见规格 §6 与实现处注释）——~~home/
-    // 链的取值语义与校验顺序不变；--no-config 下仍交空串
+    // N89：扩展 --input-conf 判读（判读四步表见实现处注释）——~~home/ 链的取值语义
+    // 与校验顺序不变；--no-config 下仍交空串
     QString inputConfPath() const;
 
     // N13：轨道信息（track-list 解析产物）
@@ -329,10 +331,16 @@ class MpvController : public QObject {
     // N121：把预估值有界阻塞交接给 GUI 线程（上限见 App::preloadResizeTimeoutMs）
     void requestPreloadResize();
 
-    // N92：配置目录取值的唯一收口，两个文件路径出口共用（校验与安全顺序见其声明处）
-    QString configDir() const;
+    // N147：配置目录与两条文件路径的一次求值——构造期各跑一遍后填入下方缓存成员，
+    // 公开 getter 只读返回（口径与校验顺序见上方声明处）
+    QString resolveConfigDir() const;
+    QString resolveInputConfPath() const;
 
     mpv_handle *m_mpv; // 由 mpv 拥有，插件不销毁
+    // N147：三条路径的构造期缓存，写定后只读；控制器与进程同寿命，无需加锁
+    QString m_configDir;
+    QString m_mpvConfPath;
+    QString m_inputConfPath;
     // N40：上次已发布的视频有效尺寸（N110 起：源尺寸套用画面比例）——去重收口的
     // 比对基准（不再是从前"width/height 两属性合并缓存"）；仅事件线程读写
     // （去重收口与 idle-active 兜底），videoSize() 纯读不经过它

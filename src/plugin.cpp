@@ -8,13 +8,10 @@
 #include <mpv/client.h>
 #include <mpv/stream_cb.h> // N52：mpv_stream_cb_add_ro 声明
 
-#ifndef Q_OS_WIN
-#include <dlfcn.h> // dladdr：定位插件自身 .so
-#endif
-
 // 让本模块导入表含 QtSvg（原因见入口处的锚点调用）
 #include <QtSvg/QSvgRenderer>
 
+#include "AppPaths.h"
 #include "Constants.h"
 #include "ExternalTool.h"
 #include "Logging.h"
@@ -76,41 +73,6 @@ static bool checkMpvSymbols() {
     return true;
 }
 #endif // MPV_CPLUGIN_DYNAMIC_SYM
-
-// 配置文件 = 本模块目录下的 oxbow.ini；模块路径不可得或目录不可写则退 Qt 标准位置
-static QString resolveConfigFilePath() {
-    QString modulePath;
-#ifdef _WIN32
-    HMODULE hModule = nullptr;
-    if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                               GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                           reinterpret_cast<LPCWSTR>(&resolveConfigFilePath), &hModule)) {
-        // 缓冲按需倍增（B4）
-        std::wstring buf(MAX_PATH, L'\0');
-        DWORD n = 0;
-        while ((n = GetModuleFileNameW(hModule, buf.data(), static_cast<DWORD>(buf.size()))) ==
-               buf.size())
-            buf.resize(buf.size() * 2);
-        modulePath = QString::fromWCharArray(buf.data(), static_cast<int>(n));
-    }
-#else
-    Dl_info info{};
-    if (dladdr(reinterpret_cast<void *>(&resolveConfigFilePath), &info) && info.dli_fname)
-        modulePath = QString::fromUtf8(info.dli_fname);
-#endif
-
-    if (!modulePath.isEmpty() && QFileInfo::exists(modulePath)) {
-        // 只读目录（如 Program Files）下 QSettings 静默失败，写探针判定
-        const QString dir = QFileInfo(modulePath).absolutePath();
-        QTemporaryFile probe(dir + QStringLiteral("/oxbow-XXXXXX.tmp"));
-        if (probe.open())
-            return QDir(dir).filePath(App::iniFileName());
-    }
-
-    const QString fallback = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
-    QDir().mkpath(fallback);
-    return QDir(fallback).filePath(App::iniFileName());
-}
 
 // 安装内嵌翻译：language 键空/auto 跟随系统，en 用原文，其余按 QLocale 加载
 // :/i18n 资源，失败静默回退原文
@@ -192,7 +154,10 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle) {
         QApplication::setQuitOnLastWindowClosed(false);
     }
 
-    const QString configFile = resolveConfigFilePath();
+    // N147：插件目录与 ini 落点在入口一次算定；须在 setApplicationName 之后（Qt 标准
+    // 位置回落依赖它），Logging::install 之前（日志模式从 ini 读）
+    App::initializePaths();
+    const QString configFile = App::paths().iniFile();
 
     // N126：日志出口在一切子系统出生前装配，模式只读一次
     Logging::install(configFile);
@@ -207,7 +172,7 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle) {
     {
         QSettings s(configFile, QSettings::IniFormat);
         MediaInfoHelper::preload(s.value(externalToolIniKey(ExternalTool::MediaInfo)).toString(),
-                                 QFileInfo(configFile).absolutePath());
+                                 App::paths().iniDir());
     }
 
     // N143：sub-delay 追加进 --reset-on-next-file——手册载明该选项默认不重置任何项，
@@ -248,7 +213,7 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle) {
             s.value(QStringLiteral("colorScheme"), App::colorSchemeDefault()).toString());
     }
 
-    auto *window = new MainWindow(controller, &appearance, configFile, std::move(relay));
+    auto *window = new MainWindow(controller, &appearance, std::move(relay));
     controller->setParent(window);
 
     // GUI 宿主：列表播完进 idle 而非退出

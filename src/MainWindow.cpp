@@ -3,6 +3,7 @@
 #include "MainWindow.h"
 
 #include "ActionManager.h"
+#include "AppPaths.h"
 #include "BookmarkManager.h"
 #include "Constants.h"
 #include "CustomToolManager.h"
@@ -648,10 +649,9 @@ class ThumbHoverWatch : public QObject {
 };
 
 MainWindow::MainWindow(MpvController *controller, AppearanceManager *appearance,
-                       const QString &configFile, std::shared_ptr<StreamRelay> relay,
-                       QWidget *parent)
-    : QMainWindow(parent), m_controller(controller), m_configFile(configFile),
-      m_relay(std::move(relay)), m_appearance(appearance) {
+                       std::shared_ptr<StreamRelay> relay, QWidget *parent)
+    : QMainWindow(parent), m_controller(controller), m_relay(std::move(relay)),
+      m_appearance(appearance) {
     setWindowTitle(App::name());
 
     m_actions = new ActionManager(this); // A15：先于任何容器构建
@@ -753,7 +753,7 @@ MainWindow::MainWindow(MpvController *controller, AppearanceManager *appearance,
     m_clickTimer->setSingleShot(true);
     connect(m_clickTimer, &QTimer::timeout, this, &MainWindow::onVideoClickTimeout);
 
-    m_playlist = new PlaylistWidget(configFile, m_registry, m_listRegistry, m_splitter);
+    m_playlist = new PlaylistWidget(m_registry, m_listRegistry, m_splitter);
     m_playlist->attachController(m_controller); // N4：四步式停止前读取 time-pos
     m_splitter->addWidget(m_playlist);
     m_splitter->setStretchFactor(0, 1);
@@ -773,11 +773,11 @@ MainWindow::MainWindow(MpvController *controller, AppearanceManager *appearance,
     });
     m_playlist->loadPlaylists();
 
-    m_bookmarkMgr = new BookmarkManager(configFile, this);
+    m_bookmarkMgr = new BookmarkManager(App::paths().iniFile(), this);
     m_bookmarkMgr->load();
 
     // N134
-    m_toolMgr = new CustomToolManager(configFile, this);
+    m_toolMgr = new CustomToolManager(App::paths().iniFile(), this);
     m_toolMgr->load();
     rebuildToolActions(); // N138：AM 键位已在此前 applyShortcutOverrides 落定
 
@@ -1531,8 +1531,8 @@ void MainWindow::connectController() {
 void MainWindow::provideHttpServices() {
     int timeoutSec = App::remoteTimeoutSecDefault();
     bool ignoreSsl = App::ignoreHttpsErrorsDefault();
-    if (!m_configFile.isEmpty()) {
-        QSettings s(m_configFile, QSettings::IniFormat);
+    if (!App::paths().iniFile().isEmpty()) {
+        QSettings s(App::paths().iniFile(), QSettings::IniFormat);
         bool ok = false;
         const int v = s.value(QStringLiteral("remoteTimeoutSec"), timeoutSec).toInt(&ok);
         if (ok && v >= 1 && v <= 120) // 与设置目录 range 同界，读侧自钳
@@ -1549,8 +1549,8 @@ void MainWindow::provideHttpServices() {
 // 取值侧在 DirProvider::enumerate 起始处 resolve
 void MainWindow::provideTraversalPolicy() {
     int depthLimit = App::recursiveDepthLimitDefault();
-    if (!m_configFile.isEmpty()) {
-        QSettings s(m_configFile, QSettings::IniFormat);
+    if (!App::paths().iniFile().isEmpty()) {
+        QSettings s(App::paths().iniFile(), QSettings::IniFormat);
         bool ok = false;
         const int v = s.value(QStringLiteral("recursiveDepthLimit"), depthLimit).toInt(&ok);
         // 读侧自钳：上界与设置目录 range 同源（见 Constants.h）；下界恒 0
@@ -1564,9 +1564,9 @@ void MainWindow::provideTraversalPolicy() {
 
 // N115：style / colorScheme 两键的运行期读取点（初始 apply 在插件入口完成）
 void MainWindow::applyAppearanceFromIni() {
-    if (m_configFile.isEmpty())
+    if (App::paths().iniFile().isEmpty())
         return;
-    QSettings settings(m_configFile, QSettings::IniFormat);
+    QSettings settings(App::paths().iniFile(), QSettings::IniFormat);
     m_appearance->apply(
         settings.value(QStringLiteral("style"), App::interfaceStyleDefault()).toString(),
         settings.value(QStringLiteral("colorScheme"), App::colorSchemeDefault()).toString());
@@ -1583,10 +1583,9 @@ void MainWindow::onPluginIniKeysChanged(const QStringList &keys) {
     // N142：库路径变更——未加载则当场生效（失败重试也走这一遍），已加载由 preload 自己
     // 判要不要提示下次启动生效
     const QString mediaInfoKey = externalToolIniKey(ExternalTool::MediaInfo);
-    if (keys.contains(mediaInfoKey) && !m_configFile.isEmpty()) {
-        QSettings settings(m_configFile, QSettings::IniFormat);
-        MediaInfoHelper::preload(settings.value(mediaInfoKey).toString(),
-                                 QFileInfo(m_configFile).absolutePath());
+    if (keys.contains(mediaInfoKey) && !App::paths().iniFile().isEmpty()) {
+        QSettings settings(App::paths().iniFile(), QSettings::IniFormat);
+        MediaInfoHelper::preload(settings.value(mediaInfoKey).toString(), App::paths().iniDir());
     }
     // N143：ffmpeg 路径变更——重解析并推送取数模块，下一次取数即按新路径
     if (keys.contains(externalToolIniKey(ExternalTool::Ffmpeg)) && m_subtitleExtractor)
@@ -1595,8 +1594,8 @@ void MainWindow::onPluginIniKeysChanged(const QStringList &keys) {
     syncReporterSwitches(keys);
     // 音量族这两项都只读 ini：配置文件为空串即整段跳过（与同函数邻居
     // provideHttpServices / provideTraversalPolicy 同一守卫口径）
-    if (!m_configFile.isEmpty()) {
-        QSettings settings(m_configFile, QSettings::IniFormat);
+    if (!App::paths().iniFile().isEmpty()) {
+        QSettings settings(App::paths().iniFile(), QSettings::IniFormat);
         // 滚轮 / 方向键音量步长（N5）改动即时生效：变更后重读，下一次步进即按新值
         if (keys.contains(QStringLiteral("volumeWheelStep")) ||
             keys.contains(QStringLiteral("volumeKeyStep"))) {
@@ -1653,7 +1652,7 @@ void MainWindow::onPluginIniKeysChanged(const QStringList &keys) {
 // queued 投递走 functor 形态：改名 / 改签名交给编译器，不落字符串查找
 void MainWindow::syncReporterSwitches(const QStringList &changedKeys) {
     const bool filter = !changedKeys.isEmpty();
-    const QHash<QString, bool> values = readReporterSwitchValues(m_configFile);
+    const QHash<QString, bool> values = readReporterSwitchValues(App::paths().iniFile());
     for (const ReporterSwitch &row : reporterSwitches()) {
         if (filter && !changedKeys.contains(QLatin1String(row.iniKey)))
             continue; // 本次变更未命中该行：表值不变，不重投
@@ -1708,7 +1707,7 @@ void MainWindow::maybeBootReportDriver() {
         return; // 已启动（Running / Gated / Dead）：启动一次即不再销毁
     if (!m_reporters->hasEntry())
         return; // 无在册报告者：无损失可谈（服务器续播点靠 Progress 与超时收尾）
-    const QHash<QString, bool> values = readReporterSwitchValues(m_configFile);
+    const QHash<QString, bool> values = readReporterSwitchValues(App::paths().iniFile());
     std::vector<QString> registeredKeys; // 未经任何过滤的全部在册键（anyEnabled 的契约）
     for (const auto &entry : m_reporters->snapshot())
         registeredKeys.push_back(entry.key);
@@ -2274,12 +2273,11 @@ void MainWindow::destroySubtitleBrowser() {
 // N143：ffmpeg 路径解析单点——ini 显式值优先，空则取候选表第一项，都没有判不可用。
 // 设置面路径项变更经 onPluginIniKeysChanged 重解析推送，下一次取数即按新路径
 QString MainWindow::resolvedFfmpegPath() const {
-    if (m_configFile.isEmpty())
+    if (App::paths().iniFile().isEmpty())
         return {};
-    QSettings settings(m_configFile, QSettings::IniFormat);
+    QSettings settings(App::paths().iniFile(), QSettings::IniFormat);
     return SubtitleExtractor::resolveFfmpegPath(
-        settings.value(externalToolIniKey(ExternalTool::Ffmpeg)).toString(),
-        QFileInfo(m_configFile).absolutePath());
+        settings.value(externalToolIniKey(ExternalTool::Ffmpeg)).toString(), App::paths().iniDir());
 }
 
 // 浮窗不随属主联动，主窗口移动/缩放时手动跟随并刷新映射。
@@ -4167,7 +4165,7 @@ void MainWindow::ensureSettingsDialog() {
         m_settingsDialog->activateWindow();
         return;
     }
-    m_settingsDialog = new SettingsDialog(this, m_controller, m_configFile);
+    m_settingsDialog = new SettingsDialog(this, m_controller, App::paths().iniFile());
     m_settingsDialog->setAttribute(Qt::WA_DeleteOnClose, true);
     connect(m_settingsDialog, &QObject::destroyed, this, [this] { m_settingsDialog = nullptr; });
     // N66 §二-9：对话框关闭重评由 PopupCloseWatch 统一兜住（QDialog 在其观察面内），
@@ -4183,9 +4181,9 @@ void MainWindow::ensureSettingsDialog() {
 // 幂等——按 ini 现状重算，调用方不负责"当前处于什么态"；两条路径同码：启动装配 /
 // 对话框 Apply 即时生效
 void MainWindow::applyShortcutOverrides() {
-    if (!m_actions || m_configFile.isEmpty())
+    if (!m_actions || App::paths().iniFile().isEmpty())
         return;
-    const auto keys = m_actions->effectiveKeys(m_configFile);
+    const auto keys = m_actions->effectiveKeys(App::paths().iniFile());
     for (ActionManager::Id id : m_actions->orderedIds()) {
         // 不可改绑条目恒用声明默认
         m_actions->applyKey(id,
@@ -4263,7 +4261,7 @@ void MainWindow::ensureShortcutsDialog() {
         m_shortcutsDialog->activateWindow();
         return;
     }
-    m_shortcutsDialog = new ShortcutsDialog(m_actions, m_configFile, this);
+    m_shortcutsDialog = new ShortcutsDialog(m_actions, App::paths().iniFile(), this);
     m_shortcutsDialog->setAttribute(Qt::WA_DeleteOnClose, true);
     connect(m_shortcutsDialog, &ShortcutsDialog::applied, this, &MainWindow::applyShortcutsLive);
     connect(m_shortcutsDialog, &QObject::destroyed, this, [this] { m_shortcutsDialog = nullptr; });
@@ -4335,7 +4333,7 @@ void MainWindow::saveSettings() {
         return;
     m_settingsSaved = true;
 
-    QSettings settings(m_configFile, QSettings::IniFormat);
+    QSettings settings(App::paths().iniFile(), QSettings::IniFormat);
 
     // 音量：读 UI 缓存而非实时查询 mpv——SHUTDOWN 后查询可能失败返回空串，
     // toDouble() 得 0 会把音量误存为 0
@@ -4375,7 +4373,7 @@ void MainWindow::saveSettings() {
 }
 
 void MainWindow::restoreSettings() {
-    QSettings settings(m_configFile, QSettings::IniFormat);
+    QSettings settings(App::paths().iniFile(), QSettings::IniFormat);
 
     // R3：循环模式 / 硬件解码 / 音量上限 改由 mpv 自管（mpv.conf + observe），
     // 插件 INI 不再读写这三项；启动期经 MpvController::volumeMaxChanged 推送

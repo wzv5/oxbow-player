@@ -42,7 +42,6 @@ class MainWindow : public QMainWindow {
     // appearance 由 plugin.cpp 构造并完成初始 apply 后注入（非拥有），本类只做
     // 运行期 ini 变更的套用
     explicit MainWindow(MpvController *controller, AppearanceManager *appearance,
-                        const QString &configFile = QString(),
                         std::shared_ptr<StreamRelay> relay = nullptr, QWidget *parent = nullptr);
     // N107：退出序兜底——先阻塞拆缩略图 core（N103 销毁顺序）再停引擎线程；
     // 常规退出走 onMpvShutdown 的同款收口，本处覆盖不经它的销毁路径
@@ -395,7 +394,7 @@ class MainWindow : public QMainWindow {
     void onAddBookmark();
 
     MpvController *m_controller;
-    QString m_configFile; // 配置文件完整路径（插件 DLL 同目录下的 oxbow.ini）
+    // N147：配置路径不再由本类持有，消费者一律取 App::paths().iniFile() / iniDir()
     // N52：转接协议适配层（寿命归 plugin.cpp 的 shared_ptr，覆盖 exec 全程）
     std::shared_ptr<StreamRelay> m_relay;
     // N115：外观套用点——入口构造并注入的非拥有指针，本类只做运行期套用

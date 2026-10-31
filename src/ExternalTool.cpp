@@ -2,9 +2,7 @@
 
 #include "ExternalTool.h"
 
-#ifndef Q_OS_WIN
-#include <dlfcn.h> // dladdr：定位核心插件自身 .so
-#endif
+#include "AppPaths.h"
 
 namespace {
 
@@ -56,34 +54,9 @@ QString externalToolIniKey(ExternalTool tool) {
     return QString::fromLatin1(externalToolSpec(tool).iniKey);
 }
 
-QString externalToolPluginDir() {
-#ifdef Q_OS_WIN
-    HMODULE hModule = nullptr;
-    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                                GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                            reinterpret_cast<LPCWSTR>(&externalToolPluginDir), &hModule))
-        return {};
-    // 缓冲按需倍增（B4 同款）
-    std::wstring buf(MAX_PATH, L'\0');
-    DWORD n = 0;
-    while ((n = GetModuleFileNameW(hModule, buf.data(), static_cast<DWORD>(buf.size()))) ==
-           buf.size())
-        buf.resize(buf.size() * 2);
-    const QString modulePath = QString::fromWCharArray(buf.data(), static_cast<int>(n));
-#else
-    Dl_info info{};
-    if (!dladdr(reinterpret_cast<void *>(&externalToolPluginDir), &info) || !info.dli_fname)
-        return {};
-    const QString modulePath = QString::fromUtf8(info.dli_fname);
-#endif
-    if (modulePath.isEmpty())
-        return {};
-    return QFileInfo(modulePath).absolutePath();
-}
-
 QStringList externalToolCandidates(const ExternalToolSpec &spec, const QString &configDir) {
     QStringList dirs;
-    const QString plugin = externalToolPluginDir();
+    const QString plugin = App::paths().pluginDir();
     if (!plugin.isEmpty())
         dirs << plugin;
     if (!configDir.isEmpty())

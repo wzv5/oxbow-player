@@ -4,6 +4,8 @@
 
 #include "ExternalTool.h"
 
+#include "AppPaths.h"
+
 ExternalToolPathCombo::ExternalToolPathCombo(const ExternalToolSpec &spec, const QString &configDir,
                                              QWidget *parent)
     : QWidget(parent), m_spec(spec), m_configDir(configDir), m_autoLabel(tr("<Automatic>")) {
@@ -71,7 +73,7 @@ void ExternalToolPathCombo::browse() {
     if (!current.isEmpty()) {
         startDir = QFileInfo(current).absolutePath();
     } else {
-        const QString plugin = externalToolPluginDir();
+        const QString plugin = App::paths().pluginDir();
         if (!plugin.isEmpty() && QFileInfo::exists(plugin))
             startDir = plugin;
         else {

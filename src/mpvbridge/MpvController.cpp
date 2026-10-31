@@ -378,6 +378,14 @@ MpvController::MpvController(mpv_handle *mpv, QObject *parent) : QObject(parent)
     const int hookRc = mpv_hook_add(m_mpv, 0, "on_preloaded", 0);
     if (hookRc < 0)
         OXBOW_LOG_DEBUG() << "mpv_hook_add(on_preloaded) failed:" << hookRc;
+
+    // N147：三条配置路径构造期一次求值并缓存（口径见声明处）——句柄已可用、不等事件
+    // 线程；显式 --input-conf 的探读也只在此做一次，会话内不再切换
+    m_configDir = resolveConfigDir();
+    m_mpvConfPath = m_configDir.isEmpty()
+                        ? QString()
+                        : QDir::toNativeSeparators(m_configDir + QStringLiteral("/mpv.conf"));
+    m_inputConfPath = resolveInputConfPath();
 }
 
 void MpvController::startEventThread() { m_eventThread->start(); }
@@ -745,10 +753,11 @@ QString MpvController::commandResultString(const QStringList &args) const {
     return out;
 }
 
-// N92 §2：配置目录取值的唯一收口，三道校验的清单与安全顺序见声明处。这里只留最不吃眼的
-// 一条——判空必须落在目录上而非文件路径上：--no-config 下 ~~home/ 是空串，而
-// expand-path ~~/input.conf 交回的是非空裸串 "input.conf"，对它判空等于没判
-QString MpvController::configDir() const {
+// N92 §2 + N147：配置目录的一次求值，三道校验的清单与安全顺序见声明处。这里只留最不吃
+// 眼的一条——判空必须落在目录上而非文件路径上：--no-config 下 ~~home/ 是空串，而
+// expand-path ~~/input.conf 交回的是非空裸串 "input.conf"，对它判空等于没判。
+// 构造期跑一次后填进 m_configDir，getter 只读返回
+QString MpvController::resolveConfigDir() const {
     const QString raw =
         commandResultString({QStringLiteral("expand-path"), QStringLiteral("~~home/")});
     if (raw.isEmpty())
@@ -761,12 +770,9 @@ QString MpvController::configDir() const {
     return absolute;
 }
 
-// 两个文件出口共用这一次目录取值，文件名词法拼接（toNativeSeparators 是纯串加工，
-// 不碰文件系统——目录已由 normalize-path 交回反斜杠形态，这里只是让拼接符与之一致）
-QString MpvController::mpvConfPath() const {
-    const QString dir = configDir();
-    return dir.isEmpty() ? QString() : QDir::toNativeSeparators(dir + QStringLiteral("/mpv.conf"));
-}
+// 两个文件出口共用构造期已填的 m_configDir，文件名词法拼接（toNativeSeparators 是纯串
+// 加工，不碰文件系统——目录已由 normalize-path 交回反斜杠形态，这里只是让拼接符与之一致）
+QString MpvController::mpvConfPath() const { return m_mpvConfPath; }
 
 // N89：在 N92 的 ~~home/ 链之前加 --input-conf 判读——重启口径下这份文件是改动
 // 生效的唯一途径，判读必须严格同构 mpv（四步表见规格 §6）：
@@ -775,11 +781,11 @@ QString MpvController::mpvConfPath() const {
 //      读（不存在 / 打不开 / 读失败同属 mpv 侧的"读不到"这一种失败）→ 读到才用；
 //   3. 读不到 → 回落 ~~home/ 链（mpv 随即去扫配置目录，写到 --input-conf 指定的
 //      位置永远不会被读）；
-//   4. input-conf 未设（空）→ ~~home/ 链（configDir() 内含判空 / 绝对化 / 判目录
+//   4. input-conf 未设（空）→ ~~home/ 链（m_configDir 内含判空 / 绝对化 / 判目录
 //      存在三道校验），拼 input.conf（文件本身不必存在）。
 // 全部答案都来自 mpv 原语与探读，无一处目录推导；空串即报错，不猜、不 mkpath、
-// 不降级。configDir() 与 mpvConfPath() 不动（对已归档 N92 的范围扩展仅此一处）。
-QString MpvController::inputConfPath() const {
+// 不降级。N147：整条判读连同探读只在构造期跑一次，结果缓存进 m_inputConfPath
+QString MpvController::resolveInputConfPath() const {
     const QString conf = propertyString(QStringLiteral("input-conf"));
     if (conf.contains(QStringLiteral("://")))
         return QString();
@@ -795,10 +801,12 @@ QString MpvController::inputConfPath() const {
             }
         }
     }
-    const QString dir = configDir();
-    return dir.isEmpty() ? QString()
-                         : QDir::toNativeSeparators(dir + QStringLiteral("/input.conf"));
+    return m_configDir.isEmpty()
+               ? QString()
+               : QDir::toNativeSeparators(m_configDir + QStringLiteral("/input.conf"));
 }
+
+QString MpvController::inputConfPath() const { return m_inputConfPath; }
 
 QImage MpvController::screenshotRaw() {
     // N78：screenshot-raw 经节点通道取内存原始图像（仅 client API 可用）。

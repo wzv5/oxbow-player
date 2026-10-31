@@ -2,6 +2,7 @@
 
 #include "PlaylistWidget.h"
 
+#include "AppPaths.h"
 #include "Constants.h"
 #include "Logging.h"
 #include "MediaInfoHelper.h"
@@ -19,10 +20,9 @@
 #include "ui/OpenUrlDialog.h" // N131
 #include "ui/ThemedIconEngine.h"
 
-PlaylistWidget::PlaylistWidget(const QString &configFile, std::shared_ptr<ServiceRegistry> registry,
+PlaylistWidget::PlaylistWidget(std::shared_ptr<ServiceRegistry> registry,
                                std::shared_ptr<PlaylistRegistry> lists, QWidget *parent)
-    : QTabWidget(parent), m_configFile(configFile), m_registry(std::move(registry)),
-      m_lists(std::move(lists)) {
+    : QTabWidget(parent), m_registry(std::move(registry)), m_lists(std::move(lists)) {
     // N56 §2.7：registry 由装配顶点（MainWindow）创建并注入，本类不再自造；
     // HttpClient / TraversalPolicy 的注册与设置变更更新同样上移装配顶点，本类
     // 只经注入的 registry 取用（提供者构造注入、实体求值现查），不做任何 provide。
@@ -1414,10 +1414,10 @@ void PlaylistWidget::rebuildMemoryAfterAdopt(PlaylistListView *list, int playing
 }
 
 void PlaylistWidget::loadPlaylists() {
-    if (m_configFile.isEmpty())
+    if (App::paths().iniFile().isEmpty())
         return;
 
-    QSettings settings(m_configFile, QSettings::IniFormat);
+    QSettings settings(App::paths().iniFile(), QSettings::IniFormat);
     settings.beginGroup(QStringLiteral("Playlists"));
     const int savedCount = settings.value(QStringLiteral("count"), 0).toInt();
     settings.endGroup();
@@ -1482,10 +1482,10 @@ void PlaylistWidget::readTabGroup(QSettings &settings, int index) {
 }
 
 void PlaylistWidget::savePlaylists() {
-    if (m_configFile.isEmpty())
+    if (App::paths().iniFile().isEmpty())
         return;
 
-    QSettings settings(m_configFile, QSettings::IniFormat);
+    QSettings settings(App::paths().iniFile(), QSettings::IniFormat);
     // 清理旧的播放列表节（节名的第三处知识点）
     for (const QString &g : settings.childGroups()) {
         if (g.startsWith(QStringLiteral("Playlist_")) || g == QLatin1String("Playlists"))
@@ -4768,7 +4768,7 @@ void PlaylistWidget::backfillItems(Playlist *list) {
 // 名字自动生成、落末尾并激活。复制是只读动作：不停播、不动播放目标与会话键
 // （不经 markPlayingTab，播放语义什么都没发生）
 void PlaylistWidget::duplicateList(int tabIndex) {
-    if (tabIndex <= 0 || m_busy || m_configFile.isEmpty())
+    if (tabIndex <= 0 || m_busy || App::paths().iniFile().isEmpty())
         return; // 与 openListSettings 同档兜底（N19：忙时表头菜单已禁用）
     PlaylistListView *srcView = viewAt(tabIndex);
     if (!srcView || !srcView->list())
@@ -4781,7 +4781,7 @@ void PlaylistWidget::duplicateList(int tabIndex) {
     // 配置往返走现有配置文件上的暂存组（变更记录 1）：写、读、删在同一会话内一气
     // 呵成，暂存组从不 sync 落盘；组名带 Playlist_ 前缀，即便极端残留也会被
     // savePlaylists 的旧节清理收走
-    QSettings settings(m_configFile, QSettings::IniFormat);
+    QSettings settings(App::paths().iniFile(), QSettings::IniFormat);
     const QString staging = QStringLiteral("Playlist_duplicate_staging");
     settings.beginGroup(staging);
     auto dup = src->provider()->duplicated(settings);
