@@ -246,6 +246,9 @@ void AiSubtitleJob::launchFfmpeg(const QString &ffmpeg, const QString &inputArg,
                 }
                 startAsr();
             });
+    // N149：起飞前记一条完整命令行（ffmpeg 路径来自主窗解析单点，已是绝对路径）
+    OXBOW_LOG_INFO().noquote() << QStringLiteral("AiSubtitleJob: ffmpeg starting: %1")
+                                      .arg(Util::commandLineForLog(ffmpeg, args));
     process->start(ffmpeg, args);
 }
 
@@ -254,19 +257,25 @@ void AiSubtitleJob::startAsr() {
     // 解析入表的 srt 块到达即切"识别"；内置档的模型加载落在这一段
     setStep(Step::InitializingSpeechRecognition);
 
-    const QString command = AiSubtitleCatalog::selectAsrCommand(m_params.settings.asrMode,
-                                                                m_params.settings.asrCommand);
-    QStringList args = AiSubtitleCatalog::splitCommandLine(command);
-    if (args.isEmpty()) {
+    const QStringList command = AiSubtitleCatalog::selectAsrCommand(m_params.settings.asrMode,
+                                                                    m_params.settings.asrCommand);
+    if (command.isEmpty()) {
         // 拆不出实参即命令行是空串（自定义档空串已被自检挡住，够得到的只有被手改坏
         // 的 ini 档位）；细节只进日志
-        OXBOW_LOG_WARNING().noquote() << "AiSubtitleJob: empty ASR command line:" << command;
+        OXBOW_LOG_WARNING() << "AiSubtitleJob: empty ASR command line";
         fail(AiSubtitleCatalog::reasonAsrCommandInvalid());
         return;
     }
-    const QString program =
-        AiSubtitleCatalog::resolvePluginProgramPath(App::paths().pluginDir(), args.takeFirst());
-    args = AiSubtitleCatalog::expandArg(args, QStringLiteral("${wav_file}"), m_wavPath);
+    const QString program = Util::resolveExternalProgram(App::paths().pluginDir(),
+                                                         App::paths().iniDir(), command.first());
+    if (program.isEmpty()) {
+        // 程序段解析不到（自检之后文件被动过、ini 档位手改坏一类）；细节只进日志
+        OXBOW_LOG_WARNING() << "AiSubtitleJob: ASR program not resolvable:" << command.first();
+        fail(AiSubtitleCatalog::reasonAsrCommandInvalid());
+        return;
+    }
+    QStringList args =
+        AiSubtitleCatalog::expandArg(command.mid(1), QStringLiteral("${wav_file}"), m_wavPath);
 
     const qint64 generation = m_generation;
     QProcess *process = new QProcess(this);
@@ -325,6 +334,9 @@ void AiSubtitleJob::startAsr() {
                 }
                 startTranslationStage();
             });
+    // N149：起飞前记一条完整命令行（解析后的绝对路径 + 全部实参，${wav_file} 已展开）
+    OXBOW_LOG_INFO().noquote() << QStringLiteral("AiSubtitleJob: ASR starting: %1")
+                                      .arg(Util::commandLineForLog(program, args));
     process->start(program, args);
 }
 
@@ -363,7 +375,8 @@ void AiSubtitleJob::startTranslationStage() {
             if (generation == m_generation && m_step == Step::Translation)
                 fail(AiSubtitleCatalog::reasonServerExitedUnexpectedly());
         });
-        m_llmServer->start(AiSubtitleCatalog::builtinServerCommand(), App::paths().pluginDir());
+        m_llmServer->start(AiSubtitleCatalog::builtinServerCommand(), App::paths().pluginDir(),
+                           App::paths().iniDir());
         return;
     }
     runTranslator(m_params.settings.translationApi);

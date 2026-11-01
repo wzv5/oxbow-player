@@ -292,7 +292,8 @@ class MainWindow : public QMainWindow {
     // N143：字幕浏览器面板按需创建生命周期收口（关闭即销毁，null=未打开）
     void ensureSubtitleBrowser();
     void destroySubtitleBrowser();
-    QString resolvedFfmpegPath() const; // N143：ffmpeg 路径解析单点（ini 显式值优先）
+    // N143：ffmpeg 路径解析单点；N149 起显式值与自动档同判据（解析得到真实文件才出串）
+    QString resolvedFfmpegPath() const;
     // N146：AI 字幕生成——对话框按需创建（关闭即销毁），任务归主窗持有
     void ensureAiSubtitleDialog();
     AiSubtitleStartContext aiSubtitleStartContext() const; // 点开始的现读复核

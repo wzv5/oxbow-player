@@ -2,6 +2,8 @@
 
 #include "AiSubtitleCatalog.h"
 
+#include "Util.h"
+
 namespace AiSubtitleCatalog {
 
 namespace {
@@ -99,28 +101,62 @@ constexpr TargetLanguage kTargetLanguages[] = {
     {"Cantonese", "yue"},
 };
 
-// 内置档的判据对象是内置命令自己定形后的那批文件（自定义串在这一档根本不参与运行）
-bool builtinCommandFilesExist(const QString &commandLine, const QString &pluginDir) {
-    const QStringList paths = selfCheckPaths(commandLine, pluginDir);
+// 内置档的判据对象是内置命令解析定形后的那批文件（自定义串在这一档根本不参与运行）
+bool builtinCommandFilesExist(const QStringList &command, const QString &pluginDir,
+                              const QString &iniDir) {
+    const QStringList paths = selfCheckPaths(command, pluginDir, iniDir);
     return !paths.isEmpty() && allFilesExist(paths);
 }
 
 } // namespace
 
-const QString &builtinAsrCommand() {
-    static const QString command =
-        QStringLiteral("./whisper/whisper-cli -m ./model/ggml-large-v3-turbo.bin -l auto -sns"
-                       " --vad -vm ./model/ggml-silero-v6.2.0.bin -f ${wav_file}");
+// N149：数组即权威形态，程序是第 0 项；需要一整条串的场合由 builtinAsrCommandLine 拼接
+const QStringList &builtinAsrCommand() {
+    static const QStringList command = {
+        QStringLiteral("./whisper/whisper-cli"),
+        QStringLiteral("-m"),
+        QStringLiteral("./model/ggml-large-v3-turbo.bin"),
+        QStringLiteral("-l"),
+        QStringLiteral("auto"),
+        QStringLiteral("-sns"),
+        QStringLiteral("--vad"),
+        QStringLiteral("-vm"),
+        QStringLiteral("./model/ggml-silero-v6.2.0.bin"),
+        QStringLiteral("-f"),
+        QStringLiteral("${wav_file}"),
+    };
     return command;
 }
 
-const QString &builtinServerCommand() {
-    static const QString command =
-        QStringLiteral("./llama.cpp/llama-server --model ./model/Hy-MT2-1.8B-Q4_K_M.gguf --jinja"
-                       " -c 8192 -n 1024 --batch-size 512 --temperature 0.7 --top-p 0.6 --top-k 20"
-                       " --repeat-penalty 1.05 --host 127.0.0.1 --port 0");
+const QStringList &builtinServerCommand() {
+    static const QStringList command = {
+        QStringLiteral("./llama.cpp/llama-server"),
+        QStringLiteral("--model"),
+        QStringLiteral("./model/Hy-MT2-1.8B-Q4_K_M.gguf"),
+        QStringLiteral("--jinja"),
+        QStringLiteral("-c"),
+        QStringLiteral("8192"),
+        QStringLiteral("-n"),
+        QStringLiteral("1024"),
+        QStringLiteral("--batch-size"),
+        QStringLiteral("512"),
+        QStringLiteral("--temperature"),
+        QStringLiteral("0.7"),
+        QStringLiteral("--top-p"),
+        QStringLiteral("0.6"),
+        QStringLiteral("--top-k"),
+        QStringLiteral("20"),
+        QStringLiteral("--repeat-penalty"),
+        QStringLiteral("1.05"),
+        QStringLiteral("--host"),
+        QStringLiteral("127.0.0.1"),
+        QStringLiteral("--port"),
+        QStringLiteral("0"),
+    };
     return command;
 }
+
+QString builtinAsrCommandLine() { return builtinAsrCommand().join(u' '); }
 
 const QString &defaultTranslationPrompt() {
     static const QString prompt = QStringLiteral(
@@ -164,29 +200,20 @@ QStringList expandArg(const QStringList &args, const QString &token, const QStri
     return out;
 }
 
-QString resolvePluginProgramPath(const QString &pluginDir, const QString &token) {
-    QString name = token.trimmed();
-    while (name.startsWith(QStringLiteral("./")))
-        name.remove(0, 2);
-    if (name.isEmpty() || pluginDir.isEmpty())
+QStringList selfCheckPaths(const QStringList &command, const QString &pluginDir,
+                           const QString &iniDir) {
+    if (command.isEmpty())
         return {};
-#ifdef Q_OS_WIN
-    if (!name.endsWith(QStringLiteral(".exe"), Qt::CaseInsensitive))
-        name += QStringLiteral(".exe");
-#endif
-    return QDir::cleanPath(QDir(pluginDir).filePath(name));
-}
-
-QStringList selfCheckPaths(const QString &commandLine, const QString &pluginDir) {
-    const QStringList tokens = splitCommandLine(commandLine);
-    if (tokens.isEmpty() || pluginDir.isEmpty())
+    // 程序段走通用解析（两目录 + PATH 三步，N149）；解析不到即整表为空、自检判不可用
+    const QString program = Util::resolveExternalProgram(pluginDir, iniDir, command.first());
+    if (program.isEmpty())
         return {};
     QStringList paths;
-    paths << resolvePluginProgramPath(pluginDir, tokens.first());
-    for (int i = 1; i < tokens.size(); ++i) {
-        if (!tokens.at(i).startsWith(QStringLiteral("./")))
+    paths << program;
+    for (int i = 1; i < command.size(); ++i) {
+        if (!command.at(i).startsWith(QStringLiteral("./")))
             continue;
-        paths << QDir::cleanPath(QDir(pluginDir).filePath(tokens.at(i).mid(2)));
+        paths << QDir::cleanPath(QDir(pluginDir).filePath(command.at(i).mid(2)));
     }
     return paths;
 }
@@ -200,15 +227,17 @@ bool allFilesExist(const QStringList &paths) {
 
 bool isConfigured(const QString &value) { return !value.trimmed().isEmpty(); }
 
-QString selectAsrCommand(const QString &mode, const QString &customCommand) {
-    return mode == QLatin1String(kModeBuiltin) ? builtinAsrCommand() : customCommand;
+QStringList selectAsrCommand(const QString &mode, const QString &customCommand) {
+    return mode == QLatin1String(kModeBuiltin) ? builtinAsrCommand()
+                                               : splitCommandLine(customCommand);
 }
 
 Settings readSettings(QSettings &ini) {
     Settings settings;
     settings.asrMode =
         ini.value(QLatin1String(kAsrModeKey), QLatin1String(kModeBuiltin)).toString();
-    settings.asrCommand = ini.value(QLatin1String(kAsrCommandKey), builtinAsrCommand()).toString();
+    settings.asrCommand =
+        ini.value(QLatin1String(kAsrCommandKey), builtinAsrCommandLine()).toString();
     settings.translationMode =
         ini.value(QLatin1String(kTranslationModeKey), QLatin1String(kModeBuiltin)).toString();
     settings.translationApi = ini.value(QLatin1String(kTranslationApiEndpointKey)).toString();
@@ -221,16 +250,23 @@ Settings readSettings(QSettings &ini) {
     return settings;
 }
 
-bool asrAvailable(const QString &mode, const QString &customCommand, const QString &pluginDir) {
+bool asrAvailable(const QString &mode, const QString &customCommand, const QString &pluginDir,
+                  const QString &iniDir) {
     if (mode == QLatin1String(kModeBuiltin))
-        return builtinCommandFilesExist(builtinAsrCommand(), pluginDir);
-    return isConfigured(customCommand);
+        return builtinCommandFilesExist(builtinAsrCommand(), pluginDir, iniDir);
+    // 自定义档：非空前置之后判第 0 项解析得到真实文件（N149 从"非空即真"收紧）
+    if (!isConfigured(customCommand))
+        return false;
+    const QStringList tokens = splitCommandLine(customCommand);
+    if (tokens.isEmpty())
+        return false;
+    return !Util::resolveExternalProgram(pluginDir, iniDir, tokens.first()).isEmpty();
 }
 
 bool translationAvailable(const QString &mode, const QString &customEndpoint,
-                          const QString &pluginDir) {
+                          const QString &pluginDir, const QString &iniDir) {
     if (mode == QLatin1String(kModeBuiltin))
-        return builtinCommandFilesExist(builtinServerCommand(), pluginDir);
+        return builtinCommandFilesExist(builtinServerCommand(), pluginDir, iniDir);
     return isConfigured(customEndpoint);
 }
 

@@ -187,19 +187,22 @@ void AiSubtitleDialog::runSelfCheck() {
     m_snapshot.settings = AiSubtitleCatalog::readSettings(settings);
     m_snapshot.enableTranslation = false; // 勾选框不进快照，点开始时现读
 
-    // ffmpeg：只判解析出的路径非空（不查文件存在、不跑进程）——ini 显式值原样
-    // 优先（存在性归运行机制），自动发现返回空串才判不可用
+    // ffmpeg：N149 起判"解析得到真实文件"——ini 显式值经 externalToolResolvedPath
+    // 三步解析定形（插件目录 → ini 目录 → PATH），ini 空即自动档回落候选表（出表前
+    // 逐项验过 isFile，天然存在）。两态判据同源，显式值指向不存在的文件判不可用
     m_ffmpegAvailable = !externalToolResolvedPath(
                              externalToolSpec(ExternalTool::Ffmpeg),
                              settings.value(externalToolIniKey(ExternalTool::Ffmpeg)).toString(),
-                             App::paths().iniDir())
+                             pluginDir, App::paths().iniDir())
                              .isEmpty();
-    // ASR 与翻译：判据分域各立（内置档判插件目录下定形后的程序与模型文件，其余档
-    // 只判用户那一串非空——不跑进程、不查 PATH、不探端口可用性）
-    m_asrAvailable = AiSubtitleCatalog::asrAvailable(m_snapshot.settings.asrMode,
-                                                     m_snapshot.settings.asrCommand, pluginDir);
+    // ASR 与翻译：判据分域各立（内置档判解析定形后的程序与模型文件，ASR 自定义档判
+    // 第 0 项解析得到真实文件，翻译自定义档只判端点串非空——不跑进程、不探端口可用性）
+    m_asrAvailable =
+        AiSubtitleCatalog::asrAvailable(m_snapshot.settings.asrMode, m_snapshot.settings.asrCommand,
+                                        pluginDir, App::paths().iniDir());
     m_translationAvailable = AiSubtitleCatalog::translationAvailable(
-        m_snapshot.settings.translationMode, m_snapshot.settings.translationApi, pluginDir);
+        m_snapshot.settings.translationMode, m_snapshot.settings.translationApi, pluginDir,
+        App::paths().iniDir());
 
     m_selfCheckDone = true;
     const auto setCheckValue = [this](QLabel *label, bool available) {

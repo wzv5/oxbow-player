@@ -172,7 +172,7 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle) {
     {
         QSettings s(configFile, QSettings::IniFormat);
         MediaInfoHelper::preload(s.value(externalToolIniKey(ExternalTool::MediaInfo)).toString(),
-                                 App::paths().iniDir());
+                                 App::paths().pluginDir(), App::paths().iniDir());
     }
 
     // N143：sub-delay 追加进 --reset-on-next-file——手册载明该选项默认不重置任何项，

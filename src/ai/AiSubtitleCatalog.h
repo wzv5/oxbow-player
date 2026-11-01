@@ -33,10 +33,15 @@ inline constexpr int kRateLimitBackoffMaxMs = 30000;
 inline constexpr int kRateLimitHeaderCapMs = 60000; // retry-after 整数秒的封顶
 
 // —— 数据（内置命令原文与各项缺省）——
+// 内置命令以"程序 + 实参"数组为权威形态（N149）：第 0 项是程序写法且带 `./`，与实参
+// 里的 `./model/...` 同形（设置项给用户看的整条串照此显示），其余是实参。需要一整条
+// 串的场合（设置项 fallback、ini 缺省值）用 builtinAsrCommandLine 拼接，不在消费点各
+// 写一遍
 // 目标语言在 .cpp 只有一张表（长名 + 短名）：清单顺序即 UI 顺序、首项亦即缺省，
 // 短名只服务译文缓存文件名的语言后缀（2–3 字母主标签，可带 `-` 子标签）
-const QString &builtinAsrCommand();
-const QString &builtinServerCommand();
+const QStringList &builtinAsrCommand();
+const QStringList &builtinServerCommand();
+QString builtinAsrCommandLine(); // 内置 ASR 命令数组的单空格拼接
 const QString &defaultTranslationPrompt();
 const QString &defaultTargetLanguage(); // "Chinese"，清单首项亦即缺省
 QStringList targetLanguages();          // 顺序即 UI 顺序
@@ -50,18 +55,18 @@ QStringList splitCommandLine(const QString &line);
 // 实参级替换：逐实参把 token 子串换成 value（不许整串拼好后再替换）
 QStringList expandArg(const QStringList &args, const QString &token, const QString &value);
 
-// —— 程序令牌定形与存在性自检 ——
-// `./xxx` 或裸名 → 插件目录下的绝对路径；Windows 缺 .exe 后缀则补上
-QString resolvePluginProgramPath(const QString &pluginDir, const QString &token);
-// 内置命令的存在性自检取路径：首个令牌按程序定形，其余以 ./ 开头的实参按模型
-// 相对路径定形（不补 .exe）；返回绝对路径列表
-QStringList selfCheckPaths(const QString &commandLine, const QString &pluginDir);
+// —— 存在性自检（N149：程序段统一走 Util::resolveExternalProgram，判据是
+// "解析得到真实文件才可用"；模型串不补后缀也不进 PATH）——
+// 内置命令的存在性自检取路径：第 0 项按三步解析，其余以 ./ 开头的实参按模型
+// 相对路径按插件目录定形；程序解析不到即整表为空。返回绝对路径列表
+QStringList selfCheckPaths(const QStringList &command, const QString &pluginDir,
+                           const QString &iniDir);
 bool allFilesExist(const QStringList &paths);
-// 自定义档的自检判据：trim 后非空
+// 自定义档的自检前置：trim 后非空
 bool isConfigured(const QString &value);
 
-// —— 模式分派（ASR 命令行读值单点：内置取固定串，自定义取用户串）——
-QString selectAsrCommand(const QString &mode, const QString &customCommand);
+// —— 模式分派（ASR 命令行读值单点：内置取固定数组，自定义拆用户串）——
+QStringList selectAsrCommand(const QString &mode, const QString &customCommand);
 
 // —— 设置快照的读法单点（八项设置全写 oxbow.ini；"键 → 缺省"的配对只住这里）——
 // 开档归调用方，本函数不碰路径；缺键落本模块缺省，已写值原样返回（不 trim、不校验
@@ -79,13 +84,14 @@ struct Settings {
 
 Settings readSettings(QSettings &ini);
 
-// —— 自检分派（判据分域各立：ASR 认命令行与插件目录下的程序与模型，翻译认服务端
+// —— 自检分派（判据分域各立：ASR 认解析得到的程序与插件目录下的模型，翻译认服务端
 // 文件或远端端点，两域档位将来也不同步扩）——
-// 内置档判内置命令定形后的程序与 `./` 实参都存在；其余档位只判用户那一串非空
-// （不解析程序、不查文件、不做 PATH 搜索、不探端口可用性）
-bool asrAvailable(const QString &mode, const QString &customCommand, const QString &pluginDir);
+// 内置档判内置命令解析出的程序与 `./` 实参都存在；ASR 自定义档判第 0 项解析得到
+// 真实文件；翻译自定义档只判端点串非空（不探端口可用性）
+bool asrAvailable(const QString &mode, const QString &customCommand, const QString &pluginDir,
+                  const QString &iniDir);
 bool translationAvailable(const QString &mode, const QString &customEndpoint,
-                          const QString &pluginDir);
+                          const QString &pluginDir, const QString &iniDir);
 
 // —— 请求侧归一 ——
 // 端点归一：去空格 → 去尾部 / → 路径不以 /chat/completions 结尾则补上

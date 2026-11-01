@@ -47,11 +47,12 @@ class MediaInfoHelper {
     static bool available();
 
     // N142：入口预载（仅 GUI 线程、先于任何元数据扫描）。configuredPath 去空白后为空 =
-    // 自动态（按候选表发现）；非空 = 显式路径，相对写法以 configDir 为基准规范化为绝对
-    // 路径，不存在或基名不符即判不可用、不回落自动加载。句柄永久保留不卸载；已加载后
-    // 重复调用不改状态，只有解析出的加载目标与已加载那份不同才记日志、下次启动生效；
-    // 未就绪时再次调用可重试
-    static void preload(const QString &configuredPath, const QString &configDir);
+    // 自动态（按候选表发现）；非空 = 显式路径，相对写法在插件目录与 ini 目录上逐个
+    // 试（插件目录在前，N149），两处都没有或基名不符即判不可用、不回落自动加载。
+    // 句柄永久保留不卸载；已加载后重复调用不改状态，只有解析出的加载目标与已加载
+    // 那份不同才记日志、下次启动生效；未就绪时再次调用可重试
+    static void preload(const QString &configuredPath, const QString &pluginDir,
+                        const QString &iniDir);
 
     // 单文件解析；无 dll / 打开失败返回默认 Data（字段皆空/0）
     static Data parse(const QString &path);

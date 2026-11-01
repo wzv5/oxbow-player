@@ -674,7 +674,7 @@ const QList<SettingCategory> &settingCatalog() {
                          {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Custom ASR Command"),
                           .widget = WidgetKind::LineEdit,
                           .iniKey = AiSubtitleCatalog::kAsrCommandKey,
-                          .fallback = AiSubtitleCatalog::builtinAsrCommand(),
+                          .fallback = AiSubtitleCatalog::builtinAsrCommandLine(),
                           .note = QT_TRANSLATE_NOOP(
                               "SettingsDialog",
                               "Only used in Custom mode; ${wav_file} is replaced with the audio "

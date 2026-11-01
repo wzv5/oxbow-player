@@ -18,9 +18,10 @@ class LocalLlmServer : public QObject {
     explicit LocalLlmServer(QObject *parent = nullptr);
     ~LocalLlmServer() override;
 
-    // 发起一次服务：commandLine 为内置命令原文——装配三步照流水线约定（Qt 命令行
-    // 拆分、程序令牌在插件目录下定形、以插件目录为工作目录），无占位符可换
-    void start(const QString &commandLine, const QString &pluginDir);
+    // 发起一次服务：command 为内置命令数组（第 0 项程序写法、其余实参）——程序段
+    // 经 Util::resolveExternalProgram 三步解析并记起飞日志（N149），装配不再有拆串
+    // 一步；以插件目录为工作目录，无占位符可换
+    void start(const QStringList &command, const QString &pluginDir, const QString &iniDir);
     // 收杀（任务终态与取消同一条出口）；idle 时无操作
     void stop();
 

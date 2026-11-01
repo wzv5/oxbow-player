@@ -8,7 +8,8 @@
 
 ExternalToolPathCombo::ExternalToolPathCombo(const ExternalToolSpec &spec, const QString &configDir,
                                              QWidget *parent)
-    : QWidget(parent), m_spec(spec), m_configDir(configDir), m_autoLabel(tr("<Auto>")) {
+    : QWidget(parent), m_spec(spec), m_pluginDir(App::paths().pluginDir()), m_configDir(configDir),
+      m_autoLabel(tr("<Auto>")) {
     auto *layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(4);
@@ -24,7 +25,7 @@ ExternalToolPathCombo::ExternalToolPathCombo(const ExternalToolSpec &spec, const
     // 而自动项恒占第 0 位；行编辑的占位是"文本为空即显示"
     m_combo->lineEdit()->setPlaceholderText(m_autoLabel);
     m_combo->addItem(m_autoLabel, QString());
-    for (const QString &path : externalToolCandidates(m_spec, m_configDir))
+    for (const QString &path : externalToolCandidates(m_spec, m_pluginDir, m_configDir))
         m_combo->addItem(path, path);
     m_combo->setCurrentIndex(0);
     m_combo->clearEditText();
@@ -73,11 +74,10 @@ void ExternalToolPathCombo::browse() {
     if (!current.isEmpty()) {
         startDir = QFileInfo(current).absolutePath();
     } else {
-        const QString plugin = App::paths().pluginDir();
-        if (!plugin.isEmpty() && QFileInfo::exists(plugin))
-            startDir = plugin;
+        if (!m_pluginDir.isEmpty() && QFileInfo::exists(m_pluginDir))
+            startDir = m_pluginDir;
         else {
-            const QStringList candidates = externalToolCandidates(m_spec, m_configDir);
+            const QStringList candidates = externalToolCandidates(m_spec, m_pluginDir, m_configDir);
             if (!candidates.isEmpty())
                 startDir = QFileInfo(candidates.first()).absolutePath();
         }

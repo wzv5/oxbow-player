@@ -4,6 +4,7 @@
 
 #include "AiSubtitleCatalog.h"
 #include "Logging.h"
+#include "Util.h"
 
 namespace {
 
@@ -27,19 +28,23 @@ LocalLlmServer::LocalLlmServer(QObject *parent) : QObject(parent) {
 
 LocalLlmServer::~LocalLlmServer() { finishProcess(); }
 
-void LocalLlmServer::start(const QString &commandLine, const QString &pluginDir) {
+void LocalLlmServer::start(const QStringList &command, const QString &pluginDir,
+                           const QString &iniDir) {
     stop();
     m_line.clear();
     m_tail.clear();
     m_state = State::Starting;
 
-    QStringList args = AiSubtitleCatalog::splitCommandLine(commandLine);
-    if (args.isEmpty() || pluginDir.isEmpty()) {
+    if (command.isEmpty()) {
         fail();
         return;
     }
-    const QString program =
-        AiSubtitleCatalog::resolvePluginProgramPath(pluginDir, args.takeFirst());
+    const QString program = Util::resolveExternalProgram(pluginDir, iniDir, command.first());
+    if (program.isEmpty()) {
+        fail();
+        return;
+    }
+    const QStringList args = command.mid(1);
 
     m_process = new QProcess(this);
     m_process->setProcessChannelMode(QProcess::MergedChannels);
@@ -64,6 +69,10 @@ void LocalLlmServer::start(const QString &commandLine, const QString &pluginDir)
                     emit exited();
                 }
             });
+    // N149：起飞前记一条完整命令行（解析后的绝对路径 + 全部实参），回答"到底跑的是
+    // 哪一个二进制"——解析放开 PATH 后的可诊断手段
+    OXBOW_LOG_INFO().noquote() << QStringLiteral("local translation server starting: %1")
+                                      .arg(Util::commandLineForLog(program, args));
     m_process->start(program, args);
     m_deadline.start(AiSubtitleCatalog::kServerReadyTimeoutMs);
 }

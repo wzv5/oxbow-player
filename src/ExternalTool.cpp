@@ -2,7 +2,7 @@
 
 #include "ExternalTool.h"
 
-#include "AppPaths.h"
+#include "Util.h"
 
 namespace {
 
@@ -54,11 +54,11 @@ QString externalToolIniKey(ExternalTool tool) {
     return QString::fromLatin1(externalToolSpec(tool).iniKey);
 }
 
-QStringList externalToolCandidates(const ExternalToolSpec &spec, const QString &configDir) {
+QStringList externalToolCandidates(const ExternalToolSpec &spec, const QString &pluginDir,
+                                   const QString &configDir) {
     QStringList dirs;
-    const QString plugin = App::paths().pluginDir();
-    if (!plugin.isEmpty())
-        dirs << plugin;
+    if (!pluginDir.isEmpty())
+        dirs << pluginDir;
     if (!configDir.isEmpty())
         dirs << configDir;
     const QStringList pathDirs =
@@ -96,10 +96,14 @@ QString externalToolBrowseFilter(const ExternalToolSpec &spec) {
            QStringLiteral(" (%1)").arg(spec.targetFileName);
 }
 
+// N143 起的解析单点；N149 起显式值经 Util::resolveExternalProgram 三步解析定形
+// （插件目录 → ini 目录 → PATH，判据与自检同源），空串回落候选表首项（出表前
+// 逐项验过 isFile，天然存在），都没有判不可用
 QString externalToolResolvedPath(const ExternalToolSpec &spec, const QString &configured,
-                                 const QString &configDir) {
-    if (!configured.trimmed().isEmpty())
-        return configured.trimmed();
-    const QStringList candidates = externalToolCandidates(spec, configDir);
+                                 const QString &pluginDir, const QString &configDir) {
+    const QString trimmed = configured.trimmed();
+    if (!trimmed.isEmpty())
+        return Util::resolveExternalProgram(pluginDir, configDir, trimmed);
+    const QStringList candidates = externalToolCandidates(spec, pluginDir, configDir);
     return candidates.isEmpty() ? QString() : candidates.first();
 }

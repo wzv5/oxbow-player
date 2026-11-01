@@ -446,6 +446,9 @@ void SubtitleExtractor::launchFfmpeg(qint64 generation, const QString &cacheKey,
             m_generation = generation + 1;
         });
 
+    // N149：起飞前记一条完整命令行（ffmpeg 路径来自主窗解析单点，已是绝对路径）
+    OXBOW_LOG_INFO().noquote() << QStringLiteral("SubtitleExtractor: ffmpeg starting: %1")
+                                      .arg(Util::commandLineForLog(m_ffmpegPath, args));
     process->start(m_ffmpegPath, args);
 }
 

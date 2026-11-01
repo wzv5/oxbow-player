@@ -1606,7 +1606,8 @@ void MainWindow::onPluginIniKeysChanged(const QStringList &keys) {
     const QString mediaInfoKey = externalToolIniKey(ExternalTool::MediaInfo);
     if (keys.contains(mediaInfoKey) && !App::paths().iniFile().isEmpty()) {
         QSettings settings(App::paths().iniFile(), QSettings::IniFormat);
-        MediaInfoHelper::preload(settings.value(mediaInfoKey).toString(), App::paths().iniDir());
+        MediaInfoHelper::preload(settings.value(mediaInfoKey).toString(), App::paths().pluginDir(),
+                                 App::paths().iniDir());
     }
     // N143：ffmpeg 路径变更——重解析并推送取数模块，下一次取数即按新路径
     if (keys.contains(externalToolIniKey(ExternalTool::Ffmpeg)) && m_subtitleExtractor)
@@ -2291,8 +2292,9 @@ void MainWindow::destroySubtitleBrowser() {
     m_subtitleBrowser = nullptr;
 }
 
-// N143：ffmpeg 路径解析单点——ini 显式值优先，空则取候选表第一项，都没有判不可用
-// （选择逻辑住 ExternalTool，本处只读 ini 与传参）
+// N143：ffmpeg 路径解析单点——ini 显式值经 externalToolResolvedPath 解析定形
+// （N149：插件目录 → ini 目录 → PATH，判据与自检同源），空则取候选表第一项，
+// 都没有判不可用（选择逻辑住 ExternalTool，本处只读 ini 并注入两目录）
 // 设置面路径项变更经 onPluginIniKeysChanged 重解析推送，下一次取数即按新路径
 QString MainWindow::resolvedFfmpegPath() const {
     if (App::paths().iniFile().isEmpty())
@@ -2300,7 +2302,8 @@ QString MainWindow::resolvedFfmpegPath() const {
     QSettings settings(App::paths().iniFile(), QSettings::IniFormat);
     return externalToolResolvedPath(
         externalToolSpec(ExternalTool::Ffmpeg),
-        settings.value(externalToolIniKey(ExternalTool::Ffmpeg)).toString(), App::paths().iniDir());
+        settings.value(externalToolIniKey(ExternalTool::Ffmpeg)).toString(),
+        App::paths().pluginDir(), App::paths().iniDir());
 }
 
 // ——N146：AI 字幕生成——

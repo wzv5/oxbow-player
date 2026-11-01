@@ -23,6 +23,23 @@ QStringList extensionPatterns(const QStringList &extensions);
 // 塞进来既改语义又让通用层背上那个提供者的翻译。要递归就用那一支，别在此加参数
 QFileInfoList listFiles(const QString &dirPath, const QStringList &extensions);
 
+// 外部程序解析单点（N149）：命令行首段（程序写法）→ 可执行文件绝对路径，命不中返回
+// 空串。前导 `./`（可叠多个）剥掉后按形态分派：绝对写法拆"目录 + 名"回喂一次
+// findExecutable（绝对路径不套 Qt 的后缀清单，必须拆解）；相对与裸名先按原样写法、
+// 再按只留尾段，各在 pluginDir 与 iniDir 上搜一次（两目录一次喂入、插件目录在前，
+// 同名并存随包那份优先），两步都落空最后拿尾段搜系统 PATH——带子目录的写法绝不进
+// PATH。后缀枚举用 Qt 自己的固定清单（.com/.exe/.bat/.cmd），不镜像 PATHEXT；出表
+// 恒为正斜杠绝对路径，输入的大小写形态原样透出。`..` 越界照常拼，本层不做路径安全
+// 语义；token 空白或剥完 `./` 后为空返回空串。两目录入参为空只表示"这一档没得搜"
+// （空串不入搜索表、两目录同形只搜一次），不因此提前判不可得
+QString resolveExternalProgram(const QString &pluginDir, const QString &iniDir,
+                               const QString &token);
+
+// 起进程日志用的命令行串（N149 §2.4）：定形后的程序绝对路径 + 全部实参连成一行；
+// 含空白或引号的段加双引号、内嵌引号按 Win32 规则前缀反斜杠（与 QProcess 实际下发给
+// CreateProcess 的形态一致），带空格的路径这一族可按 QProcess::splitCommand 回拆
+QString commandLineForLog(const QString &program, const QStringList &args);
+
 // 数字化文件名的分段序列（N4）：文本段或数值段。
 // 拆分依据仅为 ASCII 0-9；数值段按十进制解析（前导零不敏感，01 与 1 相等），
 // 解析失败（超出 qlonglong 的超长数字串）时该段降级为普通文本段，

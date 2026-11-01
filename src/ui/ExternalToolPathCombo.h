@@ -10,7 +10,9 @@
 class ExternalToolPathCombo : public QWidget {
     Q_OBJECT
   public:
-    // configDir 供候选发现使用（ini 所在目录；启动侧与设置对话框语义一致）
+    // configDir 供候选发现使用（ini 所在目录；启动侧与设置对话框语义一致）；插件目录
+    // 取 App::paths() 的出口在构造期定格（N147），与 configDir 一起注入 ExternalTool
+    // 那两只函数（它们只吃参数、不读单点）
     ExternalToolPathCombo(const ExternalToolSpec &spec, const QString &configDir,
                           QWidget *parent = nullptr);
 
@@ -29,6 +31,7 @@ class ExternalToolPathCombo : public QWidget {
     void browse();
 
     ExternalToolSpec m_spec;
+    QString m_pluginDir;
     QString m_configDir;
     QString m_autoLabel;
     QComboBox *m_combo = nullptr;

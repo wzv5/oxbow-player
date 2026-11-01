@@ -108,6 +108,22 @@ class TestUtil : public QObject {
     // urls 侧照 entriesFromUrls；文本侧只收已定形串（file: 折成本地串再判）；
     // 转接形态两侧都丢；两者皆无得空表
     void entriesFromDropShapes();
+    // ——N149：Util::resolveExternalProgram（外部程序三步解析）——
+    // 三步各命中一次：① 带子目录只在两目录命中、② 只摆目录根靠尾段命中、③ 尾段在
+    // PATH 命中（含控制项：先证裸名读的是当下 PATH）；带子目录的写法绝不进 PATH
+    void resolveExternalProgramThreeSteps();
+    // 两目录各命中一形：只摆 ini 目录命中、同名并存插件目录优先、ini 留空只用插件目录
+    void resolveExternalProgramTwoDirs();
+    // 绝对写法拆解回喂：无后缀补可命中、带后缀大小写原样、不存在判不可得、不进 PATH
+    // 也不依赖两个目录入参
+    void resolveExternalProgramAbsolute();
+    // Qt 固定后缀清单：.bat/.cmd 命中、.vbs 与写进 PATHEXT 的自定义后缀不可得、
+    // .com 与 .exe 并存取 .com
+    void resolveExternalProgramSuffixList();
+    // 边界行：空 token、纯空白、多重 ./、`..` 越界照常拼并命中
+    void resolveExternalProgramEdges();
+    // 起飞日志的命令行串：含空白 / 引号的段加引号，且能按 splitCommand 回拆原数组
+    void commandLineForLogRoundTrips();
 };
 
 void TestUtil::emptyInputYieldsNoSegments() {
@@ -853,6 +869,236 @@ void TestUtil::entriesFromDropShapes() {
     // 两者皆无 → 空表
     QMimeData emptyMime;
     QVERIFY(Util::Url::entriesFromDrop(emptyMime).isEmpty());
+}
+
+// ——N149：Util::resolveExternalProgram——
+
+// 造文件（父目录一并建）：解析判据只看文件存在，不必是真程序
+static bool touchFile(const QString &path) {
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    QFile f(path);
+    return f.open(QIODevice::WriteOnly) && f.write("x") == 1;
+}
+
+// 三步各命中一次。次序敏感：逐档抽掉上一档的落点，逼解析落到下一步
+void TestUtil::resolveExternalProgramThreeSteps() {
+#ifdef Q_OS_WIN
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QString plugin = root.filePath(QStringLiteral("plug"));
+    const QString ini = root.filePath(QStringLiteral("ini"));
+    const QString pathDir = root.filePath(QStringLiteral("onpath"));
+    QVERIFY(touchFile(plugin + QStringLiteral("/n149dir/n149cli.exe")));
+    QVERIFY(touchFile(plugin + QStringLiteral("/n149cli.exe")));
+
+    // ①：带子目录的写法（正 / 反斜杠）只在插件目录的子目录上命中，
+    // 根上那份同名文件不干扰（①查的是整条写法）
+    const QString step1 =
+        Util::resolveExternalProgram(plugin, ini, QStringLiteral("./n149dir/n149cli"));
+    QCOMPARE(QFileInfo(step1).absolutePath(),
+             QDir(plugin).absoluteFilePath(QStringLiteral("n149dir")));
+    QVERIFY(QFileInfo(step1).isFile());
+    // 出表形态钉死：正斜杠绝对路径、写法里的 ./ 与反斜杠都不透出（§2.2）
+    QCOMPARE(step1, QDir(plugin).filePath(QStringLiteral("n149dir/n149cli.exe")));
+    QVERIFY(!Util::resolveExternalProgram(plugin, ini, QStringLiteral("n149dir\\n149cli"))
+                 .contains(QLatin1Char('\\')));
+
+    // ②：抽掉子目录那份，只留目录根——带子目录写法靠只留尾段命中
+    QVERIFY(QFile::remove(plugin + QStringLiteral("/n149dir/n149cli.exe")));
+    const QString step2 =
+        Util::resolveExternalProgram(plugin, ini, QStringLiteral("./n149dir/n149cli"));
+    QCOMPARE(QFileInfo(step2).absolutePath(), QDir(plugin).absolutePath());
+
+    // ③：抽掉插件目录那份，尾段在 PATH 命中。控制项先行——裸名在注入的 PATH 首项
+    // 命中，才证明这一档读的是当下 PATH 而非缓存
+    QVERIFY(QFile::remove(plugin + QStringLiteral("/n149cli.exe")));
+    QVERIFY(touchFile(pathDir + QStringLiteral("/top-cli.exe")));
+    QVERIFY(touchFile(pathDir + QStringLiteral("/n149cli.exe")));
+    const QString savedPath = qEnvironmentVariable("PATH");
+    const QByteArray injectedPath = (pathDir + QDir::listSeparator() + savedPath).toLocal8Bit();
+    qputenv("PATH", injectedPath);
+    const QString control = Util::resolveExternalProgram(plugin, ini, QStringLiteral("top-cli"));
+    QCOMPARE(QFileInfo(control).absolutePath(), QDir(pathDir).absolutePath());
+    const QString step3 =
+        Util::resolveExternalProgram(plugin, ini, QStringLiteral("./n149dir/n149cli"));
+    QCOMPARE(QFileInfo(step3).absolutePath(), QDir(pathDir).absolutePath());
+
+    // 带子目录的写法在第 ③ 步不参与：抽掉 PATH 项根上的尾段文件、只在项下摆
+    // n149dir/ 子目录——尾段搜不到，子目录写法也不得拼上 PATH 项
+    QVERIFY(QFile::remove(pathDir + QStringLiteral("/n149cli.exe")));
+    QVERIFY(touchFile(pathDir + QStringLiteral("/n149dir/n149cli.exe")));
+    QVERIFY(
+        Util::resolveExternalProgram(plugin, ini, QStringLiteral("./n149dir/n149cli")).isEmpty());
+    QVERIFY(QFile::remove(pathDir + QStringLiteral("/n149dir/n149cli.exe")));
+
+    // PATH 还原后第 ③ 步随之失效（逐次现读，不残留上次结果）
+    qputenv("PATH", savedPath.toLocal8Bit());
+    QVERIFY(
+        Util::resolveExternalProgram(plugin, ini, QStringLiteral("./n149dir/n149cli")).isEmpty());
+#else
+    QSKIP("后缀枚举与 PATH 注入语义只在 Windows 侧成立");
+#endif
+}
+
+void TestUtil::resolveExternalProgramTwoDirs() {
+#ifdef Q_OS_WIN
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QString plugin = root.filePath(QStringLiteral("plug"));
+    const QString ini = root.filePath(QStringLiteral("ini"));
+    QVERIFY(touchFile(ini + QStringLiteral("/tool.exe")));
+
+    // 只摆 ini 目录：照样命中
+    const QString onlyIni = Util::resolveExternalProgram(plugin, ini, QStringLiteral("tool"));
+    QCOMPARE(QFileInfo(onlyIni).absolutePath(), QDir(ini).absolutePath());
+
+    // 两目录同名并存：插件目录在前、随包那份优先
+    QVERIFY(touchFile(plugin + QStringLiteral("/tool.exe")));
+    const QString both = Util::resolveExternalProgram(plugin, ini, QStringLiteral("tool"));
+    QCOMPARE(QFileInfo(both).absolutePath(), QDir(plugin).absolutePath());
+
+    // ini 入参留空：只用插件目录，不影响命中
+    QCOMPARE(QFileInfo(Util::resolveExternalProgram(plugin, QString(), QStringLiteral("tool")))
+                 .absolutePath(),
+             QDir(plugin).absolutePath());
+#else
+    QSKIP("后缀枚举语义只在 Windows 侧成立");
+#endif
+}
+
+void TestUtil::resolveExternalProgramAbsolute() {
+#ifdef Q_OS_WIN
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QString absDir = root.filePath(QStringLiteral("absdir"));
+    const QString plugin = root.filePath(QStringLiteral("plug"));
+    QVERIFY(touchFile(absDir + QStringLiteral("/abs-tool.exe")));
+    QVERIFY(touchFile(absDir + QStringLiteral("/noext.exe")));
+    QVERIFY(touchFile(absDir + QStringLiteral("/Mixed.EXE")));
+    QVERIFY(touchFile(plugin + QStringLiteral("/abs-tool.exe")));
+
+    const QStringList dirs{plugin, root.filePath(QStringLiteral("onpath"))};
+
+    // 绝对路径省后缀：拆"目录 + 名"回喂后补出 .exe
+    const QString noExt =
+        Util::resolveExternalProgram(plugin, QString(), absDir + QStringLiteral("/noext"));
+    QVERIFY(QFileInfo(noExt).isFile());
+    QVERIFY(noExt.endsWith(QStringLiteral("noext.exe"), Qt::CaseInsensitive));
+
+    // 绝对路径带后缀：命中且大小写原样透出（不归一为真名）
+    const QString cased =
+        Util::resolveExternalProgram(plugin, QString(), absDir + QStringLiteral("/Mixed.EXE"));
+    QVERIFY(cased.endsWith(QStringLiteral("Mixed.EXE"), Qt::CaseSensitive));
+    QVERIFY(QFileInfo(cased).isFile());
+
+    // 绝对路径不进 PATH 也不依赖两目录：指向不存在的文件判不可得，
+    // 即便插件目录上摆着同名程序也不被顶替
+    QVERIFY(
+        Util::resolveExternalProgram(plugin, dirs.at(1), absDir + QStringLiteral("/absent-tool"))
+            .isEmpty());
+    QVERIFY(Util::resolveExternalProgram(plugin, dirs.at(1),
+                                         absDir + QStringLiteral("/absent-tool.exe"))
+                .isEmpty());
+#else
+    QSKIP("后缀枚举语义只在 Windows 侧成立");
+#endif
+}
+
+void TestUtil::resolveExternalProgramSuffixList() {
+#ifdef Q_OS_WIN
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QString plugin = root.filePath(QStringLiteral("plug"));
+    QVERIFY(touchFile(plugin + QStringLiteral("/whisper/only-bat.bat")));
+    QVERIFY(touchFile(plugin + QStringLiteral("/whisper/only-cmd.cmd")));
+    QVERIFY(touchFile(plugin + QStringLiteral("/whisper/only-vbs.vbs")));
+    QVERIFY(touchFile(plugin + QStringLiteral("/plain.exe")));
+    QVERIFY(touchFile(plugin + QStringLiteral("/plain.com")));
+    QVERIFY(touchFile(plugin + QStringLiteral("/weird.zzz")));
+
+    // 只有 bat / cmd 也命中（N149 的立题）
+    QVERIFY(Util::resolveExternalProgram(plugin, QString(), QStringLiteral("./whisper/only-bat"))
+                .endsWith(QStringLiteral(".bat"), Qt::CaseInsensitive));
+    QVERIFY(Util::resolveExternalProgram(plugin, QString(), QStringLiteral("./whisper/only-cmd"))
+                .endsWith(QStringLiteral(".cmd"), Qt::CaseInsensitive));
+    // 清单外后缀不可得
+    QVERIFY(Util::resolveExternalProgram(plugin, QString(), QStringLiteral("./whisper/only-vbs"))
+                .isEmpty());
+    QVERIFY(Util::resolveExternalProgram(plugin, QString(), QStringLiteral("weird")).isEmpty());
+    // .com 与 .exe 并存：按 Qt 固定顺序取第一个（.com 在前）
+    QVERIFY(Util::resolveExternalProgram(plugin, QString(), QStringLiteral("plain"))
+                .endsWith(QStringLiteral(".com"), Qt::CaseInsensitive));
+
+    // PATHEXT 不镜像：写进自定义后缀后同一写法仍不可得
+    const QString savedPathExt = qEnvironmentVariable("PATHEXT");
+    const QByteArray extendedPathExt =
+        ((savedPathExt.isEmpty() ? QStringLiteral(".COM;.EXE;.BAT;.CMD") : savedPathExt) +
+         QStringLiteral(";.ZZZ"))
+            .toLocal8Bit();
+    qputenv("PATHEXT", extendedPathExt);
+    QVERIFY(Util::resolveExternalProgram(plugin, QString(), QStringLiteral("weird")).isEmpty());
+    if (savedPathExt.isEmpty())
+        qunsetenv("PATHEXT");
+    else
+        qputenv("PATHEXT", savedPathExt.toLocal8Bit());
+#else
+    QSKIP("后缀枚举与 PATHEXT 语义只在 Windows 侧成立");
+#endif
+}
+
+void TestUtil::resolveExternalProgramEdges() {
+#ifdef Q_OS_WIN
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QString plugin = root.filePath(QStringLiteral("plug"));
+    QVERIFY(touchFile(plugin + QStringLiteral("/n149dir/n149cli.exe")));
+    QVERIFY(touchFile(root.filePath(QStringLiteral("n149outside.exe"))));
+
+    // 空 token / 纯空白 / 剥完 ./ 后为空：一律空串
+    QVERIFY(Util::resolveExternalProgram(plugin, QString(), QString()).isEmpty());
+    QVERIFY(Util::resolveExternalProgram(plugin, QString(), QStringLiteral("   ")).isEmpty());
+    QVERIFY(Util::resolveExternalProgram(plugin, QString(), QStringLiteral("./")).isEmpty());
+    QVERIFY(Util::resolveExternalProgram(plugin, QString(), QStringLiteral("./././")).isEmpty());
+
+    // 多重 ./ 与首尾空白照常剥：命中 ①
+    QVERIFY(
+        !Util::resolveExternalProgram(plugin, QString(), QStringLiteral("./././n149dir/n149cli"))
+             .isEmpty());
+    QVERIFY(
+        !Util::resolveExternalProgram(plugin, QString(), QStringLiteral("  ./n149dir/n149cli  "))
+             .isEmpty());
+
+    // `..` 越界写法不另设防：按目录语义照常拼出插件目录之外并命中
+    const QString outside =
+        Util::resolveExternalProgram(plugin, QString(), QStringLiteral("../n149outside"));
+    QVERIFY(QFileInfo(outside).isFile());
+    QCOMPARE(QFileInfo(outside).absolutePath(), root.path());
+#else
+    QSKIP("后缀枚举语义只在 Windows 侧成立");
+#endif
+}
+
+// 起飞日志的命令行串（N149 §2.4）：程序绝对路径与全部实参连成一行，含空白 / 引号 /
+// 空串的段按 Win32 规则加引号（与 QProcess 下发给 CreateProcess 的形态一致）。现实里
+// 咬人的是带空格的路径——这一族要能按 QProcess::splitCommand 回拆成实际下发的那个数组
+void TestUtil::commandLineForLogRoundTrips() {
+    const QString program = QStringLiteral("C:/Program Files/whisper/whisper-cli.exe");
+    const QStringList args{QStringLiteral("-m"), QStringLiteral("C:/my dir/ggml model.bin"),
+                           QStringLiteral("-f"), QStringLiteral("C:/Temp/my dir/clip.wav"),
+                           QStringLiteral("--srt")};
+    const QString line = Util::commandLineForLog(program, args);
+    QCOMPARE(QProcess::splitCommand(line), QStringList{program} + args);
+    QVERIFY(line.startsWith(QStringLiteral("\"C:/Program Files/whisper/whisper-cli.exe\" -m")));
+    QVERIFY(!line.contains(QStringLiteral("\"--srt\""))); // 无需加引号的短实参原样出表
+
+    // 内嵌引号前缀反斜杠、空实参落成一对引号（不吞掉实参位）、尾反斜杠加倍后再收尾
+    // 引号——少这一步，整行从这一位起串行
+    const QString escaped =
+        Util::commandLineForLog(program, QStringList{QStringLiteral("--model=D:/a \"b\".gguf"),
+                                                     QStringLiteral("C:\\my out\\"), QString()});
+    QVERIFY(escaped.contains(QStringLiteral("\"--model=D:/a \\\"b\\\".gguf\"")));
+    QVERIFY(escaped.contains(QStringLiteral("\"C:\\my out\\\\\"")));
+    QVERIFY(escaped.endsWith(QStringLiteral(" \"\"")));
 }
 
 // 一类一可执行（R5）：自带 main（QTEST_GUILESS_MAIN）

@@ -4,12 +4,17 @@
 
 #include "ai/AiSubtitleCatalog.h"
 
+#include <QProcess>
 #include <QTemporaryDir>
+
+#include "Util.h"
 
 // N146：AI 字幕目录单点的契约测试——命令行拆分与占位符替换、模式分派、按域分派的
 // 自检、八项设置的"键 → 缺省"读法、端点与 API Key 归一、限速退避、提示词渲染、
 // 句子归一、回复解析（含剥思考过程）、缓存基名口径、语言清单与短名映射。
-// 除 readSettings 走一份临时 ini 外全部是纯函数，不碰进程与网络。
+// 除 readSettings 走一份临时 ini 外全部是纯函数，不碰网络；N149 起唯一例外是
+// customCommandBatchLaunch——它真实起飞一个临时 .bat 验证"bat 免 shell 直起"，
+// 此外不碰进程。
 
 using namespace AiSubtitleCatalog;
 
@@ -32,11 +37,13 @@ class TestAiSubtitleCatalog : public QObject {
 
   private slots:
     void splitCommandLineAndExpandArgs();
+    void builtinArraysShapeAndJoin();
     void selectAsrCommandByMode();
     void readSettingsPrefersWrittenValues();
     void selfCheckPathsResolveUnderPluginDir();
     void selfCheckRequiresConfiguredCustom();
     void selfCheckDispatchesByDomain();
+    void customCommandBatchLaunch();
     void normalizeEndpointVariants();
     void normalizeApiKeyTrims();
     void rateLimitWaitMsPrefersHeader();
@@ -75,14 +82,31 @@ void TestAiSubtitleCatalog::splitCommandLineAndExpandArgs() {
     QCOMPARE(embedded.at(0), QStringLiteral("--file=D:/a b.wav"));
 }
 
+// N149：内置命令以数组为权威形态——第 0 项即程序写法且带 ./（与实参里的 ./model/...
+// 同形，设置项给用户看的整条串照此），${wav_file} 独占一个实参位供实参级展开；
+// 拼接出口与逐项 join 逐字节一致
+void TestAiSubtitleCatalog::builtinArraysShapeAndJoin() {
+    QCOMPARE(builtinAsrCommand().first(), QStringLiteral("./whisper/whisper-cli"));
+    QCOMPARE(builtinServerCommand().first(), QStringLiteral("./llama.cpp/llama-server"));
+    // 首段与模型实参同为 ./ 开头：UI 上"随包相对插件目录"一眼可辨
+    QVERIFY(builtinAsrCommand().first().startsWith(QStringLiteral("./")));
+    QVERIFY(builtinAsrCommand().contains(QStringLiteral("./model/ggml-large-v3-turbo.bin")));
+    QVERIFY(builtinAsrCommand().last() == QStringLiteral("${wav_file}"));
+    QCOMPARE(builtinAsrCommandLine(), builtinAsrCommand().join(u' '));
+    // 拼接串回拆等于原数组（QProcess::splitCommand 对这批实参无歧义）
+    QCOMPARE(splitCommandLine(builtinAsrCommandLine()), builtinAsrCommand());
+}
+
 void TestAiSubtitleCatalog::selectAsrCommandByMode() {
-    // 内置忽略自定义串，取固定命令原文；自定义取用户串（空串原样透出，
-    // "判不可用"由 isConfigured 承担）
+    // 内置忽略自定义串，取固定数组；自定义拆用户串（空串得空表，
+    // "判不可用"由 isConfigured 与解析判据承担）
     QCOMPARE(selectAsrCommand(QStringLiteral("builtin"), QStringLiteral("whatever")),
              builtinAsrCommand());
+    const QStringList customSplit{QStringLiteral("my"), QStringLiteral("tool"),
+                                  QStringLiteral("--srt")};
     QCOMPARE(selectAsrCommand(QStringLiteral("custom"), QStringLiteral("my tool --srt")),
-             QStringLiteral("my tool --srt"));
-    QCOMPARE(selectAsrCommand(QStringLiteral("custom"), QString()), QString());
+             customSplit);
+    QVERIFY(selectAsrCommand(QStringLiteral("custom"), QString()).isEmpty());
 }
 
 void TestAiSubtitleCatalog::readSettingsPrefersWrittenValues() {
@@ -101,7 +125,7 @@ void TestAiSubtitleCatalog::readSettingsPrefersWrittenValues() {
     QCOMPARE(values.asrMode, QStringLiteral("custom"));
     QCOMPARE(values.translationApi, QStringLiteral("http://h:1/v1"));
     // 缺键落本模块缺省，与设置目录各项的 fallback 同一批值
-    QCOMPARE(values.asrCommand, builtinAsrCommand());
+    QCOMPARE(values.asrCommand, builtinAsrCommandLine());
     QCOMPARE(values.translationMode, QLatin1String(kModeBuiltin));
     QCOMPARE(values.translationTargetLang, defaultTargetLanguage());
     QCOMPARE(values.translationPrompt, defaultTranslationPrompt());
@@ -110,24 +134,20 @@ void TestAiSubtitleCatalog::readSettingsPrefersWrittenValues() {
 }
 
 void TestAiSubtitleCatalog::selfCheckPathsResolveUnderPluginDir() {
+#ifdef Q_OS_WIN
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const QString pluginDir = dir.path();
-    // 内置形：程序令牌定形（Windows 补 .exe），./ 开头的模型实参按相对路径定形，
-    // ${wav_file} 与旗标不进清单
-    const QString command =
-        QStringLiteral("./funasr/llama-funasr-cli --enc ./model/enc.gguf -m ./model/llm.gguf"
-                       " --vad ./model/vad.gguf -a ${wav_file} --srt");
-    const QString program =
-        resolvePluginProgramPath(pluginDir, QStringLiteral("./funasr/llama-funasr-cli"));
-#ifdef Q_OS_WIN
-    QVERIFY(program.endsWith(QStringLiteral("funasr/llama-funasr-cli.exe")));
-#else
-    QVERIFY(program.endsWith(QStringLiteral("funasr/llama-funasr-cli")));
-#endif
-    const QStringList paths = selfCheckPaths(command, pluginDir);
+    // 内置形：程序段走三步解析（文件须真实存在，先造程序再取表），./ 开头的模型实参
+    // 按相对路径定形（不补后缀、不进 PATH），${wav_file} 与旗标不进清单
+    const QStringList command =
+        splitCommandLine(QStringLiteral("./funasr/llama-funasr-cli --enc ./model/enc.gguf"
+                                        " -m ./model/llm.gguf --vad ./model/vad.gguf"
+                                        " -a ${wav_file} --srt"));
+    createFiles({pluginDir + QStringLiteral("/funasr/llama-funasr-cli.exe")});
+    const QStringList paths = selfCheckPaths(command, pluginDir, QString());
     QCOMPARE(paths.size(), 4);
-    QCOMPARE(paths.at(0), program);
+    QVERIFY(paths.at(0).endsWith(QStringLiteral("funasr/llama-funasr-cli.exe")));
     QVERIFY(paths.at(1).endsWith(QStringLiteral("model/enc.gguf")));
     QVERIFY(paths.at(2).endsWith(QStringLiteral("model/llm.gguf")));
     QVERIFY(paths.at(3).endsWith(QStringLiteral("model/vad.gguf")));
@@ -136,10 +156,17 @@ void TestAiSubtitleCatalog::selfCheckPathsResolveUnderPluginDir() {
     QVERIFY(!allFilesExist(paths));
     createFiles(paths);
     QVERIFY(allFilesExist(paths));
+
+    // 程序解析不到（文件撤掉）即整表为空、自检判不可用（N149）
+    QVERIFY(QFile::remove(paths.at(0)));
+    QVERIFY(selfCheckPaths(command, pluginDir, QString()).isEmpty());
+#else
+    QSKIP("程序解析依赖后缀枚举语义，只在 Windows 侧成立");
+#endif
 }
 
 void TestAiSubtitleCatalog::selfCheckRequiresConfiguredCustom() {
-    // 自定义档只判非空：不解析程序、不查文件、不做 PATH 搜索
+    // 自定义档的前置：trim 后非空（其后 N149 起还要过解析判据，见 selfCheckDispatchesByDomain）
     QVERIFY(!isConfigured(QString()));
     QVERIFY(!isConfigured(QStringLiteral("   ")));
     QVERIFY(isConfigured(QStringLiteral("tool")));
@@ -147,32 +174,96 @@ void TestAiSubtitleCatalog::selfCheckRequiresConfiguredCustom() {
 }
 
 void TestAiSubtitleCatalog::selfCheckDispatchesByDomain() {
-    // 判据按域各立一条出口（ASR 认命令行与插件目录下的文件，翻译认服务端文件或端点）：
-    // 两档模式并非同一件事，将来各自的档位不同步扩也不互相牵扯
+    // 判据按域各立一条出口（ASR 认解析得到的程序与插件目录下的文件，翻译认服务端
+    // 文件或端点）：两档模式并非同一件事，将来各自的档位不同步扩也不互相牵扯
+#ifdef Q_OS_WIN
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const QString pluginDir = dir.path();
+    const QString iniDir = QString(); // 本套自检不吃 ini 目录，传空串照走
     const QString builtin = QLatin1String(kModeBuiltin);
     const QString custom = QLatin1String(kModeCustom);
 
-    // 空目录：两域的内置档都判不可用（程序与模型都不在）
-    QVERIFY(!asrAvailable(builtin, QStringLiteral("whatever"), pluginDir));
-    QVERIFY(!translationAvailable(builtin, QStringLiteral("http://h:1/v1"), pluginDir));
+    // 空目录：两域的内置档都判不可用（程序解析不到即整表为空）
+    QVERIFY(!asrAvailable(builtin, QStringLiteral("whatever"), pluginDir, iniDir));
+    QVERIFY(!translationAvailable(builtin, QStringLiteral("http://h:1/v1"), pluginDir, iniDir));
 
-    // 内置档不吃用户那一串：只补 ASR 那批文件，翻译仍判不可用
-    createFiles(selfCheckPaths(builtinAsrCommand(), pluginDir));
-    QVERIFY(asrAvailable(builtin, QString(), pluginDir));
-    QVERIFY(!translationAvailable(builtin, QStringLiteral("http://h:1/v1"), pluginDir));
+    // ASR 自定义档从"非空即真"改为"解析不到即假"：首段指向不存在的文件判不可用
+    QVERIFY(!asrAvailable(custom, QStringLiteral("mytool -f ${wav_file}"), pluginDir, iniDir));
+
+    // 内置档不吃用户那一串：先造程序文件（解析前提），模型补齐前判不可用
+    createFiles({pluginDir + QStringLiteral("/whisper/whisper-cli.exe")});
+    QVERIFY(!asrAvailable(builtin, QString(), pluginDir, iniDir)); // 模型缺
+    const QStringList asrPaths = selfCheckPaths(builtinAsrCommand(), pluginDir, iniDir);
+    QCOMPARE(asrPaths.size(), 3); // 程序 + 两个模型（${wav_file} 不进表）
+    createFiles(asrPaths);
+    QVERIFY(asrAvailable(builtin, QStringLiteral("whatever"), pluginDir, iniDir));
+
+    // 自定义档补上真实程序后转可用（只判程序，不查模型）
+    createFiles({pluginDir + QStringLiteral("/mytool.exe")});
+    QVERIFY(asrAvailable(custom, QStringLiteral("mytool -f ${wav_file}"), pluginDir, iniDir));
+    // 带子目录写法与只摆目录根（第 ② 步）同样判可用
+    createFiles({pluginDir + QStringLiteral("/tools/nested.exe")});
+    QVERIFY(asrAvailable(custom, QStringLiteral("tools/nested"), pluginDir, iniDir));
+    QVERIFY(asrAvailable(custom, QStringLiteral("./tools/nested"), pluginDir, iniDir));
 
     // 补齐服务端与模型：翻译内置档随之转可用
-    createFiles(selfCheckPaths(builtinServerCommand(), pluginDir));
-    QVERIFY(translationAvailable(builtin, QString(), pluginDir));
+    createFiles({pluginDir + QStringLiteral("/llama.cpp/llama-server.exe")});
+    QVERIFY(!translationAvailable(builtin, QStringLiteral("http://h:1/v1"), pluginDir, iniDir));
+    const QStringList serverPaths = selfCheckPaths(builtinServerCommand(), pluginDir, iniDir);
+    QCOMPARE(serverPaths.size(), 2); // 服务端 + 模型
+    createFiles(serverPaths);
+    QVERIFY(translationAvailable(builtin, QString(), pluginDir, iniDir));
 
-    // 其余档位只判用户那一串非空：ASR 看命令行、翻译看端点，都不查文件、不探端口
-    QVERIFY(!asrAvailable(custom, QStringLiteral("   "), pluginDir));
-    QVERIFY(asrAvailable(custom, QStringLiteral("my tool -f ${wav_file}"), pluginDir));
-    QVERIFY(!translationAvailable(custom, QString(), pluginDir));
-    QVERIFY(translationAvailable(custom, QStringLiteral("http://h:1/v1"), pluginDir));
+    // 翻译自定义档只判端点串非空：不解析程序、不探端口
+    QVERIFY(!translationAvailable(custom, QString(), pluginDir, iniDir));
+    QVERIFY(translationAvailable(custom, QStringLiteral("http://h:1/v1"), pluginDir, iniDir));
+#else
+    QSKIP("程序解析依赖后缀枚举语义，只在 Windows 侧成立");
+#endif
+}
+
+// N149：自定义命令指向临时 .bat——解析命中 .bat 后 QProcess 免 shell 直起、标准输出
+// 可取回，并钉住"带空格路径的实参原样送达"（§2.5 唯一承诺的实参语义，其余特殊字符
+// 由 cmd 二次展开、不承诺）。本套件唯一的真实起进程用例（文件头例外声明同源）
+void TestAiSubtitleCatalog::customCommandBatchLaunch() {
+#ifdef Q_OS_WIN
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString pluginDir = dir.path();
+    const QString bat = pluginDir + QStringLiteral("/marker.bat");
+    {
+        QFile file(bat);
+        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+        // %~ 形式剥掉 cmd 加的外层引号，回显的即是收到的实参原串
+        QVERIFY(file.write("@echo off\r\necho [%~1][%~2]\r\n") > 0);
+    }
+
+    const QStringList command =
+        selectAsrCommand(QStringLiteral("custom"), QStringLiteral("marker.bat -f ${wav_file}"));
+    QCOMPARE(command.first(), QStringLiteral("marker.bat"));
+    const QString program = Util::resolveExternalProgram(pluginDir, QString(), command.first());
+    QVERIFY(QFileInfo(program).isFile());
+    QCOMPARE(QDir::cleanPath(program), QDir::cleanPath(bat));
+
+    // wav 落在带空格的子目录名里：实参级展开后整段仍是一个实参
+    const QString wav = dir.filePath(QStringLiteral("my dir/clip.wav"));
+    const QStringList args = expandArg(command.mid(1), QStringLiteral("${wav_file}"), wav);
+    const QStringList wantArgs{QStringLiteral("-f"), wav};
+    QCOMPARE(args, wantArgs);
+
+    QProcess process;
+    process.setProcessChannelMode(QProcess::MergedChannels);
+    process.start(program, args);
+    QVERIFY(process.waitForStarted(3000));
+    QVERIFY(process.waitForFinished(3000));
+    QCOMPARE(process.exitCode(), 0);
+    const QString echoed = QString::fromLocal8Bit(process.readAll()).trimmed();
+    const QString wantEcho = QStringLiteral("[%1][%2]").arg(wantArgs.at(0), wantArgs.at(1));
+    QVERIFY2(echoed == wantEcho, qPrintable(echoed));
+#else
+    QSKIP("bat 直起语义只在 Windows 侧成立");
+#endif
 }
 
 void TestAiSubtitleCatalog::normalizeEndpointVariants() {

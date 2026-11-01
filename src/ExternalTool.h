@@ -24,22 +24,20 @@ const ExternalToolSpec &externalToolSpec(ExternalTool tool);
 // 设置目录那侧按自己的声明写、由 validateCatalog 对着定义校验
 QString externalToolIniKey(ExternalTool tool);
 
-// 核心模块所在目录（即插件目录；动态部署下与加载壳同目录）由 App::paths().pluginDir()
-// 单点持有（N147），本层不重复反查
-
-// 候选路径：插件目录（App::paths().pluginDir()）→ 配置文件目录 → PATH 各目录 →
-// （Linux）shim 同款标准库目录。只返回存在的文件，按规范化后的完整路径去重（Windows
-// 下大小写不敏感），保持发现顺序；出表按平台原生分隔符呈现（这些串直接进下拉框与 ini）；
-// configDir 由调用方传入（设置对话框取 ini 所在目录，启动侧取 App::paths().iniDir()）
-QStringList externalToolCandidates(const ExternalToolSpec &spec, const QString &configDir);
+// 候选路径：插件目录 → 配置文件目录 → PATH 各目录 →（Linux）shim 同款标准库目录。
+// 只返回存在的文件，按规范化后的完整路径去重（Windows 下大小写不敏感），保持发现
+// 顺序；出表按平台原生分隔符呈现（这些串直接进下拉框与 ini）。两目录一律由调用方
+// 注入（N147 的 App::paths() 出口在调用点取，本层不反查、不读单点）
+QStringList externalToolCandidates(const ExternalToolSpec &spec, const QString &pluginDir,
+                                   const QString &configDir);
 
 // 文件对话框过滤器：显示名 + 目标文件名，只此一个（不提供 All files——浏览面
 // 只能命中 shim 认的目标名）
 QString externalToolBrowseFilter(const ExternalToolSpec &spec);
 
-// 路径选择（N146）：ini 显式值 trim 后非空即原样优先（相对写法交调用方的运行机制
-// 自行解析），否则取候选表首项，都没有返回空串（判不可用）。ffmpeg 进程与 MediaInfo
-// 库的"ini 值优先、缺席自动发现"共用这一个选择点；加载目标的校验与绝对化是另一条
-// 口径，住 MediaInfoHelper
+// 路径选择（N146）：ini 显式值 trim 后非空即走解析定形（N149：插件目录 → 配置文件
+// 目录 → PATH 三步，解析不到判不可用），否则取候选表首项，都没有返回空串。ffmpeg
+// 进程与 MediaInfo 库的"ini 值优先、缺席自动发现"共用这一个选择点；加载目标的校验
+// 与绝对化是另一条口径，住 MediaInfoHelper。两目录同样由调用方注入
 QString externalToolResolvedPath(const ExternalToolSpec &spec, const QString &configured,
-                                 const QString &configDir);
+                                 const QString &pluginDir, const QString &configDir);

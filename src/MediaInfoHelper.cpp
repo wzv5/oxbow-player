@@ -48,13 +48,14 @@ struct LoadTarget {
 };
 
 // configured 为空 = 自动态：取候选表首项，POSIX 候选全空时退回目标名本身（与 shim 同参的按
-// 名 dlopen）。非空 = 显式路径：相对写法以配置文件目录为基准（进程 CWD 随 mpv 从哪儿启动而
-// 变，不可控），且一律绝对化——LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR 对相对路径不可靠
+// 名 dlopen）。非空 = 显式路径：相对写法在插件目录与 ini 目录上逐个试（插件目录在前，
+// N149；进程 CWD 随 mpv 从哪儿启动而变，不可控，不作基准），且一律绝对化——
+// LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR 对相对路径不可靠
 LoadTarget resolveLoadTarget(const ExternalToolSpec &spec, const QString &configured,
-                             const QString &configDir) {
+                             const QString &pluginDir, const QString &iniDir) {
     LoadTarget out;
     if (configured.isEmpty()) {
-        const QStringList candidates = externalToolCandidates(spec, configDir);
+        const QStringList candidates = externalToolCandidates(spec, pluginDir, iniDir);
         if (!candidates.isEmpty())
             // 候选表出表是给人看的形态（Windows 原生分隔符），加载目标这一侧统一归回正斜杠
             out.path = QDir::cleanPath(candidates.first());
@@ -66,11 +67,26 @@ LoadTarget resolveLoadTarget(const ExternalToolSpec &spec, const QString &config
     }
 
     const QFileInfo raw(configured);
-    const QString absolute =
-        raw.isAbsolute() || configDir.isEmpty()
-            ? raw.absoluteFilePath()
-            : QFileInfo(QDir(configDir).absoluteFilePath(configured)).absoluteFilePath();
-    const QFileInfo info(absolute);
+    if (!raw.isAbsolute()) {
+        // 相对写法：两目录逐个试（空串不入表、同形只试一次，与 Util::resolveExternalProgram
+        // 同一口径），命中判据仍是文件存在且基名严格相符（N149）
+        QStringList dirs;
+        if (!pluginDir.isEmpty())
+            dirs << pluginDir;
+        if (!iniDir.isEmpty() && iniDir != pluginDir)
+            dirs << iniDir;
+        for (const QString &dir : dirs) {
+            const QFileInfo info(QDir(dir).absoluteFilePath(configured));
+            if (info.isFile() && sameTargetName(info.fileName(), spec.targetFileName)) {
+                out.path = QDir::cleanPath(info.absoluteFilePath());
+                return out;
+            }
+        }
+        out.unusableConfigured = true;
+        return out;
+    }
+
+    const QFileInfo info(raw.absoluteFilePath());
     if (!info.isFile() || !sameTargetName(info.fileName(), spec.targetFileName)) {
         out.unusableConfigured = true;
         return out;
@@ -167,10 +183,11 @@ bool MediaInfoHelper::available() {
     return g_libState.load(std::memory_order_acquire) == LibState::Ready;
 }
 
-void MediaInfoHelper::preload(const QString &configuredPath, const QString &configDir) {
+void MediaInfoHelper::preload(const QString &configuredPath, const QString &pluginDir,
+                              const QString &iniDir) {
     const ExternalToolSpec &spec = externalToolSpec(ExternalTool::MediaInfo);
     const QString configured = configuredPath.trimmed();
-    const LoadTarget target = resolveLoadTarget(spec, configured, configDir);
+    const LoadTarget target = resolveLoadTarget(spec, configured, pluginDir, iniDir);
 
     if (g_libState.load(std::memory_order_acquire) == LibState::Ready) {
         // 已加载：不卸载、不清状态，只在加载目标确有变化（含"发现不到了"）时提示下次启动

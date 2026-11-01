@@ -36,6 +36,72 @@ QFileInfoList listFiles(const QString &dirPath, const QStringList &extensions) {
                                        QDir::NoSort);
 }
 
+QString resolveExternalProgram(const QString &pluginDir, const QString &iniDir,
+                               const QString &token) {
+    QString name = token.trimmed();
+    while (name.startsWith(QStringLiteral("./")))
+        name.remove(0, 2);
+    if (name.isEmpty())
+        return {};
+
+    const QFileInfo info(name);
+    if (info.isAbsolute())
+        return QStandardPaths::findExecutable(info.fileName(), {info.path()});
+
+    const QString tail = info.fileName();
+    QStringList dirs;
+    if (!pluginDir.isEmpty())
+        dirs << pluginDir;
+    if (!iniDir.isEmpty() && iniDir != pluginDir)
+        dirs << iniDir;
+
+    if (!dirs.isEmpty()) {
+        const QString direct = QStandardPaths::findExecutable(name, dirs);
+        if (!direct.isEmpty())
+            return direct;
+        if (tail != name) { // 裸名没有子目录段，第 ② 步与第 ① 步同形不必重试
+            const QString rooted = QStandardPaths::findExecutable(tail, dirs);
+            if (!rooted.isEmpty())
+                return rooted;
+        }
+    }
+    return QStandardPaths::findExecutable(tail, {});
+}
+
+QString commandLineForLog(const QString &program, const QStringList &args) {
+    // Win32 加引号规则（与 QProcess 下发给 CreateProcess 的形态一致）：紧挨 " 或段尾
+    // 的反斜杠串加倍再补一个反斜杠——否则尾反斜杠会把收尾引号吃掉、整行从这一位起串行
+    auto quote = [](const QString &token) {
+        if (!token.isEmpty() && !token.contains(QLatin1Char(' ')) &&
+            !token.contains(QLatin1Char('\t')) && !token.contains(QLatin1Char(u'"')))
+            return token;
+        QString out;
+        int slashes = 0;
+        for (const QChar ch : token) {
+            if (ch == QLatin1Char(u'\\')) {
+                ++slashes;
+                continue;
+            }
+            if (ch == QLatin1Char(u'"'))
+                out += QString(slashes * 2, QLatin1Char(u'\\')) + QStringLiteral("\\\"");
+            else
+                out += QString(slashes, QLatin1Char(u'\\')) + ch;
+            slashes = 0;
+        }
+        out += QString(slashes * 2, QLatin1Char(u'\\'));
+        out.prepend(u'"');
+        out.append(u'"');
+        return out;
+    };
+
+    QStringList tokens;
+    tokens.reserve(args.size() + 1);
+    tokens << quote(program);
+    for (const QString &arg : args)
+        tokens << quote(arg);
+    return tokens.join(u' ');
+}
+
 namespace {
 // 数字段解析：十进制累加并做溢出检测；成功产出数值段（前导零随解析抹平），
 // 溢出则返回 false，调用方将该段降级为普通文本段
