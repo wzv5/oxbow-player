@@ -194,6 +194,25 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle) {
         }
     }
 
+    // N146：AI 字幕缓存目录追加进 --sub-file-paths——此后装载的文件才按 sub-auto 在
+    // 该目录自动拾取生成的字幕。每进程只发一次、该选项不落盘，无需判重；-append 单条
+    // 不解析转义，绝对路径（mp_path_join_bstr 对绝对路径直通，不会被按媒体目录解析）。
+    // iniDir 取空（探针全败）即跳过：没有可写目录就没有缓存可言
+    {
+        const QString iniDir = App::paths().iniDir();
+        if (iniDir.isEmpty()) {
+            OXBOW_LOG_WARNING() << "ini dir unavailable, subtitle cache directory not registered";
+        } else {
+            const QByteArray path =
+                QDir::toNativeSeparators(iniDir + QStringLiteral("/subtitles")).toUtf8();
+            const char *args[] = {"change-list", "sub-file-paths", "append", path.constData(),
+                                  nullptr};
+            if (mpv_command(handle, args) < 0)
+                OXBOW_LOG_WARNING()
+                    << "failed to append subtitle cache directory to sub-file-paths";
+        }
+    }
+
     auto *controller = new MpvController(handle);
 
     // N52：装配硬顺序——install 须早于 startEventThread（首次 wait_event 解除启动

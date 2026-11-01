@@ -36,3 +36,10 @@ QStringList externalToolCandidates(const ExternalToolSpec &spec, const QString &
 // 文件对话框过滤器：显示名 + 目标文件名，只此一个（不提供 All files——浏览面
 // 只能命中 shim 认的目标名）
 QString externalToolBrowseFilter(const ExternalToolSpec &spec);
+
+// 路径选择（N146）：ini 显式值 trim 后非空即原样优先（相对写法交调用方的运行机制
+// 自行解析），否则取候选表首项，都没有返回空串（判不可用）。ffmpeg 进程与 MediaInfo
+// 库的"ini 值优先、缺席自动发现"共用这一个选择点；加载目标的校验与绝对化是另一条
+// 口径，住 MediaInfoHelper
+QString externalToolResolvedPath(const ExternalToolSpec &spec, const QString &configured,
+                                 const QString &configDir);

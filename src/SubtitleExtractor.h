@@ -82,9 +82,6 @@ class SubtitleExtractor : public QObject {
     // select.lua 的 codec 黑名单兜底）
     static bool isBrowsableTextSubtitle(const MpvController::TrackInfo &track);
 
-    // ffmpeg 路径选择：ini 显式值优先，空则取候选表第一项；都没有返回空串（判不可用）
-    static QString resolveFfmpegPath(const QString &configured, const QString &configDir);
-
     // srt 文本 → 条目表：时间行切块（, 与 . 毫秒分隔都接受、终点可缺）、行号只当
     // 分隔不用于定位、按起点稳定排序、畸形块整块丢弃；end 缺失回落下一块起点
     // （末块无上界）；文本已清洗，清洗后为空的条目保留

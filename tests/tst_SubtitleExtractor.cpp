@@ -6,7 +6,7 @@
 #include "streams/StreamTransit.h"
 
 // N143：字幕浏览器取数模块的解析与判据契约测试——srt 解析（时间行 / 行号 / 清洗 /
-// 排序 / 末块无上界）、编码判别、文本字幕轨判据、ffmpeg 路径选择。
+// 排序 / 末块无上界）、编码判别、文本字幕轨判据。
 // N145 起另含取数请求的判定矩阵（外部轨与正播解绑、转接身份与失败归类、刷新丢缓存）：
 // 全部走 start() 的同步发射面取证，不起进程、不碰端点与网络。
 
@@ -32,7 +32,6 @@ class TestSubtitleExtractor : public QObject {
     void decodeUtf16BeBom();
     void decodeInvalidUtf8FallsBackToLocale();
     void browsableTextSubtitleCriteria();
-    void resolveFfmpegPathPrefersExplicit();
     void transitWithoutResolverIsSourceUnavailable();
     void malformedTransitUriIsSourceUnavailable();
     void externalSubtitleIgnoresMediaLocality();
@@ -287,13 +286,6 @@ void TestSubtitleExtractor::browsableTextSubtitleCriteria() {
     track.type = QStringLiteral("audio");
     track.codec = QStringLiteral("subrip");
     QVERIFY(!SubtitleExtractor::isBrowsableTextSubtitle(track));
-}
-
-void TestSubtitleExtractor::resolveFfmpegPathPrefersExplicit() {
-    // ini 显式值原样优先（含空白修剪）；候选扫描依赖磁盘与 PATH，不在单测断言之列
-    QCOMPARE(SubtitleExtractor::resolveFfmpegPath(QStringLiteral(" D:/tools/ffmpeg.exe "),
-                                                  QStringLiteral("/cfg")),
-             QStringLiteral("D:/tools/ffmpeg.exe"));
 }
 
 // —— 以下取数请求的判定矩阵，一律经 start() 的同步发射面 ——

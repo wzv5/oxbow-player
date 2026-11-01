@@ -58,6 +58,16 @@ class AppearanceManager {
         return propValueForeground(p);
     }
 
+    // 自检可用 / 不可用两档（N146：AI 字幕生成对话框的三行自检值）：低饱和绿红是
+    // 色相基准，暗色档一并提亮；调用方在写值那一刻现取，与快照同寿命
+    static QColor availableForeground(const QPalette &p) {
+        return brightenForDark(QColor(0x5B, 0x9E, 0x63), p);
+    }
+
+    static QColor unavailableForeground(const QPalette &p) {
+        return brightenForDark(QColor(0xC4, 0x6A, 0x6A), p);
+    }
+
   private:
     // trim 后精确匹配（auto 不分大小写），空串与未命中落 fallbackName
     static QString resolveStyle(const QString &raw, const QStringList &available,

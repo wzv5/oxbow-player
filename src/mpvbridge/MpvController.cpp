@@ -1081,6 +1081,15 @@ MpvController::InputBindingTiers MpvController::inputBindings() const {
     return tiers;
 }
 
+QList<MpvController::TrackInfo> MpvController::readTracks() const {
+    mpv_node node;
+    if (mpv_get_property(m_mpv, "track-list", MPV_FORMAT_NODE, &node) != 0)
+        return {}; // 失败 / 不可读 → 空表
+    const QList<TrackInfo> tracks = parseTrackList(&node);
+    mpv_free_node_contents(&node);
+    return tracks;
+}
+
 // N135：menu-data 的 NODE 递归解析（数组套 map；type / title / cmd 为字符串，
 // state 为字符串数组，submenu 递归；shortcut 键不解析。字段类型不符按缺省处理，
 // 条目不是 map 即跳过，未知键忽略）

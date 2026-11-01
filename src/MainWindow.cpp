@@ -14,6 +14,8 @@
 #include "ServiceRegistry.h"
 #include "TraversalPolicy.h"
 #include "Util.h"
+#include "ai/AiSubtitleCatalog.h" // N146：复核原因文案
+#include "ai/AiSubtitleJob.h"     // N146：任务归主窗持有
 #include "mpvbridge/MpvController.h"
 #include "mpvbridge/MpvKeyName.h"                    // N87：未认领按键的 mpv 键名翻译
 #include "playbackreport/PlaybackReportDriver.h"     // N74：上报驱动器装配与退出序
@@ -27,6 +29,7 @@
 #include "streams/StreamTransit.h" // N55 §2.7：书签存储串的转接形态分岔（判据与 §3.6 同一条）
 #include "thumb/ThumbEngine.h"     // N107：缩略图第二 core 引擎
 #include "ui/AboutDialog.h"
+#include "ui/AiSubtitleDialog.h" // N146：AI 字幕生成对话框（按需创建，视图侧收步骤与进度）
 #include "ui/BookmarkEditorDialog.h"
 #include "ui/ChapterSlider.h"
 #include "ui/CustomToolListDialog.h"
@@ -818,6 +821,13 @@ MainWindow::~MainWindow() {
     // 未经 destroySubtitleBrowser 收口就退出时，在飞的 ffmpeg 由这里击杀
     if (m_subtitleExtractor)
         m_subtitleExtractor->cancel();
+    // N146：对话框无父窗（任务栏落点），不随主窗销毁，这里兜底 delete（析构不发
+    // finished，无双重 delete）；随后击杀在飞的 AI 生成链路（子进程、回环桥、
+    // 工人线程与临时 wav 都在这一条收口里尽力清理）
+    delete m_aiSubtitleDialog;
+    m_aiSubtitleDialog = nullptr;
+    if (m_aiSubtitleJob)
+        m_aiSubtitleJob->cancel();
     // N107：N103 销毁顺序——先阻塞拆缩略图 core 再停引擎线程，子控件（宿主窗）
     // 随基类析构在其后销毁。常规退出已由 onMpvShutdown 收口（幂等），本处兜底
     if (m_thumbEngine)
@@ -1071,6 +1081,17 @@ void MainWindow::connectActions() {
 
     m_navigatorAction = act(AM::Id::Navigator);
     connect(m_navigatorAction, &QAction::toggled, this, &MainWindow::setNavigatorVisible);
+
+    // N146：AI 字幕生成对话框入口（非模态单例，按需创建）
+    connect(act(AM::Id::GenerateSubtitle), &QAction::triggered, this,
+            &MainWindow::ensureAiSubtitleDialog);
+    // 当前文件行无任务时随在播变化刷新（任务进行中对话框固定为捕获项，不跟随）：
+    // 换行、装载完、转空三个时机同一条动作，共用一个刷新出口
+    connect(m_controller, &MpvController::playlistPosChanged, this,
+            &MainWindow::refreshAiSubtitleFile);
+    connect(m_controller, &MpvController::durationChanged, this,
+            &MainWindow::refreshAiSubtitleFile);
+    connect(m_controller, &MpvController::idleActive, this, &MainWindow::refreshAiSubtitleFile);
 
     // N143：字幕浏览器面板开关——勾选态即可见性，收口与导航器同款
     m_subtitleBrowserAction = act(AM::Id::SubtitleBrowser);
@@ -2270,14 +2291,79 @@ void MainWindow::destroySubtitleBrowser() {
     m_subtitleBrowser = nullptr;
 }
 
-// N143：ffmpeg 路径解析单点——ini 显式值优先，空则取候选表第一项，都没有判不可用。
+// N143：ffmpeg 路径解析单点——ini 显式值优先，空则取候选表第一项，都没有判不可用
+// （选择逻辑住 ExternalTool，本处只读 ini 与传参）
 // 设置面路径项变更经 onPluginIniKeysChanged 重解析推送，下一次取数即按新路径
 QString MainWindow::resolvedFfmpegPath() const {
     if (App::paths().iniFile().isEmpty())
         return {};
     QSettings settings(App::paths().iniFile(), QSettings::IniFormat);
-    return SubtitleExtractor::resolveFfmpegPath(
+    return externalToolResolvedPath(
+        externalToolSpec(ExternalTool::Ffmpeg),
         settings.value(externalToolIniKey(ExternalTool::Ffmpeg)).toString(), App::paths().iniDir());
+}
+
+// ——N146：AI 字幕生成——
+
+// 对话框按需创建（已在则 show/raise）；任务归主窗持有、首次使用时创建并注入
+// N145 同源的端点解析与 ffmpeg 路径出口。关闭即销毁（连到 finished）
+void MainWindow::ensureAiSubtitleDialog() {
+    if (!m_aiSubtitleJob) {
+        m_aiSubtitleJob = new AiSubtitleJob(m_controller, this);
+        m_aiSubtitleJob->setEndpointResolver([this](const QUuid &listUuid) {
+            return m_relay ? m_relay->endpointFor(listUuid) : nullptr;
+        });
+        m_aiSubtitleJob->setFfmpegPathProvider([this] { return resolvedFfmpegPath(); });
+    }
+    if (m_aiSubtitleDialog) {
+        m_aiSubtitleDialog->raise();
+        m_aiSubtitleDialog->activateWindow();
+        return;
+    }
+    // 对话框不设父窗：带属主的顶层窗进不了任务栏（Windows 侧 owned window 语义，
+    // 与窗口类型位无关），置空才有任务栏按钮与最小化落点；销毁链自补——finished
+    // 连接 deleteLater 照旧，主窗析构兜底 delete（见析构函数）
+    m_aiSubtitleDialog = new AiSubtitleDialog(
+        m_aiSubtitleJob, [this] { return aiSubtitleStartContext(); },
+        [this] { return aiSubtitleDisplayName(); }, nullptr);
+    connect(m_aiSubtitleDialog, &QDialog::finished, this, [this] {
+        m_aiSubtitleDialog->deleteLater();
+        m_aiSubtitleDialog = nullptr;
+    });
+    m_aiSubtitleDialog->show();
+}
+
+// 点开始那一刻的现读复核：有在播实体、能力位为真；不通过交原因文案（对话框弹
+// Cannot start），通过交捕获口现值与显示名。判据走 livePlayingEntity 现读——发车是
+// 一次用户动作，镜像可能已被切文件推前
+AiSubtitleStartContext MainWindow::aiSubtitleStartContext() const {
+    AiSubtitleStartContext context;
+    const auto entity = livePlayingEntity();
+    if (!entity) {
+        context.error = AiSubtitleCatalog::reasonNoPlayingItem();
+        return context;
+    }
+    if (!entity->supportsSecondaryDecode()) {
+        context.error = AiSubtitleCatalog::reasonAudioExtractionNotSupported();
+        return context;
+    }
+    context.identity = m_controller->currentPlayingPath();
+    context.displayName = entity->fileName();
+    return context;
+}
+
+// 当前文件行只显示文件名（displayUrl 对本地是整条路径，那一行太长；折叠归对话框）
+QString MainWindow::aiSubtitleDisplayName() const {
+    if (const auto entity = playingEntity())
+        return entity->fileName();
+    return {};
+}
+
+// 在播目标变化时推一次当前文件行；对话框未开即空操作（任务进行中由对话框自己
+// 不跟随，见 AiSubtitleDialog::setCurrentFile）
+void MainWindow::refreshAiSubtitleFile() {
+    if (m_aiSubtitleDialog)
+        m_aiSubtitleDialog->setCurrentFile(aiSubtitleDisplayName());
 }
 
 // 浮窗不随属主联动，主窗口移动/缩放时手动跟随并刷新映射。
@@ -4563,7 +4649,9 @@ void MainWindow::buildTrackSection(QMenu &parent) {
     addTrackSelectionGroup(video, QStringLiteral("video"));
     video->setEnabled(!tracksOfType(QStringLiteral("video")).isEmpty());
 
-    const bool hasPlaying = playingEntity() != nullptr;
+    // 正播实体取一次、两处共用（音频等三组的启用与 AI 生成入口的能力位同拍）
+    const PlaylistEntity::Ptr playing = playingEntity();
+    const bool hasPlaying = playing != nullptr;
     QMenu *audio = parent.addMenu(tr("Audio"));
     addTrackSelectionGroup(audio, QStringLiteral("audio"));
     appendTrackAddAction(audio, false);
@@ -4572,6 +4660,16 @@ void MainWindow::buildTrackSection(QMenu &parent) {
     QMenu *sub = parent.addMenu(tr("Subtitle"));
     addSubtitleSelectionGroup(sub, false);
     appendTrackAddAction(sub, true);
+    // N146：AI 字幕生成入口挂字幕子菜单末尾——buildTrackSection 是 Kind::Tracks 段的
+    // 唯一装配出口，播放菜单与视频区右键菜单两个渲染面同源出现（同一动作主实例，
+    // 禁用一次处处生效）。启用判据三件：有在播实体、能力位为真、当前没有在跑任务
+    // （本函数每次 aboutToShow 整段重建，取的是当刻镜像；真正的门在点开始的复核）
+    QAction *generate = m_actions->action(ActionManager::Id::GenerateSubtitle);
+    if (!sub->isEmpty())
+        sub->addSeparator();
+    sub->addAction(generate);
+    generate->setEnabled(playing && playing->supportsSecondaryDecode() &&
+                         !(m_aiSubtitleJob && m_aiSubtitleJob->isRunning()));
     sub->setEnabled(hasPlaying);
 
     QMenu *secondary = parent.addMenu(tr("Secondary Subtitle"));

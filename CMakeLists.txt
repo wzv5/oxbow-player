@@ -239,6 +239,18 @@ add_library(oxbowcore MODULE
     src/thumb/ThumbEngine.h
     src/ui/ThemedIconEngine.cpp
     src/ui/ThemedIconEngine.h
+    src/ai/AiSubtitleCatalog.cpp
+    src/ai/AiSubtitleCatalog.h
+    src/ai/SrtAssembler.cpp
+    src/ai/SrtAssembler.h
+    src/ai/LocalLlmServer.cpp
+    src/ai/LocalLlmServer.h
+    src/ai/AiTranslator.cpp
+    src/ai/AiTranslator.h
+    src/ai/AiSubtitleJob.cpp
+    src/ai/AiSubtitleJob.h
+    src/ui/AiSubtitleDialog.cpp
+    src/ui/AiSubtitleDialog.h
 )
 
 # mpv/client.h 已内置在仓库根目录的 mpv/ 下；src 一并入包含路径只为子目录源单元解析
@@ -571,6 +583,10 @@ if(OXBOW_BUILD_TESTS)
         src/Logging.h
         src/Version.cpp
         src/Version.h
+        src/ai/AiSubtitleCatalog.cpp
+        src/ai/AiSubtitleCatalog.h
+        src/ai/SrtAssembler.cpp
+        src/ai/SrtAssembler.h
     )
     target_include_directories(oxbow_testlib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
                                                     ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -646,6 +662,9 @@ if(OXBOW_BUILD_TESTS)
     oxbow_add_test(ReporterSwitchCatalog)
     oxbow_add_test(PlaybackSnapshot)
     oxbow_add_test(TaskbarIntegration)
+    oxbow_add_test(ExternalTool)
+    oxbow_add_test(AiSubtitleCatalog)
+    oxbow_add_test(SrtAssembler)
     # rclone crypt 的两套件与特性同进退（关掉就没有被测对象）；FileByteStream 是通用
     # L3 传输，不受本门禁影响
     if(OXBOW_WITH_RCLONE_CRYPT)

@@ -210,6 +210,11 @@ class MpvController : public QObject {
         QString title;
     };
 
+    // N146：track-list 的一次性读（AI 任务按 external-filename 反查字幕轨 id、按
+    // selected 取当前音轨的 ffIndex 用）。复用既有解析；读失败交空表。GUI 线程直读
+    // （与 propertyString 同一线程口径），不观察——反查时机由调用方自定
+    QList<TrackInfo> readTracks() const;
+
   signals:
     void timePosChanged(double seconds);
     // B18：首参为归属键——START_FILE 时缓存、FILE_LOADED/observe 推送当刻

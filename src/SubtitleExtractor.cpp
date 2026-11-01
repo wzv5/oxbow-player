@@ -2,7 +2,6 @@
 
 #include "SubtitleExtractor.h"
 
-#include "ExternalTool.h"
 #include "Logging.h"
 #include "Util.h"
 #include "streams/StreamRangeServer.h"
@@ -56,14 +55,6 @@ SubtitleExtractor::SubtitleExtractor(QObject *parent) : QObject(parent) {}
 bool SubtitleExtractor::isBrowsableTextSubtitle(const MpvController::TrackInfo &track) {
     return track.type == QLatin1String("sub") && track.mainSelection == 0 && !track.image &&
            !isBitmapSubtitleCodec(track.codec);
-}
-
-QString SubtitleExtractor::resolveFfmpegPath(const QString &configured, const QString &configDir) {
-    if (!configured.trimmed().isEmpty())
-        return configured.trimmed();
-    const QStringList candidates =
-        externalToolCandidates(externalToolSpec(ExternalTool::Ffmpeg), configDir);
-    return candidates.isEmpty() ? QString() : candidates.first();
 }
 
 QString SubtitleExtractor::decodeText(const QByteArray &bytes, bool *ok) {

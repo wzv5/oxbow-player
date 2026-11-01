@@ -8,7 +8,8 @@
 #include "ExternalToolPathCombo.h"
 #include "FilterListWidget.h"
 #include "Logging.h"
-#include "ThemedIconEngine.h" // N128：重置按钮染色
+#include "ThemedIconEngine.h"     // N128：重置按钮染色
+#include "ai/AiSubtitleCatalog.h" // N146：AI 设置项的键名与缺省单点
 #include "mpvbridge/MpvConf.h"
 #include "mpvbridge/MpvController.h"
 #include "playbackreport/ReporterSwitchCatalog.h" // N99：上报开关目录项同引账目行（键名与缺省单点）
@@ -24,6 +25,7 @@ enum class WidgetKind {
     SpinBox,
     CheckBox,
     LineEdit,
+    MultiLine, // N146：多行文本（QPlainTextEdit；仅 INI 后端，换行交给 QSettings 转义）
     FilterList,
     ToolPath // N142：外部工具路径选择（容器控件，非裸 QComboBox）
 }; // CheckBox 预留
@@ -59,6 +61,8 @@ struct SettingItem {
     QVariant fallback;                 // 后端不可读 / 未命中 / 依赖禁用时的兜底值
     IntRange range;                    // SpinBox 专用
     const char *note = nullptr;        // 可选备注（空 = 不显示），灰色小字显示在控件下方
+    const char *placeholder = nullptr; // N146：LineEdit 占位串（空 = 无）；显示面文案
+    bool secret = false;               // N146：LineEdit 密码回显（仅 LineEdit 有意义）
     QString id;                        // 可选：联动主控项标识（仅 CheckBox 主控需要）
     QString dependsOn;                 // 可选：指向某 CheckBox 项 id（单层依赖，禁用不回填）
     MpvType mpvType = MpvType::String; // mpv 属性类型提示（默认 String；INI 后端忽略；
@@ -213,6 +217,8 @@ std::optional<QVariant> controlValueFromAuthoredKeys(const SettingItem *item,
     }
     case WidgetKind::ToolPath:
         break; // 仅 INI 后端（validateCatalog 保证），mpv 读回不触达
+    case WidgetKind::MultiLine:
+        break; // 仅 INI 后端（N146），mpv 读回不触达
     }
     return std::nullopt;
 }
@@ -234,6 +240,29 @@ QList<SettingChoice> osdModeChoices() {
         {QT_TRANSLATE_NOOP("SettingsDialog", "mpv show-text"), QStringLiteral("show-text"), {}},
         {QT_TRANSLATE_NOOP("SettingsDialog", "Standalone"), QStringLiteral("standalone"), {}},
     };
+}
+
+// N146：AI 两档模式（INI 后端，写串）——两个模式下拉同款取值；label 经 trS 翻译，
+// 值是稳定数据不随翻译变
+QList<SettingChoice> aiModeChoices() {
+    return {
+        {QT_TRANSLATE_NOOP("SettingsDialog", "Built-in"),
+         QString::fromLatin1(AiSubtitleCatalog::kModeBuiltin),
+         {}},
+        {QT_TRANSLATE_NOOP("SettingsDialog", "Custom"),
+         QString::fromLatin1(AiSubtitleCatalog::kModeCustom),
+         {}},
+    };
+}
+
+// N146：目标语言候选（EditableCombo，可手输）——清单是数据不是界面文案，label 即
+// 取值本身，不做显示名映射、不进翻译
+QList<SettingChoice> translationTargetLangChoices() {
+    QList<SettingChoice> choices;
+    choices.reserve(AiSubtitleCatalog::targetLanguages().size());
+    for (const QString &language : AiSubtitleCatalog::targetLanguages())
+        choices.append({language, language, {}});
+    return choices;
 }
 
 // 语言 native 显示名（迁自原 populateLanguageCombo 的显示逻辑）
@@ -409,213 +438,298 @@ QList<SettingChoice> tlsVerifyChoices() {
 // 全局目录（函数内 static 单例，内容 const；规避跨编译单元静态初始化顺序问题）。
 // 指定初始化器：省略的字段取声明处默认值，新增可选字段零波及。
 const QList<SettingCategory> &settingCatalog() {
-    static const QList<SettingCategory> catalog =
-        {
-            // ① 基本 —— 插件本体选项（写 oxbow.ini）
-            {.title = QT_TRANSLATE_NOOP("SettingsDialog", "Basic"),
-             .items =
-                 {
-                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Language"),
-                      .widget = WidgetKind::Combo,
-                      .iniKey = "language",
-                      .choices = languageChoices,
-                      .fallback = App::languageDefault(),
-                      .note = QT_TRANSLATE_NOOP("SettingsDialog", "Takes effect after restart")},
-                     // N115：Style 兜底空串 = 第 0 项 Auto
-                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Interface Style"),
-                      .widget = WidgetKind::Combo,
-                      .iniKey = "style",
-                      .choices = styleChoices,
-                      .fallback = App::interfaceStyleDefault() /* 空 = Auto（第 0 项） */},
-                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Color Scheme"),
-                      .widget = WidgetKind::Combo,
-                      .iniKey = "colorScheme",
-                      .choices = colorSchemeChoices,
-                      .fallback = App::colorSchemeDefault(),
-                      .note = QT_TRANSLATE_NOOP(
-                          "SettingsDialog",
-                          "Only some styles (such as Fusion) follow this setting; "
-                          "others ignore it silently")},
-                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Wheel Step"),
-                      .widget = WidgetKind::Combo,
-                      .iniKey = "volumeWheelStep",
-                      .choices = stepChoices,
-                      .fallback = App::volumeWheelStepDefault(),
-                      .note = QT_TRANSLATE_NOOP("SettingsDialog", "For adjusting volume")},
-                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Arrow Key Step"),
-                      .widget = WidgetKind::Combo,
-                      .iniKey = "volumeKeyStep",
-                      .choices = stepChoices,
-                      .fallback = App::volumeKeyStepDefault(), // 对齐现版：miss 兜底 5 而非第 0 项
-                      .note = QT_TRANSLATE_NOOP("SettingsDialog", "For adjusting volume")},
-                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Recursive Depth Limit"),
-                      .widget = WidgetKind::SpinBox,
-                      .iniKey = "recursiveDepthLimit",
-                      .fallback = App::recursiveDepthLimitDefault(),
-                      .range = {0, App::recursiveDepthLimitMax()},
-                      .note = QT_TRANSLATE_NOOP(
-                          "SettingsDialog", "For directory enumeration including subdirectories")},
-                     // N113：OSD 形态四档（插件 INI 后端；只管插件自己的消息，mpv 内置
-                     // OSD 不受影响）。位置取 Basic 末位，不打散音量步进与递归深度的
-                     // 既有相邻关系
-                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "OSD Mode"),
-                      .widget = WidgetKind::Combo,
-                      .iniKey = "osdMode",
-                      .choices = osdModeChoices,
-                      .fallback = App::osdModeDefault(),
-                      .note = QT_TRANSLATE_NOOP(
-                          "SettingsDialog",
-                          "Controls the plugin's own OSD only; mpv's built-in OSD is "
-                          "unaffected")},
-                 }},
-            // ② 播放 —— mpv 选项（写 mpv.conf + 下发）
-            {.title = QT_TRANSLATE_NOOP("SettingsDialog", "Playback"),
-             .items =
-                 {
-                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Loop Playback"),
-                      .widget = WidgetKind::Combo,
-                      .mpvKeys = {"loop-file", "loop-playlist"},
-                      .choices = loopChoices,
-                      // fallback 兼 mpv 默认回退（no/no → No Loop）；占位由"组合不命中任何
-                      // choice"的回填承担，两者职责不同
-                      .fallback = QStringLiteral("none")},
-                     // N107：悬停缩略图开关（插件 INI 项与 mpv 项同分类混列，后端按项互斥，
-                     // ignoreHttpsErrors 与 Audio 分类混列同先例）
-                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Show thumbnail on hover"),
-                      .widget = WidgetKind::CheckBox,
-                      .iniKey = "hoverThumbnail",
-                      .fallback = App::hoverThumbnailDefault(),
-                      .note = QT_TRANSLATE_NOOP("SettingsDialog",
-                                                "Shows a preview frame while hovering the progress "
+    static const QList<SettingCategory>
+        catalog =
+            {
+                // ① 基本 —— 插件本体选项（写 oxbow.ini）
+                {.title = QT_TRANSLATE_NOOP("SettingsDialog", "Basic"),
+                 .items =
+                     {
+                         {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Language"),
+                          .widget = WidgetKind::Combo,
+                          .iniKey = "language",
+                          .choices = languageChoices,
+                          .fallback = App::languageDefault(),
+                          .note =
+                              QT_TRANSLATE_NOOP("SettingsDialog", "Takes effect after restart")},
+                         // N115：Style 兜底空串 = 第 0 项 Auto
+                         {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Interface Style"),
+                          .widget = WidgetKind::Combo,
+                          .iniKey = "style",
+                          .choices = styleChoices,
+                          .fallback = App::interfaceStyleDefault() /* 空 = Auto（第 0 项） */},
+                         {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Color Scheme"),
+                          .widget = WidgetKind::Combo,
+                          .iniKey = "colorScheme",
+                          .choices = colorSchemeChoices,
+                          .fallback = App::colorSchemeDefault(),
+                          .note = QT_TRANSLATE_NOOP(
+                              "SettingsDialog",
+                              "Only some styles (such as Fusion) follow this setting; "
+                              "others ignore it silently")},
+                         {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Wheel Step"),
+                          .widget = WidgetKind::Combo,
+                          .iniKey = "volumeWheelStep",
+                          .choices = stepChoices,
+                          .fallback = App::volumeWheelStepDefault(),
+                          .note = QT_TRANSLATE_NOOP("SettingsDialog", "For adjusting volume")},
+                         {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Arrow Key Step"),
+                          .widget = WidgetKind::Combo,
+                          .iniKey = "volumeKeyStep",
+                          .choices = stepChoices,
+                          .fallback =
+                              App::volumeKeyStepDefault(), // 对齐现版：miss 兜底 5 而非第 0 项
+                          .note = QT_TRANSLATE_NOOP("SettingsDialog", "For adjusting volume")},
+                         {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Recursive Depth Limit"),
+                          .widget = WidgetKind::SpinBox,
+                          .iniKey = "recursiveDepthLimit",
+                          .fallback = App::recursiveDepthLimitDefault(),
+                          .range = {0, App::recursiveDepthLimitMax()},
+                          .note = QT_TRANSLATE_NOOP(
+                              "SettingsDialog",
+                              "For directory enumeration including subdirectories")},
+                         // N113：OSD 形态四档（插件 INI 后端；只管插件自己的消息，mpv 内置
+                         // OSD 不受影响）。位置取 Basic 末位，不打散音量步进与递归深度的
+                         // 既有相邻关系
+                         {.label = QT_TRANSLATE_NOOP("SettingsDialog", "OSD Mode"),
+                          .widget = WidgetKind::Combo,
+                          .iniKey = "osdMode",
+                          .choices = osdModeChoices,
+                          .fallback = App::osdModeDefault(),
+                          .note = QT_TRANSLATE_NOOP(
+                              "SettingsDialog",
+                              "Controls the plugin's own OSD only; mpv's built-in OSD is "
+                              "unaffected")},
+                     }},
+                // ② 播放 —— mpv 选项（写 mpv.conf + 下发）
+                {.title = QT_TRANSLATE_NOOP("SettingsDialog", "Playback"),
+                 .items =
+                     {
+                         {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Loop Playback"),
+                          .widget = WidgetKind::Combo,
+                          .mpvKeys = {"loop-file", "loop-playlist"},
+                          .choices = loopChoices,
+                          // fallback 兼 mpv 默认回退（no/no → No Loop）；占位由"组合不命中任何
+                          // choice"的回填承担，两者职责不同
+                          .fallback = QStringLiteral("none")},
+                         // N107：悬停缩略图开关（插件 INI 项与 mpv 项同分类混列，后端按项互斥，
+                         // ignoreHttpsErrors 与 Audio 分类混列同先例）
+                         {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Show thumbnail on hover"),
+                          .widget = WidgetKind::CheckBox,
+                          .iniKey = "hoverThumbnail",
+                          .fallback = App::hoverThumbnailDefault(),
+                          .note = QT_TRANSLATE_NOOP(
+                              "SettingsDialog", "Shows a preview frame while hovering the progress "
                                                 "bar; not available for remote sources")},
-                 }},
-            // ③ 视频 —— mpv 选项
-            {.title = QT_TRANSLATE_NOOP("SettingsDialog", "Video"),
-             .items =
-                 {
-                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Hardware Decoding"),
-                      .widget = WidgetKind::EditableCombo,
-                      .mpvKeys = {"hwdec"},
-                      .choices = hwdecPresets,
-                      .fallback = "no"},
-                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Video Filters"),
-                      .widget = WidgetKind::FilterList,
-                      .mpvKeys = {"vf"},
-                      .note = QT_TRANSLATE_NOOP(
-                          "SettingsDialog",
-                          "To use video filters, set Hardware Decoding to a copy mode "
-                          "(auto-copy) or no; changing it during playback may require stop "
-                          "and play to take effect"),
-                      .filterPresets = videoFilterPresets},
-                 }},
-            // ④ 音频 —— mpv 选项
-            {.title = QT_TRANSLATE_NOOP("SettingsDialog", "Audio"),
-             .items =
-                 {
-                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Max Volume"),
-                      .widget = WidgetKind::SpinBox,
-                      .mpvKeys = {"volume-max"},
-                      .fallback = 130,
-                      .range = {100, 1000},
-                      .mpvType = MpvType::Double},
-                     // N108：MPC-HC 兼容音量曲线（插件 INI 选项）——勾选后滑条显示百分比
-                     // 与量程按二次方听感标尺换算，换算与量程重算都在 MainWindow 侧
-                     // （Util::Volume + updateVolumeSliderRange）；本项只管键的读写
-                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Louder Volume Curve"),
-                      .widget = WidgetKind::CheckBox,
-                      .iniKey = "quadraticVolumeCurve",
-                      .fallback = App::quadraticVolumeCurveDefault(),
-                      .note = QT_TRANSLATE_NOOP(
-                          "SettingsDialog",
-                          "Uses a quadratic volume curve instead of mpv's cubic one to match "
-                          "MPC-HC's volume scale; the slider's range is rescaled so its top "
-                          "still matches Max Volume")},
-                     // N42：原单行文本框升级为滤镜列表编辑器（空值语义不变：无滤镜）
-                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Audio Filters"),
-                      .widget = WidgetKind::FilterList,
-                      .mpvKeys = {"af"},
-                      .note = QT_TRANSLATE_NOOP(
-                          "SettingsDialog",
-                          "loudnorm works internally at 192 kHz in dynamic mode and raises the "
-                          "output sample rate; add aresample=48000 when a fixed rate is needed"),
-                      .filterPresets = audioFilterPresets},
-                 }},
-            // ⑤ 网络 —— N35：远端浏览链路（WebDAV 枚举）所用 client 的缺省参数（写 oxbow.ini）；N37
-            // 起并列 mpv 侧播放证书开关
-            // （写 mpv.conf + 下发 tls-verify）——两条链路的证书校验各自独立，
-            // 只关一侧就会出现"能列出、播不了"（或反之），两开关互不联动；
-            // 并列 mpv 侧 ytdl hook 开关（写 mpv.conf + 下发 ytdl）
-            {.title = QT_TRANSLATE_NOOP("SettingsDialog", "Network"),
-             .items =
-                 {
-                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Remote Request Timeout"),
-                      .widget = WidgetKind::SpinBox,
-                      .iniKey = "remoteTimeoutSec",
-                      .fallback = App::remoteTimeoutSecDefault(),
-                      .range = {1, 120}},
-                     {.label =
-                          QT_TRANSLATE_NOOP("SettingsDialog", "Ignore HTTPS Certificate Errors"),
-                      .widget = WidgetKind::CheckBox,
-                      .iniKey = "ignoreHttpsErrors",
-                      .fallback = App::ignoreHttpsErrorsDefault(),
-                      // N37：澄清只管浏览侧（列表与元数据请求），不影响播放
-                      .note = QT_TRANSLATE_NOOP(
-                          "SettingsDialog",
-                          "Applies to playlist and metadata requests only; "
-                          "playback is governed by the mpv-side option below")},
-                     // N37：播放侧（mpv / ffmpeg 发请求）证书开关。fallback 兼 mpv 默认回退
-                     // （实测默认 no → Ignore 勾选），只在属性不可读或取值未命中两项赋值时
-                     // 兜底；可实时读写，正常运行落不到这里
-                     {.label = QT_TRANSLATE_NOOP("SettingsDialog",
-                                                 "Ignore HTTPS Certificate Errors (mpv side)"),
-                      .widget = WidgetKind::CheckBox,
-                      .mpvKeys = {"tls-verify"},
-                      .choices = tlsVerifyChoices,
-                      .fallback = true,
-                      .mpvType = MpvType::String},
-                     // mpv 侧 ytdl hook 开关（ytdl 选项，bool）：勾选 = ytdl=yes（mpv
-                     // 内置默认即启用，可实时读写——ytdl hook 脚本逐文件加载时现读该
-                     // 选项，改动对后续播放立即生效）；无 choices 走 Flag 直通两态
-                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Enable youtube-dl hook script"),
-                      .widget = WidgetKind::CheckBox,
-                      .mpvKeys = {"ytdl"},
-                      .fallback = true,
-                      .mpvType = MpvType::Flag},
-                 }},
-            // ⑥ 播放上报 —— N74：报告者开关组（粒度 = 报告者种类，ini 键与注册表的键
-            // 一一对应；分类不设总开关）。全部写 oxbow.ini，应用成功经既有
-            // pluginIniKeysChanged 通知主窗改驱动器启用表并切闸门，实时生效、无需重启
-            {.title = QT_TRANSLATE_NOOP("SettingsDialog", "Playback Reporting"),
-             .items =
-                 {
-                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Report playback to Jellyfin"),
-                      .widget = WidgetKind::CheckBox,
-                      .iniKey = jellyfinSwitch().iniKey, // 键名与缺省同引上报账目行（N99 单点）
-                      .fallback = jellyfinSwitch().defaultValue,
-                      .note = QT_TRANSLATE_NOOP(
-                          "SettingsDialog",
-                          "Sends watch position to the signed-in Jellyfin server so resume "
-                          "points and watched marks stay up to date")},
-                 }},
-            // ⑦ 外部工具 —— N142：工具的路径设置。空串 = 自动态（写盘期按"等于默认即删
-            // 键"口径从 ini 移除）
-            {.title = QT_TRANSLATE_NOOP("SettingsDialog", "External Tools"),
-             .items =
-                 {
-                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "MediaInfo Library"),
-                      .widget = WidgetKind::ToolPath,
-                      .iniKey = "mediaInfoPath",
-                      .fallback = QString(),
-                      .note = QT_TRANSLATE_NOOP("SettingsDialog",
-                                                "Path changes take effect after restart"),
-                      .tool = ExternalTool::MediaInfo},
-                     // N143：ffmpeg 是外部进程，路径改动无需重启，下一次取数即按新路径
-                     {.label = QT_TRANSLATE_NOOP("SettingsDialog", "FFmpeg Executable"),
-                      .widget = WidgetKind::ToolPath,
-                      .iniKey = "ffmpegPath",
-                      .fallback = QString(),
-                      .tool = ExternalTool::Ffmpeg},
-                 }},
+                     }},
+                // ③ 视频 —— mpv 选项
+                {.title = QT_TRANSLATE_NOOP("SettingsDialog", "Video"),
+                 .items =
+                     {
+                         {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Hardware Decoding"),
+                          .widget = WidgetKind::EditableCombo,
+                          .mpvKeys = {"hwdec"},
+                          .choices = hwdecPresets,
+                          .fallback = "no"},
+                         {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Video Filters"),
+                          .widget = WidgetKind::FilterList,
+                          .mpvKeys = {"vf"},
+                          .note = QT_TRANSLATE_NOOP(
+                              "SettingsDialog",
+                              "To use video filters, set Hardware Decoding to a copy mode "
+                              "(auto-copy) or no; changing it during playback may require stop "
+                              "and play to take effect"),
+                          .filterPresets = videoFilterPresets},
+                     }},
+                // ④ 音频 —— mpv 选项
+                {.title = QT_TRANSLATE_NOOP("SettingsDialog", "Audio"),
+                 .items =
+                     {
+                         {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Max Volume"),
+                          .widget = WidgetKind::SpinBox,
+                          .mpvKeys = {"volume-max"},
+                          .fallback = 130,
+                          .range = {100, 1000},
+                          .mpvType = MpvType::Double},
+                         // N108：MPC-HC 兼容音量曲线（插件 INI 选项）——勾选后滑条显示百分比
+                         // 与量程按二次方听感标尺换算，换算与量程重算都在 MainWindow 侧
+                         // （Util::Volume + updateVolumeSliderRange）；本项只管键的读写
+                         {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Louder Volume Curve"),
+                          .widget = WidgetKind::CheckBox,
+                          .iniKey = "quadraticVolumeCurve",
+                          .fallback = App::quadraticVolumeCurveDefault(),
+                          .note = QT_TRANSLATE_NOOP(
+                              "SettingsDialog",
+                              "Uses a quadratic volume curve instead of mpv's cubic one to match "
+                              "MPC-HC's volume scale; the slider's range is rescaled so its top "
+                              "still matches Max Volume")},
+                         // N42：原单行文本框升级为滤镜列表编辑器（空值语义不变：无滤镜）
+                         {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Audio Filters"),
+                          .widget = WidgetKind::FilterList,
+                          .mpvKeys = {"af"},
+                          .note = QT_TRANSLATE_NOOP(
+                              "SettingsDialog",
+                              "loudnorm works internally at 192 kHz in dynamic mode and raises the "
+                              "output sample rate; add aresample=48000 when a fixed rate is "
+                              "needed"),
+                          .filterPresets = audioFilterPresets},
+                     }},
+                // ⑤ 网络 —— N35：远端浏览链路（WebDAV 枚举）所用 client 的缺省参数（写
+                // oxbow.ini）；N37 起并列 mpv 侧播放证书开关 （写 mpv.conf + 下发
+                // tls-verify）——两条链路的证书校验各自独立，
+                // 只关一侧就会出现"能列出、播不了"（或反之），两开关互不联动；
+                // 并列 mpv 侧 ytdl hook 开关（写 mpv.conf + 下发 ytdl）
+                {
+                    .title = QT_TRANSLATE_NOOP("SettingsDialog", "Network"),
+                    .items =
+                        {
+                            {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Remote Request Timeout"),
+                             .widget = WidgetKind::SpinBox,
+                             .iniKey = "remoteTimeoutSec",
+                             .fallback = App::remoteTimeoutSecDefault(),
+                             .range = {1, 120}},
+                            {.label = QT_TRANSLATE_NOOP("SettingsDialog",
+                                                        "Ignore HTTPS Certificate Errors"),
+                             .widget = WidgetKind::CheckBox,
+                             .iniKey = "ignoreHttpsErrors",
+                             .fallback = App::ignoreHttpsErrorsDefault(),
+                             // N37：澄清只管浏览侧（列表与元数据请求），不影响播放
+                             .note = QT_TRANSLATE_NOOP(
+                                 "SettingsDialog",
+                                 "Applies to playlist and metadata requests only; "
+                                 "playback is governed by the mpv-side option below")},
+                            // N37：播放侧（mpv / ffmpeg 发请求）证书开关。fallback 兼 mpv 默认回退
+                            // （实测默认 no → Ignore 勾选），只在属性不可读或取值未命中两项赋值时
+                            // 兜底；可实时读写，正常运行落不到这里
+                            {.label = QT_TRANSLATE_NOOP(
+                                 "SettingsDialog",
+                                 "Ignore HTTPS Certificate Errors (mpv side)"),
+                             .widget = WidgetKind::CheckBox,
+                             .mpvKeys = {"tls-verify"},
+                             .choices = tlsVerifyChoices,
+                             .fallback = true,
+                             .mpvType = MpvType::String},
+                            // mpv 侧 ytdl hook 开关（ytdl 选项，bool）：勾选 = ytdl=yes（mpv
+                            // 内置默认即启用，可实时读写——ytdl hook 脚本逐文件加载时现读该
+                            // 选项，改动对后续播放立即生效）；无 choices 走 Flag 直通两态
+                            {.label = QT_TRANSLATE_NOOP("SettingsDialog",
+                                                        "Enable youtube-dl hook script"),
+                             .widget = WidgetKind::CheckBox,
+                             .mpvKeys = {"ytdl"},
+                             .fallback = true,
+                             .mpvType = MpvType::Flag},
+                        }},
+                // ⑥ 播放上报 —— N74：报告者开关组（粒度 = 报告者种类，ini 键与注册表的键
+                // 一一对应；分类不设总开关）。全部写 oxbow.ini，应用成功经既有
+                // pluginIniKeysChanged 通知主窗改驱动器启用表并切闸门，实时生效、无需重启
+                {
+                    .title = QT_TRANSLATE_NOOP("SettingsDialog", "Playback Reporting"),
+                    .items =
+                        {
+                            {.label =
+                                 QT_TRANSLATE_NOOP("SettingsDialog", "Report playback to Jellyfin"),
+                             .widget = WidgetKind::CheckBox,
+                             .iniKey =
+                                 jellyfinSwitch().iniKey, // 键名与缺省同引上报账目行（N99 单点）
+                             .fallback = jellyfinSwitch().defaultValue,
+                             .note = QT_TRANSLATE_NOOP(
+                                 "SettingsDialog",
+                                 "Sends watch position to the signed-in Jellyfin server so resume "
+                                 "points and watched marks stay up to date")},
+                        }},
+                // ⑦ 外部工具 —— N142：工具的路径设置。空串 = 自动态（写盘期按"等于默认即删
+                // 键"口径从 ini 移除）
+                {
+                    .title = QT_TRANSLATE_NOOP("SettingsDialog", "External Tools"),
+                    .items =
+                        {
+                            {.label = QT_TRANSLATE_NOOP("SettingsDialog", "MediaInfo Library"),
+                             .widget = WidgetKind::ToolPath,
+                             .iniKey = "mediaInfoPath",
+                             .fallback = QString(),
+                             .note = QT_TRANSLATE_NOOP("SettingsDialog",
+                                                       "Path changes take effect after restart"),
+                             .tool = ExternalTool::MediaInfo},
+                            // N143：ffmpeg 是外部进程，路径改动无需重启，下一次取数即按新路径
+                            {.label = QT_TRANSLATE_NOOP("SettingsDialog", "FFmpeg Executable"),
+                             .widget = WidgetKind::ToolPath,
+                             .iniKey = "ffmpegPath",
+                             .fallback = QString(),
+                             .tool = ExternalTool::Ffmpeg},
+                        }},
+                // ⑧ AI —— N146：语音识别字幕与可选翻译（全部写 oxbow.ini；键名与缺省引
+                // AiSubtitleCatalog 单点）。模式下拉是唯一主控，但不做 dependsOn 禁用：
+                // 第 2、4、5、6 项始终可见可编辑、取值原样往返，切换模式不丢已填内容，
+                // 运行期只看当前模式那一档（命令行／端点／key／模型归用户，内置档忽略）
+                {.title = QT_TRANSLATE_NOOP("SettingsDialog", "AI"),
+                 .items =
+                     {
+                         {.label = QT_TRANSLATE_NOOP("SettingsDialog", "ASR Mode"),
+                          .widget = WidgetKind::Combo,
+                          .iniKey = AiSubtitleCatalog::kAsrModeKey,
+                          .choices = aiModeChoices,
+                          .fallback = QString::fromLatin1(AiSubtitleCatalog::kModeBuiltin),
+                          .note = QT_TRANSLATE_NOOP("SettingsDialog",
+                                                    "Built-in mode uses whisper")},
+                         {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Custom ASR Command"),
+                          .widget = WidgetKind::LineEdit,
+                          .iniKey = AiSubtitleCatalog::kAsrCommandKey,
+                          .fallback = AiSubtitleCatalog::builtinAsrCommand(),
+                          .note = QT_TRANSLATE_NOOP(
+                              "SettingsDialog",
+                              "Only used in Custom mode. Placeholder: ${wav_file}. The command "
+                              "must "
+                              "write subtitles to stdout in UTF-8 as SRT blocks or whisper "
+                              "timestamp "
+                              "lines (incrementally or all at once). The working directory is "
+                              "always "
+                              "the plugin directory, and no shell is involved.")},
+                         {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Translation Mode"),
+                          .widget = WidgetKind::Combo,
+                          .iniKey = AiSubtitleCatalog::kTranslationModeKey,
+                          .choices = aiModeChoices,
+                          .fallback = QString::fromLatin1(AiSubtitleCatalog::kModeBuiltin),
+                          .note = QT_TRANSLATE_NOOP(
+                              "SettingsDialog",
+                              "Built-in mode uses llama.cpp with the Hy-MT2 model")},
+                         {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Translation API Endpoint"),
+                          .widget = WidgetKind::LineEdit,
+                          .iniKey = AiSubtitleCatalog::kTranslationApiEndpointKey,
+                          .fallback = QString(),
+                          .note = QT_TRANSLATE_NOOP(
+                              "SettingsDialog",
+                              "Only used in Custom mode. OpenAI-compatible endpoint: base URL or "
+                              "full path.")},
+                         {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Translation API Key"),
+                          .widget = WidgetKind::LineEdit,
+                          .iniKey = AiSubtitleCatalog::kTranslationApiKeyKey,
+                          .fallback = QString(),
+                          .note = QT_TRANSLATE_NOOP("SettingsDialog", "Only used in Custom mode."),
+                          .secret = true},
+                         {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Translation Model"),
+                          .widget = WidgetKind::LineEdit,
+                          .iniKey = AiSubtitleCatalog::kTranslationModelKey,
+                          .fallback = QString(),
+                          .note = QT_TRANSLATE_NOOP(
+                              "SettingsDialog",
+                              "Only used in Custom mode. Empty means the request omits the model "
+                              "field."),
+                          .placeholder = QT_TRANSLATE_NOOP("SettingsDialog", "Automatic")},
+                         {.label =
+                              QT_TRANSLATE_NOOP("SettingsDialog", "Translation Target Language"),
+                          .widget = WidgetKind::EditableCombo,
+                          .iniKey = AiSubtitleCatalog::kTranslationTargetLangKey,
+                          .choices = translationTargetLangChoices,
+                          .fallback = AiSubtitleCatalog::defaultTargetLanguage()},
+                         {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Translation Prompt"),
+                          .widget = WidgetKind::MultiLine,
+                          .iniKey = AiSubtitleCatalog::kTranslationPromptKey,
+                          .fallback = AiSubtitleCatalog::defaultTranslationPrompt(),
+                          .note = QT_TRANSLATE_NOOP(
+                              "SettingsDialog",
+                              "Placeholders: {target_lang} and {source_text}. Adjust it freely to "
+                              "suit your model.")},
+                     }},
     };
     return catalog;
 }
@@ -954,7 +1068,7 @@ SettingsDialog::SettingsDialog(QWidget *parent, MpvController *controller,
         m_confCache = MpvConf::open(m_mpvConfPath);
 
     setWindowTitle(tr("Settings"));
-    resize(760, 520); // 默认窗口尺寸（内容较小时避免对话框过小）
+    resize(760, 520); // 固定初始尺寸；页内容超高走纵向滚动，拉大由用户手动
     buildUi();
     applyToControls();
 
@@ -992,6 +1106,13 @@ void SettingsDialog::buildUi() {
     rightLayout->setContentsMargins(0, 0, 0, 0);
 
     m_pageStack = new QStackedWidget(rightPane);
+    // 页内容进纵向滚动区（N146）：AI 页条目多、含多行编辑框，最满一页的最小高度
+    // 不再反灌对话框——内容高于视口即滚动，初始 760x520，用户可拉大
+    auto *pageScroll = new QScrollArea(rightPane);
+    pageScroll->setWidget(m_pageStack);
+    pageScroll->setWidgetResizable(true);
+    pageScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    pageScroll->setFrameShape(QFrame::NoFrame);
 
     // 遍历目录动态生成页面：每分类一页、每设置项一组"标签 + 控件（+ 备注行）"。
     // 文案在构建控件此刻经 tr() 翻译（上下文即 SettingsDialog，既有 .ts 不失效）。
@@ -1068,9 +1189,24 @@ void SettingsDialog::buildUi() {
                 break;
             }
             case WidgetKind::LineEdit: {
-                // 纯编辑框：逻辑值即文本
+                // 纯编辑框：逻辑值即文本；N146 起支持密码回显与占位串
                 auto *edit = new QLineEdit(page);
+                if (item->secret)
+                    edit->setEchoMode(QLineEdit::Password);
+                if (item->placeholder && *item->placeholder)
+                    edit->setPlaceholderText(tr(item->placeholder));
                 connect(edit, &QLineEdit::textChanged, this,
+                        [this, item] { onControlChanged(item); });
+                control = edit;
+                break;
+            }
+            case WidgetKind::MultiLine: {
+                // N146：多行文本（QPlainTextEdit）；逻辑值即整段文本，换行往返交给
+                // QSettings 的 ini 转义。高度钉 5 行（提示词模板不长）：页高不再被
+                // 默认 sizeHint 撑起
+                auto *edit = new QPlainTextEdit(page);
+                edit->setFixedHeight(edit->fontMetrics().lineSpacing() * 5 + 12);
+                connect(edit, &QPlainTextEdit::textChanged, this,
                         [this, item] { onControlChanged(item); });
                 control = edit;
                 break;
@@ -1110,7 +1246,10 @@ void SettingsDialog::buildUi() {
             // 行首槽（resetCell）：所有行统一让出重置按钮位，保证各页按钮同列对齐；
             // 干净行按钮隐藏、槽恒占位（空 QWidget，不进 Tab 链）
             auto *resetCell = new QWidget(page);
+            // 宽高都钉死：宽保按钮出现零位移，高保 label 行不因按钮显隐而变高
+            // （按钮比标签高，显隐会让该行标签垂直居中位上下漂移）
             resetCell->setFixedWidth(resetGutter);
+            resetCell->setFixedHeight(resetSide);
             auto *resetLayout = new QHBoxLayout(resetCell);
             resetLayout->setContentsMargins(0, 0, 0, 0);
             resetLayout->setSpacing(0); // 槽宽恰为按钮宽，格内不再另加间距（间距归外层）
@@ -1180,7 +1319,7 @@ void SettingsDialog::buildUi() {
         layout->addStretch(1);
         m_pageStack->addWidget(page);
     }
-    rightLayout->addWidget(m_pageStack, 1);
+    rightLayout->addWidget(pageScroll, 1);
 
     m_buttonBox = new QDialogButtonBox(
         QDialogButtonBox::Apply | QDialogButtonBox::Ok | QDialogButtonBox::Cancel, rightPane);
@@ -1244,12 +1383,12 @@ void SettingsDialog::fillItemFromBackend(const SettingItem *item) {
             const int v = ini.value(item->iniKey, item->fallback).toInt(&ok);
             spin->setValue(ok ? v : item->fallback.toInt());
             m_pending[item] = spin->value();
-        } else if (item->widget == WidgetKind::LineEdit) {
-            auto *edit = static_cast<QLineEdit *>(w);
-            const QString v = ini.value(item->iniKey, item->fallback).toString();
-            edit->setText(v);
-            m_pending[item] = v;
-        } else if (item->widget == WidgetKind::ToolPath) {
+        } else {
+            // 其余形态（LineEdit / EditableCombo / MultiLine / ToolPath / FilterList）
+            // 值即串，走与写值同一条通用路径：新形态只要 writeControlValue /
+            // readControlValue 认得就自动进回填，不会因漏补一支而把 pending 停在构造
+            // 期占位——那种漏补会让脏判定永远回不到净。CheckBox / Combo / SpinBox
+            // 有类型对齐与索引回落的额外动作，留在上面
             writeControlValue(item, ini.value(item->iniKey, item->fallback));
             m_pending[item] = readControlValue(w);
         }
@@ -1372,6 +1511,8 @@ void SettingsDialog::fillItemFromBackend(const SettingItem *item) {
         }
         case WidgetKind::ToolPath:
             break; // 仅 INI 后端（validateCatalog 保证），mpv 读回不触达
+        case WidgetKind::MultiLine:
+            break; // 仅 INI 后端（N146），mpv 读回不触达
         }
     }
     m_fillValue[item] = m_pending[item];
@@ -1382,34 +1523,14 @@ void SettingsDialog::applyFallback(const SettingItem *item) {
     if (!item || !w)
         return;
     w->setEnabled(false);
-    switch (item->widget) {
-    case WidgetKind::Combo: {
-        auto *combo = static_cast<QComboBox *>(w);
-        const int idx = combo->findData(item->fallback);
-        combo->setCurrentIndex(idx >= 0 ? idx : 0);
-        break;
-    }
-    case WidgetKind::EditableCombo:
-        static_cast<QComboBox *>(w)->setCurrentText(item->fallback.toString());
-        break;
-    case WidgetKind::LineEdit:
-        static_cast<QLineEdit *>(w)->setText(item->fallback.toString());
-        break;
-    case WidgetKind::SpinBox:
-        static_cast<QSpinBox *>(w)->setValue(item->fallback.toInt());
-        break;
-    case WidgetKind::CheckBox:
-        static_cast<QCheckBox *>(w)->setChecked(item->fallback.toBool());
-        break;
-    case WidgetKind::FilterList:
-        // 禁用落兜底：空列表 = 无滤镜（空值语义，与 mpv 属性空值口径一致）
+    // 落兜底与写值同一条路径：Combo 的索引回落、文本标量一族、ToolPath 的自动项
+    // 都与 writeControlValue 逐字相同，不再各抄一份 switch（新增控件形态从此只补
+    // writeControlValue / readControlValue 两处）。滤镜项是唯一真特例：禁用落空列表
+    // = 无滤镜（空值语义与 mpv 属性空值同口径），不解析 fallback 串
+    if (item->widget == WidgetKind::FilterList)
         static_cast<FilterListWidget *>(w)->setEntries({});
-        break;
-    case WidgetKind::ToolPath:
-        // N142：路径项落兜底 = 自动项
-        static_cast<ExternalToolPathCombo *>(w)->setPath(item->fallback.toString());
-        break;
-    }
+    else
+        writeControlValue(item, item->fallback);
     m_pending[item] = readControlValue(w);
     // 禁用不变式：三值同落 fallback，dirty 与按钮可见性判据对禁用项恒为净
     m_fillValue[item] = m_pending[item];
@@ -1488,6 +1609,8 @@ QVariant SettingsDialog::readControlValue(QWidget *control) const {
         return spin->value();
     if (auto *edit = qobject_cast<QLineEdit *>(control))
         return edit->text();
+    if (auto *multi = qobject_cast<QPlainTextEdit *>(control))
+        return multi->toPlainText();
     if (auto *box = qobject_cast<QCheckBox *>(control))
         return box->isChecked();
     if (auto *fl = qobject_cast<FilterListWidget *>(control))
@@ -1606,6 +1729,7 @@ QVariant SettingsDialog::fallbackControlValue(const SettingItem *item) const {
         return d.isValid() ? d : QVariant(combo->itemText(hit));
     }
     case WidgetKind::EditableCombo:
+    case WidgetKind::MultiLine:
     case WidgetKind::LineEdit:
         return item->fallback.toString();
     case WidgetKind::SpinBox:
@@ -1753,6 +1877,9 @@ void SettingsDialog::writeControlValue(const SettingItem *item, const QVariant &
         break;
     case WidgetKind::LineEdit:
         static_cast<QLineEdit *>(w)->setText(value.toString());
+        break;
+    case WidgetKind::MultiLine:
+        static_cast<QPlainTextEdit *>(w)->setPlainText(value.toString());
         break;
     case WidgetKind::SpinBox:
         static_cast<QSpinBox *>(w)->setValue(value.toInt()); // setValue 自动钳制

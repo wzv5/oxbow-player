@@ -17,6 +17,9 @@
 class NavigatorPanel;
 class SubtitleBrowserDialog;
 class SubtitleExtractor;
+class AiSubtitleJob;           // N146：AI 字幕生成任务（主窗持有）
+class AiSubtitleDialog;        // N146：生成对话框，按需创建、关闭即销毁
+struct AiSubtitleStartContext; // N146：发车复核结果，定义在 ai/AiSubtitleJob.h
 class BookmarkEditorDialog;
 class ShortcutsDialog;
 class CustomToolManager; // N134：自定义工具单表（定义于 CustomToolManager.h）
@@ -290,6 +293,11 @@ class MainWindow : public QMainWindow {
     void ensureSubtitleBrowser();
     void destroySubtitleBrowser();
     QString resolvedFfmpegPath() const; // N143：ffmpeg 路径解析单点（ini 显式值优先）
+    // N146：AI 字幕生成——对话框按需创建（关闭即销毁），任务归主窗持有
+    void ensureAiSubtitleDialog();
+    AiSubtitleStartContext aiSubtitleStartContext() const; // 点开始的现读复核
+    QString aiSubtitleDisplayName() const;                 // 当前文件行的显示名现读
+    void refreshAiSubtitleFile();                          // 在播变化时推一次当前文件行
     // 持久化：关闭时保存 / 启动时恢复
     void saveSettings();
     void restoreSettings();
@@ -494,6 +502,8 @@ class MainWindow : public QMainWindow {
     QAction *m_subtitleBrowserAction = nullptr;         // 视图菜单"字幕浏览器"勾选项（N143）
     SubtitleBrowserDialog *m_subtitleBrowser = nullptr; // N143：按需创建，null=未打开
     SubtitleExtractor *m_subtitleExtractor = nullptr;   // N143：取数模块，寿命不随面板开关
+    AiSubtitleJob *m_aiSubtitleJob = nullptr;           // N146：任务归主窗持有，首次使用时创建
+    AiSubtitleDialog *m_aiSubtitleDialog = nullptr;     // N146：按需创建，关闭即销毁
     QAction *m_fullscreenAction = nullptr;              // 视图菜单"全屏"勾选项（N3）
     QAction *m_miniAction = nullptr;                    // 视图菜单"小窗"勾选项（N68）
     QAction *m_aboutAction = nullptr; // About 动作（不进登记表，两个菜单共用一份）

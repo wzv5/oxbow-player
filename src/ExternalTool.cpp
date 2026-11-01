@@ -95,3 +95,11 @@ QString externalToolBrowseFilter(const ExternalToolSpec &spec) {
     return QCoreApplication::translate("ExternalTool", spec.displayName) +
            QStringLiteral(" (%1)").arg(spec.targetFileName);
 }
+
+QString externalToolResolvedPath(const ExternalToolSpec &spec, const QString &configured,
+                                 const QString &configDir) {
+    if (!configured.trimmed().isEmpty())
+        return configured.trimmed();
+    const QStringList candidates = externalToolCandidates(spec, configDir);
+    return candidates.isEmpty() ? QString() : candidates.first();
+}

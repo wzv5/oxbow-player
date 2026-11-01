@@ -50,6 +50,7 @@
 #include <QFontDatabase>
 #include <QFontMetrics>
 #include <QFormLayout>
+#include <QFrame>
 #include <QFuture>
 #include <QFutureWatcher>
 #include <QGroupBox>
@@ -106,6 +107,7 @@
 #include <QRawFont>
 #include <QRegularExpression>
 #include <QSaveFile>
+#include <QScrollArea>
 #include <QSemaphore>
 #include <QSet>
 #include <QSettings>
