@@ -47,6 +47,7 @@ AiSubtitleDialog::AiSubtitleDialog(AiSubtitleJob *job, const StartContextProvide
     // 键值行用两列网格：值列水平 Ignored（不把长文本反灌进对话框最小宽度），
     // 全列对齐等效"tab 分隔"；分割线与两个勾选框也在网格里，保证各行顺序
     auto *grid = new QGridLayout;
+    grid->setHorizontalSpacing(16);
     const auto makeRow = [this, grid](const QString &key, QLabel *&value, int row) {
         grid->addWidget(new QLabel(key, this), row, 0);
         value = new QLabel(this);
