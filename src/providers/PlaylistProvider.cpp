@@ -51,12 +51,14 @@ void PlaylistProvider::setTransitPreference(bool preferred) { m_transitPreferred
 std::shared_ptr<StreamEndpoint> PlaylistProvider::createStreamEndpoint() const { return nullptr; }
 
 // N52 §2.8：播放形态模板方法（非虚公开出口，约 10 行，必须轻——零网络）。
-// N57 §2.4：列表身份按值入参，提供者不持有也不镜像它。
+// N57：列表身份按值入参，提供者不持有也不镜像它。N148：fileName 同纪律——名的唯一
+// 来源是实体的 m_fileName（N70），提供者只把它转手交给 mint。
 // N65：出口升为 playTarget——串与它的逐文件选项在同一句 return 里出生：直发支
 // 无选项；转接支随串交出 cache=yes（N52 §2.10 的申报语义一字不改，落点从
 // MpvController::loadFile 内的 scheme 反推搬回铸造点——谁知道事实谁就交选项；
 // "转接项必带 cache"的显影由 Playlist::playTargets 的 Debug 断言守候）
-PlayTarget PlaylistProvider::playTarget(const QUuid &listUuid, const QString &path) const {
+PlayTarget PlaylistProvider::playTarget(const QUuid &listUuid, const QString &path,
+                                        const QString &fileName) const {
     // 端点缓存与发布只在 GUI 线程发生（Playlist::playTargets 整表逐条调用的既有
     // 线程口径），故缓存无需加锁；demux 线程只经 relay 表中的 weak_ptr 取用
     Q_ASSERT(QThread::currentThread() == QCoreApplication::instance()->thread());
@@ -74,7 +76,7 @@ PlayTarget PlaylistProvider::playTarget(const QUuid &listUuid, const QString &pa
         relay->publish(listUuid, m_transitEndpoint);
     // 入参先剥凭据（N48 纪律在协议出口的延伸）；L1 侧另有凭据双保险（Q_ASSERT +
     // Release 拒铸返空串，调用方按 open 必失败处理）
-    return {StreamTransit::mint(listUuid, Util::Url::stripCredentials(path)),
+    return {StreamTransit::mint(listUuid, Util::Url::stripCredentials(path), fileName),
             QVariantMap{{QStringLiteral("cache"), QStringLiteral("yes")}}};
 }
 

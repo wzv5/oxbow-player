@@ -149,16 +149,20 @@ class PlaylistProvider {
     // URI 并把端点发布进注册表（发布即下发，N52 §2.6）。这样"把直接形态误当播放
     // 串下发"在编译期就不可能——directPlayUrl 降为 protected，外部拿不到那个钩子。
     // 实现必须轻（playTargets 是整表逐条调用）：一次哈希查找 + 一次前缀判定 +
-    // 一次百分号编码，零网络。仅在 GUI 线程经 Playlist::playTargets 调用。
+    // 一次百分号编码与一次尾段转义，零网络。仅在 GUI 线程经 Playlist::playTargets
+    // 调用。
     // N57 §2.4：列表身份由调用方按值传入——提供者不认识列表、也不持有它的身份，
     // 转接铸造与端点发布所需的身份只是入参（nil 属编程错误，Debug 断言显影）。
+    // N148：fileName 同纪律——提供者不拥有、不镜像、不派生名，只在转接支把它转手交给
+    // mint 拼尾段；直发支不碰它。
     // N65：出口升为 playTarget——串与它的逐文件选项在同一句 return 里出生
     // （直发支无选项；转接支随串交出 cache=yes，N52 §2.10 语义一字不改、落点从
     // 控制器内的 scheme 反推搬回铸造点——谁知道事实谁就交选项）；
     // playUrl() 保留为薄包装（playTarget(...).url），四个"只要串"的消费者语义不变
-    PlayTarget playTarget(const QUuid &listUuid, const QString &path) const;
-    QString playUrl(const QUuid &listUuid, const QString &path) const {
-        return playTarget(listUuid, path).url;
+    PlayTarget playTarget(const QUuid &listUuid, const QString &path,
+                          const QString &fileName) const;
+    QString playUrl(const QUuid &listUuid, const QString &path, const QString &fileName) const {
+        return playTarget(listUuid, path, fileName).url;
     }
 
     // 转接偏好（持久化值）：Optional 返偏好值；Required / Unsupported 返 nullopt

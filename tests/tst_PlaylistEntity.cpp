@@ -187,6 +187,8 @@ class TestPlaylistEntity : public QObject {
     // N55 §2.2/§2.3：归属注入口与出生属性——playUrl() 走归属现算（StaticProvider 恒等
     // 与转接提供者各验一次，断言形态出自归属提供者而非所在列表）
     void ownershipStampDrivesPlayUrl();
+    // N148：转接铸造带尾段——playUrl() 末段等于实体 fileName
+    void transitUrlCarriesFileName();
     // N55 §2.1：clone() 携带归属——克隆副本不经再盖章即由原归属（同一提供者 + 同一
     // 身份）加工（克隆后重新盖章的那一支随 N55 C2 的收编路径另测）
     void cloneCarriesOwnership();
@@ -684,6 +686,31 @@ void TestPlaylistEntity::ownershipStampDrivesPlayUrl() {
     // ③ 再盖章即显式赋盖（不做"空则补盖"）：换归属后形态随新归属现算
     t.applyOwnership(QUuid::createUuid(), staticProvider);
     QCOMPARE(t.playUrl(), t.path());
+}
+
+// N148：fileName 按值随行——转接铸造据此拼尾段，身份段不受它影响。既有归属用例只断言
+// 前缀、uuid 与 unwrap 往返，带尾段天然成立
+void TestPlaylistEntity::transitUrlCarriesFileName() {
+    auto registry = testRegistry();
+    auto relay = std::make_shared<TestRelay>();
+    registry->provide<StreamRelayIf>(relay);
+    auto transitProvider = std::make_shared<TransitTestProvider>(registry);
+    const QUuid uuid = QUuid::createUuid();
+
+    TestEntity t(QStringLiteral("https://example.com/dir/stream.mp4"), registry);
+    t.applyOwnership(uuid, transitProvider);
+    const QString form = t.playUrl();
+    QVERIFY(StreamTransit::isTransitUri(form));
+    const qsizetype slash = form.lastIndexOf(u'/');
+    QVERIFY(slash > 0);
+    QCOMPARE(form.mid(slash + 1), t.fileName());
+    QCOMPARE(StreamTransit::unwrap(form), t.path());
+    QCOMPARE(StreamTransit::listUuidOfUri(form), uuid);
+
+    // 整体出口同一条串，cache 申报仍在
+    const PlayTarget target = t.playTarget();
+    QCOMPARE(target.url, form);
+    QCOMPARE(target.options.value(QStringLiteral("cache")).toString(), QStringLiteral("yes"));
 }
 
 // N55 §2.1：clone() 携带归属——拷贝构造默认复制两件套。克隆未经再盖章即由原归属

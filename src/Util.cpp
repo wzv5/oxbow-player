@@ -585,9 +585,14 @@ QStringList entriesFromDrop(const QMimeData &mime) {
 }
 
 // N37：播放项显示文件名（自 HttpEntity 构造内的同名逻辑收编，供标题 / OSD
-// 取名共用，见头注）。percent-decode 仅对 http(s) 生效（isHttp，与
-// toNative / key 的网络分支同口径）。N56 收族更名 playUrlFileName → fileName
+// 取名共用，见头注）。N56 收族更名 playUrlFileName → fileName。
+// N148：转接串尾段的 '?' 与 '#' 已在转义集内，无字面 query / fragment 可剥，不走 pathEnd。
 QString fileName(const QString &identity) {
+    if (StreamTransit::isTransitUri(identity)) {
+        const qsizetype slash = identity.lastIndexOf(QLatin1Char('/'));
+        const QString lastSeg = slash >= 0 ? identity.mid(slash + 1) : identity;
+        return QUrl::fromPercentEncoding(lastSeg.toUtf8());
+    }
     if (isHttp(identity)) {
         // N48：query / fragment 的分界走共用内核（与 WebDavProvider::normalizeRootUrl
         // 的尾斜杠补位是同一口径）

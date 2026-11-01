@@ -353,6 +353,16 @@ void TestUtil::fileNameExtraction() {
              QStringLiteral("rtsp://Host/live/a b.mp4"));
     QVERIFY(Util::Url::key(QStringLiteral("rtsp://Host/live/a.mp4")) !=
             Util::Url::key(QStringLiteral("rtsp://host/live/a.mp4")));
+    // N148：转接串取尾段解码，转义集字符还原成明文（比对侧 cacheBaseName 反向不解码）
+    QCOMPARE(Util::Url::fileName(QStringLiteral("oxbow://0a1b-2c/x%2Fy/a%3Fb.mkv")),
+             QStringLiteral("a?b.mkv"));
+    QCOMPARE(Util::Url::fileName(QStringLiteral("oxbow://0a1b-2c/x/a%25b.mkv")),
+             QStringLiteral("a%b.mkv"));
+    QCOMPARE(Util::Url::fileName(QStringLiteral("oxbow://0a1b-2c/x/%E4%B8%AD%E6%96%87.mkv")),
+             QString::fromUtf8("中文.mkv"));
+    // 无尾段的旧串解出整条身份（含目录）——已接受的退化面
+    QCOMPARE(Util::Url::fileName(QStringLiteral("oxbow://0a1b-2c/x%2Fy%2Fold.mkv")),
+             QStringLiteral("x/y/old.mkv"));
 }
 
 void TestUtil::toNativeBranches() {

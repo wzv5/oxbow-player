@@ -488,14 +488,15 @@ static const QUuid kListUuid = QUuid::createUuid();
 
 void TestWebDavProvider::directPlayUrlInjectsAndRoundTrips() {
     // 空凭据：恒等（不注入、不产出空 userinfo 段）
+    // N148：出口补 fileName 形参；本套件恒走直发支，实参恒空
     const auto plain = providerWith(QString(), QString());
-    QCOMPARE(plain->playUrl(kListUuid, expectUrl(QStringLiteral("a.mp4"))),
+    QCOMPARE(plain->playUrl(kListUuid, expectUrl(QStringLiteral("a.mp4")), QString()),
              expectUrl(QStringLiteral("a.mp4")));
 
     // 含分隔符 / 空格 / 非 ASCII / sub-delims 的凭据：注入后剥离必须逐字还原
     const QString clean = expectUrl(QStringLiteral("sub/a%20b.mp4"));
     const auto tricky = providerWith(QStringLiteral("u@x"), QStringLiteral("p:w@ss/word+!$&=% 中"));
-    const QString played = tricky->playUrl(kListUuid, clean);
+    const QString played = tricky->playUrl(kListUuid, clean, QString());
     QVERIFY(played != clean);
     QVERIFY(played.startsWith(QStringLiteral("http://")));
     QVERIFY(played.endsWith(QStringLiteral("@server/dav/sub/a%20b.mp4")));
@@ -518,14 +519,14 @@ void TestWebDavProvider::directPlayUrlInjectsAndRoundTrips() {
 
     // path 中的 '@' 不受影响：定位规则只作用于 authority 段
     const QString atPath = expectUrl(QStringLiteral("a@b.mp4"));
-    QCOMPARE(Util::Url::stripCredentials(tricky->playUrl(kListUuid, atPath)), atPath);
+    QCOMPARE(Util::Url::stripCredentials(tricky->playUrl(kListUuid, atPath, QString())), atPath);
 
     // query 中的 '@' 同理（authority 终止于 '?'）
     const QString atQuery = expectUrl(QStringLiteral("a.mp4?token=x@y"));
-    QCOMPARE(Util::Url::stripCredentials(tricky->playUrl(kListUuid, atQuery)), atQuery);
+    QCOMPARE(Util::Url::stripCredentials(tricky->playUrl(kListUuid, atQuery, QString())), atQuery);
 
     // 非 http(s) 入参不注入（条目恒 http(s) 由解析侧保证，此处为同口径的守）
-    QCOMPARE(tricky->playUrl(kListUuid, QStringLiteral("rtsp://host/live")),
+    QCOMPARE(tricky->playUrl(kListUuid, QStringLiteral("rtsp://host/live"), QString()),
              QStringLiteral("rtsp://host/live"));
 }
 

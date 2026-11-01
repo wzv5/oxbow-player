@@ -50,7 +50,7 @@ class TestAiSubtitleCatalog : public QObject {
     void stripThinkingOpenOnly();
     void stripThinkingCloseOnly();
     void cacheBaseNameLocal();
-    void cacheBaseNameTransitKeepsEncoding();
+    void cacheBaseNameTransitKeepsTailVerbatim();
     void languageMappingCoversList();
 };
 
@@ -285,14 +285,16 @@ void TestAiSubtitleCatalog::cacheBaseNameLocal() {
     QCOMPARE(cacheBaseName(QStringLiteral("D:/movies/no.ext.at.all")), QStringLiteral("no.ext.at"));
 }
 
-void TestAiSubtitleCatalog::cacheBaseNameTransitKeepsEncoding() {
-    // oxbow:// 不 unwrap：最后一个 / 之后的编码段再按最后一个 . 剥扩展名，%2F 不解码，
-    // 与 mpv 的比对串逐字节一致
-    QCOMPARE(cacheBaseName(QStringLiteral("oxbow://0a1b-2c/movies%2Fmovie.srt")),
-             QStringLiteral("movies%2Fmovie"));
-    QCOMPARE(cacheBaseName(QStringLiteral("oxbow://0a1b-2c/movies%2Fmovie.zh.srt")),
-             QStringLiteral("movies%2Fmovie.zh"));
-    QCOMPARE(cacheBaseName(QStringLiteral("oxbow://0a1b-2c/noext")), QStringLiteral("noext"));
+void TestAiSubtitleCatalog::cacheBaseNameTransitKeepsTailVerbatim() {
+    // oxbow:// 不 unwrap 也不解码：尾段逐字节当基名用，只按最后一个 . 剥扩展名——与
+    // mpv 的比对串同源（显示解码走 Util::Url::fileName，两个口径各守各的）
+    QCOMPARE(cacheBaseName(QStringLiteral("oxbow://0a1b-2c/x%2Fy/movie.mkv")),
+             QStringLiteral("movie"));
+    QCOMPARE(cacheBaseName(QStringLiteral("oxbow://0a1b-2c/x/a%3Fb.mkv")),
+             QStringLiteral("a%3Fb")); // 转义形态保持
+    QCOMPARE(cacheBaseName(QStringLiteral("oxbow://0a1b-2c/x/a%3Fb.zh.srt")),
+             QStringLiteral("a%3Fb.zh"));
+    QCOMPARE(cacheBaseName(QStringLiteral("oxbow://0a1b-2c/x/noext")), QStringLiteral("noext"));
 }
 
 void TestAiSubtitleCatalog::languageMappingCoversList() {

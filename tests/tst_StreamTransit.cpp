@@ -20,6 +20,12 @@ class TestStreamTransit : public QObject {
     void isTransitUriPrefixOnly();
     void nilIdentityNeverMatches();
     void prefixNotHandTruncated();
+    // N148：尾段
+    void mintWithTailKeepsIdentity();
+    void unwrapIgnoresTail();
+    void tailKeepsUnicodeRaw();
+    void tailEscapesReservedAndIllegal();
+    void emptyTailMatchesLegacyForm();
 };
 
 // 列表身份（N57 §2.4）：入参一律 QUuid，字面串只是 mint 的产物与 INI 形态
@@ -108,6 +114,53 @@ void TestStreamTransit::prefixNotHandTruncated() {
     const QString uri = StreamTransit::mint(kUuid, id);
     QCOMPARE(StreamTransit::unwrap(uri), id);
     QVERIFY(uri.mid(8).startsWith(kUuidText)); // 偏移 8 = sizeof("oxbow://")-1
+}
+
+// ——N148：尾段——
+
+void TestStreamTransit::mintWithTailKeepsIdentity() {
+    const QString id = QStringLiteral("https://dav.example.com/dav/a.mp4");
+    const QString uri = StreamTransit::mint(kUuid, id, QStringLiteral("a.mp4"));
+    QVERIFY(uri.endsWith(QLatin1String("/a.mp4")));
+    QCOMPARE(StreamTransit::unwrap(uri), id);
+    QVERIFY(StreamTransit::listUuidOfUri(uri) == kUuid);
+    // '/' 不在转义集内，带它的尾段跨两段：身份段恒取第一段，还原不受影响
+    const QString uri2 = StreamTransit::mint(kUuid, id, QStringLiteral("a/b.mp4"));
+    QCOMPARE(StreamTransit::unwrap(uri2), id);
+}
+
+void TestStreamTransit::unwrapIgnoresTail() {
+    const QString uri =
+        QStringLiteral("oxbow://") + kUuidText + QStringLiteral("/a%2Fb.mp4/c%20d.mp4");
+    QCOMPARE(StreamTransit::unwrap(uri), QStringLiteral("a/b.mp4"));
+    // 尾随空段等同无尾段
+    const QString trailing = QStringLiteral("oxbow://") + kUuidText + QStringLiteral("/a%2Fb.mp4/");
+    QCOMPARE(StreamTransit::unwrap(trailing), QStringLiteral("a/b.mp4"));
+}
+
+void TestStreamTransit::tailKeepsUnicodeRaw() {
+    // 转义集只取必要项：全量编码会把字幕缓存名的超长带回来
+    const QString id = QStringLiteral("https://dav.example.com/dav/dir/a.mp4");
+    const QString name = QStringLiteral("影片 第1集.mp4");
+    const QString uri = StreamTransit::mint(kUuid, id, name);
+    QVERIFY(uri.contains(name));
+    QCOMPARE(StreamTransit::unwrap(uri), id);
+}
+
+void TestStreamTransit::tailEscapesReservedAndIllegal() {
+    // '@' 不在集内：mint 的 userinfo 守卫只查身份段，尾段带 '@' 照样铸得出
+    const QString id = QStringLiteral("https://dav.example.com/dav/a.mp4");
+    const QString name = QStringLiteral("a%b?c#d:e*f\"g<h>i|j\\k@l.mp4");
+    const QString uri = StreamTransit::mint(kUuid, id, name);
+    const qsizetype slash = uri.lastIndexOf(u'/');
+    QVERIFY(slash > 0);
+    QCOMPARE(uri.mid(slash + 1), QStringLiteral("a%25b%3Fc%23d%3Ae%2Af%22g%3Ch%3Ei%7Cj%5Ck@l.mp4"));
+    QCOMPARE(StreamTransit::unwrap(uri), id);
+}
+
+void TestStreamTransit::emptyTailMatchesLegacyForm() {
+    const QString id = QStringLiteral("https://dav.example.com/dav/a.mp4");
+    QCOMPARE(StreamTransit::mint(kUuid, id, QString()), StreamTransit::mint(kUuid, id));
 }
 
 QTEST_GUILESS_MAIN(TestStreamTransit)

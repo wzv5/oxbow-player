@@ -161,9 +161,12 @@ QString key(const QString &path);
 // N37：播放项显示文件名（含后缀不含路径）——列表显示名与标题 / OSD 取名的唯一
 // 出口。本地路径取末段（QFileInfo::fileName 口径）；http(s) URL 先剥 query /
 // fragment（避免末段混入 "?token=xx"），取末段后 percent-decode（与列表显示名
-// 一致，不出现 "%20" 形态）——解码仅限 http(s)：URL 编码语义只对 URI 路径成立，
-// 其余协议（rtsp / srt / edl 等）与 UnknownEntity 列表侧同走末段原样。解后为空
-// （如以 / 结尾）返回空串，调用方按"未知"处理；无路径且无尾斜杠时末段即主机名。
+// 一致，不出现 "%20" 形态）——解码只按 URL 语义成立的分支做（http(s) 与转接串的尾段，
+// N148），其余协议（rtsp / srt / edl 等）与 UnknownEntity 列表侧同走末段原样。解后
+// 为空（如以 / 结尾）返回空串，调用方按"未知"处理；无路径且无尾斜杠时末段即主机名。
+// N148：oxbow:// 转接串取尾段解码——尾段是必要集转义形态，解出即明文名；字幕比对侧
+// cacheBaseName 反向不解码，两个出口各守各的。无尾段的旧串解出整条身份（含目录），
+// 退化面已接受。
 // 禁止用于匹配（匹配走 key）。
 // N56 收族更名 playUrlFileName → fileName。
 QString fileName(const QString &identity);

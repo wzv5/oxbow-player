@@ -160,7 +160,8 @@ class PlaylistEntity {
     // 形态级逐字节比对（R，N56 §2.5），两套语义不得合一
     bool matches(const QString &path) const;
     // ——N55 形态解析唯一出口——
-    // 锁归属提供者 → provider->playUrl(归属 uuid, path())；"无来源 → 所在列表代答"
+    // 锁归属提供者 → provider->playUrl(归属 uuid, path(), fileName())；"无来源 →
+    // 所在列表代答"
     // 的分岔整体删除（N55 §2.3）。委托不是缓存：实体不存形态串、不算形态，每次现问
     // 提供者 ⇒ 无陈旧问题、无"枚举即全表铸 URI"的前置成本。锁失败即编程错误
     // （契约见 m_ownerProvider 注），Debug Q_ASSERT 显影；release 不可达分支返回

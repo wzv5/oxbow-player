@@ -129,7 +129,7 @@ QString PlaylistEntity::playUrl() const {
     Q_ASSERT(provider && !m_ownerUuid.isNull());
     if (!provider || m_ownerUuid.isNull())
         return QString();
-    return provider->playUrl(m_ownerUuid, m_path);
+    return provider->playUrl(m_ownerUuid, m_path, m_fileName);
 }
 
 // N65：串 + 逐文件选项的整体出口——与 playUrl() 同一条归属通路、同一个锁失败
@@ -139,7 +139,7 @@ PlayTarget PlaylistEntity::playTarget() const {
     Q_ASSERT(provider && !m_ownerUuid.isNull());
     if (!provider || m_ownerUuid.isNull())
         return {};
-    return provider->playTarget(m_ownerUuid, m_path);
+    return provider->playTarget(m_ownerUuid, m_path, m_fileName);
 }
 
 // 构造期派生 title / fileName / suffix / key / displayUrl（纯字符串运算 + 一次规范化，

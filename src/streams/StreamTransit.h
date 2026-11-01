@@ -4,11 +4,12 @@
 
 // N52 L1：oxbow:// 转接 URI 语法唯一持有者（协议名与 scheme 常量只住在这里）。
 //
-// URI 形态（沿用 N51 已实证结论，逐字不改）：
-//   oxbow://<listUuid>/<条目段>
-// 条目段 = 条目身份整体 QUrl::toPercentEncoding（unreserved 之外全编码，'/' 编成
-// %2F）——整段只占一个路径段，段尾保留原扩展名，不挂显示名段，不追求可读性；
-// fromPercentEncoding 严格互逆。
+// URI 形态（N148 起带可选尾段）：
+//   oxbow://<listUuid>/<身份段>[/<文件名尾段>]
+// 身份段 = 条目身份整体 QUrl::toPercentEncoding（unreserved 之外全编码，'/' 编成
+// %2F）——整段只占一个路径段，fromPercentEncoding 严格互逆。尾段是明文文件名的必要
+// 集转义形态，只给"以 URL 末段当文件名"的消费面读，不参与身份：unwrap 恒丢弃它，
+// 为空即等同无尾段。
 //
 // 分层定位：本层是叶子。只依赖 QtCore 字符串运算，不认识 Util、不认识提供者、
 // 不认识 mpv、不认识传输。允许依赖方：Util（折叠点）、Playlist（仅 Debug 断言
@@ -28,23 +29,26 @@ inline constexpr char kScheme[] = "oxbow://"; // URI 前缀 = kProtocol + "://"
 // 仅前缀判定（大小写不敏感，与 Util::Url::isHttp 同款串前缀口径，不解析 QUrl）。
 bool isTransitUri(const QString &path);
 
-// 铸造转接 URI：oxbow://<uuid>/<percent-encoded identity>。
+// 铸造转接 URI：oxbow://<uuid>/<percent-encoded identity>[/<escaped tail>]。
 // 入参应为无凭据身份（由调用方——基类下发点——先 Util::Url::stripCredentials 保证，
 // 本层不依赖 Util、不代剥）；listUuid 为列表身份，字面形态恒为 toString 的
 // WithoutBraces 小写串（N57 §2.4：内存中一律 QUuid，大小写与花括号不再参与判等）。
+// tail 为明文文件名（N148），按必要集转义后作为最后一段拼上：为空时不追加分隔符，
+// 产出与无尾段形态逐字节相同。转义集见 StreamTransit.cpp 的 escapeTail。
 // 凭据双保险：Debug 用 Q_ASSERT 守候；Release 下检出 userinfo 形态即拒绝铸造
 // （返回空串，调用方按 open 必失败处理），绝不产出含凭据的 URI。
 // 身份不含 "://"（条目 id、本地路径等）时无 userinfo 可言，不受影响。
 // nil 身份属编程错误（Debug 断言显影；Release 同样返空串，但不作为可测分支）。
-QString mint(const QUuid &listUuid, const QString &identity);
+QString mint(const QUuid &listUuid, const QString &identity, const QString &tail = {});
 
 // 从转接 URI 取回列表身份（N57 §2.4，与 mint 成对）：非本协议、无 authority 段、
 // 或该段解不出合法 uuid 一律返回 nil——nil 恒不命中任何列表。
 // 纯字符串运算，可在 mpv 的 demux 线程调用（不触注册表与视图）。
 QUuid listUuidOfUri(const QString &uri);
 
-// 还原条目身份：unwrap(mint(u, i)) == i。
-// 非本协议、authority 空（uuid 段缺失）、无条目段、解出空串一律原样返回。
+// 还原条目身份：unwrap(mint(u, i, t)) == i（尾段不参与，N148）。
+// 取 authority 之后第一个 '/' 与下一个 '/' 之间那一段解码（无下一个 '/' 时取到串尾）。
+// 非本协议、authority 空（uuid 段缺失）、无身份段、解出空串一律原样返回。
 // 幂等：可安全重复施加——这是还原折叠点（Util::Url::toIdentity）能常驻
 // 首行的前提。
 QString unwrap(const QString &path);
