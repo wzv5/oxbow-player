@@ -1106,13 +1106,6 @@ void SettingsDialog::buildUi() {
     rightLayout->setContentsMargins(0, 0, 0, 0);
 
     m_pageStack = new QStackedWidget(rightPane);
-    // 页内容进纵向滚动区（N146）：AI 页条目多、含多行编辑框，最满一页的最小高度
-    // 不再反灌对话框——内容高于视口即滚动，初始 760x520，用户可拉大
-    auto *pageScroll = new QScrollArea(rightPane);
-    pageScroll->setWidget(m_pageStack);
-    pageScroll->setWidgetResizable(true);
-    pageScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    pageScroll->setFrameShape(QFrame::NoFrame);
 
     // 遍历目录动态生成页面：每分类一页、每设置项一组"标签 + 控件（+ 备注行）"。
     // 文案在构建控件此刻经 tr() 翻译（上下文即 SettingsDialog，既有 .ts 不失效）。
@@ -1317,9 +1310,17 @@ void SettingsDialog::buildUi() {
         }
         layout->addLayout(form);
         layout->addStretch(1);
-        m_pageStack->addWidget(page);
+        // 滚动权归页：栈的尺寸取所有页的最大值，外套一个滚动区会让短页也按最高那页
+        // 撑开、竖条恒在；每页各套一个则只有内容高于视口的那页出条，也不需要栈去猜
+        // 当前页该多高。初始 760x520，用户可拉大
+        auto *scroll = new QScrollArea(this);
+        scroll->setWidget(page);
+        scroll->setWidgetResizable(true);
+        scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        scroll->setFrameShape(QFrame::NoFrame);
+        m_pageStack->addWidget(scroll);
     }
-    rightLayout->addWidget(pageScroll, 1);
+    rightLayout->addWidget(m_pageStack, 1);
 
     m_buttonBox = new QDialogButtonBox(
         QDialogButtonBox::Apply | QDialogButtonBox::Ok | QDialogButtonBox::Cancel, rightPane);
