@@ -8,7 +8,7 @@
 
 ExternalToolPathCombo::ExternalToolPathCombo(const ExternalToolSpec &spec, const QString &configDir,
                                              QWidget *parent)
-    : QWidget(parent), m_spec(spec), m_configDir(configDir), m_autoLabel(tr("<Automatic>")) {
+    : QWidget(parent), m_spec(spec), m_configDir(configDir), m_autoLabel(tr("<Auto>")) {
     auto *layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(4);

@@ -677,13 +677,10 @@ const QList<SettingCategory> &settingCatalog() {
                           .fallback = AiSubtitleCatalog::builtinAsrCommand(),
                           .note = QT_TRANSLATE_NOOP(
                               "SettingsDialog",
-                              "Only used in Custom mode. Placeholder: ${wav_file}. The command "
-                              "must "
-                              "write subtitles to stdout in UTF-8 as SRT blocks or whisper "
-                              "timestamp "
-                              "lines (incrementally or all at once). The working directory is "
-                              "always "
-                              "the plugin directory, and no shell is involved.")},
+                              "Only used in Custom mode; ${wav_file} is replaced with the audio "
+                              "file path; subtitles go to stdout in UTF-8 as SRT blocks or whisper "
+                              "timestamp lines, streamed or all at once; runs in the plugin "
+                              "directory without a shell")},
                          {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Translation Mode"),
                           .widget = WidgetKind::Combo,
                           .iniKey = AiSubtitleCatalog::kTranslationModeKey,
@@ -698,13 +695,13 @@ const QList<SettingCategory> &settingCatalog() {
                           .fallback = QString(),
                           .note = QT_TRANSLATE_NOOP(
                               "SettingsDialog",
-                              "Only used in Custom mode. OpenAI-compatible endpoint: base URL or "
-                              "full path.")},
+                              "Only used in Custom mode; OpenAI-compatible endpoint, either a base "
+                              "URL or a full path")},
                          {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Translation API Key"),
                           .widget = WidgetKind::LineEdit,
                           .iniKey = AiSubtitleCatalog::kTranslationApiKeyKey,
                           .fallback = QString(),
-                          .note = QT_TRANSLATE_NOOP("SettingsDialog", "Only used in Custom mode."),
+                          .note = QT_TRANSLATE_NOOP("SettingsDialog", "Only used in Custom mode"),
                           .secret = true},
                          {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Translation Model"),
                           .widget = WidgetKind::LineEdit,
@@ -712,9 +709,9 @@ const QList<SettingCategory> &settingCatalog() {
                           .fallback = QString(),
                           .note = QT_TRANSLATE_NOOP(
                               "SettingsDialog",
-                              "Only used in Custom mode. Empty means the request omits the model "
-                              "field."),
-                          .placeholder = QT_TRANSLATE_NOOP("SettingsDialog", "Automatic")},
+                              "Only used in Custom mode; empty means the request omits the model "
+                              "field"),
+                          .placeholder = QT_TRANSLATE_NOOP("SettingsDialog", "Auto")},
                          {.label =
                               QT_TRANSLATE_NOOP("SettingsDialog", "Translation Target Language"),
                           .widget = WidgetKind::EditableCombo,
@@ -727,8 +724,8 @@ const QList<SettingCategory> &settingCatalog() {
                           .fallback = AiSubtitleCatalog::defaultTranslationPrompt(),
                           .note = QT_TRANSLATE_NOOP(
                               "SettingsDialog",
-                              "Placeholders: {target_lang} and {source_text}. Adjust it freely to "
-                              "suit your model.")},
+                              "Placeholders: {target_lang} and {source_text}; adjust the prompt to "
+                              "suit your model")},
                      }},
     };
     return catalog;
