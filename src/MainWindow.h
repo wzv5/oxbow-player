@@ -24,17 +24,19 @@ class BookmarkEditorDialog;
 class ShortcutsDialog;
 class CustomToolManager; // N134：自定义工具单表（定义于 CustomToolManager.h）
 class ChapterSlider;
-class MarkAggregator;           // N15：章节+书签标记聚合器（定义于 MainWindow.cpp）
-class PlaylistRegistry;         // N57：列表注册表（装配顶点创建并持有，注入 PlaylistWidget）
-class PopupCloseWatch;          // N66：弹层关闭观察器（定义于 MainWindow.cpp）
-class CursorAutoHider;          // N67：播放时视频区光标自动隐藏（定义于 MainWindow.cpp）
-class StreamRelay;              // N52：mpv 自定义协议适配层（定义于 StreamRelay.h）
-class PlaybackReporterRegistry; // N74：报告者注册表（定义于 PlaybackReporterRegistry.h）
-class PlaybackReportDriver;     // N74：上报驱动器（定义于 PlaybackReportDriver.h）
-class ThumbEngine;              // N107：缩略图第二 core 引擎（定义于 thumb/ThumbEngine.h）
-class ThumbWindow;              // N107：缩略图宿主窗（定义于 ui/ThumbWindow.h）
-class ThumbHoverWatch;          // N107：进度条悬停缩略图会话机（定义于 MainWindow.cpp）
-class OsdController;            // N113：三形态 OSD 控制器（定义于 ui/OsdController.h）
+class MarkAggregator;            // N15：章节+书签标记聚合器（定义于 MainWindow.cpp）
+class PlaylistRegistry;          // N57：列表注册表（装配顶点创建并持有，注入 PlaylistWidget）
+class PopupCloseWatch;           // N66：弹层关闭观察器（定义于 MainWindow.cpp）
+class CursorAutoHider;           // N67：播放时视频区光标自动隐藏（定义于 MainWindow.cpp）
+class StreamRelay;               // N52：mpv 自定义协议适配层（定义于 StreamRelay.h）
+class PlaybackReporterRegistry;  // N74：报告者注册表（定义于 PlaybackReporterRegistry.h）
+class PlaybackReportDriver;      // N74：上报驱动器（定义于 PlaybackReportDriver.h）
+class ThumbEngine;               // N107：缩略图第二 core 引擎（定义于 thumb/ThumbEngine.h）
+class ThumbWindow;               // N107：缩略图宿主窗（定义于 ui/ThumbWindow.h）
+class ThumbHoverWatch;           // N107：进度条悬停缩略图会话机（定义于 MainWindow.cpp）
+class OsdController;             // N113：三形态 OSD 控制器（定义于 ui/OsdController.h）
+class DependencyInstallJob;      // N150：可选依赖安装作业（主窗持有，应用级寿命）
+class DependencyInstallerWizard; // N150：安装向导（按需创建，QPointer 兜底）
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -508,6 +510,17 @@ class MainWindow : public QMainWindow {
     QAction *m_fullscreenAction = nullptr;              // 视图菜单"全屏"勾选项（N3）
     QAction *m_miniAction = nullptr;                    // 视图菜单"小窗"勾选项（N68）
     QAction *m_aboutAction = nullptr; // About 动作（不进登记表，两个菜单共用一份）
+
+#ifdef OXBOW_WITH_OPTIONAL_DEPENDENCY_INSTALLER
+    // ---- N150：可选依赖安装器 ----
+    QAction *m_installDependenciesAction = nullptr;         // 帮助菜单入口（自建，不进登记表）
+    DependencyInstallJob *m_dependencyJob = nullptr;        // 作业构造即无父，主窗只持指针
+    QPointer<DependencyInstallerWizard> m_dependencyWizard; // 按需创建，关闭即销毁
+    void openDependencyInstaller();
+    void refreshInstallerResults(); // 执行收口：重解析 ffmpeg 与重预载 MediaInfo
+#endif
+
+    void reloadMediaInfoLibrary(); // 按 ini 现值重预载 MediaInfo 库（N142）
 
     double m_duration = 0.0;
     double m_timePos = 0.0;

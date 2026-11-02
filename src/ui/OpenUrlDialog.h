@@ -2,9 +2,6 @@
 
 #include "pch.h"
 
-class QDialogButtonBox;
-class QPlainTextEdit;
-
 // N131：手输"打开链接 / 添加链接"对话框，文件菜单（整表替换并起播）与播放列表右键
 // （追加进当前 tab）共用同一份——差别只有标题，故不设"用途"枚举。
 // 只回答"输了哪些条目"：切分走 Util::Url::splitEntryText，定形在这里补形态；

@@ -30,6 +30,10 @@
 #include "thumb/ThumbEngine.h"     // N107：缩略图第二 core 引擎
 #include "ui/AboutDialog.h"
 #include "ui/AiSubtitleDialog.h" // N146：AI 字幕生成对话框（按需创建，视图侧收步骤与进度）
+#ifdef OXBOW_WITH_OPTIONAL_DEPENDENCY_INSTALLER
+#include "installer/DependencyInstallJob.h" // N150：安装作业（主窗持有）
+#include "ui/DependencyInstallerWizard.h"   // N150：安装向导（按需创建）
+#endif
 #include "ui/BookmarkEditorDialog.h"
 #include "ui/ChapterSlider.h"
 #include "ui/CustomToolListDialog.h"
@@ -1182,6 +1186,18 @@ void MainWindow::connectActions() {
     // 需求的入口不进键位表，免得在快捷键编辑器里白占一行）
     m_aboutAction = new QAction(tr("&About"), this);
     connect(m_aboutAction, &QAction::triggered, this, [this] { AboutDialog(this).exec(); });
+
+#ifdef OXBOW_WITH_OPTIONAL_DEPENDENCY_INSTALLER
+    // N150：安装器入口同 About 判据——主窗自建、不进登记表
+    m_installDependenciesAction = new QAction(tr("Install Optional Dependencies\u2026"), this);
+    connect(m_installDependenciesAction, &QAction::triggered, this,
+            &MainWindow::openDependencyInstaller);
+    // 退出路径：置取消旗、abort、对作业线程做有界等待（超时故意泄漏）
+    connect(qApp, &QCoreApplication::aboutToQuit, this, [this] {
+        if (m_dependencyJob)
+            m_dependencyJob->shutdown(2000);
+    });
+#endif
 }
 
 // N119：菜单栏装配——六个顶级菜单是常驻实例（既有语义与 N85 的过滤都挂在实例上），
@@ -1217,6 +1233,11 @@ void MainWindow::renderMenuItems(QMenu &menu, std::span<const MenuSpec::Item> it
             break;
         case Kind::About:
             menu.addAction(m_aboutAction);
+            break;
+        case Kind::InstallDependencies:
+#ifdef OXBOW_WITH_OPTIONAL_DEPENDENCY_INSTALLER
+            menu.addAction(m_installDependenciesAction);
+#endif
             break;
         case Kind::Separator:
             menu.addSeparator();
@@ -1603,12 +1624,8 @@ void MainWindow::onPluginIniKeysChanged(const QStringList &keys) {
         provideTraversalPolicy();
     // N142：库路径变更——未加载则当场生效（失败重试也走这一遍），已加载由 preload 自己
     // 判要不要提示下次启动生效
-    const QString mediaInfoKey = externalToolIniKey(ExternalTool::MediaInfo);
-    if (keys.contains(mediaInfoKey) && !App::paths().iniFile().isEmpty()) {
-        QSettings settings(App::paths().iniFile(), QSettings::IniFormat);
-        MediaInfoHelper::preload(settings.value(mediaInfoKey).toString(), App::paths().pluginDir(),
-                                 App::paths().iniDir());
-    }
+    if (keys.contains(externalToolIniKey(ExternalTool::MediaInfo)))
+        reloadMediaInfoLibrary();
     // N143：ffmpeg 路径变更——重解析并推送取数模块，下一次取数即按新路径
     if (keys.contains(externalToolIniKey(ExternalTool::Ffmpeg)) && m_subtitleExtractor)
         m_subtitleExtractor->setFfmpegPath(resolvedFfmpegPath());
@@ -2305,6 +2322,43 @@ QString MainWindow::resolvedFfmpegPath() const {
         settings.value(externalToolIniKey(ExternalTool::Ffmpeg)).toString(),
         App::paths().pluginDir(), App::paths().iniDir());
 }
+
+// 照入口同口径读 ini 重预载 MediaInfo：显式路径优先，未配置回落插件目录与 ini 目录
+void MainWindow::reloadMediaInfoLibrary() {
+    if (App::paths().iniFile().isEmpty())
+        return;
+    QSettings settings(App::paths().iniFile(), QSettings::IniFormat);
+    MediaInfoHelper::preload(settings.value(externalToolIniKey(ExternalTool::MediaInfo)).toString(),
+                             App::paths().pluginDir(), App::paths().iniDir());
+}
+
+#ifdef OXBOW_WITH_OPTIONAL_DEPENDENCY_INSTALLER
+
+// N150：入口按需建作业与向导；重复点击只前置不重开
+void MainWindow::openDependencyInstaller() {
+    if (!m_dependencyJob) {
+        // 作业构造即无父（moveToThread 的前提，见 startThread），主窗只持指针不接管寿命
+        m_dependencyJob = new DependencyInstallJob(nullptr);
+        m_dependencyJob->startThread();
+    }
+    if (m_dependencyWizard) {
+        m_dependencyWizard->raise();
+        m_dependencyWizard->activateWindow();
+        return;
+    }
+    m_dependencyWizard = new DependencyInstallerWizard(
+        m_dependencyJob, App::paths().pluginDir(), [this] { refreshInstallerResults(); }, nullptr);
+    m_dependencyWizard->show();
+}
+
+// 收口刷新：不刷新的话字幕浏览器会用创建时缓存的 ffmpeg 路径直到重启
+void MainWindow::refreshInstallerResults() {
+    if (m_subtitleExtractor)
+        m_subtitleExtractor->setFfmpegPath(resolvedFfmpegPath());
+    reloadMediaInfoLibrary();
+}
+
+#endif // OXBOW_WITH_OPTIONAL_DEPENDENCY_INSTALLER
 
 // ——N146：AI 字幕生成——
 

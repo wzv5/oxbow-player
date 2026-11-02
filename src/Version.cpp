@@ -20,6 +20,8 @@ QString versionInfo() {
                                          QStringLiteral(OXBOW_REVISION_STRING));
 }
 
+QString version() { return QStringLiteral(OXBOW_VERSION_STRING); }
+
 QDateTime buildDateTime() {
     return QDateTime::fromString(QStringLiteral(OXBOW_BUILD_TIME), Qt::ISODate);
 }

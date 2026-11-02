@@ -113,7 +113,7 @@ bool builtinCommandFilesExist(const QStringList &command, const QString &pluginD
 // N149：数组即权威形态，程序是第 0 项；需要一整条串的场合由 builtinAsrCommandLine 拼接
 const QStringList &builtinAsrCommand() {
     static const QStringList command = {
-        QStringLiteral("./whisper/whisper-cli"),
+        QStringLiteral("./whisper.cpp/whisper-cli"),
         QStringLiteral("-m"),
         QStringLiteral("./model/ggml-large-v3-turbo.bin"),
         QStringLiteral("-l"),
@@ -132,7 +132,7 @@ const QStringList &builtinServerCommand() {
     static const QStringList command = {
         QStringLiteral("./llama.cpp/llama-server"),
         QStringLiteral("--model"),
-        QStringLiteral("./model/Hy-MT2-1.8B-Q4_K_M.gguf"),
+        QStringLiteral("./model/Hy-MT2-1.8B-Q6_K.gguf"),
         QStringLiteral("--jinja"),
         QStringLiteral("-c"),
         QStringLiteral("8192"),

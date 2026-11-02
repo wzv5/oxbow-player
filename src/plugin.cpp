@@ -20,6 +20,9 @@
 #include "Version.h"
 #include "mpvbridge/MpvController.h"
 #include "streams/StreamRelay.h"
+#ifdef OXBOW_WITH_OPTIONAL_DEPENDENCY_INSTALLER
+#include "installer/DependencySwap.h" // N150：启动清理上一轮安装器的临时根
+#endif
 #ifdef Q_OS_WIN
 #include "platform/TaskbarIntegration.h"
 #endif
@@ -161,6 +164,13 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle) {
 
     // N126：日志出口在一切子系统出生前装配，模式只读一次
     Logging::install(configFile);
+
+#ifdef OXBOW_WITH_OPTIONAL_DEPENDENCY_INSTALLER
+    // N150：启动清理——删上轮安装器留在插件目录的整个 .oxbow-install/（含 backup /
+    // stage / extract 与残留包）。不做跨启动的备份恢复：崩溃在交换窗口里就重装该项；
+    // 删不掉的项记日志、不阻断启动，安装器打开时再清一次
+    DependencySwap::cleanupTempRoot(App::paths().pluginDir());
+#endif
 
     // N84：启动诊断行，自报版本身份，与 About 对话框同源
     OXBOW_LOG_INFO().noquote() << App::versionInfo();

@@ -15,6 +15,9 @@ namespace App {
 // revision 落 unknown，串形不变
 QString versionInfo();
 
+// 纯版本号：0.1.0（不带 revision 串；N150 User-Agent 用）
+QString version();
+
 // 构建时刻，UTC 指定的 QDateTime（宏形如 2026-10-06T14:30:00Z，Z 即 UTC 指定制）。
 // 运行期只是把宏串解析成 QDateTime；本地时区换算与格式化是展示关切，归消费者
 QDateTime buildDateTime();

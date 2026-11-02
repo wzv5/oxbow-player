@@ -4,7 +4,6 @@
 
 #include "entities/PlaylistEntity.h"
 
-class QSettings;
 class StreamEndpoint;   // N52 L2：来源解析点（纯头接口，实现文件使用）
 class StreamRelayIf;    // N52 L4：转接发布接缝（StreamRelay.h 的抽象基，纯头无实现体）
 class PlaybackReporter; // N74：播放上报报告者（寿命归本提供者，注册点在列表侧）

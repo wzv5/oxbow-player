@@ -86,11 +86,12 @@ void TestAiSubtitleCatalog::splitCommandLineAndExpandArgs() {
 // 同形，设置项给用户看的整条串照此），${wav_file} 独占一个实参位供实参级展开；
 // 拼接出口与逐项 join 逐字节一致
 void TestAiSubtitleCatalog::builtinArraysShapeAndJoin() {
-    QCOMPARE(builtinAsrCommand().first(), QStringLiteral("./whisper/whisper-cli"));
+    QCOMPARE(builtinAsrCommand().first(), QStringLiteral("./whisper.cpp/whisper-cli"));
     QCOMPARE(builtinServerCommand().first(), QStringLiteral("./llama.cpp/llama-server"));
     // 首段与模型实参同为 ./ 开头：UI 上"随包相对插件目录"一眼可辨
     QVERIFY(builtinAsrCommand().first().startsWith(QStringLiteral("./")));
     QVERIFY(builtinAsrCommand().contains(QStringLiteral("./model/ggml-large-v3-turbo.bin")));
+    QVERIFY(builtinServerCommand().contains(QStringLiteral("./model/Hy-MT2-1.8B-Q6_K.gguf")));
     QVERIFY(builtinAsrCommand().last() == QStringLiteral("${wav_file}"));
     QCOMPARE(builtinAsrCommandLine(), builtinAsrCommand().join(u' '));
     // 拼接串回拆等于原数组（QProcess::splitCommand 对这批实参无歧义）
@@ -192,7 +193,7 @@ void TestAiSubtitleCatalog::selfCheckDispatchesByDomain() {
     QVERIFY(!asrAvailable(custom, QStringLiteral("mytool -f ${wav_file}"), pluginDir, iniDir));
 
     // 内置档不吃用户那一串：先造程序文件（解析前提），模型补齐前判不可用
-    createFiles({pluginDir + QStringLiteral("/whisper/whisper-cli.exe")});
+    createFiles({pluginDir + QStringLiteral("/whisper.cpp/whisper-cli.exe")});
     QVERIFY(!asrAvailable(builtin, QString(), pluginDir, iniDir)); // 模型缺
     const QStringList asrPaths = selfCheckPaths(builtinAsrCommand(), pluginDir, iniDir);
     QCOMPARE(asrPaths.size(), 3); // 程序 + 两个模型（${wav_file} 不进表）

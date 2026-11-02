@@ -29,6 +29,7 @@
 #include <QComboBox>
 #include <QContextMenuEvent>
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QCursor>
 #include <QDateTime>
 #include <QDeadlineTimer>
@@ -108,6 +109,7 @@
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QSemaphore>
 #include <QSet>
 #include <QSettings>
@@ -120,6 +122,7 @@
 #include <QSslError>
 #include <QStackedWidget>
 #include <QStandardPaths>
+#include <QStorageInfo>
 #include <QString>
 #include <QStringConverter>
 #include <QStringList>
@@ -128,6 +131,7 @@
 #include <QStyleFactory>
 #include <QStyleHints>
 #include <QStyleOptionSlider>
+#include <QStyleOptionViewItem>
 #include <QStyledItemDelegate>
 #include <QTabBar>
 #include <QTabWidget>
@@ -154,12 +158,15 @@
 #include <QVariantList>
 #include <QVariantMap>
 #include <QWaitCondition>
+#include <QWidget>
 #include <QWindow>
+#include <QWizard>
 #include <QXmlStreamReader>
 #include <QtConcurrent/QtConcurrentRun>
 #include <QtGlobal>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <clocale>

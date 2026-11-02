@@ -13,6 +13,13 @@ option(OXBOW_PUREQT "Use the pure-Qt implementation path for the mini window" OF
 # libsodium / OpenSSL、不链 bcrypt、src/rclonecrypt 与解密流与提供者一概不入列；
 # 存量 rclonecrypt:// 列表在关掉的构建里按"键未知"回落登记表第 0 项（静态表）
 option(OXBOW_WITH_RCLONE_CRYPT "Build the rclone crypt backend (read-only encrypted local folder)" ON)
+# N150：可选外部依赖（ffmpeg / whisper.cpp / llama.cpp / MediaInfo 与模型）的图形安装器。
+# 非 Windows 直接关（不 FATAL_ERROR）：Linux 构建不因一个 Windows 专属特性而失败
+option(OXBOW_WITH_OPTIONAL_DEPENDENCY_INSTALLER
+       "Build the graphical installer for optional external dependencies (Windows only)" ON)
+if(NOT WIN32)
+    set(OXBOW_WITH_OPTIONAL_DEPENDENCY_INSTALLER OFF CACHE BOOL "" FORCE)
+endif()
 
 # N83：静态 Qt 依赖 MSVC 运行库口径与 windeployqt 部署语义，限 Windows（Linux 用系统
 # Qt 动态链接），非 Windows 在 configure 期拦截。运行库收紧只看 OXBOW_STATIC：
@@ -359,6 +366,26 @@ if(OXBOW_WITH_RCLONE_CRYPT)
                                  ${OXBOW_RCLONE_CRYPT_PLATFORM_SOURCES})
     target_compile_definitions(oxbowcore PRIVATE OXBOW_WITH_RCLONE_CRYPT)
 endif()
+# N150：可选依赖安装器整块受 OXBOW_WITH_OPTIONAL_DEPENDENCY_INSTALLER 门禁。源分两层：
+# 纯逻辑两模块进 OXBOW_INSTALLER_SOURCES（oxbow_testlib 同轮消费，见测试段）；作业与
+# 向导 UI 只进 oxbowcore。version 库随门禁（GetFileVersionInfo），OFF 时连导入项都不留
+set(OXBOW_INSTALLER_SOURCES
+    src/installer/DependencyCatalog.cpp
+    src/installer/DependencyCatalog.h
+    src/installer/DependencySwap.cpp
+    src/installer/DependencySwap.h
+    src/installer/InstallerStrings.h
+)
+if(OXBOW_WITH_OPTIONAL_DEPENDENCY_INSTALLER)
+    target_sources(oxbowcore PRIVATE ${OXBOW_INSTALLER_SOURCES}
+        src/installer/DependencyInstallJob.cpp
+        src/installer/DependencyInstallJob.h
+        src/ui/DependencyInstallerWizard.cpp
+        src/ui/DependencyInstallerWizard.h
+    )
+    target_compile_definitions(oxbowcore PRIVATE OXBOW_WITH_OPTIONAL_DEPENDENCY_INSTALLER)
+    target_link_libraries(oxbowcore PRIVATE version)
+endif()
 # Windows 专属集成：源不入主列表，由本段构建条件决定（与 X11Util 同一纪律）。
 # A19 全屏期 DWM 圆角裁切抑制用 dwmapi（Vista 起系统组件）；N127 任务栏集成
 # （覆盖图标 / 进度 / 预览工具条）用 ole32（COM 装载）、uuid（CLSID_TaskbarList
@@ -605,6 +632,12 @@ if(OXBOW_BUILD_TESTS)
                                              ${OXBOW_RCLONE_CRYPT_PLATFORM_SOURCES})
         target_compile_definitions(oxbow_testlib PUBLIC OXBOW_WITH_RCLONE_CRYPT)
     endif()
+    # N150：安装器纯逻辑两模块进测试库。宏 PUBLIC——测试 exe 以 REUSE_FROM 复用本库
+    # PCH，宏状态必须一致（照 OXBOW_WITH_RCLONE_CRYPT 口径）；向导与作业不编进测试库
+    if(OXBOW_WITH_OPTIONAL_DEPENDENCY_INSTALLER)
+        target_sources(oxbow_testlib PRIVATE ${OXBOW_INSTALLER_SOURCES})
+        target_compile_definitions(oxbow_testlib PUBLIC OXBOW_WITH_OPTIONAL_DEPENDENCY_INSTALLER)
+    endif()
     # N83：同 oxbowcore——测试库也编 MediaInfoHelper，宽字符口径显式定义。PUBLIC：
     # 随链接传播到各测试 exe——测试 exe 以 REUSE_FROM 复用 oxbow_testlib 的 PCH，
     # 宏状态必须一致，PRIVATE 时宏不传播，gch 因 _UNICODE 未定义被弃用
@@ -670,6 +703,11 @@ if(OXBOW_BUILD_TESTS)
     if(OXBOW_WITH_RCLONE_CRYPT)
         oxbow_add_test(RcloneCrypt)
         oxbow_add_test(RcloneCryptProvider)
+    endif()
+    # N150：安装器两套件与特性同进退（关掉就没有被测对象）
+    if(OXBOW_WITH_OPTIONAL_DEPENDENCY_INSTALLER)
+        oxbow_add_test(DependencyCatalog)
+        oxbow_add_test(DependencySwap)
     endif()
 
     # 一次 windeployqt 吃全部测试 exe：部署面按入参二进制的依赖并集决定，逐个挂载会漏

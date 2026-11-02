@@ -4,8 +4,6 @@
 
 class PlaylistProvider;
 class ProviderSettingsPage;
-class QSettings;
-class QWidget;
 class ServiceRegistry;
 
 // 提供者登记表条目（N44）：提供者对外可见的全部身份与唯一构造入口。

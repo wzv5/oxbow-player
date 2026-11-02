@@ -3,7 +3,6 @@
 #include "pch.h"
 
 class PlaylistProvider;
-class QCheckBox;
 
 // 提供者参数页（N44）：每个提供者一页，页内自持控件、输入校验与实例构造。
 // 对话框只按本接口驱动，不认识任何具体提供者——新增提供者的改动面因此收敛为

@@ -6,7 +6,6 @@
 #include "PlaybackSnapshot.h"
 
 class MpvController;
-class QTimer;
 
 // N74：播放进度上报驱动器。QObject 驻独立工作线程（QThread 子类 run() 内 exec()，
 // B17 EventThread 同族），构造期由 MainWindow 创建并连好全部信号、不启动线程——

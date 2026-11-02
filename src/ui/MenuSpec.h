@@ -17,15 +17,16 @@ enum class HideIn { None, Fullscreen, Mini, Both };
 
 struct Item {
     enum class Kind {
-        Action,    // ActionManager 主实例
-        About,     // 主窗自建，不进登记表
-        Separator, // 分隔线
-        Filters,   // 视频 / 音频两个滤镜子菜单
-        Tracks,    // 四组轨道子菜单
-        Chapter,   // 章节 + 书签整段
-        Aspect,    // 画面比例子菜单（N123：内容仍由填充函数装配，勾选需按属性回填）
-        Tools,     // N134：自定义工具段 + 编辑入口（buildToolSection 现填）
-        SubMenu,   // N123：子菜单内容也由描述表定义（标题 + 子条目表）
+        Action,              // ActionManager 主实例
+        About,               // 主窗自建，不进登记表
+        InstallDependencies, // N150：可选依赖安装器入口（主窗自建，同 About 判据）
+        Separator,           // 分隔线
+        Filters,             // 视频 / 音频两个滤镜子菜单
+        Tracks,              // 四组轨道子菜单
+        Chapter,             // 章节 + 书签整段
+        Aspect,              // 画面比例子菜单（N123：内容仍由填充函数装配，勾选需按属性回填）
+        Tools,               // N134：自定义工具段 + 编辑入口（buildToolSection 现填）
+        SubMenu,             // N123：子菜单内容也由描述表定义（标题 + 子条目表）
     };
     Kind kind = Kind::Action;
     ActionManager::Id action = ActionManager::Id::Count; // 仅 Kind::Action 有意义
@@ -55,6 +56,7 @@ constexpr Item action(ActionManager::Id id, HideIn hide = HideIn::None) {
     return {.kind = Item::Kind::Action, .action = id, .hideIn = hide};
 }
 constexpr Item about() { return {.kind = Item::Kind::About}; }
+constexpr Item installDependencies() { return {.kind = Item::Kind::InstallDependencies}; }
 constexpr Item separator(HideIn hide = HideIn::None) {
     return {.kind = Item::Kind::Separator, .hideIn = hide};
 }
@@ -128,7 +130,12 @@ inline constexpr Item kViewItems[] = {
     section(Item::Kind::Aspect),
 };
 
+// N150：安装器入口随 OXBOW_WITH_OPTIONAL_DEPENDENCY_INSTALLER 门禁（关掉时动作不存在）
+#ifdef OXBOW_WITH_OPTIONAL_DEPENDENCY_INSTALLER
+inline constexpr Item kHelpItems[] = {installDependencies(), about()};
+#else
 inline constexpr Item kHelpItems[] = {about()};
+#endif
 
 // N134：Tools 组
 inline constexpr Item kToolsItems[] = {

@@ -4,7 +4,6 @@
 
 typedef struct mpv_handle mpv_handle;
 class StreamRelay;
-class QTimer;
 
 // N107：缩略图第二 mpv core 的引擎。跑在专属 QThread（mpv_command 同步语义会在
 // demux/seek 上阻塞，不能落 GUI 线程）；会话生命周期 = 一次悬停会话一套 core，
