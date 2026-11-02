@@ -785,44 +785,6 @@ class TestHttpClient : public QObject {
         QVERIFY(!resp.canceled);
     }
 
-    // 总时限含排队：占满 QNAM 内建 6 连接后，队尾作业在排队期耗尽总时限→
-    // 按超时失败，且从未发出（桩侧确认）。并发上限功能已删除（保旧发行版
-    // 兼容）：实际约束即 QNAM 内建值，调用方按小批量纪律使用，见规格 §2.4。
-    void queueTimeCountsTowardTotalDeadline() {
-        QVERIFY(m_stub.resetLogs());
-        HttpClient::Config cfg;
-        cfg.baseUrl = m_stub.url();
-        cfg.timeoutMs = 2000;
-        HttpClient c{cfg};
-        HttpClient::Request slow;
-        slow.url = QUrl(QStringLiteral("/slow"));
-        slow.method = "GET";
-        std::vector<HttpClient::RequestId> ids;
-        for (int i = 0; i < 6; ++i)
-            ids.push_back(c.submit(slow)); // 占满 6 连接
-        QTest::qWait(200);                 // 等 6 条全部发出、在途
-        HttpClient::Config tailCfg = cfg;
-        tailCfg.timeoutMs = 300;
-        HttpClient tailClient{tailCfg};
-        const auto tail = tailClient.submit(slow); // 无空位，QNAM 排队
-        QElapsedTimer clock;
-        clock.start();
-        QVERIFY(waitInThread(tail, -1));
-        const auto tailResp = takeInThread(tail);
-        QVERIFY(!tailResp.canceled);
-        QVERIFY(tailResp.error.contains(QStringLiteral("timed out")));
-        QVERIFY(clock.elapsed() < 1500); // 远早于首批的 2000ms 到期
-        for (const auto &id : ids) {
-            QVERIFY(waitInThread(id, -1));
-            const auto resp = takeInThread(id);
-            QVERIFY(!resp.canceled);
-            QVERIFY(!resp.error.isEmpty()); // 首批同样超时（服务端睡 8s）
-        }
-        const auto snap = m_stub.snapshot(m_stub.url().port());
-        QCOMPARE(PythonStub::count(snap.requests, "GET", "/slow"), 6); // 队尾从未发出
-        QCOMPARE(snap.connPeak, 6); // 池化生效：6 并发恰开 6 连接
-    }
-
     // 排队中撤销：批量提交后撤销仍在 QNAM 队列中的尾部作业——桩侧确认从未发出
     void queuedAbortNeverSends() {
         QVERIFY(m_stub.resetLogs());

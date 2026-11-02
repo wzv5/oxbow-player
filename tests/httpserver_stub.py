@@ -166,9 +166,13 @@ class StubHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         for k, v in headers:
             self.send_header(k, v)
+        # HEAD 的响应不得有 body：多写出的字节会留在 keep-alive 连接里，被下一个
+        # 复用该连接的请求当成响应起始，Qt 解析状态行失败后重发幂等请求——桩侧
+        # 便多记一条，计数断言随连接复用与否偶发翻。Content-Length 仍按 body 长度
+        # 给（HEAD 允许声明 GET 时的长度），只是不写字节。
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        if body:
+        if body and self.command != "HEAD":
             self.wfile.write(body)
 
     def _record(self):
