@@ -322,8 +322,8 @@ void TestDependencyCatalog::modelSourcesAndUrls() {
              QStringLiteral("https://hf-mirror.com/api/models/ggerganov/whisper.cpp/tree/main?"
                             "expand=true"));
     QCOMPARE(modelQueryUrl(ModelHost::ModelScope, component(Id::HyMt2)).toString(),
-             QStringLiteral("https://www.modelscope.cn/api/v1/models/tencent/Hy-MT2-1.8B-GGUF/"
-                            "repo/files?Revision=master&Root="));
+             QStringLiteral("https://www.modelscope.cn/api/v1/models/Tencent-Hunyuan/"
+                            "Hy-MT2-1.8B-GGUF/repo/files?Revision=master&Root="));
     QCOMPARE(modelDownloadUrl(ModelHost::HuggingFace, component(Id::WhisperTurbo)).toString(),
              QStringLiteral("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/"
                             "ggml-large-v3-turbo.bin"));
@@ -331,7 +331,7 @@ void TestDependencyCatalog::modelSourcesAndUrls() {
              QStringLiteral("https://hf-mirror.com/tencent/Hy-MT2-1.8B-GGUF/resolve/main/"
                             "Hy-MT2-1.8B-Q6_K.gguf"));
     QCOMPARE(modelDownloadUrl(ModelHost::ModelScope, component(Id::HyMt2)).toString(),
-             QStringLiteral("https://www.modelscope.cn/models/tencent/Hy-MT2-1.8B-GGUF/"
+             QStringLiteral("https://www.modelscope.cn/models/Tencent-Hunyuan/Hy-MT2-1.8B-GGUF/"
                             "resolve/master/Hy-MT2-1.8B-Q6_K.gguf"));
 }
 

@@ -85,7 +85,8 @@ struct Component {
     const char *assetPattern = nullptr;    // GitHub：资产名正则源串
     ExtractSpec extract;
     ProbeSpec probe;
-    const char *modelRepo = nullptr; // Model：仓库与仓库内文件路径
+    const char *modelRepo = nullptr;      // Model：仓库与仓库内文件路径
+    const char *modelScopeRepo = nullptr; // ModelScope 的仓库 ID；空 = 同 modelRepo
     const char *modelPath = nullptr;
     std::array<ModelHost, 3> hosts = {ModelHost::None, ModelHost::None, ModelHost::None};
 };

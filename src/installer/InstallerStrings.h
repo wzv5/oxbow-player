@@ -105,7 +105,7 @@ constexpr const char *kLogLegacyWhisper = QT_TRANSLATE_NOOP(
 constexpr const char *kLogDownloadRetry =
     QT_TRANSLATE_NOOP("DependencyInstallerWizard", "Download retry %1 of %2: %3");
 constexpr const char *kLogHostSwitch = QT_TRANSLATE_NOOP(
-    "DependencyInstallerWizard", "Host %1 failed before any byte, switching to %2");
+    "DependencyInstallerWizard", "Host %1 failed before any byte (%2), switching to %3: %4");
 
 // —— 字符占位（不进翻译表：— 与 … 是字符不是文案）——
 inline QString emptyCell() { return QStringLiteral("\u2014"); }

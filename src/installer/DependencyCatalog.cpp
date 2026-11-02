@@ -116,6 +116,7 @@ const Component kComponents[] = {
         .installTarget = "model/Hy-MT2-1.8B-Q6_K.gguf",
         .sourceKind = SourceKind::Model,
         .modelRepo = "tencent/Hy-MT2-1.8B-GGUF",
+        .modelScopeRepo = "Tencent-Hunyuan/Hy-MT2-1.8B-GGUF",
         .modelPath = "Hy-MT2-1.8B-Q6_K.gguf",
         .hosts = {ModelHost::HuggingFace, ModelHost::ModelScope, ModelHost::HfMirror},
     },
@@ -377,6 +378,16 @@ QUrl modelscopeResolveUrl(const QString &repo, const QString &path) {
                     .arg(QLatin1String(kModelScopeHost), repo, path));
 }
 
+namespace {
+
+// ModelScope 上的仓库 ID 与 HF 常不同（owner 换名，例：HF 的 tencent/... 在 ModelScope
+// 是 Tencent-Hunyuan/...）；组件没单配时沿用 HF 的仓库名
+QString modelScopeRepoOf(const Component &comp) {
+    return comp.modelScopeRepo ? QLatin1String(comp.modelScopeRepo) : QLatin1String(comp.modelRepo);
+}
+
+} // namespace
+
 QUrl modelQueryUrl(ModelHost host, const Component &comp) {
     switch (host) {
     case ModelHost::None:
@@ -386,7 +397,7 @@ QUrl modelQueryUrl(ModelHost host, const Component &comp) {
     case ModelHost::HfMirror:
         return hfTreeApiUrl(QLatin1String(kHfMirrorHost), QLatin1String(comp.modelRepo));
     case ModelHost::ModelScope:
-        return modelscopeFilesApiUrl(QLatin1String(comp.modelRepo));
+        return modelscopeFilesApiUrl(modelScopeRepoOf(comp));
     }
     return {};
 }
@@ -402,7 +413,7 @@ QUrl modelDownloadUrl(ModelHost host, const Component &comp) {
         return hfResolveUrl(QLatin1String(kHfMirrorHost), QLatin1String(comp.modelRepo),
                             QLatin1String(comp.modelPath));
     case ModelHost::ModelScope:
-        return modelscopeResolveUrl(QLatin1String(comp.modelRepo), QLatin1String(comp.modelPath));
+        return modelscopeResolveUrl(modelScopeRepoOf(comp), QLatin1String(comp.modelPath));
     }
     return {};
 }

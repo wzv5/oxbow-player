@@ -429,11 +429,17 @@ SourceQuery DependencyInstallJob::queryModel(Id id) {
     for (int i = 0; i < chain.size(); ++i) {
         if (m_cancel.load())
             break;
-        if (hostFailedThisSession(modelHostName(chain.at(i))))
-            continue; // 本次向导会话里已经失败过的 host 不再试
+        if (hostFailedThisSession(modelHostName(chain.at(i)))) {
+            // 本次向导会话里已经失败过的 host 不再试；原因一并带出，免得只剩一句"跳过"
+            const QString host = modelHostName(chain.at(i));
+            report(Logging::Level::Info,
+                   QStringLiteral("skipping model host %1 (failed this session: %2)")
+                       .arg(host, hostFailureReason(host)));
+            continue;
+        }
         SourceQuery query = queryModelHost(id, chain.at(i));
         if (!query.ok) {
-            markHostFailed(modelHostName(chain.at(i)));
+            markHostFailed(modelHostName(chain.at(i)), query.error);
             continue;
         }
         query.hostIndex = i; // 零字节换 host 从这一位的下一家起试
@@ -472,10 +478,14 @@ bool DependencyInstallJob::hostFailedThisSession(const QString &host) const {
     return m_failedHosts.contains(host);
 }
 
-void DependencyInstallJob::markHostFailed(const QString &host) {
-    report(Logging::Level::Info,
-           QStringLiteral("model host failed this session, skipping it: %1").arg(host));
-    m_failedHosts.insert(host);
+QString DependencyInstallJob::hostFailureReason(const QString &host) const {
+    return m_failedHosts.value(host);
+}
+
+void DependencyInstallJob::markHostFailed(const QString &host, const QString &reason) {
+    m_failedHosts.insert(host, reason);
+    report(Logging::Level::Warning,
+           QStringLiteral("model host %1 failed this session: %2").arg(host, reason));
 }
 
 // —— 执行 ——
@@ -612,9 +622,9 @@ void DependencyInstallJob::executeInstall(const QString &pluginDir, const PlanEn
     }
 
     emit stepText(wizText(kStepDownloading, name));
-    report(Logging::Level::Info,
-           QStringLiteral("downloading %1 (%2) from %3")
-               .arg(name, displayDownloadSize(cached->downloadBytes), cached->downloadUrl.host()));
+    report(Logging::Level::Info, QStringLiteral("downloading %1 (%2) from %3")
+                                     .arg(name, displayDownloadSize(cached->downloadBytes),
+                                          cached->downloadUrl.toString()));
     if (!downloadWithRetry(comp.id, cached.value(), download)) {
         discardAttempt();
         ++outcome.failed;
@@ -698,20 +708,28 @@ bool DependencyInstallJob::downloadWithRetry(Id id, const SourceQuery &query,
             // 零字节才换家；重查该家的大小与哈希，与第一步不一致即判该项失败
             const ModelHost next = chain.at(static_cast<size_t>(hostIndex + 1));
             const SourceQuery alt = queryModelHost(id, next);
-            if (alt.ok && alt.downloadBytes == query.downloadBytes &&
-                (query.sha256.isEmpty() || alt.sha256 == query.sha256)) {
-                report(Logging::Level::Info,
-                       wizText(kLogHostSwitch)
-                           .arg(modelHostName(chain.at(static_cast<size_t>(hostIndex))),
-                                modelHostName(next)));
-                url = alt.downloadUrl;
-                ++hostIndex;
-                continue; // 不消耗额度、不退避
+            if (!alt.ok) {
+                report(Logging::Level::Error,
+                       QStringLiteral("host switch failed: %1").arg(alt.error));
+                return false;
             }
-            report(Logging::Level::Error,
-                   QStringLiteral("host switch failed: metadata mismatch on %1")
-                       .arg(modelHostName(next)));
-            return false;
+            if (alt.downloadBytes != query.downloadBytes ||
+                (!query.sha256.isEmpty() && alt.sha256 != query.sha256)) {
+                report(Logging::Level::Error,
+                       QStringLiteral("host switch failed: metadata mismatch on %1 (size %2 vs %3)")
+                           .arg(modelHostName(next))
+                           .arg(alt.downloadBytes)
+                           .arg(query.downloadBytes));
+                return false;
+            }
+            report(Logging::Level::Info,
+                   wizText(kLogHostSwitch)
+                       .arg(modelHostName(chain.at(static_cast<size_t>(hostIndex))),
+                            failureText(failure, error), modelHostName(next),
+                            alt.downloadUrl.toString()));
+            url = alt.downloadUrl;
+            ++hostIndex;
+            continue; // 不消耗额度、不退避
         }
         if (verdict.move == RetryBudget::Move::Retry) {
             if (received > 0) {

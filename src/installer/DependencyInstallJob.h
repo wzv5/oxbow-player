@@ -73,7 +73,8 @@ class DependencyInstallJob : public QObject {
     DependencyCatalog::SourceQuery queryModelHost(DependencyCatalog::Id id,
                                                   DependencyCatalog::ModelHost host);
     bool hostFailedThisSession(const QString &host) const;
-    void markHostFailed(const QString &host);
+    QString hostFailureReason(const QString &host) const;
+    void markHostFailed(const QString &host, const QString &reason);
 
     HttpClient::Response blockingRequest(const HttpClient &client,
                                          const HttpClient::Request &request);
@@ -119,7 +120,7 @@ class DependencyInstallJob : public QObject {
     std::atomic_bool m_cancel{false};
     QMutex m_jobMutex; // 保护 m_inFlight（cancel 与工作线程两侧都要碰）
     HttpClient::RequestId m_inFlight;
-    QSet<QString> m_failedHosts; // 本次向导会话内查询失败的 host（关窗即清）
+    QHash<QString, QString> m_failedHosts; // host → 查询失败原因（本次会话，关窗即清）
     // 每项最近一次查询结论：只复用成功项——一次进程会话内结果稳定，重开向导不重复请求
     // （GitHub 未认证限流 60 次/小时/IP）；失败项重开时重查
     QMap<int, DependencyCatalog::SourceQuery> m_queryCache;
