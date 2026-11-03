@@ -25,9 +25,8 @@ class DependencyInstallJob : public QObject {
     void startThread();
     Phase phase() const;
 
-    // 向导会话开始：清本次会话的 host 失败记录（成功查询的进程内缓存保留）、旧布局
-    // whisper/ 提示
-    void beginWizardSession(const QString &pluginDir);
+    // 向导会话开始：清本次会话的 host 失败记录（成功查询的进程内缓存保留）
+    void beginWizardSession();
 
     // 查询 + 探测七项；已成功的查询直接回填缓存
     void startQueries(const QString &pluginDir);

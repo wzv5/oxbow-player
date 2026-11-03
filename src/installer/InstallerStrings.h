@@ -78,11 +78,14 @@ constexpr const char *kGroupSkipped =
 constexpr const char *kGroupContinue = QT_TRANSLATE_NOOP("DependencyInstallerWizard", "Continue?");
 constexpr const char *kWarnDiskSpace = QT_TRANSLATE_NOOP(
     "DependencyInstallerWizard",
-    "Warning: the plugin drive may not have enough free space (need about %1, available %2).");
+    "The install location may not have enough free space (need about %1, available %2).");
 constexpr const char *kDialogTitleNotWritable =
     QT_TRANSLATE_NOOP("DependencyInstallerWizard", "Plugin Directory Not Writable");
 constexpr const char *kDialogBodyNotWritable = QT_TRANSLATE_NOOP(
-    "DependencyInstallerWizard", "Oxbow cannot write to the plugin directory:\n%1\n\n%2");
+    "DependencyInstallerWizard", "Cannot write to the plugin directory:\n%1\n\n%2");
+// 探针没跑起来（插件目录反查失败）时的原因行，与 QFile::errorString() 同为整句
+constexpr const char *kReasonPluginDirUnknown =
+    QT_TRANSLATE_NOOP("DependencyInstallerWizard", "The plugin directory could not be determined.");
 
 // —— 步骤行与摘要 ——
 constexpr const char *kStepDownloading =
@@ -100,8 +103,6 @@ constexpr const char *kSummaryLine = QT_TRANSLATE_NOOP(
 // —— 钉死的日志串 ——
 constexpr const char *kLogSkipped =
     QT_TRANSLATE_NOOP("DependencyInstallerWizard", "Skipped (unavailable): %1");
-constexpr const char *kLogLegacyWhisper = QT_TRANSLATE_NOOP(
-    "DependencyInstallerWizard", "Legacy whisper/ folder detected (not migrated)");
 constexpr const char *kLogDownloadRetry =
     QT_TRANSLATE_NOOP("DependencyInstallerWizard", "Download retry %1 of %2: %3");
 constexpr const char *kLogHostSwitch = QT_TRANSLATE_NOOP(

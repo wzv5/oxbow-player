@@ -163,18 +163,11 @@ void DependencyInstallJob::setPhase(Phase phase) {
     m_phase.store(static_cast<int>(phase), std::memory_order_release);
 }
 
-void DependencyInstallJob::beginWizardSession(const QString &pluginDir) {
+void DependencyInstallJob::beginWizardSession() {
     QMetaObject::invokeMethod(
         this,
-        [this, pluginDir] {
+        [this] {
             m_failedHosts.clear(); // 会话级失败记录关窗即清；成功查询的缓存保留
-            // 旧布局只提示不迁移
-            const QString legacy =
-                DependencySwap::pluginPath(pluginDir, QStringLiteral("whisper/whisper-cli.exe"));
-            const QString renamed =
-                DependencySwap::pluginPath(pluginDir, QStringLiteral("whisper.cpp"));
-            if (QFileInfo::exists(legacy) && !QFileInfo::exists(renamed))
-                report(Logging::Level::Info, wizText(kLogLegacyWhisper));
         },
         Qt::QueuedConnection);
 }

@@ -109,7 +109,7 @@ DependencyInstallerWizard::DependencyInstallerWizard(DependencyInstallJob *job,
 
 void DependencyInstallerWizard::startQuerySession() {
     m_queriesRunning = true;
-    m_job->beginWizardSession(m_pluginDir);
+    m_job->beginWizardSession();
     m_job->startQueries(m_pluginDir);
 }
 
@@ -393,18 +393,22 @@ void DependencyInstallerWizard::onFinished(int installed, int removed, int faile
 }
 
 bool DependencyInstallerWizard::ensureWritable() {
+    QString location;
     QString error;
     if (!m_pluginDir.isEmpty()) {
         QTemporaryFile probe(QDir(m_pluginDir).filePath(QStringLiteral("oxbow-probe-XXXXXX")));
         probe.setAutoRemove(true);
         if (probe.open())
             return true;
+        location = QDir::toNativeSeparators(m_pluginDir);
         error = probe.errorString();
     } else {
-        error = QStringLiteral("plugin directory unknown");
+        // 目录反查失败：位置无址可显示，原因由本侧给
+        location = emptyCell();
+        error = wizText(kReasonPluginDirUnknown);
     }
     QMessageBox::warning(this, wizText(kDialogTitleNotWritable),
-                         wizText(kDialogBodyNotWritable).arg(m_pluginDir, error));
+                         wizText(kDialogBodyNotWritable).arg(location, error));
     return false;
 }
 
