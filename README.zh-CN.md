@@ -4,6 +4,27 @@
 
 > mpv 的桌面前端，Qt 界面，专注于改善日常使用体验。
 
+## 目录
+
+- [简介](#简介)
+- [功能特性](#功能特性)
+- [界面截图](#界面截图)
+- [mpv 兼容性](#mpv-兼容性)
+- [安装](#安装)
+  - [前置条件](#前置条件)
+  - [安装插件](#安装插件)
+- [安装可选的 AI 功能](#安装可选的-ai-功能)
+  - [自动安装（仅 Windows）](#自动安装仅-windows)
+  - [手动安装](#手动安装)
+- [卸载](#卸载)
+- [从源码构建](#从源码构建)
+  - [环境要求](#环境要求)
+  - [配置与构建](#配置与构建)
+  - [构建选项](#构建选项)
+- [名字的由来](#名字的由来)
+- [致谢](#致谢)
+- [开源协议](#开源协议)
+
 ## 简介
 
 Oxbow 是 Windows / Linux 上的桌面视频播放器，播放内核为 [mpv](https://mpv.io/)，界面以 Qt 构建。它以 mpv C 插件的形式运行，把插件目录放进 mpv 的 scripts 目录，之后每次启动 mpv 即为带界面的播放器；插件接口稳定，因此不随 mpv 版本重发，可以随意搭配最新版 mpv 使用。
@@ -29,6 +50,7 @@ Oxbow 专注于改善日常使用体验，界面**精简、高效、不打扰**�
 - **小窗模式**：置顶小窗，等比缩放，靠近屏幕边缘时自动吸附。
 - **导航器**：类似 Photoshop 的导航器，以视口矩形示意当前可见范围，支持点击跳转、拖拽平移、滚轮缩放。
 - **字幕浏览器**：浏览当前使用的字幕轨，双击跳转到选中句。
+- **AI 字幕生成**：从当前音轨生成字幕，支持本地语音识别与逐句翻译，结果自动缓存。
 - **滤镜编辑器**：音频 / 视频滤镜逐条增删，改动即时生效。
 - **音量曲线**：可将音量映射切换为与 MPC-HC 一致的二次曲线，代替 mpv 默认的三次曲线，低音量下的响度更高。
 - **mpv 键位编辑器**：以可视化方式查看与编辑 `input.conf`。
@@ -42,7 +64,7 @@ Oxbow 专注于改善日常使用体验，界面**精简、高效、不打扰**�
 | --- | --- |
 | ![导航器与进度条缩略图](docs/screenshots/zh/navigator-thumbnail.png) | ![快速切换轨道](docs/screenshots/zh/track-switch.png) |
 | ![设置与播放列表配置](docs/screenshots/zh/settings.png) | ![mpv 键位编辑器](docs/screenshots/zh/key-bindings.png) |
-| ![字幕浏览器](docs/screenshots/zh/subtitle-browser.png) | |
+| ![字幕浏览器](docs/screenshots/zh/subtitle-browser.png) | ![AI 字幕生成](docs/screenshots/zh/ai-subtitles.png) |
 
 ## mpv 兼容性
 
@@ -61,6 +83,7 @@ Oxbow 以插件形式运行在 mpv 中，需要与其他插件共存，同时保
 - Linux：X11 会话，或带 XWayland 的 Wayland 会话
 - [mpv](https://mpv.io/) 0.39 及以上
 - Qt 6.8 及以上运行库——Windows 随插件分发，无需单独安装；Linux 依赖系统 Qt
+- AI 字幕生成所需的程序与模型不随插件分发，安装方法见[安装可选的 AI 功能](#安装可选的-ai-功能)。
 
 视频区通过 mpv 的 `wid` 嵌入，该属性只在 X11 一侧存在，因此无 XWayland 的纯 Wayland 会话不受支持。
 
@@ -92,6 +115,48 @@ scripts/oxbow/
 ```
 
 Linux 上媒体元数据补全依赖系统 `libmediainfo`；缺失时该功能不可用，其余功能不受影响。
+
+## 安装可选的 AI 功能
+
+AI 字幕生成会用到 FFmpeg、whisper.cpp、llama.cpp 与模型，这些程序和模型不随插件分发，按需安装。
+
+### 自动安装（仅 Windows）
+
+通过 帮助 → 安装可选依赖… 打开安装向导，勾选想要安装的组件。
+
+![可选依赖安装向导](docs/screenshots/zh/dependency-installer.png)
+
+### 手动安装
+
+ffmpeg、whisper-cli、llama-server 支持从 PATH 调用；不放在 PATH 时，按下面的布局放进插件目录，模型始终放在 `model/` 下，文件名不要改：
+
+```text
+scripts/oxbow/
+├── ffmpeg.exe
+├── whisper.cpp/
+│   └── whisper-cli.exe        # 连同同目录的 DLL
+├── llama.cpp/
+│   └── llama-server.exe       # 连同同目录的 DLL
+└── model/
+    ├── ggml-large-v3-turbo.bin
+    ├── ggml-silero-v6.2.0.bin
+    └── Hy-MT2-1.8B-Q6_K.gguf
+```
+
+| 组件 | 放置位置 | 来源 |
+| --- | --- | --- |
+| FFmpeg | `ffmpeg.exe` | [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) 的 essentials 构建，取 `bin/ffmpeg.exe` |
+| whisper.cpp | `whisper.cpp/` | [发布页](https://github.com/ggerganov/whisper.cpp/releases) |
+| Whisper 模型 | `model/ggml-large-v3-turbo.bin`、`model/ggml-silero-v6.2.0.bin` | [hf-mirror](https://hf-mirror.com/ggerganov/whisper.cpp)（主模型）、[hf-mirror](https://hf-mirror.com/ggml-org/whisper-vad)（VAD） |
+| llama.cpp | `llama.cpp/` | [发布页](https://github.com/ggml-org/llama.cpp/releases) |
+| Hy-MT2 模型 | `model/Hy-MT2-1.8B-Q6_K.gguf` | [ModelScope](https://www.modelscope.cn/models/Tencent-Hunyuan/Hy-MT2-1.8B-GGUF)、[hf-mirror](https://hf-mirror.com/tencent/Hy-MT2-1.8B-GGUF) |
+
+- 不启用翻译，或翻译走自定义端点时，`llama.cpp/` 与 Hy-MT2 模型可以不装。
+- 语音识别改用自定义命令时，whisper.cpp 与识别模型可以不装。
+- FFmpeg 也可在 设置 → 外部工具 里显式指定。
+- 放好后，打开 播放 → 字幕 → 声音生成字幕…，对话框会自检并列出缺什么。
+
+Linux 上使用相同的布局和程序名，只是不带 `.exe` 后缀；模型文件名相同。
 
 ## 卸载
 

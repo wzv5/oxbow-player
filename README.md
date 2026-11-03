@@ -4,6 +4,27 @@
 
 > A desktop front end for mpv, Qt interface, focused on improving the everyday experience.
 
+## Table of Contents
+
+- [Introduction](#introduction)
+- [Features](#features)
+- [Interface screenshots](#interface-screenshots)
+- [mpv compatibility](#mpv-compatibility)
+- [Installation](#installation)
+  - [Prerequisites](#prerequisites)
+  - [Install the plugin](#install-the-plugin)
+- [Installing optional AI features](#installing-optional-ai-features)
+  - [Automatic installation (Windows only)](#automatic-installation-windows-only)
+  - [Manual installation](#manual-installation)
+- [Uninstall](#uninstall)
+- [Building from source](#building-from-source)
+  - [Requirements](#requirements)
+  - [Configure and build](#configure-and-build)
+  - [Build options](#build-options)
+- [Why the name](#why-the-name)
+- [Acknowledgements](#acknowledgements)
+- [License](#license)
+
 ## Introduction
 
 Oxbow is a desktop video player for Windows and Linux. The playback engine is [mpv](https://mpv.io/), the interface is built with Qt. It runs as an mpv C plugin, so place the plugin folder in mpv's scripts directory and from then on starting mpv gives you the player with its full interface; the plugin interface is stable, so Oxbow is not re-released for each mpv version and you can pair it with the latest mpv.
@@ -29,6 +50,7 @@ Oxbow focuses on improving everyday use, with an interface that is **lean, effic
 - **Mini window mode**: an always-on-top mini window with aspect-locked resizing and automatic edge snapping.
 - **Navigator**: like Photoshop's navigator — a viewport rectangle shows what is currently visible; click to jump, drag to pan, scroll to zoom.
 - **Subtitle browser**: browse the subtitle track in use — double-click a line to jump to it.
+- **AI subtitle generation**: generate subtitles from the current audio track, with local speech recognition and optional line-by-line translation; results are cached automatically.
 - **Filter editor**: add or remove audio / video filters one by one, taking effect immediately.
 - **Volume curve**: the volume mapping can be switched to MPC-HC's quadratic curve instead of mpv's default cubic one, which raises the loudness at low volume levels.
 - **mpv key bindings editor**: view and edit `input.conf` visually.
@@ -42,7 +64,7 @@ Oxbow focuses on improving everyday use, with an interface that is **lean, effic
 | --- | --- |
 | ![Navigator and seek-bar thumbnails](docs/screenshots/en/navigator-thumbnail.png) | ![Quick track switching](docs/screenshots/en/track-switch.png) |
 | ![Settings and playlist configuration](docs/screenshots/en/settings.png) | ![mpv key bindings editor](docs/screenshots/en/key-bindings.png) |
-| ![Subtitle browser](docs/screenshots/en/subtitle-browser.png) | |
+| ![Subtitle browser](docs/screenshots/en/subtitle-browser.png) | ![AI subtitle generation](docs/screenshots/en/ai-subtitles.png) |
 
 ## mpv compatibility
 
@@ -61,6 +83,7 @@ Oxbow runs as a plugin inside mpv and has to coexist with other plugins while ke
 - Linux with an X11 session, or a Wayland session with XWayland
 - [mpv](https://mpv.io/) — 0.39 or later
 - Qt 6.8 or later runtime libraries — bundled with the plugin on Windows, no separate install needed; on Linux the system Qt is used
+- The programs and models used by AI subtitle generation are not bundled; see [Installing optional AI features](#installing-optional-ai-features).
 
 The video area is embedded through mpv's `wid`, which only exists on the X11 side; pure-Wayland sessions without XWayland are therefore not supported.
 
@@ -92,6 +115,48 @@ scripts/oxbow/
 ```
 
 On Linux, media metadata enrichment depends on the system `libmediainfo`. Without it that feature is unavailable; nothing else is affected.
+
+## Installing optional AI features
+
+AI subtitle generation uses FFmpeg, whisper.cpp, llama.cpp and models; these programs and models are not bundled and are installed as needed.
+
+### Automatic installation (Windows only)
+
+Open the installer via **Help → Install Optional Dependencies…** and check the components you want.
+
+![Optional dependency installer](docs/screenshots/en/dependency-installer.png)
+
+### Manual installation
+
+`ffmpeg`, `whisper-cli` and `llama-server` can be found on PATH; if they are not on PATH, place them in the plugin directory using the layout below. Models always go under `model/`, and their file names must not be changed:
+
+```text
+scripts/oxbow/
+├── ffmpeg.exe
+├── whisper.cpp/
+│   └── whisper-cli.exe        # plus the DLLs in the same folder
+├── llama.cpp/
+│   └── llama-server.exe       # plus the DLLs in the same folder
+└── model/
+    ├── ggml-large-v3-turbo.bin
+    ├── ggml-silero-v6.2.0.bin
+    └── Hy-MT2-1.8B-Q6_K.gguf
+```
+
+| Component | Location | Source |
+| --- | --- | --- |
+| FFmpeg | `ffmpeg.exe` | essentials build from [gyan.dev](https://www.gyan.dev/ffmpeg/builds/); take `bin/ffmpeg.exe` |
+| whisper.cpp | `whisper.cpp/` | [releases](https://github.com/ggerganov/whisper.cpp/releases) |
+| Whisper models | `model/ggml-large-v3-turbo.bin`, `model/ggml-silero-v6.2.0.bin` | [Hugging Face](https://huggingface.co/ggerganov/whisper.cpp) (main model), [Hugging Face](https://huggingface.co/ggml-org/whisper-vad) (VAD) |
+| llama.cpp | `llama.cpp/` | [releases](https://github.com/ggml-org/llama.cpp/releases) |
+| Hy-MT2 model | `model/Hy-MT2-1.8B-Q6_K.gguf` | [ModelScope](https://www.modelscope.cn/models/Tencent-Hunyuan/Hy-MT2-1.8B-GGUF), [Hugging Face](https://huggingface.co/tencent/Hy-MT2-1.8B-GGUF) |
+
+- When translation is disabled or uses a custom endpoint, `llama.cpp/` and the Hy-MT2 model are not needed.
+- With speech recognition switched to a custom command, whisper.cpp and the recognition models are not needed.
+- FFmpeg can also be set explicitly under Settings → External Tools.
+- Once everything is in place, open Play → Subtitle → Generate Subtitle from Audio…; the dialog self-checks and lists anything missing.
+
+On Linux, use the same layout and program names without the `.exe` suffix; model file names are unchanged.
 
 ## Uninstall
 
