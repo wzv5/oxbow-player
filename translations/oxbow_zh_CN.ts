@@ -3288,101 +3288,98 @@ These values were not written to mpv.conf.</source>
 <context>
     <name>SubtitleBrowserDialog</name>
     <message>
-        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="127"/>
+        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="136"/>
         <source>Subtitle Browser</source>
         <translation>字幕浏览器</translation>
     </message>
     <message>
-        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="169"/>
+        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="178"/>
         <source>Select All</source>
         <translation>全选</translation>
     </message>
     <message>
-        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="170"/>
+        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="179"/>
         <source>Copy</source>
         <translation>复制</translation>
     </message>
     <message>
-        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="207"/>
+        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="216"/>
         <source>Cancel</source>
         <translation>取消</translation>
     </message>
     <message>
-        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="238"/>
+        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="247"/>
         <source>Show subtitles 0.5s earlier</source>
         <translation>提前 0.5 秒显示字幕</translation>
     </message>
     <message>
-        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="242"/>
+        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="251"/>
         <source>Subtitle offset in seconds</source>
         <translation>字幕偏移量（秒）</translation>
     </message>
     <message>
-        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="252"/>
+        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="261"/>
         <source>Show subtitles 0.5s later</source>
         <translation>延后 0.5 秒显示字幕</translation>
     </message>
     <message>
-        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="255"/>
+        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="264"/>
         <source>Reset subtitle offset</source>
         <translation>重置字幕偏移</translation>
     </message>
     <message>
-        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="258"/>
+        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="267"/>
         <source>Scroll to the current subtitle line</source>
         <translation>滚动到当前字幕行</translation>
     </message>
     <message>
-        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="262"/>
+        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="271"/>
         <source>Reload subtitles</source>
         <translation>重新加载字幕</translation>
     </message>
     <message>
-        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="266"/>
+        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="275"/>
         <source>Search</source>
         <translation>搜索</translation>
     </message>
     <message>
-        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="377"/>
+        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="386"/>
         <source>No usable text subtitle track</source>
         <translation>没有可用的文本字幕轨道</translation>
     </message>
     <message>
-        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="393"/>
+        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="402"/>
         <source>Loading subtitles</source>
         <translation>正在加载字幕</translation>
     </message>
     <message>
-        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="453"/>
+        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="462"/>
         <source>This source is not available</source>
         <translation>此源不可用</translation>
     </message>
     <message>
-        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="376"/>
-        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="444"/>
+        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="385"/>
+        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="453"/>
         <source>Only local media and local subtitle files are supported</source>
         <translation>仅支持本地媒体和本地字幕文件</translation>
     </message>
     <message>
-        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="447"/>
+        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="456"/>
         <source>FFmpeg not found. Set its path in Settings, under External Tools.</source>
         <translation>未找到 FFmpeg。请在“设置 &gt; 外部工具”下设置其路径。</translation>
     </message>
     <message>
-        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="450"/>
+        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="459"/>
         <source>Failed to extract subtitles</source>
         <translation>提取字幕失败</translation>
     </message>
-</context>
-<context>
-    <name>SubtitleBrowserModel</name>
     <message>
-        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="85"/>
+        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="13"/>
         <source>Time</source>
         <translation>时间</translation>
     </message>
     <message>
-        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="85"/>
+        <location filename="../src/ui/SubtitleBrowserDialog.cpp" line="14"/>
         <source>Text</source>
         <translation>文本</translation>
     </message>

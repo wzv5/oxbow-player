@@ -8,6 +8,15 @@
 #include "mpvbridge/MpvController.h"
 #include "ui/ThemedIconEngine.h"
 
+// 表头两列归对话框上下文：模型是无 Q_OBJECT 的实现内部类，裸 tr 会落到 QObject
+// 上下文；按常量式源文案 + 取值函数分工，抽取与取值共用同一字面量上下文
+constexpr const char *kColumnTime = QT_TRANSLATE_NOOP("SubtitleBrowserDialog", "Time");
+constexpr const char *kColumnText = QT_TRANSLATE_NOOP("SubtitleBrowserDialog", "Text");
+
+static QString dialogText(const char *source) {
+    return QCoreApplication::translate("SubtitleBrowserDialog", source);
+}
+
 // 行模型：两列（有效起始时间 / 文本）。时间列显示"事件时间 + 当前 sub-delay"，
 // 与进度条同一坐标系；延迟变化整列平移重算。定义在类前，与头文件的
 // 前置声明同一实体（匿名命名空间会与之分家成两个类型）
@@ -82,7 +91,7 @@ class SubtitleBrowserModel : public QAbstractTableModel {
     QVariant headerData(int section, Qt::Orientation orientation, int role) const override {
         if (orientation != Qt::Horizontal || role != Qt::DisplayRole)
             return {};
-        return section == TimeColumn ? tr("Time") : tr("Text");
+        return dialogText(section == TimeColumn ? kColumnTime : kColumnText);
     }
 
   private:
