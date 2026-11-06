@@ -13,6 +13,7 @@
 #include "MediaInfoHelper.h"
 #include "ServiceRegistry.h"
 #include "TraversalPolicy.h"
+#include "UpdateChecker.h" // N151：检查更新后端（主窗子对象）
 #include "Util.h"
 #include "ai/AiSubtitleCatalog.h" // N146：复核原因文案
 #include "ai/AiSubtitleJob.h"     // N146：任务归主窗持有
@@ -46,7 +47,8 @@
 #include "ui/ShortcutsDialog.h" // N86
 #include "ui/SubtitleBrowserDialog.h"
 #include "ui/ThemedIconEngine.h"
-#include "ui/ThumbWindow.h" // N107：缩略图宿主窗
+#include "ui/ThumbWindow.h"  // N107：缩略图宿主窗
+#include "ui/UpdateDialog.h" // N151：检查更新对话框（按需创建）
 #ifndef Q_OS_WIN
 #include "platform/X11Util.h" // N83：小窗置顶 EWMH 直发（仅非 Windows 编译，见 CMakeLists）
 #endif
@@ -680,6 +682,9 @@ MainWindow::MainWindow(MpvController *controller, AppearanceManager *appearance,
     // 不报错。提供者在构造期只造实例、不自注册（规格 §2）
     m_reporters = std::make_shared<PlaybackReporterRegistry>();
     m_registry->provide<PlaybackReporterRegistry>(m_reporters);
+    // N151：检查更新后端——registry 建好即造（现取 HttpClient 的前提），主窗子对象，
+    // 不入注册表
+    m_updateChecker = new UpdateChecker(m_registry, this);
     // N74：驱动器对象——构造期出生、连好全部信号、不启动线程（按需启动见
     // maybeBootReportDriver；启动一次即不再销毁，进程生命周期存活、不 delete）。
     // 五条直连推送 AutoConnection：接收者已在工作线程 → queued 投递，与 GUI 侧同序；
@@ -819,6 +824,15 @@ MainWindow::MainWindow(MpvController *controller, AppearanceManager *appearance,
     restoreSettings();
     updateChapterMenuState();
     updateChapterSlider();
+
+    // N151：自动检查——启动后一次，运行期不再复查；结果只对"有新版本"弹窗
+    QTimer::singleShot(3000, this, [this] { m_updateChecker->maybeCheckAutomatically(); });
+    connect(m_updateChecker, &UpdateChecker::checkFinished, this,
+            [this](UpdateChecker::Trigger trigger, UpdateChecker::Status status) {
+                if (trigger == UpdateChecker::Trigger::Automatic &&
+                    status == UpdateChecker::Status::UpdateAvailable)
+                    showUpdateDialog(false); // 结果已就绪，不再发起检查
+            });
 }
 
 MainWindow::~MainWindow() {
@@ -1187,9 +1201,14 @@ void MainWindow::connectActions() {
     m_aboutAction = new QAction(tr("&About"), this);
     connect(m_aboutAction, &QAction::triggered, this, [this] { AboutDialog(this).exec(); });
 
+    // N151：检查更新入口同 About 判据——主窗自建、不进登记表；无条件走手动入口，
+    // 检查中再触发只把已有对话框带到前台
+    m_checkUpdatesAction = new QAction(tr("Check for Updates…"), this);
+    connect(m_checkUpdatesAction, &QAction::triggered, this, [this] { showUpdateDialog(true); });
+
 #ifdef OXBOW_WITH_OPTIONAL_DEPENDENCY_INSTALLER
     // N150：安装器入口同 About 判据——主窗自建、不进登记表
-    m_installDependenciesAction = new QAction(tr("Install Optional Dependencies\u2026"), this);
+    m_installDependenciesAction = new QAction(tr("Install Optional Dependencies…"), this);
     connect(m_installDependenciesAction, &QAction::triggered, this,
             &MainWindow::openDependencyInstaller);
     // 退出路径：置取消旗、abort、对作业线程做有界等待（超时故意泄漏）
@@ -1238,6 +1257,9 @@ void MainWindow::renderMenuItems(QMenu &menu, std::span<const MenuSpec::Item> it
 #ifdef OXBOW_WITH_OPTIONAL_DEPENDENCY_INSTALLER
             menu.addAction(m_installDependenciesAction);
 #endif
+            break;
+        case Kind::CheckUpdates:
+            menu.addAction(m_checkUpdatesAction);
             break;
         case Kind::Separator:
             menu.addSeparator();
@@ -2330,6 +2352,20 @@ void MainWindow::reloadMediaInfoLibrary() {
     QSettings settings(App::paths().iniFile(), QSettings::IniFormat);
     MediaInfoHelper::preload(settings.value(externalToolIniKey(ExternalTool::MediaInfo)).toString(),
                              App::paths().pluginDir(), App::paths().iniDir());
+}
+
+// N151：自动与手动共用的打开函数——startCheck 为真先发起手动检查（打开即"正在
+// 检查"），为假直接展示已就绪结果（自动入口）
+void MainWindow::showUpdateDialog(bool startCheck) {
+    if (startCheck)
+        m_updateChecker->checkNow(UpdateChecker::Trigger::Manual);
+    if (!m_updateDialog) {
+        m_updateDialog = new UpdateDialog(m_updateChecker, this);
+        m_updateDialog->setAttribute(Qt::WA_DeleteOnClose);
+    }
+    m_updateDialog->show();
+    m_updateDialog->raise();
+    m_updateDialog->activateWindow();
 }
 
 #ifdef OXBOW_WITH_OPTIONAL_DEPENDENCY_INSTALLER

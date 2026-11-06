@@ -3,7 +3,6 @@
 #include "installer/DependencyCatalog.h"
 
 #include "Util.h"
-#include "Version.h"
 #include "installer/InstallerStrings.h"
 
 using namespace InstallerText;
@@ -201,7 +200,7 @@ bool hasNewerVersion(const Component &comp, const RowFacts &row) {
         return false;
     if (row.probeVersion.isEmpty() || row.query.version.isEmpty())
         return false;
-    return compareDottedVersions(row.query.version, row.probeVersion) > 0;
+    return Util::Version::compare(row.query.version, row.probeVersion) > 0;
 }
 
 QString statusText(const QVector<RowFacts> &rows) {
@@ -236,10 +235,6 @@ bool planChangesFiles(const QVector<PlanEntry> &plan) {
     return false;
 }
 
-QUrl githubLatestReleaseUrl(const QString &repo) {
-    return QUrl(QString::fromLatin1(kGithubApi) + repo + QStringLiteral("/releases/latest"));
-}
-
 QUrl githubReleaseByTagUrl(const QString &repo, const QString &tag) {
     return QUrl(QString::fromLatin1(kGithubApi) + repo + QStringLiteral("/releases/tags/") + tag);
 }
@@ -247,15 +242,6 @@ QUrl githubReleaseByTagUrl(const QString &repo, const QString &tag) {
 QUrl githubReleasesListUrl(const QString &repo, int perPage) {
     return QUrl(QString::fromLatin1(kGithubApi) + repo +
                 QStringLiteral("/releases?per_page=%1").arg(perPage));
-}
-
-QByteArray githubUserAgent() { return QStringLiteral("oxbow/%1").arg(App::version()).toUtf8(); }
-
-QString githubReleaseVersion(const QString &tagName) {
-    QString tag = tagName;
-    if (tag.size() > 1 && tag.startsWith(QLatin1Char('v')) && tag.at(1).isDigit())
-        tag.remove(0, 1);
-    return tag;
 }
 
 QString githubNightlyBuildNumber(const QString &releaseBody) {
@@ -494,19 +480,7 @@ QString pendingCellText() { return pendingCell(); }
 
 QString emptyCellText() { return emptyCell(); }
 
-int compareDottedVersions(const QString &a, const QString &b) {
-    const QStringList aParts = a.split(QLatin1Char('.'));
-    const QStringList bParts = b.split(QLatin1Char('.'));
-    const int count = qMax(aParts.size(), bParts.size());
-    for (int i = 0; i < count; ++i) {
-        const long long av = i < aParts.size() ? aParts.at(i).toLongLong() : 0LL;
-        const long long bv = i < bParts.size() ? bParts.at(i).toLongLong() : 0LL;
-        if (av != bv)
-            return av < bv ? -1 : 1;
-    }
-    return 0;
-}
-
+// 进程探测输出按表内正则取版本；解析不出返回空
 QString parseProbeVersion(Id id, const QString &rawOutput) {
     const ProbeSpec &probe = component(id).probe;
     if (probe.kind != ProbeKind::Process || !probe.versionPattern)

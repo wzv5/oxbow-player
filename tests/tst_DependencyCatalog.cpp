@@ -73,7 +73,6 @@ class TestDependencyCatalog : public QObject {
     void modelSourcesAndUrls();
     void hfTreeFixture();
     void modelscopeLookup();
-    void versionCompare();
     void probeParsing();
     void columnText();
     void sizeColumnText();
@@ -173,15 +172,12 @@ void TestDependencyCatalog::componentTableShape() {
 
 void TestDependencyCatalog::githubUrls() {
     const QString repo = QStringLiteral("ggerganov/whisper.cpp");
-    QCOMPARE(githubLatestReleaseUrl(repo).toString(),
-             QStringLiteral("https://api.github.com/repos/ggerganov/whisper.cpp/releases/latest"));
     QCOMPARE(
         githubReleaseByTagUrl(repo, QStringLiteral("b5454")).toString(),
         QStringLiteral("https://api.github.com/repos/ggerganov/whisper.cpp/releases/tags/b5454"));
     QCOMPARE(
         githubReleasesListUrl(repo, 30).toString(),
         QStringLiteral("https://api.github.com/repos/ggerganov/whisper.cpp/releases?per_page=30"));
-    QVERIFY(githubUserAgent().startsWith("oxbow/"));
     QCOMPARE(githubNightlyTag(QStringLiteral("5454")), QStringLiteral("b5454"));
     QVERIFY(githubNightlyTag(QString()).isEmpty());
 }
@@ -190,7 +186,7 @@ void TestDependencyCatalog::githubParsing() {
     // whisper.cpp：latest 拿发布版本与 nightly 行 → b#### 那条 release 的资产
     const QJsonDocument whisperLatest = loadJson("github_whisper_latest.json");
     const QString whisperVersion =
-        githubReleaseVersion(whisperLatest.object()[QLatin1String("tag_name")].toString());
+        Util::GitHub::releaseVersion(whisperLatest.object()[QLatin1String("tag_name")].toString());
     QCOMPARE(whisperVersion, QStringLiteral("1.9.5"));
     const QString buildNumber =
         githubNightlyBuildNumber(whisperLatest.object()[QLatin1String("body")].toString());
@@ -207,8 +203,9 @@ void TestDependencyCatalog::githubParsing() {
 
     // llama.cpp：资产名带构建号，按 ^llama-b\d+-bin-win-cpu-x64\.zip$ 挑
     const QJsonDocument llamaLatest = loadJson("github_llama_latest.json");
-    QCOMPARE(githubReleaseVersion(llamaLatest.object()[QLatin1String("tag_name")].toString()),
-             QStringLiteral("0.8.0"));
+    QCOMPARE(
+        Util::GitHub::releaseVersion(llamaLatest.object()[QLatin1String("tag_name")].toString()),
+        QStringLiteral("0.8.0"));
     const QJsonDocument llamaNightly = loadJson("github_llama_nightly.json");
     const GitHubAsset llamaAsset =
         githubPickAsset(llamaNightly, githubAssetPattern(component(Id::LlamaCpp)));
@@ -220,8 +217,9 @@ void TestDependencyCatalog::githubParsing() {
 
     // ffmpeg：tag 即版本，essentials_build.7z 静态包
     const QJsonDocument ffmpegLatest = loadJson("github_ffmpeg_latest.json");
-    QCOMPARE(githubReleaseVersion(ffmpegLatest.object()[QLatin1String("tag_name")].toString()),
-             QStringLiteral("9.0.2"));
+    QCOMPARE(
+        Util::GitHub::releaseVersion(ffmpegLatest.object()[QLatin1String("tag_name")].toString()),
+        QStringLiteral("9.0.2"));
     const GitHubAsset ffmpegAsset =
         githubPickAsset(ffmpegLatest, githubAssetPattern(component(Id::Ffmpeg)));
     QCOMPARE(ffmpegAsset.name, QStringLiteral("ffmpeg-9.0.2-essentials_build.7z"));
@@ -395,14 +393,6 @@ void TestDependencyCatalog::modelscopeLookup() {
                          &mirrorOid));
 }
 
-void TestDependencyCatalog::versionCompare() {
-    QCOMPARE(compareDottedVersions(QStringLiteral("9.0.10"), QStringLiteral("9.0.2")), 1);
-    QCOMPARE(compareDottedVersions(QStringLiteral("26.10"), QStringLiteral("26.10")), 0);
-    QCOMPARE(compareDottedVersions(QStringLiteral("1.9.5"), QStringLiteral("1.9.4")), 1);
-    QCOMPARE(compareDottedVersions(QStringLiteral("9.0"), QStringLiteral("9.0.1")), -1);
-    QCOMPARE(compareDottedVersions(QStringLiteral("0.8.0"), QStringLiteral("0.8.0")), 0);
-}
-
 void TestDependencyCatalog::probeParsing() {
     // 解析正则来自组件表
     QCOMPARE(parseProbeVersion(Id::Ffmpeg,
@@ -497,7 +487,7 @@ void TestDependencyCatalog::newerVersionAndStatus() {
     rows[static_cast<int>(Id::Ffmpeg)].probeVersion = QStringLiteral("0.9");
     QCOMPARE(statusText(rows), QStringLiteral("New versions available"));
     rows[static_cast<int>(Id::LlamaCpp)].querySettled = false;
-    QCOMPARE(statusText(rows), QStringLiteral("Checking\u2026"));
+    QCOMPARE(statusText(rows), QStringLiteral("Checking…"));
     // 全部落定且模型只认 Installed 也算落定（探测侧出生即真）
     rows[static_cast<int>(Id::LlamaCpp)].querySettled = true;
     QVERIFY(allRowsSettled(rows));

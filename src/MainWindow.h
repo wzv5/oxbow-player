@@ -37,6 +37,8 @@ class ThumbHoverWatch;           // N107：进度条悬停缩略图会话机（�
 class OsdController;             // N113：三形态 OSD 控制器（定义于 ui/OsdController.h）
 class DependencyInstallJob;      // N150：可选依赖安装作业（主窗持有，应用级寿命）
 class DependencyInstallerWizard; // N150：安装向导（按需创建，QPointer 兜底）
+class UpdateChecker;             // N151：检查更新后端（主窗子对象）
+class UpdateDialog;              // N151：检查更新对话框（按需创建，QPointer 兜底）
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -509,7 +511,13 @@ class MainWindow : public QMainWindow {
     AiSubtitleDialog *m_aiSubtitleDialog = nullptr;     // N146：按需创建，关闭即销毁
     QAction *m_fullscreenAction = nullptr;              // 视图菜单"全屏"勾选项（N3）
     QAction *m_miniAction = nullptr;                    // 视图菜单"小窗"勾选项（N68）
-    QAction *m_aboutAction = nullptr; // About 动作（不进登记表，两个菜单共用一份）
+    QAction *m_aboutAction = nullptr;        // About 动作（不进登记表，两个菜单共用一份）
+    QAction *m_checkUpdatesAction = nullptr; // N151：帮助菜单入口（自建，不进登记表）
+
+    // ---- N151：检查更新 ----
+    UpdateChecker *m_updateChecker = nullptr; // m_registry 建好即造，寿命随子对象链
+    QPointer<UpdateDialog> m_updateDialog;    // 按需创建，WA_DeleteOnClose
+    void showUpdateDialog(bool startCheck);   // 自动与手动共用的单一打开函数
 
 #ifdef OXBOW_WITH_OPTIONAL_DEPENDENCY_INSTALLER
     // ---- N150：可选依赖安装器 ----

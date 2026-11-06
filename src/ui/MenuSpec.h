@@ -20,6 +20,7 @@ struct Item {
         Action,              // ActionManager 主实例
         About,               // 主窗自建，不进登记表
         InstallDependencies, // N150：可选依赖安装器入口（主窗自建，同 About 判据）
+        CheckUpdates,        // N151：检查更新入口（主窗自建，同 About 判据）
         Separator,           // 分隔线
         Filters,             // 视频 / 音频两个滤镜子菜单
         Tracks,              // 四组轨道子菜单
@@ -57,6 +58,7 @@ constexpr Item action(ActionManager::Id id, HideIn hide = HideIn::None) {
 }
 constexpr Item about() { return {.kind = Item::Kind::About}; }
 constexpr Item installDependencies() { return {.kind = Item::Kind::InstallDependencies}; }
+constexpr Item checkUpdates() { return {.kind = Item::Kind::CheckUpdates}; }
 constexpr Item separator(HideIn hide = HideIn::None) {
     return {.kind = Item::Kind::Separator, .hideIn = hide};
 }
@@ -130,11 +132,12 @@ inline constexpr Item kViewItems[] = {
     section(Item::Kind::Aspect),
 };
 
-// N150：安装器入口随 OXBOW_WITH_OPTIONAL_DEPENDENCY_INSTALLER 门禁（关掉时动作不存在）
+// N150：安装器入口随 OXBOW_WITH_OPTIONAL_DEPENDENCY_INSTALLER 门禁（关掉时动作不存在）；
+// N151：检查更新恒在，位于安装可选依赖与关于之间
 #ifdef OXBOW_WITH_OPTIONAL_DEPENDENCY_INSTALLER
-inline constexpr Item kHelpItems[] = {installDependencies(), about()};
+inline constexpr Item kHelpItems[] = {installDependencies(), checkUpdates(), about()};
 #else
-inline constexpr Item kHelpItems[] = {about()};
+inline constexpr Item kHelpItems[] = {checkUpdates(), about()};
 #endif
 
 // N134：Tools 组

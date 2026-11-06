@@ -2,6 +2,9 @@
 
 #include "Util.h"
 
+// N151：User-Agent 只取版本身份；全仓只有 Version.cpp 允许 include revision.h
+#include "Version.h"
+
 // N52：依赖方向 Util → StreamTransit 单向（StreamTransit 是叶子，不认识 Util）。
 // 全仓 unwrap 只在此一处——"来源路径 → 内部形态"的唯一还原折叠点。
 #include "streams/StreamTransit.h"
@@ -733,6 +736,38 @@ double Volume::mpvToMpc(double percent) {
     if (percent <= 0.0)
         return 0.0;
     return 100.0 * std::pow(percent / 100.0, 1.5);
+}
+
+// ——版本比较族与 GitHub 共用件（N151）——口径见 Util.h 声明处注释
+int Version::compare(const QString &a, const QString &b) {
+    const QStringList aParts = a.split(QLatin1Char('.'));
+    const QStringList bParts = b.split(QLatin1Char('.'));
+    const int count = qMax(aParts.size(), bParts.size());
+    for (int i = 0; i < count; ++i) {
+        const long long av = i < aParts.size() ? aParts.at(i).toLongLong() : 0LL;
+        const long long bv = i < bParts.size() ? bParts.at(i).toLongLong() : 0LL;
+        if (av != bv)
+            return av < bv ? -1 : 1;
+    }
+    return 0;
+}
+
+namespace {
+// GitHub API 根：latest 与 by-tag / 列表两类地址同根（后者仍在安装器域）
+constexpr const char kGithubApi[] = "https://api.github.com/repos/";
+} // namespace
+
+QUrl GitHub::latestReleaseApiUrl(const QString &repo) {
+    return QUrl(QString::fromLatin1(kGithubApi) + repo + QStringLiteral("/releases/latest"));
+}
+
+QByteArray GitHub::userAgent() { return QStringLiteral("oxbow/%1").arg(App::version()).toUtf8(); }
+
+QString GitHub::releaseVersion(const QString &tagName) {
+    QString tag = tagName;
+    if (tag.size() > 1 && tag.startsWith(QLatin1Char('v')) && tag.at(1).isDigit())
+        tag.remove(0, 1);
+    return tag;
 }
 
 } // namespace Util

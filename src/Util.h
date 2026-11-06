@@ -127,6 +127,30 @@ double mpvToMpc(double percent);
 
 } // namespace Volume
 
+// ——版本比较族（N151）：安装器与更新检查共用——
+namespace Version {
+
+// 点分数字比较：段数不齐按 0 补齐（9.0 < 9.0.1）；负值 = a < b，0 = 相等。
+// 不做形态校验，调用方要严格校验自己包一层。纯函数
+int compare(const QString &a, const QString &b);
+
+} // namespace Version
+
+// ——GitHub 请求共用件（N151）：安装器与更新检查共用。
+// 纯函数：不发请求、不碰文件——User-Agent 只读 App::version()——
+namespace GitHub {
+
+// latest release 的 API 地址（…/releases/latest），不是发布页
+QUrl latestReleaseApiUrl(const QString &repo);
+
+// GitHub 出站请求的 User-Agent：oxbow/<App::version()>。缺了它 GitHub 直接 403
+QByteArray userAgent();
+
+// 发布版本：tag_name 去引导 v（只在后接数字时）
+QString releaseVersion(const QString &tagName);
+
+} // namespace GitHub
+
 // ——身份与形态一族（N56 收族）：嵌套命名空间即这一族的边界——
 // 实体与提供者都从这里取内核；调用方只问角色（toIdentity 定形 / key 落键 /
 // fileName 取显示名 / 判据定性），不再自己拼加工链。算法本身与收族前逐字一致

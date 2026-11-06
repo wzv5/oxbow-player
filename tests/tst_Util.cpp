@@ -124,6 +124,11 @@ class TestUtil : public QObject {
     void resolveExternalProgramEdges();
     // 起飞日志的命令行串：含空白 / 引号的段加引号，且能按 splitCommand 回拆原数组
     void commandLineForLogRoundTrips();
+    // ——N151：Util::Version::compare——点分数字比较、段数不齐补 0、相等得 0
+    void versionCompare();
+    // ——N151：Util::GitHub 三件——latest 地址按 repo 拼全、UA 以 oxbow/ 前缀起步、
+    // 去 v 只在后接数字时生效
+    void githubHelpers();
 };
 
 void TestUtil::emptyInputYieldsNoSegments() {
@@ -1099,6 +1104,29 @@ void TestUtil::commandLineForLogRoundTrips() {
     QVERIFY(escaped.contains(QStringLiteral("\"--model=D:/a \\\"b\\\".gguf\"")));
     QVERIFY(escaped.contains(QStringLiteral("\"C:\\my out\\\\\"")));
     QVERIFY(escaped.endsWith(QStringLiteral(" \"\"")));
+}
+
+// ——N151：Util::Version::compare——
+void TestUtil::versionCompare() {
+    QCOMPARE(Util::Version::compare(QStringLiteral("9.0.10"), QStringLiteral("9.0.2")), 1);
+    QCOMPARE(Util::Version::compare(QStringLiteral("26.10"), QStringLiteral("26.10")), 0);
+    QCOMPARE(Util::Version::compare(QStringLiteral("1.9.5"), QStringLiteral("1.9.4")), 1);
+    QCOMPARE(Util::Version::compare(QStringLiteral("9.0"), QStringLiteral("9.0.1")), -1);
+    QCOMPARE(Util::Version::compare(QStringLiteral("0.8.0"), QStringLiteral("0.8.0")), 0);
+}
+
+// ——N151：Util::GitHub 三件——
+void TestUtil::githubHelpers() {
+    const QString repo = QStringLiteral("wzv5/oxbow-player");
+    QCOMPARE(Util::GitHub::latestReleaseApiUrl(repo).toString(),
+             QStringLiteral("https://api.github.com/repos/wzv5/oxbow-player/releases/latest"));
+    QVERIFY(Util::GitHub::userAgent().startsWith("oxbow/"));
+    // 只在后接数字时去 v；非数字尾段与裸 v 原样返回
+    QCOMPARE(Util::GitHub::releaseVersion(QStringLiteral("v1.2.3")), QStringLiteral("1.2.3"));
+    QCOMPARE(Util::GitHub::releaseVersion(QStringLiteral("v1")), QStringLiteral("1"));
+    QCOMPARE(Util::GitHub::releaseVersion(QStringLiteral("vbeta")), QStringLiteral("vbeta"));
+    QCOMPARE(Util::GitHub::releaseVersion(QStringLiteral("v")), QStringLiteral("v"));
+    QCOMPARE(Util::GitHub::releaseVersion(QStringLiteral("b5454")), QStringLiteral("b5454"));
 }
 
 // 一类一可执行（R5）：自带 main（QTEST_GUILESS_MAIN）

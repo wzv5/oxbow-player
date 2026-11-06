@@ -123,7 +123,7 @@ HttpClient::Request plainGetRequest(const QUrl &url) {
 
 HttpClient::Request githubRequest(const QUrl &url) {
     HttpClient::Request request = plainGetRequest(url);
-    request.headers.append({"User-Agent", githubUserAgent()}); // 缺了 GitHub 直接 403
+    request.headers.append({"User-Agent", Util::GitHub::userAgent()}); // 缺了 GitHub 直接 403
     return request;
 }
 
@@ -335,14 +335,14 @@ SourceQuery DependencyInstallJob::queryGitHub(Id id) {
     const QRegularExpression pattern = githubAssetPattern(comp);
 
     const HttpClient::Response latest =
-        blockingRequest(m_queryClient, githubRequest(githubLatestReleaseUrl(repo)));
+        blockingRequest(m_queryClient, githubRequest(Util::GitHub::latestReleaseApiUrl(repo)));
     if (latest.canceled)
         return canceledQuery();
     if (latest.status != 200)
         return failedQuery(httpErrorText(QStringLiteral("GitHub latest release"), latest.status));
     const QJsonDocument latestDoc = QJsonDocument::fromJson(latest.body);
     const QString version =
-        githubReleaseVersion(latestDoc.object()[QLatin1String("tag_name")].toString());
+        Util::GitHub::releaseVersion(latestDoc.object()[QLatin1String("tag_name")].toString());
     if (version.isEmpty())
         return failedQuery(QStringLiteral("GitHub latest response missing tag_name"));
     if (comp.sourceKind == SourceKind::GitHubRelease)

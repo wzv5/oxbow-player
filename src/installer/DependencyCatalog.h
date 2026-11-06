@@ -165,12 +165,10 @@ QVector<PlanEntry> executablePlan(const std::function<Qt::CheckState(Id)> &check
 bool planChangesFiles(const QVector<PlanEntry> &plan);
 
 // —— GitHub ——
-QUrl githubLatestReleaseUrl(const QString &repo);
+// latest 地址 / User-Agent / tag 去 v 在 Util::GitHub（N151）；下面两件是
+// nightly 回退专用，仍属安装器域
 QUrl githubReleaseByTagUrl(const QString &repo, const QString &tag);
 QUrl githubReleasesListUrl(const QString &repo, int perPage);
-QByteArray githubUserAgent();
-// 发布版本：tag_name 去引导 v（只在后接数字时）
-QString githubReleaseVersion(const QString &tagName);
 // 发布说明里 "Nightly build" 之后第一个构建号（纯数字）；没有该行返回空（走 /releases 回退）
 QString githubNightlyBuildNumber(const QString &releaseBody);
 // 构建号 → nightly release 的 tag（b####）
@@ -231,8 +229,6 @@ QString versionFailureTip(const QString &reason);
 QString sizeFailureTip(const QString &reason);
 
 // —— 版本比较与展示 ——
-// 点分数字比较：段数不齐按 0 补齐（9.0 < 9.0.1）；负值 = a < b
-int compareDottedVersions(const QString &a, const QString &b);
 // 进程探测输出按表内正则取版本；解析不出返回空
 QString parseProbeVersion(Id id, const QString &rawOutput);
 // DLL 四段版本取前两段（26.10.0.0 → 26.10）

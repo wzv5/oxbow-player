@@ -212,6 +212,10 @@ add_library(oxbowcore MODULE
     src/ui/BookmarkEditorDialog.h
     src/Util.cpp
     src/Util.h
+    src/UpdateChecker.cpp
+    src/UpdateChecker.h
+    src/ui/UpdateDialog.cpp
+    src/ui/UpdateDialog.h
     src/ExternalTool.cpp
     src/ExternalTool.h
     src/MediaInfoHelper.cpp
@@ -604,6 +608,8 @@ if(OXBOW_BUILD_TESTS)
         src/streams/StreamRangeServer.h
         src/Util.cpp
         src/Util.h
+        src/UpdateChecker.cpp
+        src/UpdateChecker.h
         src/HttpClient.cpp
         src/HttpClient.h
         src/Logging.cpp
@@ -680,6 +686,7 @@ if(OXBOW_BUILD_TESTS)
     oxbow_add_test(WebDavProvider)
     oxbow_add_test(ExternalProvider)
     oxbow_add_test(Util)
+    oxbow_add_test(UpdateChecker)
     oxbow_add_test(Logging)
     oxbow_add_test(BookmarkManager)
     oxbow_add_test(CustomToolManager)

@@ -44,8 +44,7 @@ constexpr const char *kHintInstallLocation =
     QT_TRANSLATE_NOOP("DependencyInstallerWizard", "Install Location: %1");
 constexpr const char *kHintClosingPlayer = QT_TRANSLATE_NOOP(
     "DependencyInstallerWizard", "Closing the player interrupts an ongoing install.");
-constexpr const char *kStatusChecking =
-    QT_TRANSLATE_NOOP("DependencyInstallerWizard", "Checking\u2026");
+constexpr const char *kStatusChecking = QT_TRANSLATE_NOOP("DependencyInstallerWizard", "Checking…");
 constexpr const char *kStatusNewVersions =
     QT_TRANSLATE_NOOP("DependencyInstallerWizard", "New versions available");
 constexpr const char *kCellFailed = QT_TRANSLATE_NOOP("DependencyInstallerWizard", "Failed");
@@ -59,7 +58,7 @@ constexpr const char *kTipSizeFailed =
 constexpr const char *kButtonInstall = QT_TRANSLATE_NOOP("DependencyInstallerWizard", "Install");
 constexpr const char *kButtonClose = QT_TRANSLATE_NOOP("DependencyInstallerWizard", "Close");
 constexpr const char *kButtonCancelling =
-    QT_TRANSLATE_NOOP("DependencyInstallerWizard", "Cancelling\u2026");
+    QT_TRANSLATE_NOOP("DependencyInstallerWizard", "Cancelling…");
 constexpr const char *kPageExecuteTitle =
     QT_TRANSLATE_NOOP("DependencyInstallerWizard", "Installing");
 constexpr const char *kConfirmCancelTitle =
@@ -110,6 +109,6 @@ constexpr const char *kLogHostSwitch = QT_TRANSLATE_NOOP(
 
 // —— 字符占位（不进翻译表：— 与 … 是字符不是文案）——
 inline QString emptyCell() { return QStringLiteral("\u2014"); }
-inline QString pendingCell() { return QStringLiteral("\u2026"); }
+inline QString pendingCell() { return QStringLiteral("…"); }
 
 } // namespace InstallerText
