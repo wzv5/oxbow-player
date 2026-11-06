@@ -19,8 +19,10 @@ class AppearanceManager {
   public:
     AppearanceManager();
 
-    // 套用两个原始取值：样式与当前同名不重套（幂等），配色无条件 setColorScheme
-    // （Unknown 即系统跟随）；配色必须排在样式之后——setStyle 会重置应用调色板
+    // 套用两个原始取值：样式——当前不是带跳转代理的同名样式即重套（N152：启动期
+    // Auto 档同名也要包一次代理，运行期同名且已包代理才跳过），配色无条件
+    // setColorScheme（Unknown 即系统跟随）；配色必须排在样式之后——setStyle 会
+    // 重置应用调色板
     void apply(const QString &styleRaw, const QString &colorSchemeRaw);
 
     // 可用样式清单：QStyleFactory::keys() 原样顺序，设置目录与解析共用
@@ -96,4 +98,6 @@ class AppearanceManager {
     }
 
     QString m_platformDefaultStyle; // 构造时捕获的平台默认样式名
+    // N152：当前服役的滑条跳转代理；样式被替换时 setStyle 删旧代理，QPointer 自动归空
+    QPointer<QStyle> m_styleProxy;
 };

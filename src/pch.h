@@ -103,6 +103,7 @@
 #include <QProcess>
 #include <QProgressBar>
 #include <QPromise>
+#include <QProxyStyle>
 #include <QPushButton>
 #include <QRadioButton>
 #include <QRawFont>
