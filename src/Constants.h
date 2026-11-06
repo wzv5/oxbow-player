@@ -12,6 +12,9 @@ inline char nameAscii[] = "oxbow";
 // 显示名：QString 场景统一入口（标题/关于对话框/applicationName）
 inline QString name() { return QStringLiteral("Oxbow"); }
 
+// 项目主页：关于对话框版权行下的超链接，链接标题与 URL 同为此值
+inline QString projectUrl() { return QStringLiteral("https://github.com/wzv5/oxbow-player"); }
+
 // 配置文件名：小写基名（oxbow.ini），与翻译基名（oxbow_<locale>.qm）同族
 inline QString iniFileName() { return QStringLiteral("oxbow.ini"); }
 

@@ -2,7 +2,7 @@
 
 #include "pch.h"
 
-// N102：关于对话框——独立 QDialog，上部宿主 exe 图标 + 软件标题与版权行，
+// N102：关于对话框——独立 QDialog，上部宿主 exe 图标 + 软件标题、版权行与项目主页链接，
 // 下部只读 QTextEdit 承载构建信息（Version / Build time / mpv version /
 // Qt version，名称与值 \t 分隔）。mpv 版本不取自 MpvController：由它构造期填入
 // App::mpvVersion()，本类只读取值。模态弹出由调用方

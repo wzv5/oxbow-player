@@ -17,7 +17,7 @@ AboutDialog::AboutDialog(QWidget *parent) : QDialog(parent) {
     iconLabel->setPixmap(hostIcon.pixmap(QSize(kIconSize, kIconSize)));
     iconLabel->setFixedSize(kIconSize, kIconSize);
 
-    // 标题加粗放大两号；两行都不设 alignment——QLabel 缺省即左对齐
+    // 标题加粗放大两号；各文字行都不设 alignment——QLabel 缺省即左对齐
     auto *titleLabel = new QLabel(App::name(), this);
     QFont titleFont = titleLabel->font();
     titleFont.setBold(true);
@@ -25,12 +25,21 @@ AboutDialog::AboutDialog(QWidget *parent) : QDialog(parent) {
     titleLabel->setFont(titleFont);
     auto *copyrightLabel = new QLabel(tr("Copyright © 2026 wzv5"), this);
 
+    // 项目主页：链接标题与 URL 同值，单击交系统默认浏览器打开（复制走选中）。放在
+    // 版权行下、紧贴文字列左缘——富文本标签的文档边距为 0，与上面的纯文本标签同起点
+    auto *homepageLabel = new QLabel(this);
+    homepageLabel->setTextFormat(Qt::RichText);
+    homepageLabel->setText(QStringLiteral("<a href=\"%1\">%1</a>").arg(App::projectUrl()));
+    homepageLabel->setOpenExternalLinks(true);
+    homepageLabel->setTextInteractionFlags(Qt::TextBrowserInteraction);
+
     // 行距收口（样式缺省约 6px，叠上各自行高留白会把两行撑散），尾部拉伸让文字块
     // 贴列顶而非在图标高度里居中
     auto *titleColumn = new QVBoxLayout;
     titleColumn->setSpacing(2);
     titleColumn->addWidget(titleLabel);
     titleColumn->addWidget(copyrightLabel);
+    titleColumn->addWidget(homepageLabel);
     titleColumn->addStretch();
 
     auto *topRow = new QHBoxLayout;
