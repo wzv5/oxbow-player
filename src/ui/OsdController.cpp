@@ -2,15 +2,12 @@
 
 #include "ui/OsdController.h"
 
+#include "Constants.h"
 #include "mpvbridge/MpvController.h"
 
 // ---- N113：OSD 三形态控制器（通道分派 / 合并队列 / 2s 时限）----
 
 namespace {
-
-// N113 §3.1：overlay 通道固定 id——每个 libmpv 客户端独立命名空间，与脚本 / IPC 不冲突；
-// 同 id 重发即替换，format=none 同 id 即清除
-constexpr int kOverlayId = 1001;
 
 // N113 §3.3 文字转义：花括号 → \{ \}（避免被当 override 块），真实换行 → \N（\q2 下
 // 仍生效，且避免 data 按行分裂成多条 Dialogue）；`\` 原样（ASS 只解释 \N / \n / \h
@@ -263,7 +260,8 @@ void OsdController::sendOverlay(const QString &text, int w, int h) {
     m_overlayResH = h;
     // 数组命令（mpv_command）默认不做属性展开，文案不怕 $ / ${...}；z=-1 让位给
     // console 等其它 custom OSD（实测负值可用，console 打开时覆盖本条）
-    m_controller->command({QStringLiteral("osd-overlay"), QString::number(kOverlayId),
+    m_controller->command({QStringLiteral("osd-overlay"),
+                           QString::number(static_cast<int>(App::OsdOverlayId::Message)),
                            QStringLiteral("ass-events"),
                            assembleOverlayAss(m_host->font().family(), m_overlayFontSize, text),
                            QString::number(w), QString::number(h), QStringLiteral("-1")});
@@ -272,7 +270,8 @@ void OsdController::sendOverlay(const QString &text, int w, int h) {
 void OsdController::clearOverlay() {
     m_overlayActive = false;
     m_overlayText.clear();
-    m_controller->command({QStringLiteral("osd-overlay"), QString::number(kOverlayId),
+    m_controller->command({QStringLiteral("osd-overlay"),
+                           QString::number(static_cast<int>(App::OsdOverlayId::Message)),
                            QStringLiteral("none"), QString()});
 }
 

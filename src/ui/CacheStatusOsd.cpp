@@ -2,14 +2,11 @@
 
 #include "ui/CacheStatusOsd.h"
 
+#include "Constants.h"
 #include "Util.h"
 #include "mpvbridge/MpvController.h"
 
 namespace {
-
-// N153：与 OsdController 的 1001 分立——每个 libmpv 客户端独立 id 命名空间，同 id
-// 重发即替换，format=none 同 id 即清除；两条通道互不覆盖、可同时存在
-constexpr int kOverlayId = 1002;
 
 // 与 OsdController 同款转义（N113 定的口径）：花括号 → \{ \}（避免被当 override 块），
 // 真实换行 → \N；`\` 与 $ 原样（ASS 只解释 \N / \n / \h 三个行内序列，数组命令不做
@@ -78,8 +75,10 @@ void CacheStatusOsd::updateState() {
     m_percent = 0;
     if (m_active) {
         m_active = false;
-        m_controller->commandAsync({QStringLiteral("osd-overlay"), QString::number(kOverlayId),
-                                    QStringLiteral("none"), QString()});
+        m_controller->commandAsync(
+            {QStringLiteral("osd-overlay"),
+             QString::number(static_cast<int>(App::OsdOverlayId::CacheStatus)),
+             QStringLiteral("none"), QString()});
     }
 }
 
@@ -151,7 +150,8 @@ void CacheStatusOsd::refreshNow() {
                      tr("%1/s").arg(Util::formatFileSize(qMax<qint64>(qint64(0), speed)))));
     // 异步下发（N87）：缓冲期 core 可能正忙在 demuxer / 网络等待上，同步命令会占住
     // 调用线程；osd-overlay 纯渲染副作用、无返回值消费。z=-1 让位 console 等其它 custom OSD
-    m_controller->commandAsync({QStringLiteral("osd-overlay"), QString::number(kOverlayId),
+    m_controller->commandAsync({QStringLiteral("osd-overlay"),
+                                QString::number(static_cast<int>(App::OsdOverlayId::CacheStatus)),
                                 QStringLiteral("ass-events"), data, QString::number(w),
                                 QString::number(h), QStringLiteral("-1")});
 }

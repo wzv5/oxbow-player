@@ -7,7 +7,7 @@ class MpvController;
 // N153：缓冲状态 OSD——mpv 缓冲不足（seeking / demuxer-cache-state/underrun /
 // paused-for-cache 三观察任一为真）期间在画面左下角持续显示「正在缓冲… 百分比 /
 // 速度」两行。持续态，与 OsdController 的一次性消息通道分立——自持显隐状态机
-// （持续满 1s 才显示）、1s 数值刷新与独立 overlay 通道（id 1002）
+// （持续满 1s 才显示）、1s 数值刷新与独立 overlay 通道
 class CacheStatusOsd : public QObject {
     Q_OBJECT
   public:

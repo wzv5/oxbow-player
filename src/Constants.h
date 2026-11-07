@@ -174,4 +174,15 @@ inline bool quadraticVolumeCurveDefault() { return false; }
 // 取值域：0 = 关；1 = 每天；7 = 每 7 天——读侧只认这三值，其余落 1
 inline int updateCheckIntervalDefault() { return 1; }
 
+// ——N154 osd-overlay 通道 id——
+// 各通道共用 plugin.cpp 传入的同一个 mpv client：同一 handle 内 id 是唯一键，同 id
+// 重发即替换、format=none 同 id 即清除，撞号是互相替换 / 清除而非叠字；跨 client 由
+// mpv 按 owner 隔离，只挡外部脚本 / IPC，不构成本仓通道分立的理由。新增通道只在
+// 末尾追加一项，靠自增取号、不显式写数值、不插队（插队会让既有项数值与旧构建 /
+// 旧日志对不上）；别处不得再写 id 字面量
+enum class OsdOverlayId : int {
+    Message = 1001, // 基址：OsdController 一次性消息，避开脚本惯用的低位 id
+    CacheStatus,    // 自增 = 1002：CacheStatusOsd 缓冲持续态
+};
+
 } // namespace App
