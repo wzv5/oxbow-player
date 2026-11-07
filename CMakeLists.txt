@@ -194,6 +194,8 @@ add_library(oxbowcore MODULE
     src/providers/ExternalProvider.h
     src/ui/LoadingOverlay.cpp
     src/ui/LoadingOverlay.h
+    src/ui/CacheStatusOsd.cpp
+    src/ui/CacheStatusOsd.h
     src/ui/OsdController.cpp
     src/ui/OsdController.h
     src/ui/AppearanceManager.cpp

@@ -35,6 +35,7 @@ class ThumbEngine;               // N107：缩略图第二 core 引擎（定义�
 class ThumbWindow;               // N107：缩略图宿主窗（定义于 ui/ThumbWindow.h）
 class ThumbHoverWatch;           // N107：进度条悬停缩略图会话机（定义于 MainWindow.cpp）
 class OsdController;             // N113：三形态 OSD 控制器（定义于 ui/OsdController.h）
+class CacheStatusOsd;            // N153：缓冲状态 OSD 控制器（定义于 ui/CacheStatusOsd.h）
 class DependencyInstallJob;      // N150：可选依赖安装作业（主窗持有，应用级寿命）
 class DependencyInstallerWizard; // N150：安装向导（按需创建，QPointer 兜底）
 class UpdateChecker;             // N151：检查更新后端（主窗子对象）
@@ -545,6 +546,8 @@ class MainWindow : public QMainWindow {
     bool m_playedThisSession = false;
     // ---- OSD 三形态控制器（N113）：本类定「说什么」，它定「怎么显示」----
     OsdController *m_osd = nullptr; // 构造期创建：视频区装配之后、ThumbWindow 之前
+    // N153：缓冲状态 OSD——持续态自持状态机，与 m_osd 的一次性通道分立；装配序同上
+    CacheStatusOsd *m_cacheOsd = nullptr;
     // 进度条悬停 tooltip 的唯一出口（合并节流的落点，见 eventFilter 同名分支）
     void flushSeekToolTip();
 

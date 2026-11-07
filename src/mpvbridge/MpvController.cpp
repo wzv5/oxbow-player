@@ -38,6 +38,14 @@ enum ObservedProperty {
     PropTrackList,
     // N143：字幕偏移推送，面板显示与有效时间列重算由它驱动（仍居末尾纪律之内）
     PropSubDelay,
+    // N153：缓冲状态显隐判据（仍居末尾纪律之内）
+    PropPausedForCache,
+    // N153：seek 重启窗口（仍居末尾纪律之内）——低层 seek 进行中 demuxer 转 idle，
+    // underrun 被强制清，此属性是那段窗口的唯一信号
+    PropSeeking,
+    // N153：demuxer 供包断流（仍居末尾纪律之内）——起播首填与 seek 后重填期
+    // paused-for-cache 不置位（--cache-pause-initial 默认关），此属性补那个缺口
+    PropCacheUnderrun,
     // B18：metadata / file-format / chapter-list 三项文件级属性不 observe，
     // 改由 FILE_LOADED 主动读（见 handleFileLoaded）
 };
@@ -369,6 +377,12 @@ MpvController::MpvController(mpv_handle *mpv, QObject *parent) : QObject(parent)
     mpv_observe_property(m_mpv, PropTrackList, "track-list", MPV_FORMAT_NODE);
     // N143：字幕偏移。普通属性，注册即推初值；停止期属性消失按 NONE 推 0（分发处）
     mpv_observe_property(m_mpv, PropSubDelay, "sub-delay", MPV_FORMAT_DOUBLE);
+    // N153：缓冲状态显隐判据。播放未初始化时属性不可用，观察按 NONE 推送，分发处
+    // 归 false；注册即推初值（false）
+    mpv_observe_property(m_mpv, PropPausedForCache, "paused-for-cache", MPV_FORMAT_FLAG);
+    mpv_observe_property(m_mpv, PropSeeking, "seeking", MPV_FORMAT_FLAG);
+    // 子路径观察：node map 字段按解析值比较，只在布尔翻转时推事件（N153 实测口径见规格）
+    mpv_observe_property(m_mpv, PropCacheUnderrun, "demuxer-cache-state/underrun", MPV_FORMAT_FLAG);
     // B18：metadata / file-format / chapter-list 改 FILE_LOADED 主动读
     // （见 handleFileLoaded），不 observe；track-list 见上
 
@@ -1300,6 +1314,27 @@ void MpvController::handlePropertyChange(const mpv_event *event) {
             emit subDelayChanged(*static_cast<double *>(prop->data));
         else if (prop->format == MPV_FORMAT_NONE)
             emit subDelayChanged(0.0);
+        break;
+    case PropPausedForCache:
+        // N153：NONE（空闲 / 停止）归 false，不得因不可用而显示
+        if (prop->format == MPV_FORMAT_FLAG && prop->data)
+            emit pausedForCacheChanged(*static_cast<int *>(prop->data) != 0);
+        else if (prop->format == MPV_FORMAT_NONE)
+            emit pausedForCacheChanged(false);
+        break;
+    case PropSeeking:
+        // N153：NONE（空闲 / 停止）归 false，同上
+        if (prop->format == MPV_FORMAT_FLAG && prop->data)
+            emit seekingChanged(*static_cast<int *>(prop->data) != 0);
+        else if (prop->format == MPV_FORMAT_NONE)
+            emit seekingChanged(false);
+        break;
+    case PropCacheUnderrun:
+        // N153：NONE（空闲 / 停止 / 无 demuxer）归 false，同上
+        if (prop->format == MPV_FORMAT_FLAG && prop->data)
+            emit cacheUnderrunChanged(*static_cast<int *>(prop->data) != 0);
+        else if (prop->format == MPV_FORMAT_NONE)
+            emit cacheUnderrunChanged(false);
         break;
     // N40：PropWidth / PropHeight 分支已随 observe 移除，视频尺寸改由
     // publishVideoSize 统一取值发布；B18：PropMetadata / PropFileFormat /

@@ -36,6 +36,7 @@
 #include "ui/DependencyInstallerWizard.h"   // N150：安装向导（按需创建）
 #endif
 #include "ui/BookmarkEditorDialog.h"
+#include "ui/CacheStatusOsd.h" // N153：缓冲状态 OSD
 #include "ui/ChapterSlider.h"
 #include "ui/CustomToolListDialog.h"
 #include "ui/FilterListWidget.h"
@@ -755,6 +756,9 @@ MainWindow::MainWindow(MpvController *controller, AppearanceManager *appearance,
     // hostWid() 会触发主窗 QMoveEvent，moveEvent 里的 reposition 要求 m_osd 已
     // 存在）；这些调用点不做空指针容错，装配序就是防线，错序靠崩溃显影
     m_osd = new OsdController(this, m_videoWidget, m_controller);
+    // N153：缓冲状态 OSD——与 m_osd 同一装配序约束（同吃 moveEvent / resizeEvent
+    // 的 reposition），同样必须早于 ThumbWindow
+    m_cacheOsd = new CacheStatusOsd(this, m_videoWidget, m_controller);
 
     // N66 §三-4：弹层关闭补重评经 qApp 级过滤器观察——观察器为独立对象（原因见
     // PopupCloseWatch 类注释），主窗 eventFilter 只服务对象级过滤
@@ -1340,6 +1344,12 @@ void MainWindow::connectController() {
         if (m_playlistPos >= 0)
             m_osd->queue(OsdController::Priority::PlayPause, paused ? tr("Pause") : tr("Play"));
     });
+    connect(m_controller, &MpvController::pausedForCacheChanged, m_cacheOsd,
+            &CacheStatusOsd::onPausedForCacheChanged); // N153：缓冲状态显隐判据
+    connect(m_controller, &MpvController::seekingChanged, m_cacheOsd,
+            &CacheStatusOsd::onSeekingChanged); // N153
+    connect(m_controller, &MpvController::cacheUnderrunChanged, m_cacheOsd,
+            &CacheStatusOsd::onCacheUnderrunChanged); // N153
     connect(m_controller, &MpvController::volumeChanged, this, [this](double v) {
         QSignalBlocker blocker(m_volumeSlider);
         // N108：勾选曲线时回流反算为显示百分比——下发 f(P) 后收到同一 V，反算回
@@ -1696,8 +1706,10 @@ void MainWindow::onPluginIniKeysChanged(const QStringList &keys) {
         // N113：OSD 形态运行期切换——同值 setMode 内部即返（零副作用）；离开当前
         // 形态的清除由控制器自管，立即生效、无须重启
         if (keys.contains(QStringLiteral("osdMode"))) {
-            m_osd->setMode(OsdController::modeFromIniValue(
-                settings.value(QStringLiteral("osdMode"), App::osdModeDefault()).toString()));
+            const auto mode = OsdController::modeFromIniValue(
+                settings.value(QStringLiteral("osdMode"), App::osdModeDefault()).toString());
+            m_osd->setMode(mode);
+            m_cacheOsd->setEnabled(mode != OsdController::Mode::Off);
         }
         // N115：样式 / 配色即时生效（与启动期同一 helper；分支不设门禁——低版本
         // 触发后配色步不在编，无副作用）
@@ -2479,6 +2491,7 @@ void MainWindow::moveEvent(QMoveEvent *event) {
     QMainWindow::moveEvent(event);
     repositionNavigator();
     m_osd->reposition();
+    m_cacheOsd->reposition();
     repositionFullscreenOverlays(); // N66：全屏期两条带贴边跟随
     if (m_thumbWatch)
         m_thumbWatch->notifyLeft(); // N107 §2：主窗挪位使热区挪位，无事件按"已离开"起复核
@@ -2492,6 +2505,7 @@ void MainWindow::resizeEvent(QResizeEvent *event) {
     QMainWindow::resizeEvent(event);
     repositionNavigator();
     m_osd->reposition();
+    m_cacheOsd->reposition();
     repositionFullscreenOverlays(); // N66：全屏期两条带贴边跟随
 #if !defined(Q_OS_WIN) || defined(OXBOW_PUREQT)
     if (m_mini)
@@ -2562,6 +2576,7 @@ void MainWindow::syncVideoGeometry() {
         m_videoWidget->setGeometry(QRect(origin, m_videoPlaceholder->size()));
     }
     m_osd->reposition();
+    m_cacheOsd->reposition();
     repositionFullscreenOverlays(); // N66：两条带几何与视频区对位同源（§三-3 挂载点并列）
 }
 
@@ -3657,6 +3672,7 @@ void MainWindow::toggleMini() {
     m_cursorHider->setMini(m_mini);
     // N68/N113：小窗进出同一收口喂 OSD 控制器——抑制期消息照收照丢、不补显
     m_osd->setSuppressed(m_mini);
+    m_cacheOsd->setSuppressed(m_mini); // N153：随同一收口抑制
 }
 
 // 单击定时器超时：确非双击，执行 press 记下的动作意图（N113：press 不碰 mpv）。
@@ -4624,8 +4640,10 @@ void MainWindow::restoreSettings() {
     }
 
     // N113：OSD 形态（缺键回落常量默认；非法值经 modeFromIniValue 落缺省形态）
-    m_osd->setMode(OsdController::modeFromIniValue(
-        settings.value(QStringLiteral("osdMode"), App::osdModeDefault()).toString()));
+    const auto osdMode = OsdController::modeFromIniValue(
+        settings.value(QStringLiteral("osdMode"), App::osdModeDefault()).toString());
+    m_osd->setMode(osdMode);
+    m_cacheOsd->setEnabled(osdMode != OsdController::Mode::Off);
 
     updateNavigationActions(); // A16：启动恢复完成后的初始启停状态
 }
