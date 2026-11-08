@@ -198,8 +198,8 @@ class MainWindow : public QMainWindow {
     void renderMenuGroup(QMenu &menu, const MenuSpec::Group &group);
     // N123：条目循环本体，子菜单经它递归渲染（两个渲染面与子菜单共用同一份装配）
     void renderMenuItems(QMenu &menu, std::span<const MenuSpec::Item> items);
-    // N134：Tools 菜单的插件工具段（N135 起前置 mpv menu-data 段），名称 > 分段自动
-    // 建子菜单（两段皆空时只剩编辑入口、无前导分隔线）
+    // N134：Tools 菜单的插件工具段（N135 的 mpv menu-data 段按 N155 开关决定是否前置），名称 >
+    // 分段自动 建子菜单（两段皆空时只剩编辑入口、无前导分隔线）
     void buildToolSection(QMenu &menu);
     // N138：常驻工具动作组重建——与 tools() 等长，装不装键由 planKeys 单点判定
     void rebuildToolActions();
@@ -486,6 +486,8 @@ class MainWindow : public QMainWindow {
     // N108：音量曲线开关（INI 键 quadraticVolumeCurve）——勾选时滑条显示百分比按
     // MPC-HC 二次方听感标尺经 Util::Volume 换算为 mpv volume，量程随之取等价百分比
     bool m_quadraticVolumeCurve = App::quadraticVolumeCurveDefault();
+    // N155：Tools 菜单是否前置 mpv menu-data 段（INI 键 showMpvMenuData，缺键关）
+    bool m_showMpvMenuData = App::showMpvMenuDataDefault();
     // N38：静音——菜单项与音量行图标按钮共用同一 QAction（勾选态由 mpv 推送驱动）
     QAction *m_muteAction = nullptr;
     QToolButton *m_muteButton = nullptr;

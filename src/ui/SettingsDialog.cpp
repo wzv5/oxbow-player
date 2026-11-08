@@ -498,7 +498,7 @@ const QList<SettingCategory> &settingCatalog() {
                               "SettingsDialog",
                               "For directory enumeration including subdirectories")},
                          // N113：OSD 形态四档（插件 INI 后端；只管插件自己的消息，mpv 内置
-                         // OSD 不受影响）。位置取 Basic 末位，不打散音量步进与递归深度的
+                         // OSD 不受影响）。位置取 Basic 后段，不打散音量步进与递归深度的
                          // 既有相邻关系
                          {.label = QT_TRANSLATE_NOOP("SettingsDialog", "OSD Mode"),
                           .widget = WidgetKind::Combo,
@@ -509,6 +509,12 @@ const QList<SettingCategory> &settingCatalog() {
                               "SettingsDialog",
                               "Controls the plugin's own OSD only; mpv's built-in OSD is "
                               "unaffected")},
+                         // N155：Tools 菜单是否前置 mpv menu-data 段；默认关
+                         {.label = QT_TRANSLATE_NOOP("SettingsDialog",
+                                                     "Show mpv menu-data in the Tools menu"),
+                          .widget = WidgetKind::CheckBox,
+                          .iniKey = "showMpvMenuData",
+                          .fallback = App::showMpvMenuDataDefault()},
                      }},
                 // ② 播放 —— mpv 选项（写 mpv.conf + 下发）
                 {.title = QT_TRANSLATE_NOOP("SettingsDialog", "Playback"),
@@ -576,11 +582,12 @@ const QList<SettingCategory> &settingCatalog() {
                          {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Audio Filters"),
                           .widget = WidgetKind::FilterList,
                           .mpvKeys = {"af"},
-                          .note = QT_TRANSLATE_NOOP(
-                              "SettingsDialog",
-                              "loudnorm works internally at 192 kHz in dynamic mode and raises the "
-                              "output sample rate; add aresample=48000 when a fixed rate is "
-                              "needed"),
+                          .note = QT_TRANSLATE_NOOP("SettingsDialog",
+                                                    "loudnorm works internally at 192 kHz in "
+                                                    "dynamic mode and raises the "
+                                                    "output sample rate; add aresample=48000 when "
+                                                    "a fixed rate is "
+                                                    "needed"),
                           .filterPresets = audioFilterPresets},
                      }},
                 // ⑤ 网络 —— N35：远端浏览链路（WebDAV 枚举）所用 client 的缺省参数（写
@@ -588,50 +595,52 @@ const QList<SettingCategory> &settingCatalog() {
                 // tls-verify）——两条链路的证书校验各自独立，
                 // 只关一侧就会出现"能列出、播不了"（或反之），两开关互不联动；
                 // 并列 mpv 侧 ytdl hook 开关（写 mpv.conf + 下发 ytdl）
-                {.title = QT_TRANSLATE_NOOP("SettingsDialog", "Network"),
-                 .items =
-                     {
-                         // N151：检查更新间隔（自动入口启动时读一次，改动下次启动生效）
-                         {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Check for Updates"),
-                          .widget = WidgetKind::Combo,
-                          .iniKey = "updateCheckInterval",
-                          .choices = updateCheckIntervalChoices,
-                          .fallback = App::updateCheckIntervalDefault()},
-                         {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Remote Request Timeout"),
-                          .widget = WidgetKind::SpinBox,
-                          .iniKey = "remoteTimeoutSec",
-                          .fallback = App::remoteTimeoutSecDefault(),
-                          .range = {1, 120}},
-                         {.label = QT_TRANSLATE_NOOP("SettingsDialog",
-                                                     "Ignore HTTPS Certificate Errors"),
-                          .widget = WidgetKind::CheckBox,
-                          .iniKey = "ignoreHttpsErrors",
-                          .fallback = App::ignoreHttpsErrorsDefault(),
-                          // N37：澄清只管浏览侧（列表与元数据请求），不影响播放
-                          .note = QT_TRANSLATE_NOOP(
-                              "SettingsDialog",
-                              "Applies to playlist and metadata requests only; "
-                              "playback is governed by the mpv-side option below")},
-                         // N37：播放侧（mpv / ffmpeg 发请求）证书开关。fallback 兼 mpv 默认回退
-                         // （实测默认 no → Ignore 勾选），只在属性不可读或取值未命中两项赋值时
-                         // 兜底；可实时读写，正常运行落不到这里
-                         {.label = QT_TRANSLATE_NOOP("SettingsDialog",
-                                                     "Ignore HTTPS Certificate Errors (mpv side)"),
-                          .widget = WidgetKind::CheckBox,
-                          .mpvKeys = {"tls-verify"},
-                          .choices = tlsVerifyChoices,
-                          .fallback = true,
-                          .mpvType = MpvType::String},
-                         // mpv 侧 ytdl hook 开关（ytdl 选项，bool）：勾选 = ytdl=yes（mpv
-                         // 内置默认即启用，可实时读写——ytdl hook 脚本逐文件加载时现读该
-                         // 选项，改动对后续播放立即生效）；无 choices 走 Flag 直通两态
-                         {.label = QT_TRANSLATE_NOOP("SettingsDialog",
-                                                     "Enable youtube-dl hook script"),
-                          .widget = WidgetKind::CheckBox,
-                          .mpvKeys = {"ytdl"},
-                          .fallback = true,
-                          .mpvType = MpvType::Flag},
-                     }},
+                {
+                    .title = QT_TRANSLATE_NOOP("SettingsDialog", "Network"),
+                    .items =
+                        {
+                            // N151：检查更新间隔（自动入口启动时读一次，改动下次启动生效）
+                            {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Check for Updates"),
+                             .widget = WidgetKind::Combo,
+                             .iniKey = "updateCheckInterval",
+                             .choices = updateCheckIntervalChoices,
+                             .fallback = App::updateCheckIntervalDefault()},
+                            {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Remote Request Timeout"),
+                             .widget = WidgetKind::SpinBox,
+                             .iniKey = "remoteTimeoutSec",
+                             .fallback = App::remoteTimeoutSecDefault(),
+                             .range = {1, 120}},
+                            {.label = QT_TRANSLATE_NOOP("SettingsDialog",
+                                                        "Ignore HTTPS Certificate Errors"),
+                             .widget = WidgetKind::CheckBox,
+                             .iniKey = "ignoreHttpsErrors",
+                             .fallback = App::ignoreHttpsErrorsDefault(),
+                             // N37：澄清只管浏览侧（列表与元数据请求），不影响播放
+                             .note = QT_TRANSLATE_NOOP(
+                                 "SettingsDialog",
+                                 "Applies to playlist and metadata requests only; "
+                                 "playback is governed by the mpv-side option below")},
+                            // N37：播放侧（mpv / ffmpeg 发请求）证书开关。fallback 兼 mpv 默认回退
+                            // （实测默认 no → Ignore 勾选），只在属性不可读或取值未命中两项赋值时
+                            // 兜底；可实时读写，正常运行落不到这里
+                            {.label = QT_TRANSLATE_NOOP(
+                                 "SettingsDialog",
+                                 "Ignore HTTPS Certificate Errors (mpv side)"),
+                             .widget = WidgetKind::CheckBox,
+                             .mpvKeys = {"tls-verify"},
+                             .choices = tlsVerifyChoices,
+                             .fallback = true,
+                             .mpvType = MpvType::String},
+                            // mpv 侧 ytdl hook 开关（ytdl 选项，bool）：勾选 = ytdl=yes（mpv
+                            // 内置默认即启用，可实时读写——ytdl hook 脚本逐文件加载时现读该
+                            // 选项，改动对后续播放立即生效）；无 choices 走 Flag 直通两态
+                            {.label = QT_TRANSLATE_NOOP("SettingsDialog",
+                                                        "Enable youtube-dl hook script"),
+                             .widget = WidgetKind::CheckBox,
+                             .mpvKeys = {"ytdl"},
+                             .fallback = true,
+                             .mpvType = MpvType::Flag},
+                        }},
                 // ⑥ 播放上报 —— N74：报告者开关组（粒度 = 报告者种类，ini 键与注册表的键
                 // 一一对应；分类不设总开关）。全部写 oxbow.ini，应用成功经既有
                 // pluginIniKeysChanged 通知主窗改驱动器启用表并切闸门，实时生效、无需重启

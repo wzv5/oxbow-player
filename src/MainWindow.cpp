@@ -1703,6 +1703,12 @@ void MainWindow::onPluginIniKeysChanged(const QStringList &keys) {
                 m_thumbWatch->setEnabled(on);
             }
         }
+        // N155：Tools 菜单开关——更新成员，下一次展开按新值构建
+        if (keys.contains(QStringLiteral("showMpvMenuData"))) {
+            m_showMpvMenuData =
+                settings.value(QStringLiteral("showMpvMenuData"), App::showMpvMenuDataDefault())
+                    .toBool();
+        }
         // N113：OSD 形态运行期切换——同值 setMode 内部即返（零副作用）；离开当前
         // 形态的清除由控制器自管，立即生效、无须重启
         if (keys.contains(QStringLiteral("osdMode"))) {
@@ -4592,6 +4598,10 @@ void MainWindow::restoreSettings() {
     m_hoverThumbnailEnabled =
         settings.value(QStringLiteral("hoverThumbnail"), App::hoverThumbnailDefault()).toBool();
     m_thumbWatch->setEnabled(m_hoverThumbnailEnabled);
+    // N155：Tools 菜单的 mpv menu-data 段开关（INI 键 showMpvMenuData，缺键关；
+    // 运行期变更经 onPluginIniKeysChanged 更新成员）
+    m_showMpvMenuData =
+        settings.value(QStringLiteral("showMpvMenuData"), App::showMpvMenuDataDefault()).toBool();
     if (settings.contains(QStringLiteral("volume"))) {
         // N108：INI 的 volume 键含义恒为"滑条显示值"——钳到当前量程（滑条上界，即
         // 等价百分比量程）后按曲线换算下发，滑条写同值（仍带 QSignalBlocker）
@@ -5045,11 +5055,15 @@ static QMenu *ensureToolSubmenu(QMenu &menu, QHash<QString, QMenu *> &submenus,
 
 // N134：名称经 pathSegments 分段，最后一段是叶子文本，前面的段依次找 / 建子菜单。
 // 条目与连接都是渲染期对象，随 clear() 消亡——叶子除外：N138 起用常驻工具动作组，
-// clear() 只摘除不销毁。N135 起输出顺序为 mpv menu-data 段、分隔线、插件工具、
-// 分隔线——两段皆空时只剩描述表追加的编辑入口（前导分隔线由助手判据自然压住）
+// clear() 只摘除不销毁。N135 的 mpv menu-data 段按 N155 的 ini 开关决定是否前置；
+// 开启时顺序为 mpv 段、分隔线、插件工具、分隔线——两段皆空时只剩描述表追加的
+// 编辑入口（前导分隔线由助手判据自然压住）
 void MainWindow::buildToolSection(QMenu &menu) {
-    buildMpvMenuItems(menu, m_controller->menuData());
-    appendMenuSeparator(menu);
+    // N155：开关由启动恢复与设置 Apply 维护，菜单展开只读成员
+    if (m_showMpvMenuData) {
+        buildMpvMenuItems(menu, m_controller->menuData());
+        appendMenuSeparator(menu);
+    }
     QHash<QString, QMenu *> submenus;
     const QList<CustomTool> &tools = m_toolMgr->tools();
     Q_ASSERT(m_toolActions.size() == tools.size()); // 等长由 rebuildToolActions 保证
