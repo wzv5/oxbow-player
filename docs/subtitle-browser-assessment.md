@@ -1,17 +1,18 @@
 # 字幕浏览器 / 编辑器可行性评估
 
-- 日期：2026-10-27
+- 日期：2026-10-27（2026-11-08 按 mpv 0.42.0 复核 `sub-lines`）
 - 范围：Windows 主路径；讨论对象以**文本字幕**（subrip/srt、ass/ssa、webvtt 等）为主，PGS / DVD 图形字幕不在内
-- 依据：本机 mpv 源码 0.41.0（`player/lua/select.lua`、`osdep/subprocess-win.c`）与本地 mpv 手册；本机 ffmpeg 实测
+- 依据：本机 mpv 源码 0.41.0 / 0.42.0（`player/lua/select.lua`、`osdep/subprocess-win.c`、`player/command.c`）与本地 mpv 手册；本机 ffmpeg 实测
 - 性质：技术评估，不是方案规格。若后续决定实施，按主仓规格流程另立草案。
 
 ## 一、结论
 
-1. **mpv 客户端 API 只暴露“当前这一行”，不暴露“全部行”，也没有任何写入字幕内容的通道。** 浏览与编辑都不能直接建立在现有 API 上，必须自己取数据（读文件或解包轨道）。这是全部障碍的根。
-2. **内置菜单的 Subtitle lines 不是内核能力**，而是 `select.lua` 用 `subprocess` 命令拉 ffmpeg，把字幕轨导出成 LRC 文本再逐行解析。它证明了“API 之外有路”，同时把代价摆明了：**硬依赖外部 ffmpeg、丢全部样式与定位、时间只到秒**。
-3. **只读浏览的最小可行面是“外部字幕文件”**：Qt 直接读文件自己解析，零外部依赖、可保真（原始文件里的样式块与全部字段都在手），覆盖多数真实使用场景。只有**内嵌轨**才需要 ffmpeg 或自己链 libavformat。
+1. **mpv 客户端 API 只暴露“当前这一行”，不暴露“全部行”，也没有任何写入字幕内容的通道。** 0.42 新增的 `sub-lines` 只对外部文本轨完整，内嵌轨只含“实际解码过的行”，仍不能列出全轨（§十）。浏览与编辑都不能直接建立在现有 API 上，必须自己取数据（读文件或解包轨道）。这是全部障碍的根。
+2. **内置菜单的 Subtitle lines 不是内核全量能力**：0.41 及以前是 `select.lua` 用 `subprocess` 拉 ffmpeg 导出 LRC；0.42 改为读 `sub-lines`，但内嵌轨只含已解码行。两条路都证明“API 之外有路”，也都丢样式与定位；旧路线的额外代价是**硬依赖 ffmpeg、时间只到秒**。
+3. **只读浏览的最小可行面是“外部字幕文件”**：srt 由 Qt 直读解析，零外部依赖；外部 ass/webvtt 与内嵌轨走 ffmpeg。只有 srt 直读这一档不需要 ffmpeg，其余文本轨都交给 ffmpeg 转 srt。
 4. **编辑器的成本不在 UI，而在写回**：外部文件改完用 `sub-reload` 生效；内嵌轨 mpv 没有任何写通道，改完必须整轨重封装（mkvmerge / ffmpeg），是一次**文件级**操作，语义完全不同于“改一行”。
-5. **建议：先做只读浏览，且不要把 ffmpeg 变成硬依赖。** ffmpeg 做成可选增强——有 ffmpeg 才解锁内嵌轨，没有也能对外部文件提供完整能力。不要一上来做编辑器。
+5. **建议：只读浏览继续走“外部 srt 直读 + ffmpeg 可选增强”**：有 ffmpeg 才解锁内嵌轨与外部 ass/webvtt；没有 ffmpeg 时外部 srt 仍可浏览。不要一上来做编辑器。
+6. **0.42 `sub-lines` 不纳入本仓取数路线。** 内嵌轨列不全；外部轨虽然能全量，但 srt 已有直读，ass/webvtt 换用它也省不掉 ffmpeg（内嵌轨仍要靠 ffmpeg），只是新增一条同步 NODE 分支、空/不可用判据与缓存复杂度。**继续“外部 srt 直读 + ffmpeg 抽轨”。**
 
 ## 二、需求切片
 
@@ -19,7 +20,7 @@
 
 | 切片 | 外部字幕文件 | 内嵌字幕轨 |
 | --- | --- | --- |
-| 只读浏览（列出全部行 + 点击跳转） | 直接读文件自行解析，无外部依赖 | 需 ffmpeg / libavformat |
+| 只读浏览（列出全部行 + 点击跳转） | srt 直读无依赖；ass/webvtt 需 ffmpeg 或自解析 | 需 ffmpeg / libavformat |
 | 跟随播放高亮当前行 | 监听 `time-pos` + 自有时间轴即可 | 同左 |
 | 编辑文本并即时生效 | 改文件 + `sub-reload` | 无通道，需重封装 |
 | 改时间轴（平移 / 重定时） | 同上 | 同上 |
@@ -30,10 +31,11 @@
 
 ## 三、mpv 侧的事实边界
 
-### 3.1 只有当前行
+### 3.1 当前行与 0.42 的 `sub-lines`
 
 手册中与字幕内容相关的属性全部是“当前事件”语义：
 
+- 0.42 新增 `sub-lines` / `secondary-sub-lines`：当前轨在内存中的行数组，字段 `text` / `start` / `end`，ASS 标签已剥离、`end` 可缺、位图轨不可用。它只对外部文本轨完整；内嵌文本轨只含实际解码过的行，seek 会跳过中间行（§十），因此不是全轨接口。
 - `sub-text`：当前字幕文本（去格式；非文本字幕返回空）
 - `sub-text/ass`：当前行的 ASS 形式，只含 Text 部分
 - `sub-text/ass-full`：当前 ASS 事件的**完整一行**（含全部字段），配合 `sub-ass-extradata` 可拿到样式头
@@ -52,7 +54,7 @@
 - `external` + `external-filename`：外部字幕的来源串
 - `ff-index`：ffmpeg 工具眼里的流下标（走 ffmpeg 路线时应当用这个，而不是 `id - 1`）
 
-本仓 `MpvController` 的 `parseTrackList` 已经解析出 `id / type / codec / external / externalFilename / mainSelection`，**缺少 `ff-index`**——若走 ffmpeg 路线需要补字段。
+本仓 `MpvController` 的 `parseTrackList` 已解析出 `id / type / codec / external / externalFilename / mainSelection / ffIndex / image`（N143），ffmpeg 路线不再缺字段。
 
 ### 3.3 命令面
 
@@ -63,12 +65,14 @@
 
 ### 3.4 明确没有的
 
-- **没有任何属性或命令列出全部字幕行**
+- **没有能列出“全轨”字幕行的属性或命令**——0.42 的 `sub-lines` 只对外部文本轨完整；内嵌轨只含已解码行（§十），不满足“列出全轨”
 - **没有任何写入字幕文本的接口**（`sub-text` 只能读不能设值，没有事件级增删）
 - 没有“事件总数”之类的元信息
 - 没有让客户端拿到解码后字幕包的通道（内容类能力一律终止在“当前 ASS 行”这一层）
 
 ## 四、mpv 内置菜单的做法
+
+> **0.42 复核注**：内置 `select.lua` 的 `select-subtitle-line` 已改用 `sub-lines`，不再调用 ffmpeg；以下 §4.2–4.5 是 0.41 的历史做法，保留用来说明旧路线的有损代价，不再代表当前上游实现。
 
 ### 4.1 定位
 
@@ -163,18 +167,20 @@ LRC 是唯一既带时间戳又是纯文本的中间格式，选它就不必在 
 | 路线 | 覆盖范围 | 外部依赖 | 保真度 | 相对成本 | 备注 |
 | --- | --- | --- | --- | --- | --- |
 | A 只解析外部字幕文件 | 外部轨 | 无 | 高（含样式） | 低 | 推荐第一步；覆盖不到内嵌轨 |
-| B ffmpeg subprocess（对齐内置做法） | 外部 + 内嵌 | ffmpeg | 低（LRC 有损） | 中 | 需处理存在性探测、异步、缓存 |
+| B ffmpeg subprocess（本仓实现） | 外部 + 内嵌 | ffmpeg | 中（srt 文本/时间，丢样式） | 中 | 已实现；需处理存在性探测、异步、缓存、`ff-index` |
 | C 自己链 libavformat | 外部 + 内嵌 | 构建期依赖 | 高 | 高 | 引入分发与许可证评估，与本仓轻依赖取向冲突 |
 | D 第二个 core + `sub-seek` 逐行扫描 | 外部 + 内嵌 | 无 | 中（只能拿当前行文本） | 中，且慢 | 思路：用第二个 core 关掉音视频，反复 `sub-seek 1` 并读 `sub-text`。**未实测**：暂停态下 seek 后 `sub-text` 是否及时更新需要预研验证；逐行 seek 的耗时可能不可接受。仅在明确排斥 ffmpeg 时才评估 |
+| F `sub-lines`（0.42） | 外部文本轨完整；内嵌轨仅已解码行 | 无 | 中（纯文本，去标签） | 低（同步 NODE 读） | **不采用**：内嵌轨列不全，外部 srt 已有直读；切换只增加分支与缓存复杂度（§十） |
 | E 不做 | — | — | — | 0 | 保持现状，用户用内置菜单 |
 
-推荐组合：**A 为基线，B 为可选增强**（检测到 ffmpeg 才对内嵌轨开放）。
+推荐组合：**A 为基线，B 为可选增强**（检测到 ffmpeg 才对内嵌轨开放）；0.42 的 `sub-lines` 不纳入（§十）。
 
 ## 八、若本仓要做的前置纪律
 
 - 取当前播放入口一律走 `MpvController::currentPlayingPath()`，不裸读 `path`（pitfalls 那条）。
 - 外部字幕串一律经既有回显整形设施处理，不假设是本地可读路径；对不可处理的来源**显式禁用并给用户可读提示**，不要静默失败。
-- 走 ffmpeg 路线要在 `TrackInfo` 补 `ff-index`，不再用 `id - 1` 推流下标。
+- 走 ffmpeg 路线继续用 `TrackInfo::ffIndex`（N143 已解析），不要用 `id - 1` 推流下标。
+- `sub-lines` 不纳入取数路线：内嵌轨继续 ffmpeg，外部 srt 继续直读；不要为它新增第二条外部轨通道。
 - 外部进程必须异步化（`QProcess` 或 `mpv_command_node_async`），禁止在主 handle 上同步阻塞。
 - 解析器独立成模块，按主仓测试约定覆盖边界情形。
 - 新增用户文案用 `tr(...)`；方案不列翻译事项。
@@ -184,14 +190,15 @@ LRC 是唯一既带时间戳又是纯文本的中间格式，选它就不必在 
 
 ### 9.1 关键接口
 
-- 属性：`sub-text` / `sub-text/ass` / `sub-text/ass-full` / `sub-ass-extradata` / `sub-start` / `sub-end` / `secondary-sub-text` / `sub-delay` / `sub-speed` / `current-tracks/sub` / `track-list`
+- 属性：`sub-text` / `sub-text/ass` / `sub-text/ass-full` / `sub-ass-extradata` / `sub-start` / `sub-end` / `secondary-sub-text` / `sub-delay` / `sub-speed` / `current-tracks/sub` / `track-list` / `sub-lines` / `secondary-sub-lines`（0.42，本仓不采用）
 - 命令：`sub-add` / `sub-remove` / `sub-reload` / `sub-seek` / `sub-step` / `seek` / `subprocess`
 - 客户端符号：`mpv_get_property` / `mpv_observe_property` / `mpv_command` / `mpv_command_node` / `mpv_command_node_async`
 - 节点格式：`MPV_FORMAT_NODE_MAP`（命名参数）、`MPV_FORMAT_BYTE_ARRAY`（子进程 stdout）
 
 ### 9.2 mpv 源码与手册位置
 
-- `player/lua/select.lua`：`menu` 绑定的可用性判据，`select-subtitle-line` 的 ffmpeg 调用与 LRC 解析
+- `player/lua/select.lua`：0.41 的 `menu` 绑定与 ffmpeg/LRC 流程；0.42 的 `select-subtitle-line` 改用 `sub-lines`
+- `player/command.c` 的 `mp_property_sub_lines`、`sub/dec_sub.c` 的 `sub_get_lines`、`sub/sd_ass.c` 的 `get_lines`：`sub-lines` 的取值、排序/去重与内嵌轨“已解码行”语义
 - `osdep/subprocess-win.c`：`CreateProcessW(NULL, cmdline, ...)` 与其搜索序行为
 - `DOCS/man/input.rst`：`subprocess` 命令、`sub-text` 属性族、`track-list/N/*`（含 `ff-index` 与 `main-selection` 的语义）、各 `sub-*` 命令
 - `DOCS/man/options.rst`：`--stream-dump`（另一种“让外部工具也能读到源”的思路，供后续评估）
@@ -199,8 +206,15 @@ LRC 是唯一既带时间戳又是纯文本的中间格式，选它就不必在 
 ### 9.3 预研验证清单（走 B / D 之前先回答）
 
 1. 外部 srt / ass 自解析器对真实素材的通过率（含 GB18030、BOM、非法行）
-2. ffmpeg 是否安装、在 PATH 还是 mpv.exe 同目录、该构建是否带 `lrc` muxer
+2. ffmpeg 是否安装、在 PATH 还是 mpv.exe 同目录；本仓取数用 `-f srt`，不再依赖 `lrc` muxer
 3. 对一条网络源：交给 ffmpeg 的那个串能否打开（含需要 header/cookie 的情形）
 4. rclone crypt 场景下实际拿到的路径形态（虚拟 URL 还是本地转接地址）
 5. `sub-reload` 之后轨道 `id` 与选中状态的实际变化（决定编辑器路线是否可行）
 6. 路线 D：暂停态 `sub-seek` 后 `sub-text` 的更新延迟，以及逐行扫描的总耗时
+7. （已完成，2026-11-08）`sub-lines` 复核：外部轨完整、内嵌轨仅已解码行；结论为不采用（§十）
+
+## 十、0.42 `sub-lines` 复核结论（2026-11-08）
+
+- 外部文本轨：`sub-lines` 在文件加载时即可给出全量行，可作为完整数据源。
+- 内嵌文本轨：只包含实际解码过的行；seek 会跳过中间行，浏览器打开时无法得到完整事件表。位图轨不可用。
+- 结论：不采用。内嵌轨继续 ffmpeg，外部 srt 继续直读，外部 ass/webvtt 继续 ffmpeg；不为 `sub-lines` 新增取数通道。
