@@ -299,7 +299,7 @@ add_custom_target(oxbow_revision
         -DOXBOW_REVISION_OUTPUT=${OXBOW_GENERATED_DIR}/revision.h
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/OxbowRevision.cmake
     BYPRODUCTS "${OXBOW_GENERATED_DIR}/revision.h"
-    COMMENT "重算版本身份并生成 revision.h"
+    COMMENT "Recompute version identity and generate revision.h"
     VERBATIM)
 add_dependencies(oxbowcore oxbow_revision)
 target_include_directories(oxbowcore PRIVATE "${OXBOW_GENERATED_DIR}")
@@ -324,7 +324,7 @@ if(WIN32)
             -DMPV_SYM_LIST_OUTPUT=${OXBOW_GENERATED_DIR}/mpv_cplugin_syms.h
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/GenMpvSymList.cmake
         DEPENDS ${_mpv_headers} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/GenMpvSymList.cmake
-        COMMENT "扫 mpv 头生成 cplugin 符号转发表"
+        COMMENT "Scan mpv headers and generate cplugin symbol forwarding table"
         VERBATIM)
     add_custom_target(oxbow_mpv_syms DEPENDS "${OXBOW_GENERATED_DIR}/mpv_cplugin_syms.h")
     add_dependencies(oxbow_loader oxbow_mpv_syms)
@@ -477,7 +477,7 @@ qt_add_translations(oxbowcore MERGE_QT_TRANSLATIONS
 # 两种形态都可选随件拷 MediaInfo.dll——该库由核心在启动时按全路径自行预载。
 # ---------------------------------------------------------------------------
 # N83：部署为 Windows 专属（windeployqt 与 DLL 语义；Linux 不自动部署，只编译产物）
-set(MPV_BIN_DIR "" CACHE PATH "mpv.exe 所在目录（仅 Windows）；设置后构建完毕自动部署")
+set(MPV_BIN_DIR "" CACHE PATH "Directory of mpv.exe (Windows only); when set, deploy automatically after each build")
 # windeployqt 发现提到部署段之外：测试目标的部署守卫同样引用它，不能依赖
 # MPV_BIN_DIR 段的副作用（无部署目录的构建此前会拿到空命令串而链失败）
 if(WIN32 AND NOT OXBOW_STATIC)
@@ -485,7 +485,7 @@ if(WIN32 AND NOT OXBOW_STATIC)
 endif()
 if(WIN32 AND MPV_BIN_DIR)
     if(NOT OXBOW_STATIC AND NOT WINDEPLOYQT_EXE)
-        message(FATAL_ERROR "windeployqt 未找到：请确认 CMAKE_PREFIX_PATH 指向 Qt 安装目录（其 bin 下含 windeployqt）")
+        message(FATAL_ERROR "windeployqt not found: make sure CMAKE_PREFIX_PATH points to the Qt installation (windeployqt lives in its bin)")
     endif()
     set(OXBOW_SCRIPT_DIR "${MPV_BIN_DIR}/portable_config/scripts/oxbow")
     if(OXBOW_STATIC)

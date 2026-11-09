@@ -10,13 +10,13 @@
 # pfn_* 变量；宏自身的 #define 行以 # 开头、天然不在行首，不会被误提。
 
 if(NOT DEFINED MPV_HEADER_DIR OR NOT DEFINED MPV_SYM_LIST_OUTPUT)
-    message(FATAL_ERROR "GenMpvSymList.cmake 需要 -DMPV_HEADER_DIR=<mpv 头目录> 与 -DMPV_SYM_LIST_OUTPUT=<输出文件>")
+    message(FATAL_ERROR "GenMpvSymList.cmake requires -DMPV_HEADER_DIR=<mpv header dir> and -DMPV_SYM_LIST_OUTPUT=<output file>")
 endif()
 
 file(GLOB _mpv_headers "${MPV_HEADER_DIR}/*.h")
 list(SORT _mpv_headers)
 if(NOT _mpv_headers)
-    message(FATAL_ERROR "mpv 头目录里没有 .h 文件：${MPV_HEADER_DIR}")
+    message(FATAL_ERROR "No .h files found in mpv header dir: ${MPV_HEADER_DIR}")
 endif()
 
 set(_mpv_syms "")
@@ -35,7 +35,7 @@ endforeach()
 # 运行期失败，必须拦在构建期。不设数值下限——上游增删符号属正常演进，唯一要
 # 拦的是"正则整体失效"（上游改版式）导致的 0 条。
 if(_mpv_sym_count EQUAL 0)
-    message(FATAL_ERROR "未从 mpv 头提取到任何 MPV_DEFINE_SYM_PTR 实例（上游头文件改版式了？）：${MPV_HEADER_DIR}")
+    message(FATAL_ERROR "Extracted zero MPV_DEFINE_SYM_PTR instances from mpv headers (upstream header format changed?): ${MPV_HEADER_DIR}")
 endif()
 
 set(_content "// 构建期由 cmake/GenMpvSymList.cmake 生成，勿手改。\n")
@@ -57,4 +57,4 @@ endforeach()
 string(APPEND _content "};\n#undef MPV_FORWARD_SYM\n")
 
 file(WRITE "${MPV_SYM_LIST_OUTPUT}" "${_content}")
-message(STATUS "GenMpvSymList: 提取 ${_mpv_sym_count} 个符号 -> ${MPV_SYM_LIST_OUTPUT}")
+message(STATUS "GenMpvSymList: extracted ${_mpv_sym_count} symbols -> ${MPV_SYM_LIST_OUTPUT}")
