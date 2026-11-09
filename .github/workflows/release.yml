@@ -1,0 +1,142 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  QT_URL: https://github.com/yuanpeirong/buildQt/releases/download/Qt6.12.0_rev0/Qt_6.12.0-static-Release_msvc2026_64_RP.7z
+  # Qt 根目录在压缩包内的相对路径，更新 QT_URL 时一并核对
+  QT_SUBDIR: 6.12.0-static/msvc2026_64_RP
+  LIBSODIUM_URL: https://download.libsodium.org/libsodium/releases/libsodium-1.0.22-stable-msvc.zip
+  MEDIAINFO_URL: https://mediaarea.net/download/binary/libmediainfo0/26.10/MediaInfo_DLL_26.10_Windows_x64_WithoutInstaller.7z
+
+jobs:
+  build-windows:
+    runs-on: windows-2025-vs2026
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch deps
+        run: |
+          curl.exe -L --fail --retry 3 -o "$env:RUNNER_TEMP/qt.7z" "$env:QT_URL"
+          7z x "$env:RUNNER_TEMP/qt.7z" "-o$env:RUNNER_TEMP/qt" -y
+          curl.exe -L --fail --retry 3 -o "$env:RUNNER_TEMP/libsodium.zip" "$env:LIBSODIUM_URL"
+          7z x "$env:RUNNER_TEMP/libsodium.zip" "-o$env:RUNNER_TEMP/sodium" -y
+          curl.exe -L --fail --retry 3 -o "$env:RUNNER_TEMP/mediainfo.7z" "$env:MEDIAINFO_URL"
+          7z x "$env:RUNNER_TEMP/mediainfo.7z" "-o$env:RUNNER_TEMP/mediainfo" -y
+
+      - name: Configure
+        run: cmake -B build -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release -DQt6_ROOT="$env:RUNNER_TEMP/qt/$env:QT_SUBDIR" -DLIBSODIUM_ROOT="$env:RUNNER_TEMP/sodium/libsodium" -DOXBOW_STATIC=ON
+
+      - name: Build
+        run: cmake --build build
+
+      # 静态形态核心即插件本体，部署名 main.dll
+      - name: Package
+        run: |
+          New-Item -ItemType Directory -Force staging/oxbow | Out-Null
+          Copy-Item build/oxbowcore.dll staging/oxbow/main.dll
+          Copy-Item "$env:RUNNER_TEMP/mediainfo/MediaInfo.dll" staging/oxbow/MediaInfo.dll
+          7z a oxbow-windows-x64.7z ./staging/oxbow
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: oxbow-windows-x64.7z
+          if-no-files-found: error
+
+  build-linux:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build pkg-config qt6-base-dev qt6-svg-dev qt6-tools-dev qt6-l10n-tools qt6-translations-l10n libsodium-dev libssl-dev libx11-dev
+
+      - name: Configure
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Package
+        run: |
+          mkdir -p staging/oxbow
+          cp build/main.so staging/oxbow/main.so
+          strip staging/oxbow/main.so
+          (cd staging && zip -r ../oxbow-linux-x64.zip oxbow)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64
+          path: oxbow-linux-x64.zip
+          if-no-files-found: error
+
+  release:
+    needs: [build-windows, build-linux]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Notes
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v ver="$version" '/^## \[/ { if (p) exit; p = (index($0, "## [" ver "]") == 1) } p' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "::error::CHANGELOG.md has no ## [$version] section; add it before pushing the tag"
+            exit 1
+          fi
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            dist/oxbow-windows-x64.7z dist/oxbow-linux-x64.zip \
+            --repo "$GITHUB_REPOSITORY" --draft --title "$GITHUB_REF_NAME" --notes-file release-notes.md
+
+  nightly:
+    needs: [build-windows, build-linux]
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Move nightly tag
+        run: |
+          git tag -f nightly "$GITHUB_SHA"
+          git push --force origin refs/tags/nightly
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete nightly --yes >/dev/null 2>&1 || true
+          gh release create nightly \
+            dist/oxbow-windows-x64.7z dist/oxbow-linux-x64.zip \
+            --repo "$GITHUB_REPOSITORY" --draft --title nightly --notes ""
