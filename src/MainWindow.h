@@ -263,14 +263,14 @@ class MainWindow : public QMainWindow
     void finishGesture();
     // N156：最大化·还原统一动作（标题栏 Qt 点击与原生 NC 释放共用）；Windows 下
     // 兼作 WinFramelessMessages::Host 的动作出口
-    void toggleMaximizeRestore();
+    void toggleMaximizeRestore() override;
     // ---- N156：WinFramelessMessages::Host 实现（窗口态真相与视频比例；基类接口
     // 仅 Windows 门禁，方法本身全平台编译——videoRatio 亦供自驱动环路与迷你几何收口）----
-    bool fullscreen() const { return m_fullscreen; }
-    bool mini() const { return m_mini; }
+    bool fullscreen() const override { return m_fullscreen; }
+    bool mini() const override { return m_mini; }
     // 视频宽高比（无流 16:9，与进入路径同源）——自驱动缩放 / WM_SIZING / 迷你几何
     // 收口共用这一份，杜绝多处各写一式
-    double videoRatio() const {
+    double videoRatio() const override {
         return (m_pendingVideoW > 0 && m_pendingVideoH > 0)
                    ? double(m_pendingVideoW) / double(m_pendingVideoH)
                    : 16.0 / 9.0;
