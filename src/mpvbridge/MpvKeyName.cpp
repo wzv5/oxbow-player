@@ -177,7 +177,7 @@ std::optional<int> codeFromSegment(const QString &seg) {
 }
 
 // 组合键切分：mpv 以 '-' 分隔多键序列，'-' 键自身写作 "--"（切分成对识别）。
-// 孤立的段首 '-'（畸形）并入下段、交由段解析判失败，不产空段。
+// 孤立的段首 '-'（畸形）并入下段、交由段解析判失败；末尾悬空 '-' 切分时丢弃。
 QStringList splitCombo(const QString &name) {
     QStringList segs;
     qsizetype start = 0;
@@ -258,6 +258,315 @@ QString canonicalBaseName(int key, Qt::KeyboardModifiers mods, bool *fromTable) 
     return base;
 }
 
+// ---- N157：mpv 键名的名字层镜像 ----
+// mpv `key_names[]`（input/keycodes.c，0.42.0）的全表镜像：canonical 是 mpv 回吐的
+// 首名，别名一律映射过去。只服务合法性 / 补全 / 归一，不参与码点解析。
+struct KeyNameAlias {
+    const char *name;
+    const char *canonical;
+};
+
+constexpr KeyNameAlias kKeyNames[] = {
+    {"SPACE", "SPACE"},
+    {"SHARP", "SHARP"},
+    {"IDEOGRAPHIC_SPACE", "IDEOGRAPHIC_SPACE"},
+    {"ENTER", "ENTER"},
+    {"TAB", "TAB"},
+    {"BS", "BS"},
+    {"DEL", "DEL"},
+    {"INS", "INS"},
+    {"HOME", "HOME"},
+    {"END", "END"},
+    {"PGUP", "PGUP"},
+    {"PGDWN", "PGDWN"},
+    {"ESC", "ESC"},
+    {"PRINT", "PRINT"},
+    {"RIGHT", "RIGHT"},
+    {"LEFT", "LEFT"},
+    {"DOWN", "DOWN"},
+    {"UP", "UP"},
+    {"F1", "F1"},
+    {"F2", "F2"},
+    {"F3", "F3"},
+    {"F4", "F4"},
+    {"F5", "F5"},
+    {"F6", "F6"},
+    {"F7", "F7"},
+    {"F8", "F8"},
+    {"F9", "F9"},
+    {"F10", "F10"},
+    {"F11", "F11"},
+    {"F12", "F12"},
+    {"F13", "F13"},
+    {"F14", "F14"},
+    {"F15", "F15"},
+    {"F16", "F16"},
+    {"F17", "F17"},
+    {"F18", "F18"},
+    {"F19", "F19"},
+    {"F20", "F20"},
+    {"F21", "F21"},
+    {"F22", "F22"},
+    {"F23", "F23"},
+    {"F24", "F24"},
+    {"KP0", "KP0"},
+    {"KP1", "KP1"},
+    {"KP2", "KP2"},
+    {"KP3", "KP3"},
+    {"KP4", "KP4"},
+    {"KP5", "KP5"},
+    {"KP6", "KP6"},
+    {"KP7", "KP7"},
+    {"KP8", "KP8"},
+    {"KP9", "KP9"},
+    {"KP_DEL", "KP_DEL"},
+    {"KP_DEC", "KP_DEC"},
+    {"KP_INS", "KP_INS"},
+    {"KP_HOME", "KP_HOME"},
+    {"KP_END", "KP_END"},
+    {"KP_PGUP", "KP_PGUP"},
+    {"KP_PGDWN", "KP_PGDWN"},
+    {"KP_RIGHT", "KP_RIGHT"},
+    {"KP_BEGIN", "KP_BEGIN"},
+    {"KP_LEFT", "KP_LEFT"},
+    {"KP_DOWN", "KP_DOWN"},
+    {"KP_UP", "KP_UP"},
+    {"KP_ENTER", "KP_ENTER"},
+    {"KP_ADD", "KP_ADD"},
+    {"KP_SUBTRACT", "KP_SUBTRACT"},
+    {"KP_MULTIPLY", "KP_MULTIPLY"},
+    {"KP_DIVIDE", "KP_DIVIDE"},
+    // 鼠标与滚轮。_DBL 仅左 / 中 / 右三变体（cmd_mouse 对其余按钮拒收 double 形态）
+    {"MBTN_LEFT", "MBTN_LEFT"},
+    {"MBTN_MID", "MBTN_MID"},
+    {"MBTN_RIGHT", "MBTN_RIGHT"},
+    {"WHEEL_UP", "WHEEL_UP"},
+    {"WHEEL_DOWN", "WHEEL_DOWN"},
+    {"WHEEL_LEFT", "WHEEL_LEFT"},
+    {"WHEEL_RIGHT", "WHEEL_RIGHT"},
+    {"MBTN_BACK", "MBTN_BACK"},
+    {"MBTN_FORWARD", "MBTN_FORWARD"},
+    {"MBTN9", "MBTN9"},
+    {"MBTN10", "MBTN10"},
+    {"MBTN11", "MBTN11"},
+    {"MBTN12", "MBTN12"},
+    {"MBTN13", "MBTN13"},
+    {"MBTN14", "MBTN14"},
+    {"MBTN15", "MBTN15"},
+    {"MBTN16", "MBTN16"},
+    {"MBTN17", "MBTN17"},
+    {"MBTN18", "MBTN18"},
+    {"MBTN19", "MBTN19"},
+    {"MBTN_LEFT_DBL", "MBTN_LEFT_DBL"},
+    {"MBTN_MID_DBL", "MBTN_MID_DBL"},
+    {"MBTN_RIGHT_DBL", "MBTN_RIGHT_DBL"},
+    // 平板
+    {"TABLET_TOOL_TIP", "TABLET_TOOL_TIP"},
+    {"TABLET_TOOL_STYLUS_BTN1", "TABLET_TOOL_STYLUS_BTN1"},
+    {"TABLET_TOOL_STYLUS_BTN2", "TABLET_TOOL_STYLUS_BTN2"},
+    {"TABLET_TOOL_STYLUS_BTN3", "TABLET_TOOL_STYLUS_BTN3"},
+    // 手柄
+    {"GAMEPAD_ACTION_DOWN", "GAMEPAD_ACTION_DOWN"},
+    {"GAMEPAD_ACTION_RIGHT", "GAMEPAD_ACTION_RIGHT"},
+    {"GAMEPAD_ACTION_LEFT", "GAMEPAD_ACTION_LEFT"},
+    {"GAMEPAD_ACTION_UP", "GAMEPAD_ACTION_UP"},
+    {"GAMEPAD_BACK", "GAMEPAD_BACK"},
+    {"GAMEPAD_MENU", "GAMEPAD_MENU"},
+    {"GAMEPAD_START", "GAMEPAD_START"},
+    {"GAMEPAD_LEFT_SHOULDER", "GAMEPAD_LEFT_SHOULDER"},
+    {"GAMEPAD_RIGHT_SHOULDER", "GAMEPAD_RIGHT_SHOULDER"},
+    {"GAMEPAD_LEFT_TRIGGER", "GAMEPAD_LEFT_TRIGGER"},
+    {"GAMEPAD_RIGHT_TRIGGER", "GAMEPAD_RIGHT_TRIGGER"},
+    {"GAMEPAD_LEFT_STICK", "GAMEPAD_LEFT_STICK"},
+    {"GAMEPAD_RIGHT_STICK", "GAMEPAD_RIGHT_STICK"},
+    {"GAMEPAD_DPAD_UP", "GAMEPAD_DPAD_UP"},
+    {"GAMEPAD_DPAD_DOWN", "GAMEPAD_DPAD_DOWN"},
+    {"GAMEPAD_DPAD_LEFT", "GAMEPAD_DPAD_LEFT"},
+    {"GAMEPAD_DPAD_RIGHT", "GAMEPAD_DPAD_RIGHT"},
+    {"GAMEPAD_LEFT_STICK_UP", "GAMEPAD_LEFT_STICK_UP"},
+    {"GAMEPAD_LEFT_STICK_DOWN", "GAMEPAD_LEFT_STICK_DOWN"},
+    {"GAMEPAD_LEFT_STICK_LEFT", "GAMEPAD_LEFT_STICK_LEFT"},
+    {"GAMEPAD_LEFT_STICK_RIGHT", "GAMEPAD_LEFT_STICK_RIGHT"},
+    {"GAMEPAD_RIGHT_STICK_UP", "GAMEPAD_RIGHT_STICK_UP"},
+    {"GAMEPAD_RIGHT_STICK_DOWN", "GAMEPAD_RIGHT_STICK_DOWN"},
+    {"GAMEPAD_RIGHT_STICK_LEFT", "GAMEPAD_RIGHT_STICK_LEFT"},
+    {"GAMEPAD_RIGHT_STICK_RIGHT", "GAMEPAD_RIGHT_STICK_RIGHT"},
+    // 媒体与扩展媒体键
+    {"POWER", "POWER"},
+    {"MENU", "MENU"},
+    {"PLAY", "PLAY"},
+    {"PAUSE", "PAUSE"},
+    {"PLAYPAUSE", "PLAYPAUSE"},
+    {"STOP", "STOP"},
+    {"FORWARD", "FORWARD"},
+    {"REWIND", "REWIND"},
+    {"NEXT", "NEXT"},
+    {"PREV", "PREV"},
+    {"VOLUME_UP", "VOLUME_UP"},
+    {"VOLUME_DOWN", "VOLUME_DOWN"},
+    {"MUTE", "MUTE"},
+    {"HOMEPAGE", "HOMEPAGE"},
+    {"WWW", "WWW"},
+    {"MAIL", "MAIL"},
+    {"FAVORITES", "FAVORITES"},
+    {"SEARCH", "SEARCH"},
+    {"SLEEP", "SLEEP"},
+    {"CANCEL", "CANCEL"},
+    {"RECORD", "RECORD"},
+    {"CHANNEL_UP", "CHANNEL_UP"},
+    {"CHANNEL_DOWN", "CHANNEL_DOWN"},
+    {"PLAYONLY", "PLAYONLY"},
+    {"PAUSEONLY", "PAUSEONLY"},
+    {"GO_BACK", "GO_BACK"},
+    {"GO_FORWARD", "GO_FORWARD"},
+    {"TOOLS", "TOOLS"},
+    {"ZOOMIN", "ZOOMIN"},
+    {"ZOOMOUT", "ZOOMOUT"},
+    // 向后兼容的别名（canonical 指回正名）
+    {"XF86_PAUSE", "PAUSE"},
+    {"XF86_STOP", "STOP"},
+    {"XF86_PREV", "PREV"},
+    {"XF86_NEXT", "NEXT"},
+    // 鼠标按钮的废弃数字别名
+    {"MOUSE_BTN0", "MBTN_LEFT"},
+    {"MOUSE_BTN1", "MBTN_MID"},
+    {"MOUSE_BTN2", "MBTN_RIGHT"},
+    {"MOUSE_BTN3", "WHEEL_UP"},
+    {"MOUSE_BTN4", "WHEEL_DOWN"},
+    {"MOUSE_BTN5", "WHEEL_LEFT"},
+    {"MOUSE_BTN6", "WHEEL_RIGHT"},
+    {"MOUSE_BTN7", "MBTN_BACK"},
+    {"MOUSE_BTN8", "MBTN_FORWARD"},
+    {"MOUSE_BTN9", "MBTN9"},
+    {"MOUSE_BTN10", "MBTN10"},
+    {"MOUSE_BTN11", "MBTN11"},
+    {"MOUSE_BTN12", "MBTN12"},
+    {"MOUSE_BTN13", "MBTN13"},
+    {"MOUSE_BTN14", "MBTN14"},
+    {"MOUSE_BTN15", "MBTN15"},
+    {"MOUSE_BTN16", "MBTN16"},
+    {"MOUSE_BTN17", "MBTN17"},
+    {"MOUSE_BTN18", "MBTN18"},
+    {"MOUSE_BTN19", "MBTN19"},
+    {"MOUSE_BTN0_DBL", "MBTN_LEFT_DBL"},
+    {"MOUSE_BTN1_DBL", "MBTN_MID_DBL"},
+    {"MOUSE_BTN2_DBL", "MBTN_RIGHT_DBL"},
+    {"AXIS_UP", "WHEEL_UP"},
+    {"AXIS_DOWN", "WHEEL_DOWN"},
+    {"AXIS_LEFT", "WHEEL_LEFT"},
+    {"AXIS_RIGHT", "WHEEL_RIGHT"},
+    // 伪键（事件面键名，可绑定、不可由物理键自发产生）
+    {"CLOSE_WIN", "CLOSE_WIN"},
+    {"MOUSE_MOVE", "MOUSE_MOVE"},
+    {"MOUSE_LEAVE", "MOUSE_LEAVE"},
+    {"MOUSE_ENTER", "MOUSE_ENTER"},
+    {"UNMAPPED", "UNMAPPED"},
+    {"ANY_UNICODE", "ANY_UNICODE"},
+};
+
+// 镜像表查名（大小写不敏感），命中交 canonical，否则空串
+QString mirrorCanonical(const QString &base) {
+    for (const KeyNameAlias &e : kKeyNames)
+        if (base.compare(QLatin1String(e.name), Qt::CaseInsensitive) == 0)
+            return QString::fromLatin1(e.canonical);
+    return QString();
+}
+
+// 名字层归一单段：剥修饰后查镜像表，命中交 canonical + 固定顺序修饰（Shift 一律
+// 拼）。未命中交空串，由调用方回退段原文。
+QString mirrorSegmentName(const QString &seg) {
+    QString base = seg;
+    int mods = 0;
+    while (true) {
+        const qsizetype p = base.indexOf(QLatin1Char('+'));
+        if (p < 0)
+            break;
+        const QString prefix = base.left(p);
+        if (prefix.compare(QLatin1String("Shift"), Qt::CaseInsensitive) == 0) {
+            mods |= int(Qt::ShiftModifier);
+        } else if (prefix.compare(QLatin1String("Ctrl"), Qt::CaseInsensitive) == 0) {
+            mods |= int(Qt::ControlModifier);
+        } else if (prefix.compare(QLatin1String("Alt"), Qt::CaseInsensitive) == 0) {
+            mods |= int(Qt::AltModifier);
+        } else if (prefix.compare(QLatin1String("Meta"), Qt::CaseInsensitive) == 0) {
+            mods |= int(Qt::MetaModifier);
+        } else {
+            return QString(); // 非修饰名前缀：码点支同样解不出，原样回退（mpv 同判非法）
+        }
+        base = base.mid(p + 1);
+    }
+    const QString canon = mirrorCanonical(base);
+    if (canon.isEmpty())
+        return QString();
+    // IDEOGRAPHIC_SPACE 码点低于 MP_KEY_BASE，mpv 归一折 Shift（表中唯一走本支的键）
+    if (canon == QLatin1String("IDEOGRAPHIC_SPACE"))
+        mods &= ~int(Qt::ShiftModifier);
+    return assembleName(canon, true, Qt::KeyboardModifiers(mods));
+}
+
+// mpv MP_KEY_MODIFIER_*（input/keycodes.h）：位值与 Qt 不同（Shift 是 1<<24），
+// 0x 键码加修饰的溢出判定用 mpv 原值
+constexpr int kMpvModShift = 1 << 24;
+constexpr int kMpvModCtrl = 1 << 25;
+constexpr int kMpvModAlt = 1 << 26;
+constexpr int kMpvModMeta = 1 << 27;
+
+// 单段合法性：剥修饰后的基名按 mpv `mp_input_get_key_from_name` 口径判定
+bool isValidSegmentName(const QString &seg) {
+    QString base = seg;
+    int mods = 0;
+    while (true) {
+        const qsizetype p = base.indexOf(QLatin1Char('+'));
+        if (p < 0)
+            break;
+        const QString prefix = base.left(p);
+        if (prefix.compare(QLatin1String("Shift"), Qt::CaseInsensitive) == 0) {
+            mods |= kMpvModShift;
+        } else if (prefix.compare(QLatin1String("Ctrl"), Qt::CaseInsensitive) == 0) {
+            mods |= kMpvModCtrl;
+        } else if (prefix.compare(QLatin1String("Alt"), Qt::CaseInsensitive) == 0) {
+            mods |= kMpvModAlt;
+        } else if (prefix.compare(QLatin1String("Meta"), Qt::CaseInsensitive) == 0) {
+            mods |= kMpvModMeta;
+        } else {
+            // 非修饰名前缀：仅整段恰为 "+" 是字面加号特例（mpv 同位特判）
+            return base == QLatin1String("+");
+        }
+        base = base.mid(p + 1);
+    }
+    if (base.isEmpty())
+        return false;
+    // 单个 UTF-8 码点即合法（含非 ASCII）
+    if (base.toUcs4().size() == 1)
+        return true;
+    // 0x 宽松形态（小写前缀，同 mpv strtoll）：前缀后至少一位十六进制即认，尾部
+    // 残留不拒；加修饰后仍须在 int 域
+    if (base.startsWith(QLatin1String("0x"))) {
+        const QString digits = base.mid(2);
+        qsizetype n = 0;
+        while (n < digits.size()) {
+            const char16_t c = digits.at(n).unicode();
+            const bool hex =
+                (c >= u'0' && c <= u'9') || (c >= u'a' && c <= u'f') || (c >= u'A' && c <= u'F');
+            if (!hex)
+                break;
+            ++n;
+        }
+        if (n == 0)
+            return false;
+        bool ok = false;
+        const qlonglong v = digits.left(n).toLongLong(&ok, 16);
+        if (!ok || v < qlonglong(std::numeric_limits<int>::min()) ||
+            v > qlonglong(std::numeric_limits<int>::max()))
+            return false;
+        const qlonglong keycode = v + mods;
+        return keycode >= qlonglong(std::numeric_limits<int>::min()) &&
+               keycode <= qlonglong(std::numeric_limits<int>::max());
+    }
+    // 镜像表（大小写不敏感）
+    return !mirrorCanonical(base).isEmpty();
+}
+
 } // namespace
 
 QString MpvKey::nameFromEvent(const QKeyEvent *event) {
@@ -301,6 +610,58 @@ QString MpvKey::nameFromEvent(const QKeyEvent *event) {
     if (base.isEmpty())
         return QString();
     return assembleName(base, fromTable, mods);
+}
+
+QString MpvKey::nameFromMouseEvent(const QMouseEvent *event) {
+    if (!event)
+        return QString();
+    QString base;
+    switch (event->button()) {
+    case Qt::LeftButton:
+        base = QStringLiteral("MBTN_LEFT");
+        break;
+    case Qt::MiddleButton:
+        base = QStringLiteral("MBTN_MID");
+        break;
+    case Qt::RightButton:
+        base = QStringLiteral("MBTN_RIGHT");
+        break;
+    case Qt::BackButton:
+        base = QStringLiteral("MBTN_BACK");
+        break;
+    case Qt::ForwardButton:
+        base = QStringLiteral("MBTN_FORWARD");
+        break;
+    case Qt::ExtraButton4:
+    case Qt::ExtraButton5:
+    case Qt::ExtraButton6:
+    case Qt::ExtraButton7:
+    case Qt::ExtraButton8:
+    case Qt::ExtraButton9:
+    case Qt::ExtraButton10:
+    case Qt::ExtraButton11:
+    case Qt::ExtraButton12:
+    case Qt::ExtraButton13:
+    case Qt::ExtraButton14: {
+        // ExtraButton4..14 → MBTN9..19。Qt6 的 ExtraButtonN 是位标志（逐位左移），
+        // 按位序差映射；ExtraButton1/2 是 Back/Forward 的别名、3 即 TaskButton
+        const uint bit = qCountTrailingZeroBits(quint32(event->button()));
+        const uint base4 = qCountTrailingZeroBits(quint32(Qt::ExtraButton4));
+        base = QStringLiteral("MBTN%1").arg(int(bit - base4) + 9);
+        break;
+    }
+    default:
+        return QString(); // 表外按钮：整事件不转发
+    }
+    // 鼠标键恒为表键，Shift 一律拼（mpv 侧键码 ≥ MP_KEY_BASE，本就不折）
+    return assembleName(base, true, event->modifiers());
+}
+
+QString MpvKey::wheelName(bool horizontal, bool forward, Qt::KeyboardModifiers mods) {
+    return assembleName(
+        horizontal ? (forward ? QStringLiteral("WHEEL_RIGHT") : QStringLiteral("WHEEL_LEFT"))
+                   : (forward ? QStringLiteral("WHEEL_UP") : QStringLiteral("WHEEL_DOWN")),
+        true, mods);
 }
 
 QString MpvKey::nameFromSequence(const QKeySequence &sequence) {
@@ -347,12 +708,22 @@ QKeySequence MpvKey::sequenceFromName(const QString &name) {
 QString MpvKey::normalizedKeyName(const QString &name) {
     if (name.isEmpty())
         return name;
-    const QStringList segs = splitCombo(name);
+    // 末尾悬空分隔符先删：'-' 由 splitCombo 收，'+' 在此收（"Ctrl+P+" → "Ctrl+P"）；
+    // "++" 与裸 "+" 的末字符是字面加号键本身，不删
+    QString text = name;
+    if (text.endsWith(QLatin1Char('+')) &&
+        (text.size() < 2 || text.at(text.size() - 2) != QLatin1Char('+')))
+        text.chop(1);
+    const QStringList segs = splitCombo(text);
     QStringList canon;
     for (const QString &seg : segs) {
         const std::optional<int> code = codeFromSegment(seg);
-        if (!code)
-            return name; // 任一段解不出 → 原串（自成一组，永不与内置集匹配）
+        if (!code) {
+            // N157：码点路径解不出 → 查名字层镜像；仍解不出交段原文，原文自成一组
+            const QString mirrored = mirrorSegmentName(seg);
+            canon.append(mirrored.isEmpty() ? seg : mirrored);
+            continue;
+        }
         const auto mods = Qt::KeyboardModifiers(*code & int(Qt::KeyboardModifierMask));
         const int key = *code & ~int(Qt::KeyboardModifierMask);
         // mpv mp_normalize_keycode：ASCII 区间（< MP_KEY_BASE = 0x1000000）Shift 一律
@@ -365,8 +736,35 @@ QString MpvKey::normalizedKeyName(const QString &name) {
         bool fromTable = false;
         const QString base = canonicalBaseName(key, emitMods, &fromTable);
         if (base.isEmpty())
-            return name;
+            return text;
         canon.append(assembleName(base, fromTable, emitMods));
     }
     return canon.join(QLatin1Char('-'));
+}
+
+// N157：键名整体合法性——段数上限与逐段判定，口径见 isValidSegmentName
+bool MpvKey::isValidKeyName(const QString &name) {
+    if (name.isEmpty())
+        return false;
+    const QStringList segs = splitCombo(name);
+    if (segs.size() > 16) // mpv 上限 MP_MAX_KEY_DOWN；超长必是手误，判非法
+        return false;
+    for (const QString &seg : segs)
+        if (!isValidSegmentName(seg))
+            return false;
+    return true;
+}
+
+// N157：补全候选——镜像表 canonical 名的去重保序清单，构造一次
+QStringList MpvKey::keyNameCandidates() {
+    static const QStringList candidates = [] {
+        QStringList list;
+        for (const KeyNameAlias &e : kKeyNames) {
+            const QString canon = QString::fromLatin1(e.canonical);
+            if (!list.contains(canon))
+                list.append(canon);
+        }
+        return list;
+    }();
+    return candidates;
 }

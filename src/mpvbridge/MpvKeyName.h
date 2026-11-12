@@ -10,10 +10,16 @@ namespace MpvKey {
 // 宁可不转发，不可发错键名：错的键名会在 mpv 侧触发用户自己的绑定。
 QString nameFromEvent(const QKeyEvent *event);
 
-// N89：mpv 键名 ↔ QKeySequence 与归一化——键位编辑器的键列录制（写盘）、载入
-// 反解（解不出即显示留空）与同键分组 / 跨源比对共用。
-// "解不出"一律交可判别的空值：序列交空 QKeySequence（数据层保留原文）、归一化
-// 名交原串（解不出的串自成一组，永不与内置集匹配）。
+// N157：鼠标按键事件 → mpv 键名（带修饰前缀）。ExtraButton4–14 映 MBTN9–19，
+// 其余表外按钮交空串，调用方整事件跳过转发。
+QString nameFromMouseEvent(const QMouseEvent *event);
+
+// N157：滚轮键名（带修饰前缀）。horizontal 选左右族，forward 选正向。
+QString wheelName(bool horizontal, bool forward, Qt::KeyboardModifiers mods);
+
+// N89：mpv 键名 ↔ QKeySequence 与归一化——键列录制与同键分组 / 跨源比对共用；
+// 载入判合法性与键列标红走 isValidKeyName（N157）。
+// "解不出"一律交可判别的空值：序列交空 QKeySequence、归一化名交原串（自成一组）。
 
 // QKeySequence → mpv 键名：逐段 count() / operator[] 取值后以 '-' 连接。mpv 的
 // 多键序列分隔是 '-'，与 Qt 显示串的 ", " 不同形，不得解析显示串。
@@ -25,10 +31,17 @@ QString nameFromSequence(const QKeySequence &sequence);
 // JOY_*、表外符号键、非法键名行、0x<hex> 与非 ASCII 裸字符都在这一支）。
 QKeySequence sequenceFromName(const QString &name);
 
-// mpv 键名 → 归一化名：'-' 切分（"-" 键自身写作 "--"，切分成对识别）、修饰名与
-// 主键名大小写不敏感、修饰按 mpv 回吐的固定顺序（Shift、Ctrl、Alt、Meta）重排、
-// ASCII 区间 Shift 折进（字母进大小写：Shift+v ≡ V；其余丢弃：Shift+2 ≡ 2、
-// Shift+SPACE ≡ SPACE）。任一段解不出 → 原串原样返回。
+// mpv 键名 → 归一化名：'-' 切分（"-" 键自身写作 "--"）、修饰名与主键名大小写不
+// 敏感、修饰按 mpv 顺序重排、ASCII 区间 Shift 折进（Shift+v ≡ V、Shift+2 ≡ 2）。
+// 段级两路取名：码点路径解不出的段查名字层镜像（鼠标键 / 别名 / 媒体键名），仍
+// 解不出的段交原文（自成一组，永不与内置集匹配）。
 QString normalizedKeyName(const QString &name);
+
+// N157：键名合法性——段数 ≤ 16，逐段剥修饰后基名须为镜像表名、单个码点或 0x 形态，
+// 口径同 mpv `mp_input_get_key_from_name`。空串恒 false。
+bool isValidKeyName(const QString &name);
+
+// N157：补全候选——镜像表 canonical 名的去重保序清单，构造一次缓存。
+QStringList keyNameCandidates();
 
 } // namespace MpvKey

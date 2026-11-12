@@ -11,7 +11,7 @@ ActionManager::ActionManager(QWidget *host) : m_host(host) {
     declareAction(Id::OpenUrl, QStringLiteral("OpenUrl"), tr("Open &URL…"));
     declareAction(Id::Settings, QStringLiteral("Settings"), tr("&Settings"));
     declareAction(Id::Shortcuts, QStringLiteral("Shortcuts"), tr("&Keyboard Shortcuts…"));
-    declareAction(Id::MpvKeyBindings, QStringLiteral("MpvKeyBindings"), tr("Key &Bindings…"));
+    declareAction(Id::MpvKeyBindings, QStringLiteral("MpvKeyBindings"), tr("mpv Key &Bindings…"));
     declareAction(Id::CustomizeTools, QStringLiteral("CustomizeTools"),
                   tr("&Customize Tool List…"));
     // N78：视频截图两动作——取图经 MpvController::screenshotRaw，逻辑归主窗口。

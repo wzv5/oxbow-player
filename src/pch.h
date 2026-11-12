@@ -27,6 +27,7 @@
 #include <QClipboard>
 #include <QCloseEvent>
 #include <QComboBox>
+#include <QCompleter>
 #include <QContextMenuEvent>
 #include <QCoreApplication>
 #include <QCryptographicHash>

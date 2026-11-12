@@ -355,6 +355,15 @@ class MainWindow : public QMainWindow
     void forwardKeyToMpv(const QKeyEvent *event);
     // N95：文本转发单点——提交串按 UCS-4 码点逐个注入 keypress，仅让位期生效
     void forwardTextToMpv(const QString &text);
+    // N157：视频区鼠标透传——门控每事件现查；move / leave 在 QWindow 层转发，
+    // 按键 / 滚轮在 widget 层转发
+    bool mouseForwardingActive() const;
+    QPoint videoPhysicalPos(const QPointF &videoPos) const;
+    void forwardMouseMove(const QPointF &videoPos);
+    void forwardMouseLeave();
+    void forwardMouseButton(const QMouseEvent *event, bool down);
+    bool forwardWheel(const QWheelEvent *event);
+    void clearForwardedMouseState();
     // N90：让位期把主窗装成 QWindow 过滤器（幂等，窗口重建后须补装）
     void attachYieldFilter();
     void detachYieldFilter();
@@ -623,6 +632,12 @@ class MainWindow : public QMainWindow
     bool m_fullscreen = false; // 覆盖式全屏态标志（syncVideoGeometry 分支依据）
     // N68：小窗态标志（与 m_fullscreen 互斥，syncVideoGeometry 同走"铺满客户区"分支）
     bool m_mini = false;
+    // ---- N157：视频区鼠标透传 ----
+    // INI 键 forwardMouseEvents，缺键关；开启时 window-dragging 只置不还（透传关后
+    // mpv 收不到鼠标，该值惰性，还原反而引入"用户原值"的歧义）
+    bool m_forwardMouseEvents = App::forwardMouseEventsDefault();
+    // 按住的显式 grab 记账：过滤器吞掉按下后 Qt 不建隐式 grab；抬起且无按键才释放
+    bool m_forwardMouseGrabbed = false;
     // ---- N156：自驱动环路状态（全平台无条件编译，是否启用由 GesturePolicy 判据决定）----
     enum class GestureMode { None, Move, Resize };
     GestureMode m_gestureMode = GestureMode::None;

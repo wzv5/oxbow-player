@@ -27,8 +27,6 @@ class MpvBindingDialog : public QDialog {
     // 每次打开重读 input.conf 与 input-bindings（路径与两档数据各调一次），
     // 快照与表格随之重建——重开看到的就是文件现状，未落盘的改动随之丢弃
     void showEvent(QShowEvent *event) override;
-    // 记录器 Del / 退格 / Esc 清空该行而非记作键（同 N86）
-    bool eventFilter(QObject *watched, QEvent *event) override;
     // 调色板 / 样式变更重跑行视觉（解除编辑框 Text 色的构造期 pin）
     void changeEvent(QEvent *event) override;
 
@@ -67,7 +65,6 @@ class MpvBindingDialog : public QDialog {
     void rebuildTable();
     void populateRow(int row);
     void populateBlankRow();
-    QKeySequenceEdit *makeRecorder(int row, const QKeySequence &seq);
     int appendCustomRow(const QString &key, const QString &command, const QString &comment);
     void removeCustomRow(int row);
     void rollSnapshotForward();
@@ -75,7 +72,6 @@ class MpvBindingDialog : public QDialog {
 
     QHash<QString, int> effectiveCustomRows() const; // 归一键名 → 生效自定义行号
     int builtinState(const Row &row, const QHash<QString, int> &eff) const;
-    int rowOfEditor(const QKeySequenceEdit *edit) const; // 记录器信号时刻现查行号
     bool isDirty() const;
     // eff（生效行映射）由调用方算一次传入：菜单逐行逐操作判据，内部再算就是 O(n²)
     bool supports(int row, MenuOp op, const QHash<QString, int> &eff) const;
@@ -86,7 +82,7 @@ class MpvBindingDialog : public QDialog {
     bool customRowDirty(const Row &row, const InputConfLine &l) const; // 逐行脏判据
     void restoreCustomRow(int row); // 丢弃该行本轮改动，还原到打开时的状态
 
-    void onRecorderChanged(int row, const QKeySequence &seq);
+    // 三列编辑统一走条目收口（itemChanged），编辑器与提交归一在 delegate
     void onItemChanged(QTableWidgetItem *item);
     void checkBlankPromotion();
     void refreshRowVisuals();
@@ -109,8 +105,8 @@ class MpvBindingDialog : public QDialog {
     QLineEdit *m_filter = nullptr;
     QTimer *m_filterTimer = nullptr;
 
-    // 空白录入行的两个待填格（键在 m_blankEditor 里，转正判据实时查）
-    QKeySequenceEdit *m_blankEditor = nullptr;
+    // 空白录入行的三个待填格（成员是跨重排唯一的留存处，条目每次重建都读它们）
+    QString m_blankKey;
     QString m_blankCommand;
     QString m_blankComment;
 

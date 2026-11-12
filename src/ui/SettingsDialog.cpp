@@ -515,6 +515,17 @@ const QList<SettingCategory> &settingCatalog() {
                           .widget = WidgetKind::CheckBox,
                           .iniKey = "showMpvMenuData",
                           .fallback = App::showMpvMenuDataDefault()},
+                         // N157：鼠标透传开关（插件 INI 后端，运行期经
+                         // onPluginIniKeysChanged 生效）
+                         {.label =
+                              QT_TRANSLATE_NOOP("SettingsDialog", "Forward mouse events to mpv"),
+                          .widget = WidgetKind::CheckBox,
+                          .iniKey = "forwardMouseEvents",
+                          .fallback = App::forwardMouseEventsDefault(),
+                          .note = QT_TRANSLATE_NOOP(
+                              "SettingsDialog",
+                              "When enabled, the plugin's built-in mouse actions are "
+                              "unavailable and no plugin overlays are shown in fullscreen")},
                      }},
                 // ② 播放 —— mpv 选项（写 mpv.conf + 下发）
                 {.title = QT_TRANSLATE_NOOP("SettingsDialog", "Playback"),
@@ -683,72 +694,76 @@ const QList<SettingCategory> &settingCatalog() {
                 // AiSubtitleCatalog 单点）。模式下拉是唯一主控，但不做 dependsOn 禁用：
                 // 第 2、4、5、6 项始终可见可编辑、取值原样往返，切换模式不丢已填内容，
                 // 运行期只看当前模式那一档（命令行／端点／key／模型归用户，内置档忽略）
-                {.title = QT_TRANSLATE_NOOP("SettingsDialog", "AI"),
-                 .items =
-                     {
-                         {.label = QT_TRANSLATE_NOOP("SettingsDialog", "ASR Mode"),
-                          .widget = WidgetKind::Combo,
-                          .iniKey = AiSubtitleCatalog::kAsrModeKey,
-                          .choices = aiModeChoices,
-                          .fallback = QString::fromLatin1(AiSubtitleCatalog::kModeBuiltin),
-                          .note = QT_TRANSLATE_NOOP("SettingsDialog",
-                                                    "Built-in mode uses whisper")},
-                         {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Custom ASR Command"),
-                          .widget = WidgetKind::LineEdit,
-                          .iniKey = AiSubtitleCatalog::kAsrCommandKey,
-                          .fallback = AiSubtitleCatalog::builtinAsrCommandLine(),
-                          .note = QT_TRANSLATE_NOOP(
-                              "SettingsDialog",
-                              "Only used in Custom mode; ${wav_file} is replaced with the audio "
-                              "file path; subtitles go to stdout in UTF-8 as SRT blocks or whisper "
-                              "timestamp lines, streamed or all at once; runs in the plugin "
-                              "directory without a shell")},
-                         {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Translation Mode"),
-                          .widget = WidgetKind::Combo,
-                          .iniKey = AiSubtitleCatalog::kTranslationModeKey,
-                          .choices = aiModeChoices,
-                          .fallback = QString::fromLatin1(AiSubtitleCatalog::kModeBuiltin),
-                          .note = QT_TRANSLATE_NOOP(
-                              "SettingsDialog",
-                              "Built-in mode uses llama.cpp with the Hy-MT2 model")},
-                         {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Translation API Endpoint"),
-                          .widget = WidgetKind::LineEdit,
-                          .iniKey = AiSubtitleCatalog::kTranslationApiEndpointKey,
-                          .fallback = QString(),
-                          .note = QT_TRANSLATE_NOOP(
-                              "SettingsDialog",
-                              "Only used in Custom mode; OpenAI-compatible endpoint, either a base "
-                              "URL or a full path")},
-                         {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Translation API Key"),
-                          .widget = WidgetKind::LineEdit,
-                          .iniKey = AiSubtitleCatalog::kTranslationApiKeyKey,
-                          .fallback = QString(),
-                          .note = QT_TRANSLATE_NOOP("SettingsDialog", "Only used in Custom mode"),
-                          .secret = true},
-                         {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Translation Model"),
-                          .widget = WidgetKind::LineEdit,
-                          .iniKey = AiSubtitleCatalog::kTranslationModelKey,
-                          .fallback = QString(),
-                          .note = QT_TRANSLATE_NOOP(
-                              "SettingsDialog",
-                              "Only used in Custom mode; empty means the request omits the model "
-                              "field"),
-                          .placeholder = QT_TRANSLATE_NOOP("SettingsDialog", "Auto")},
-                         {.label =
-                              QT_TRANSLATE_NOOP("SettingsDialog", "Translation Target Language"),
-                          .widget = WidgetKind::EditableCombo,
-                          .iniKey = AiSubtitleCatalog::kTranslationTargetLangKey,
-                          .choices = translationTargetLangChoices,
-                          .fallback = AiSubtitleCatalog::defaultTargetLanguage()},
-                         {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Translation Prompt"),
-                          .widget = WidgetKind::MultiLine,
-                          .iniKey = AiSubtitleCatalog::kTranslationPromptKey,
-                          .fallback = AiSubtitleCatalog::defaultTranslationPrompt(),
-                          .note = QT_TRANSLATE_NOOP(
-                              "SettingsDialog",
-                              "Placeholders: {target_lang} and {source_text}; adjust the prompt to "
-                              "suit your model")},
-                     }},
+                {
+                    .title = QT_TRANSLATE_NOOP("SettingsDialog", "AI"),
+                    .items =
+                        {
+                            {.label = QT_TRANSLATE_NOOP("SettingsDialog", "ASR Mode"),
+                             .widget = WidgetKind::Combo,
+                             .iniKey = AiSubtitleCatalog::kAsrModeKey,
+                             .choices = aiModeChoices,
+                             .fallback = QString::fromLatin1(AiSubtitleCatalog::kModeBuiltin),
+                             .note = QT_TRANSLATE_NOOP("SettingsDialog",
+                                                       "Built-in mode uses whisper")},
+                            {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Custom ASR Command"),
+                             .widget = WidgetKind::LineEdit,
+                             .iniKey = AiSubtitleCatalog::kAsrCommandKey,
+                             .fallback = AiSubtitleCatalog::builtinAsrCommandLine(),
+                             .note = QT_TRANSLATE_NOOP(
+                                 "SettingsDialog",
+                                 "Only used in Custom mode; ${wav_file} is replaced with the audio "
+                                 "file path; subtitles go to stdout in UTF-8 as SRT blocks or "
+                                 "whisper "
+                                 "timestamp lines, streamed or all at once; runs in the plugin "
+                                 "directory without a shell")},
+                            {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Translation Mode"),
+                             .widget = WidgetKind::Combo,
+                             .iniKey = AiSubtitleCatalog::kTranslationModeKey,
+                             .choices = aiModeChoices,
+                             .fallback = QString::fromLatin1(AiSubtitleCatalog::kModeBuiltin),
+                             .note = QT_TRANSLATE_NOOP("SettingsDialog",
+                                                       "Built-in mode uses llama.cpp with the "
+                                                       "Hy-MT2 model")},
+                            {.label =
+                                 QT_TRANSLATE_NOOP("SettingsDialog", "Translation API Endpoint"),
+                             .widget = WidgetKind::LineEdit,
+                             .iniKey = AiSubtitleCatalog::kTranslationApiEndpointKey,
+                             .fallback = QString(),
+                             .note = QT_TRANSLATE_NOOP("SettingsDialog",
+                                                       "Only used in Custom mode; "
+                                                       "OpenAI-compatible endpoint, either a base "
+                                                       "URL or a full path")},
+                            {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Translation API Key"),
+                             .widget = WidgetKind::LineEdit,
+                             .iniKey = AiSubtitleCatalog::kTranslationApiKeyKey,
+                             .fallback = QString(),
+                             .note = QT_TRANSLATE_NOOP("SettingsDialog",
+                                                       "Only used in Custom mode"),
+                             .secret = true},
+                            {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Translation Model"),
+                             .widget = WidgetKind::LineEdit,
+                             .iniKey = AiSubtitleCatalog::kTranslationModelKey,
+                             .fallback = QString(),
+                             .note = QT_TRANSLATE_NOOP("SettingsDialog",
+                                                       "Only used in Custom mode; empty means the "
+                                                       "request omits the model "
+                                                       "field"),
+                             .placeholder = QT_TRANSLATE_NOOP("SettingsDialog", "Auto")},
+                            {.label =
+                                 QT_TRANSLATE_NOOP("SettingsDialog", "Translation Target Language"),
+                             .widget = WidgetKind::EditableCombo,
+                             .iniKey = AiSubtitleCatalog::kTranslationTargetLangKey,
+                             .choices = translationTargetLangChoices,
+                             .fallback = AiSubtitleCatalog::defaultTargetLanguage()},
+                            {.label = QT_TRANSLATE_NOOP("SettingsDialog", "Translation Prompt"),
+                             .widget = WidgetKind::MultiLine,
+                             .iniKey = AiSubtitleCatalog::kTranslationPromptKey,
+                             .fallback = AiSubtitleCatalog::defaultTranslationPrompt(),
+                             .note = QT_TRANSLATE_NOOP("SettingsDialog",
+                                                       "Placeholders: {target_lang} and "
+                                                       "{source_text}; adjust the prompt to "
+                                                       "suit your model")},
+                        }},
     };
     return catalog;
 }

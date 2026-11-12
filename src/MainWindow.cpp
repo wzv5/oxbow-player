@@ -2146,6 +2146,22 @@ void MainWindow::onPluginIniKeysChanged(const QStringList &keys) {
                 settings.value(QStringLiteral("showMpvMenuData"), App::showMpvMenuDataDefault())
                     .toBool();
         }
+        // N157：透传开关运行期切换——开：置 window-dragging=no；关：清 grab 与
+        // mpv 侧按住残留。reevaluateOverlays 只在全屏起作用
+        if (keys.contains(QStringLiteral("forwardMouseEvents"))) {
+            const bool on =
+                settings
+                    .value(QStringLiteral("forwardMouseEvents"), App::forwardMouseEventsDefault())
+                    .toBool();
+            if (on != m_forwardMouseEvents) {
+                m_forwardMouseEvents = on;
+                if (on)
+                    m_controller->setProperty(QStringLiteral("window-dragging"), false);
+                else
+                    clearForwardedMouseState();
+                reevaluateOverlays();
+            }
+        }
         // N113：OSD 形态运行期切换——同值 setMode 内部即返（零副作用）；离开当前
         // 形态的清除由控制器自管，立即生效、无须重启
         if (keys.contains(QStringLiteral("osdMode"))) {
@@ -3141,6 +3157,13 @@ void MainWindow::reevaluateOverlays() {
 void MainWindow::evaluateOverlayVisibility(const QPoint &clientPos) {
     if (!m_fullscreen || !m_controlOverlay)
         return;
+    // N157：透传开启即浮窗全程抑制，先于分区判据——永不显示，挂起评估无意义
+    if (mouseForwardingActive()) {
+        setOverlayShown(Overlay::TitleBar, false);
+        setOverlayShown(Overlay::ControlBar, false);
+        setOverlayShown(Overlay::Playlist, false);
+        return;
+    }
     const int W = width();
     const int H = height();
     const int t = kFullscreenEdgeTriggerWidth;
@@ -3757,6 +3780,9 @@ void MainWindow::toggleMini() {
         m_mini = true;
         // 清手势状态与原生循环原点锚（同退出侧）——拖拽中进窗不留残环
         finishGesture();
+        // N157：mini 下门控恒假，清透传残留——按住态无人释放，OSC 会卡在拖拽态
+        if (m_forwardMouseEvents)
+            clearForwardedMouseState();
 #ifdef Q_OS_WIN
         m_framelessMessages->clearDragAnchors();
 #endif
@@ -3991,6 +4017,14 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
         }
     }
     if (watched == m_videoWindow) {
+        // N157：本层只转 move / leave，按键在 widget 层单点转发；转发后一律续流
+        if (mouseForwardingActive()) {
+            if (event->type() == QEvent::MouseMove) {
+                forwardMouseMove(static_cast<const QMouseEvent *>(event)->position());
+            } else if (event->type() == QEvent::Leave) {
+                forwardMouseLeave();
+            }
+        }
         // N66 §三-4：唤起——QWindow 层原始 move（早于 widget 层追踪门闸，无须
         // 开追踪）。非全屏早退；全屏时转主窗客户区坐标交分区判据
         if (event->type() == QEvent::MouseMove && m_fullscreen) {
@@ -4015,6 +4049,9 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
         case QEvent::Drop:
             return handleVideoDropEvent(static_cast<QDropEvent *>(event));
         case QEvent::Wheel:
+            // N157：透传开启交 mpv（位置先行），否则音量步进
+            if (mouseForwardingActive())
+                return forwardWheel(static_cast<QWheelEvent *>(event));
             // N5：播放区滚轮调音量（上滚增大）
             changeVolume(static_cast<QWheelEvent *>(event)->angleDelta().y() > 0
                              ? m_volumeWheelStep
@@ -4026,11 +4063,22 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
             auto *ce = static_cast<QContextMenuEvent *>(event);
             if (ce->reason() == QContextMenuEvent::Keyboard)
                 break;
+            // N157：透传开启吞掉，右键归 mpv 的上下文菜单
+            if (mouseForwardingActive())
+                return true;
             showVideoContextMenu(ce->globalPos());
             return true;
         }
         case QEvent::MouseButtonPress:
         case QEvent::MouseButtonDblClick: {
+            // N157：门控判在前（全按钮转发，表外按钮由取名落空跳过）；清焦保留
+            // （N5：点击画面使方向键回全局音量，对全部按钮生效）
+            if (mouseForwardingActive()) {
+                if (auto *fw = QApplication::focusWidget())
+                    fw->clearFocus();
+                forwardMouseButton(static_cast<const QMouseEvent *>(event), true);
+                return true;
+            }
             auto *me = static_cast<QMouseEvent *>(event);
             if (me->button() != Qt::LeftButton)
                 break; // 右键不进这套按压 / 双击计时（菜单归 ContextMenu 分支）
@@ -4055,6 +4103,13 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
             m_clickTimer->start(QApplication::doubleClickInterval());
             break;
         }
+        case QEvent::MouseButtonRelease:
+            // N157：透传开启转发抬起并按需释放 grab；关闭态不处理（落默认）
+            if (mouseForwardingActive()) {
+                forwardMouseButton(static_cast<const QMouseEvent *>(event), false);
+                return true;
+            }
+            break;
         case QEvent::FocusIn: {
             // N117：程序性置焦当场自清归 null；Tab / Backtab 是真焦点导航，放行
             const auto reason = static_cast<QFocusEvent *>(event)->reason();
@@ -4402,6 +4457,89 @@ void MainWindow::forwardTextToMpv(const QString &text) {
             continue;
         m_controller->commandAsync({QStringLiteral("keypress"), QString::fromUcs4(&cp, 1)});
     }
+}
+
+// ---- N157：视频区鼠标透传 ----
+
+// N157：透传门控——每事件现查，不做缓存与切换信号；mini 恒假（指针是小窗唯一
+// 操作凭据）
+bool MainWindow::mouseForwardingActive() const { return m_forwardMouseEvents && !m_mini; }
+
+// N157：视频区局部坐标 → 物理像素。OSD 空间恒等于窗口物理尺寸、默认 vo_gpu 不设
+// mouse transform，故恒等映射，逐事件取 DPR；越界坐标原样交 mpv 判 hover
+QPoint MainWindow::videoPhysicalPos(const QPointF &videoPos) const {
+    const qreal dpr = m_videoWidget->devicePixelRatioF();
+    return QPoint(qRound(videoPos.x() * dpr), qRound(videoPos.y() * dpr));
+}
+
+// N157：只更新位置（mpv 内部合并连续 move，无须节流）
+void MainWindow::forwardMouseMove(const QPointF &videoPos) {
+    const QPoint physical = videoPhysicalPos(videoPos);
+    m_controller->commandAsync(
+        {QStringLiteral("mouse"), QString::number(physical.x()), QString::number(physical.y())});
+}
+
+// N157：(-1, -1) 令 mpv 判 hover=false，MOUSE_LEAVE 由它自行合成
+void MainWindow::forwardMouseLeave() {
+    m_controller->commandAsync(
+        {QStringLiteral("mouse"), QStringLiteral("-1"), QStringLiteral("-1")});
+}
+
+// N157：按下 / 抬起单点——位置先行，键名带当刻修饰。双击交 mpv 合成（Qt 的
+// DblClick 当第二次按下转发）。按下即显式 grab：吞掉按下后 Qt 不建隐式 grab，
+// 按住期间区外 move / release 靠它回到视频区；抬起且无按键才释放
+void MainWindow::forwardMouseButton(const QMouseEvent *event, bool down) {
+    const QString name = MpvKey::nameFromMouseEvent(event);
+    if (name.isEmpty())
+        return; // 表外按钮：位置与 grab 均跳过
+    const QPoint physical = videoPhysicalPos(event->position());
+    m_controller->commandAsync(
+        {QStringLiteral("mouse"), QString::number(physical.x()), QString::number(physical.y())});
+    m_controller->commandAsync({down ? QStringLiteral("keydown") : QStringLiteral("keyup"), name});
+    if (down) {
+        if (!m_forwardMouseGrabbed) {
+            m_videoWidget->grabMouse();
+            m_forwardMouseGrabbed = true;
+        }
+    } else if (m_forwardMouseGrabbed && event->buttons() == Qt::NoButton) {
+        m_videoWidget->releaseMouse();
+        m_forwardMouseGrabbed = false;
+    }
+}
+
+// N157：滚轮——先发位置，再按轴发 keypress，scale = |delta|/120（小数刻度由 mpv
+// 累积）；零 delta 轴跳过，纯 pixelDelta 事件整条不发。滚轮语义归 mpv，恒消费
+bool MainWindow::forwardWheel(const QWheelEvent *event) {
+    const QPoint delta = event->angleDelta();
+    if (delta.isNull())
+        return true; // 纯 pixelDelta 动能滚动：整条不发，仍消费
+    const QPoint physical = videoPhysicalPos(event->position());
+    m_controller->commandAsync(
+        {QStringLiteral("mouse"), QString::number(physical.x()), QString::number(physical.y())});
+    if (delta.y() != 0) {
+        const QString name = MpvKey::wheelName(false, delta.y() > 0, event->modifiers());
+        if (!name.isEmpty())
+            m_controller->commandAsync(
+                {QStringLiteral("keypress"), name, QString::number(qAbs(delta.y()) / 120.0)});
+    }
+    if (delta.x() != 0) {
+        const QString name = MpvKey::wheelName(true, delta.x() > 0, event->modifiers());
+        if (!name.isEmpty())
+            m_controller->commandAsync(
+                {QStringLiteral("keypress"), name, QString::number(qAbs(delta.x()) / 120.0)});
+    }
+    return true;
+}
+
+// N157：清透传残留——释放 grab，以 RELEASE_ALL（空名 keyup）清 mpv 按住态、(-1,-1)
+// 清位置。门控失效时按住态无人释放，OSC 会卡在拖拽态
+void MainWindow::clearForwardedMouseState() {
+    if (m_forwardMouseGrabbed) {
+        m_videoWidget->releaseMouse();
+        m_forwardMouseGrabbed = false;
+    }
+    m_controller->commandAsync({QStringLiteral("keyup")}); // 空名 = RELEASE_ALL 全清
+    forwardMouseLeave();
 }
 
 // N95：让位期输入法承接——组字串维护守卫标志，提交串经文本转发单点逐码点下发。
@@ -4797,6 +4935,14 @@ void MainWindow::restoreSettings() {
     // 运行期变更经 onPluginIniKeysChanged 更新成员）
     m_showMpvMenuData =
         settings.value(QStringLiteral("showMpvMenuData"), App::showMpvMenuDataDefault()).toBool();
+    // N157：鼠标透传开关（INI 键 forwardMouseEvents，缺键关）。开启即置
+    // window-dragging=no——嵌入形态下 mpv 拖窗会与插件窗口管理打架；只置不还，
+    // 透传关后该值惰性，还原反而引入"用户原值"的歧义
+    m_forwardMouseEvents =
+        settings.value(QStringLiteral("forwardMouseEvents"), App::forwardMouseEventsDefault())
+            .toBool();
+    if (m_forwardMouseEvents)
+        m_controller->setProperty(QStringLiteral("window-dragging"), false);
     if (settings.contains(QStringLiteral("volume"))) {
         // N108：INI 的 volume 键含义恒为"滑条显示值"——钳到当前量程（滑条上界，即
         // 等价百分比量程）后按曲线换算下发，滑条写同值（仍带 QSignalBlocker）

@@ -58,8 +58,8 @@
     </message>
     <message>
         <location filename="../src/ActionManager.cpp" line="14"/>
-        <source>Key &amp;Bindings…</source>
-        <translation>按键绑定(&amp;B)…</translation>
+        <source>mpv Key &amp;Bindings…</source>
+        <translation>mpv 按键绑定(&amp;B)…</translation>
     </message>
     <message>
         <location filename="../src/ActionManager.cpp" line="16"/>

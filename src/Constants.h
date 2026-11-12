@@ -163,6 +163,8 @@ inline bool hoverThumbnailDefault() { return true; }
 inline bool quadraticVolumeCurveDefault() { return false; }
 // N155：Tools 菜单是否前置 mpv menu-data 段（0.42 起 select.lua 会默认填充）
 inline bool showMpvMenuDataDefault() { return false; }
+// N157：视频区鼠标事件向 mpv 透传（缺省关；开启后视频区鼠标语义归 mpv）
+inline bool forwardMouseEventsDefault() { return false; }
 
 // ——N151 检查更新——
 // iniKey: updateCheckInterval（整数天）；设置目录 fallback 与 UpdateChecker 读侧同源。

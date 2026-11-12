@@ -6,9 +6,9 @@
 
 namespace {
 
-// 是否过滤鼠标键位（MBTN* / MOUSE* / WHEEL* / AXIS*）：插件当前不向 mpv 转发鼠标
-// 消息，mpv 侧的鼠标绑定永不触发，列出来只添噪。未来接入鼠标转发后改回 false
-constexpr bool kFilterMouseBindings = true;
+// 是否过滤鼠标键位（MBTN* / MOUSE* / WHEEL* / AXIS*）：透传开启后 mpv 侧鼠标绑定
+// 可真实触发，故恒显示、可编辑。isMouseKey 的唯一调用点即本开关
+constexpr bool kFilterMouseBindings = false;
 
 // 鼠标键位判定：组合键落在鼠标键族即算。大小写不敏感——自定义档的键名是文件
 // 原文，未必是 mpv 归一形
@@ -18,39 +18,231 @@ bool isMouseKey(const QString &key) {
            lower.contains(QLatin1String("wheel")) || lower.contains(QLatin1String("axis"));
 }
 
-// 灰（禁用态）标记：条目携带，委托按选中态取 QPalette::Disabled 的 Text /
-// HighlightedText（§3.1——灰只改前景色，绝不动 ItemIsEnabled）
+// 灰（禁用态）标记：条目携带，委托只改前景色，不动 ItemIsEnabled
 constexpr int kGrayRole = Qt::UserRole + 1;
 
-// 内部行编辑自带 Select All / Copy 菜单，会遮住行级右键菜单——关掉使事件穿透到
-// 编辑器自己的 CustomContextMenu（N86 同款）
-void disableInternalLineEditMenu(QKeySequenceEdit *edit) {
-    if (auto *le = edit->findChild<QLineEdit *>())
-        le->setContextMenuPolicy(Qt::NoContextMenu);
-}
+// 只读编辑器标记：delegate 据此给内置 / 脚本行弹只读框（仅供复制），
+// setModelData 跳过不落盘
+constexpr int kReadOnlyRole = Qt::UserRole + 2;
 
-// 灰行绘制：未选中行取 QPalette::Disabled, Text，选中态改取 Disabled, HighlightedText，
-// 选择反馈仍保留但字色可辨（条目级 ForegroundRole 分不出选中态，须在委托里改）
-class GrayDelegate : public QStyledItemDelegate {
+// ---- N157：键列编辑与只读展示的文件内件（均不带 Q_OBJECT，connect 走函数指针 / lambda）----
+
+// 键列编辑器：吃满单元格，… 按钮叠在右缘装饰区（resizeEvent 定位、setTextMargins
+// 留位，聚焦 / 失焦文本不跳）。焦点代理保焦：按压 NoFocus 按钮不致编辑框失焦收口
+class KeyEdit : public QLineEdit {
   public:
-    using QStyledItemDelegate::QStyledItemDelegate;
+    explicit KeyEdit(QWidget *parent) : QLineEdit(parent) {}
+
+    void setButton(QToolButton *btn) {
+        m_btn = btn;
+        setTextMargins(0, 0, btn->sizeHint().width() + 2, 0);
+    }
+
+  protected:
+    void resizeEvent(QResizeEvent *event) override {
+        QLineEdit::resizeEvent(event);
+        if (m_btn) {
+            const QSize hint = m_btn->sizeHint();
+            m_btn->setGeometry(width() - hint.width() - 2, (height() - hint.height()) / 2,
+                               hint.width(), hint.height());
+        }
+    }
+
+  private:
+    QToolButton *m_btn = nullptr;
+};
+
+// 键名补全：段内锚定。QCompleter 把行编辑框全文交 splitPath 过滤、activated 又整框
+// setText，故 splitPath 只交尾段、pathFromIndex 拼回保留前缀（mutable：前者是 const）
+class KeyCompleter : public QCompleter {
+  public:
+    KeyCompleter(const QStringList &candidates, QObject *parent) : QCompleter(candidates, parent) {}
+
+  protected:
+    QStringList splitPath(const QString &path) const override {
+        // 尾段起点：按 mpv 的 '-' 切分语义（"--" 是字面减号）扫到最后一段，刚敲完
+        // '-' 时尾段为空，空前缀不自动弹
+        qsizetype start = 0;
+        qsizetype i = 0;
+        while (i < path.size()) {
+            if (path.at(i) != QLatin1Char('-')) {
+                ++i;
+                continue;
+            }
+            if (i == start) {
+                if (i + 1 < path.size() && path.at(i + 1) == QLatin1Char('-')) {
+                    i += 2;
+                    if (i < path.size() && path.at(i) == QLatin1Char('-'))
+                        ++i; // 后随的分隔符
+                    start = i;
+                } else {
+                    ++i;
+                }
+                continue;
+            }
+            ++i;
+            start = i;
+        }
+        QString tail = path.mid(start);
+        // 段内剥最后的 '+' 修饰前缀：修饰由用户手打，不进候选
+        const qsizetype p = tail.lastIndexOf(QLatin1Char('+'));
+        if (p >= 0) {
+            start += p + 1;
+            tail = tail.mid(p + 1);
+        }
+        m_retained = path.left(start);
+        return QStringList(tail);
+    }
+
+    QString pathFromIndex(const QModelIndex &index) const override {
+        if (!index.isValid())
+            return QString();
+        return m_retained + QCompleter::pathFromIndex(index);
+    }
+
+  private:
+    mutable QString m_retained;
+};
+
+// … 模态录制窗：QKeySequenceEdit 开窗即聚焦，获得焦点即开始录（Tab / 松键 1 秒 /
+// 失焦收口）；清空走内建 X，clear() 连录制态一并重置。裸 Esc 由本类过滤器先于控件
+// event() 拦下改关窗（记录器自吞全部 KeyPress），带修饰的 Esc 照常录制
+class KeyRecorderDialog : public QDialog {
+  public:
+    explicit KeyRecorderDialog(QWidget *parent) : QDialog(parent) {
+        // 本类无 Q_OBJECT，tr 会落到 QDialog 上下文，故显式给翻译上下文
+        setWindowTitle(QCoreApplication::translate("MpvBindingDialog", "Record Key"));
+        auto *layout = new QVBoxLayout(this);
+        m_recorder = new QKeySequenceEdit(this);
+        m_recorder->setClearButtonEnabled(true);
+        layout->addWidget(m_recorder);
+        auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+        connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
+        connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+        layout->addWidget(buttons);
+        m_recorder->installEventFilter(this);
+        m_recorder->setFocus(); // 开窗即录
+    }
+
+    QKeySequence sequence() const { return m_recorder->keySequence(); }
+
+  protected:
+    bool eventFilter(QObject *watched, QEvent *event) override {
+        if (watched == m_recorder && event->type() == QEvent::KeyPress) {
+            auto *ke = static_cast<QKeyEvent *>(event);
+            if (ke->modifiers() == Qt::NoModifier && ke->key() == Qt::Key_Escape) {
+                reject();
+                return true;
+            }
+        }
+        return QDialog::eventFilter(watched, event);
+    }
+
+  private:
+    QKeySequenceEdit *m_recorder = nullptr;
+};
+
+// 全表统一委托：paint 收灰（kGrayRole）与键列非法红（列 2 现算，空键不判）；
+// createEditor 按 kReadOnlyRole 分流——内置 / 脚本行给只读框，自定义与空白行的键列
+// 给 KeyEdit + … 叠层。提交 / 还原由 handleEditorEvent 收口
+class BindingDelegate : public QStyledItemDelegate {
+  public:
+    explicit BindingDelegate(QObject *parent) : QStyledItemDelegate(parent) {}
 
     void paint(QPainter *painter, const QStyleOptionViewItem &option,
                const QModelIndex &index) const override {
-        if (!index.data(kGrayRole).toBool()) {
+        const QString keyText = index.data(Qt::DisplayRole).toString();
+        const bool gray = index.data(kGrayRole).toBool();
+        const bool red =
+            index.column() == 2 && !keyText.isEmpty() && !MpvKey::isValidKeyName(keyText);
+        if (!gray && !red) {
             QStyledItemDelegate::paint(painter, option, index);
             return;
         }
         QStyleOptionViewItem opt = option;
-        const QPalette &pal = opt.palette;
-        // 选中与未选中两态同取 QPalette::Disabled, Text：Disabled / HighlightedText 在
-        // Windows 浅色调色板里近黑，选中即黑字，字色反而不如底色能交代选择；选择反馈
-        // 交给底色，字色两态保持同一灰
-        const QColor gray = pal.color(QPalette::Disabled, QPalette::Text);
-        opt.palette.setColor(QPalette::All, QPalette::Text, gray);
-        opt.palette.setColor(QPalette::All, QPalette::HighlightedText, gray);
+        // 灰取 Disabled Text（选中 / 未选中同色，选择反馈交给底色）；红为非法键名
+        const QColor text =
+            gray ? opt.palette.color(QPalette::Disabled, QPalette::Text) : QColor(Qt::red);
+        opt.palette.setColor(QPalette::All, QPalette::Text, text);
+        opt.palette.setColor(QPalette::All, QPalette::HighlightedText, text);
         QStyledItemDelegate::paint(painter, opt, index);
     }
+
+    QWidget *createEditor(QWidget *parent, const QStyleOptionViewItem &option,
+                          const QModelIndex &index) const override {
+        if (index.data(kReadOnlyRole).toBool()) {
+            auto *le = new QLineEdit(parent);
+            le->setReadOnly(true);
+            return le;
+        }
+        if (index.column() == 2) {
+            auto *edit = new KeyEdit(parent);
+            auto *btn = new QToolButton(edit);
+            btn->setText(QStringLiteral("…"));
+            btn->setFocusPolicy(Qt::NoFocus);
+            // 光标默认沿父链继承（编辑框的 IBeam 会漫到按钮上），显式归箭头
+            btn->setCursor(Qt::ArrowCursor);
+            btn->setFocusProxy(edit); // 焦点代理：按压不致编辑框失焦收口
+            edit->setButton(btn);
+            auto *completer = new KeyCompleter(MpvKey::keyNameCandidates(), edit);
+            completer->setCompletionMode(QCompleter::PopupCompletion);
+            completer->setCaseSensitivity(Qt::CaseInsensitive);
+            completer->setFilterMode(Qt::MatchStartsWith);
+            edit->setCompleter(completer);
+            // createEditor 是 const，信号连接需非 const 别名
+            auto *self = const_cast<BindingDelegate *>(this);
+            // 录制窗夺焦会触发失焦提交并销毁编辑器，故结果在 exec 后直写条目；
+            // 父窗取编辑器所在窗（编辑器随时 deleteLater，不可挂父链）
+            QAbstractItemModel *model = const_cast<QAbstractItemModel *>(index.model());
+            const QPersistentModelIndex pidx(index);
+            // 空白行转正后 pidx 漂到新末行，结果须改落刚转正那行（按行数增量判）
+            const bool blankRow = (index.row() == model->rowCount() - 1);
+            const int rowsBefore = model->rowCount();
+            connect(btn, &QToolButton::clicked, self,
+                    [self, edit, model, pidx, blankRow, rowsBefore] {
+                        QWidget *win = edit->window();
+                        KeyRecorderDialog dialog(win);
+                        dialog.exec();
+                        if (dialog.result() != QDialog::Accepted)
+                            return; // 取消：失焦已把原文提交到条目
+                        QModelIndex target = pidx;
+                        if (blankRow && model->rowCount() > rowsBefore)
+                            target = model->index(model->rowCount() - 2, 2);
+                        if (!target.isValid())
+                            return; // 行已在模态期间被删：无落点
+                        model->setData(
+                            target,
+                            MpvKey::normalizedKeyName(MpvKey::nameFromSequence(dialog.sequence())),
+                            Qt::EditRole);
+                        // 直写不经 setModelData，补跑提交钩子
+                        if (self->m_commitHook)
+                            self->m_commitHook(target);
+                    });
+            return edit;
+        }
+        return QStyledItemDelegate::createEditor(parent, option, index);
+    }
+
+    void setModelData(QWidget *editor, QAbstractItemModel *model,
+                      const QModelIndex &index) const override {
+        auto *le = qobject_cast<QLineEdit *>(editor);
+        if (!le || le->isReadOnly())
+            return; // 只读编辑器（内置 / 脚本行）不落盘
+        QString text = le->text();
+        if (index.column() == 2)
+            text = MpvKey::normalizedKeyName(text); // 合法键名按归一形落条目，非法原样
+        model->setData(index, text, Qt::EditRole);
+        if (m_commitHook)
+            m_commitHook(index); // 同值提交不触发 itemChanged，钩子兜住
+    }
+
+    // 提交后钩子：自定义行三列全空即删行（挂接处见对话框构造）
+    void setCommitHook(std::function<void(const QModelIndex &)> hook) {
+        m_commitHook = std::move(hook);
+    }
+
+  private:
+    std::function<void(const QModelIndex &)> m_commitHook;
 };
 
 } // namespace
@@ -59,7 +251,7 @@ MpvBindingDialog::MpvBindingDialog(MpvController *mpv, ActionManager *actions,
                                    const CustomToolManager *toolMgr, QWidget *parent)
     : QDialog(parent), m_mpv(mpv), m_actions(actions), m_toolMgr(toolMgr) {
     setWindowTitle(tr("mpv Key Bindings"));
-    // 不设模态：行内捕获按键要窗口能收到事件（N86 同款）
+    // 不设模态：键列编辑随失焦收口，模态只存在于 … 录制窗内
     resize(640, 570);
 
     auto *layout = new QVBoxLayout(this);
@@ -86,7 +278,7 @@ MpvBindingDialog::MpvBindingDialog(MpvController *mpv, ActionManager *actions,
     m_table->setIconSize(QSize(0, 0));
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setSelectionMode(QAbstractItemView::ExtendedSelection); // 多选：右键批量
-    // 命令 / 注释列就地可编辑（自定义行与空白行）；键列走记录器控件，不经条目编辑
+    // 三列均条目编辑：自定义 / 空白行可改，内置 / 脚本行走只读框，键列由委托出编辑器
     m_table->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed);
     m_table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Fixed);
     m_table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
@@ -99,9 +291,26 @@ MpvBindingDialog::MpvBindingDialog(MpvController *mpv, ActionManager *actions,
     connect(m_table, &QWidget::customContextMenuRequested, this,
             &MpvBindingDialog::showContextMenu);
     connect(m_table, &QTableWidget::itemChanged, this, &MpvBindingDialog::onItemChanged);
-    m_table->setItemDelegate(new GrayDelegate(m_table));
+    // 自定义行三列全空即删行：挂提交路径（同值提交不触发 itemChanged，钩子兜住）；
+    // 派发栈未退净，删除队列化；Esc 还原不经提交
+    auto *delegate = new BindingDelegate(m_table);
+    delegate->setCommitHook([this](const QModelIndex &index) {
+        if (m_batchUpdating || !editable())
+            return;
+        const int row = index.row();
+        if (index.column() == 0 || row >= m_rows.size())
+            return;
+        const Row &r = m_rows.at(row);
+        if (r.tier != Row::Tier::Custom)
+            return;
+        const InputConfLine &l = m_conf->lines().at(r.line);
+        if (l.key.isEmpty() && l.command.isEmpty() && l.comment.isEmpty()) {
+            QMetaObject::invokeMethod(
+                this, [this, row] { removeCustomRow(row); }, Qt::QueuedConnection);
+        }
+    });
+    m_table->setItemDelegate(delegate);
 
-    // setCellWidget 不撑高行：取记录器自然高度，否则裁掉边框
     layout->addWidget(m_table, 1);
     const int rowHeight = fontMetrics().height() + 8;
     m_table->verticalHeader()->setDefaultSectionSize(rowHeight);
@@ -125,23 +334,6 @@ void MpvBindingDialog::showEvent(QShowEvent *event) {
     rebuild(); // 每次打开重读：input.conf 与 input-bindings 各一次，快照随之重建
 }
 
-bool MpvBindingDialog::eventFilter(QObject *watched, QEvent *event) {
-    // Del / 退格 / Esc 清空该行而非记作键（裸键才接管：带修饰键的组合是合法录制
-    // 目标，小键盘的 KeypadModifier 不算修饰）。清空经既有 keySequenceChanged 路径
-    if (event->type() == QEvent::KeyPress) {
-        auto *ke = static_cast<QKeyEvent *>(event);
-        if ((ke->modifiers() & ~Qt::KeypadModifier) == Qt::NoModifier &&
-            (ke->key() == Qt::Key_Delete || ke->key() == Qt::Key_Backspace ||
-             ke->key() == Qt::Key_Escape)) {
-            if (auto *edit = qobject_cast<QKeySequenceEdit *>(watched)) {
-                edit->setKeySequence(QKeySequence());
-                return true;
-            }
-        }
-    }
-    return QDialog::eventFilter(watched, event);
-}
-
 void MpvBindingDialog::rebuild() {
     m_batchUpdating = true;
     m_failedLock = false;
@@ -157,10 +349,9 @@ void MpvBindingDialog::rebuild() {
     if (m_noPath) {
         loadError = tr("No writable configuration directory; key bindings cannot be edited.");
     } else {
-        // 键名合法性判定器（变更记录 2）：经 MpvKeyName 反解认合法
-        m_conf = InputConf::open(m_confPath, [](const QString &name) {
-            return !MpvKey::sequenceFromName(name).isEmpty();
-        });
+        // 键名合法性判定器：注释掉的鼠标绑定行由此认领为 disabled 行
+        m_conf = InputConf::open(m_confPath,
+                                 [](const QString &name) { return MpvKey::isValidKeyName(name); });
         if (!m_conf)
             loadError = tr("Could not read the configuration file; key bindings cannot be edited.");
     }
@@ -201,9 +392,9 @@ void MpvBindingDialog::rebuild() {
             r.origCommand = lines.at(i).command;
             r.origComment = lines.at(i).comment;
             r.origDisabled = lines.at(i).disabled;
-            // 载入逐行反解：解不出 → 键列留空（数据层保留原文）并计数。
-            // 鼠标键位行不在计数之列：它们被过滤隐藏，提示只服务可见的留空行
-            if (!isMouseKey(r.origKey) && MpvKey::sequenceFromName(r.origKey).isEmpty())
+            // 载入逐行判合法性：不合 mpv 解析口径即计数（原文直显 + 标红）；鼠标行
+            // 同样判定——透传落地后它们可绑定可触发
+            if (!MpvKey::isValidKeyName(r.origKey))
                 ++parseFailures;
             m_rows.append(r);
         }
@@ -214,6 +405,7 @@ void MpvBindingDialog::rebuild() {
         if (r.tier == Row::Tier::Builtin)
             r.origState = builtinState(r, eff);
 
+    m_blankKey.clear();
     m_blankCommand.clear();
     m_blankComment.clear();
     rebuildTable();
@@ -258,63 +450,34 @@ void MpvBindingDialog::populateRow(int row) {
     const QString command = rowCommand(row);
     const QString comment = rowComment(row);
 
+    // 三列全行条目化：自定义 / 空白行可改，内置 / 脚本行由只读框承接（双击进入）
     auto *srcItem = new QTableWidgetItem(source);
     srcItem->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled); // 只读、非分组控件
     m_table->setItem(row, 0, srcItem);
 
     auto *cmdItem = new QTableWidgetItem(command);
-    cmdItem->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled |
-                      (custom ? Qt::ItemIsEditable : Qt::ItemFlags()));
+    cmdItem->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled | Qt::ItemIsEditable);
+    if (!custom)
+        cmdItem->setData(kReadOnlyRole, true);
     m_table->setItem(row, 1, cmdItem);
 
-    // 键列：自定义行被记录器控件盖住（条目仅承载选中）；内置 / 脚本行只读文本
-    auto *keyItem = new QTableWidgetItem(custom ? QString() : r.key);
-    keyItem->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled);
+    auto *keyItem = new QTableWidgetItem(custom ? m_conf->lines().at(r.line).key : r.key);
+    keyItem->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled | Qt::ItemIsEditable);
+    if (!custom)
+        keyItem->setData(kReadOnlyRole, true);
     m_table->setItem(row, 2, keyItem);
-    if (custom)
-        makeRecorder(row, MpvKey::sequenceFromName(m_conf->lines().at(r.line).key));
 
     auto *cmtItem = new QTableWidgetItem(comment);
-    cmtItem->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled |
-                      (custom ? Qt::ItemIsEditable : Qt::ItemFlags()));
+    cmtItem->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled | Qt::ItemIsEditable);
+    if (!custom)
+        cmtItem->setData(kReadOnlyRole, true);
     m_table->setItem(row, 3, cmtItem);
-}
-
-QKeySequenceEdit *MpvBindingDialog::makeRecorder(int row, const QKeySequence &seq) {
-    auto *edit = new QKeySequenceEdit(m_table);
-    // 不调用 setMaximumSequenceLength：默认即容 4 段（QKeySequence 本身上限；mpv 上限
-    // 16，超出的走"解不出"留空支）——低版本 Qt 无此方法，调用即崩（§3.2 / 验收 13 明禁）
-    disableInternalLineEditMenu(edit);
-    edit->installEventFilter(this); // Del / 退格 / Esc 清空，见 eventFilter
-    edit->setKeySequence(seq);
-    // 行号不捕获、信号时刻现查：转正插行 / 删除重建都会移动行，捕获行号必然过期
-    // （实测：空白行录制器捕获的行号在转正后指向刚转正那行，后续按键改错行）
-    connect(edit, &QKeySequenceEdit::keySequenceChanged, this, [this, edit](const QKeySequence &s) {
-        const int r = rowOfEditor(edit);
-        if (r >= 0)
-            onRecorderChanged(r, s);
-    });
-    // 编辑器上的右键也转给行级菜单（N86 同款）
-    edit->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(edit, &QWidget::customContextMenuRequested, this, [this, edit](const QPoint &pos) {
-        showContextMenu(edit->mapTo(m_table->viewport(), pos));
-    });
-    m_table->setCellWidget(row, 2, edit);
-    return edit;
-}
-
-int MpvBindingDialog::rowOfEditor(const QKeySequenceEdit *edit) const {
-    for (int row = 0; row <= m_rows.size(); ++row) {
-        if (qobject_cast<QKeySequenceEdit *>(m_table->cellWidget(row, 2)) == edit)
-            return row; // 末行（== m_rows.size()）即空白录入行
-    }
-    return -1;
 }
 
 void MpvBindingDialog::populateBlankRow() {
     const int row = blankRow();
-    // 不可编辑（无路径 / 文件读不到）时末行只作占位：命令 / 注释摘掉可编辑位，
-    // 录制器禁可用，避免用户往一个永远写不出去的表里填东西
+    // 不可编辑（无路径 / 文件读不到）时末行只作占位：三列摘掉可编辑位，避免用户往
+    // 一个永远写不出去的表里填东西
     const Qt::ItemFlags fillable =
         Qt::ItemIsEnabled | (editable() ? Qt::ItemIsEditable : Qt::ItemFlags());
     m_table->insertRow(row);
@@ -326,31 +489,12 @@ void MpvBindingDialog::populateBlankRow() {
     auto *cmdItem = new QTableWidgetItem(m_blankCommand);
     cmdItem->setFlags(fillable);
     m_table->setItem(row, 1, cmdItem);
-    auto *keyItem = new QTableWidgetItem;
-    keyItem->setFlags(Qt::ItemIsEnabled); // 键列由记录器承载，条目仅占位
+    auto *keyItem = new QTableWidgetItem(m_blankKey);
+    keyItem->setFlags(fillable);
     m_table->setItem(row, 2, keyItem);
     auto *cmtItem = new QTableWidgetItem(m_blankComment);
     cmtItem->setFlags(fillable);
     m_table->setItem(row, 3, cmtItem);
-    m_blankEditor = makeRecorder(row, QKeySequence());
-    m_blankEditor->setEnabled(editable());
-}
-
-void MpvBindingDialog::onRecorderChanged(int row, const QKeySequence &seq) {
-    if (m_batchUpdating || !editable())
-        return;
-    if (row >= m_rows.size()) {
-        checkBlankPromotion(); // 空白录入行：键已进编辑器，转正判据实时查
-        return;
-    }
-    const Row &r = m_rows.at(row);
-    if (r.tier != Row::Tier::Custom)
-        return;
-    // 录到的序列化成 mpv 键名写回模型；清空 → 空（Apply 校验拦住，见 apply()）。
-    // 未被用户改过的行不经过这里，数据层保留原文（含反解不出的原始串）
-    const InputConfLine &l = m_conf->lines().at(r.line);
-    m_conf->setLineFields(r.line, MpvKey::nameFromSequence(seq), l.command, l.comment);
-    afterEdit();
 }
 
 void MpvBindingDialog::onItemChanged(QTableWidgetItem *item) {
@@ -358,20 +502,26 @@ void MpvBindingDialog::onItemChanged(QTableWidgetItem *item) {
         return;
     const int row = item->row();
     if (row >= m_rows.size()) {
-        // 空白录入行的命令 / 注释（成员是跨重排唯一的留存处，条目每次重建都读它）
+        // 空白录入行的三列（成员是跨重排唯一的留存处，条目每次重建都读它）
         if (item->column() == 1)
             m_blankCommand = item->text();
+        else if (item->column() == 2)
+            m_blankKey = item->text();
         else if (item->column() == 3)
             m_blankComment = item->text();
+        else
+            return;
         checkBlankPromotion(); // 转正与否都由它收口一次视觉
         return;
     }
     const Row &r = m_rows.at(row);
     if (r.tier != Row::Tier::Custom)
-        return; // 内置 / 脚本行 flags 挡住编辑态，兜底忽略
+        return; // 内置 / 脚本行不落盘，兜底忽略
     const InputConfLine &l = m_conf->lines().at(r.line);
     if (item->column() == 1)
         m_conf->setLineFields(r.line, l.key, item->text(), l.comment);
+    else if (item->column() == 2)
+        m_conf->setLineFields(r.line, item->text(), l.command, l.comment);
     else if (item->column() == 3)
         m_conf->setLineFields(r.line, l.key, l.command, item->text());
     else
@@ -380,18 +530,17 @@ void MpvBindingDialog::onItemChanged(QTableWidgetItem *item) {
 }
 
 void MpvBindingDialog::checkBlankPromotion() {
-    if (!m_blankEditor)
-        return;
-    // 转正规则（§3.4）：键与命令都非空 → 转正为一条 pending 自定义行，落在自定义档
-    // 末尾；空白行自身重置后继续充当末尾录入行
-    const QString key = MpvKey::nameFromSequence(m_blankEditor->keySequence());
+    // 转正规则：键与命令都非空 → 转正为一条 pending 自定义行，落在自定义档末尾；
+    // 空白行重置后继续充当录入行。键取 trim 后原文，mpv 启动时自行归一
+    const QString key = m_blankKey.trimmed();
     if (!key.isEmpty() && !m_blankCommand.isEmpty()) {
         appendCustomRow(key, m_blankCommand, m_blankComment);
+        m_blankKey.clear();
         m_blankCommand.clear();
         m_blankComment.clear();
         m_batchUpdating = true; // 清空回写不得再触发一次转正
-        m_blankEditor->setKeySequence(QKeySequence());
         m_table->item(blankRow(), 1)->setText(QString());
+        m_table->item(blankRow(), 2)->setText(QString());
         m_table->item(blankRow(), 3)->setText(QString());
         m_batchUpdating = false;
     }
@@ -457,16 +606,15 @@ bool MpvBindingDialog::customRowDirty(const Row &row, const InputConfLine &l) co
 void MpvBindingDialog::restoreCustomRow(int row) {
     const Row &r = m_rows.at(row);
     Q_ASSERT(r.tier == Row::Tier::Custom);
-    m_batchUpdating = true; // 还原触发的条目 / 记录器变更不得再走回编辑路径
+    m_batchUpdating = true; // 还原触发的条目变更不得再走回编辑路径
     m_conf->setLineFields(r.line, r.origKey, r.origCommand, r.origComment);
     const bool nowDisabled = m_conf->lines().at(r.line).disabled;
     if (nowDisabled && !r.origDisabled)
         m_conf->enableLine(r.line);
     else if (!nowDisabled && r.origDisabled)
         m_conf->disableLine(r.line);
-    if (auto *edit = qobject_cast<QKeySequenceEdit *>(m_table->cellWidget(row, 2)))
-        edit->setKeySequence(MpvKey::sequenceFromName(r.origKey));
     m_table->item(row, 1)->setText(r.origCommand);
+    m_table->item(row, 2)->setText(r.origKey);
     m_table->item(row, 3)->setText(r.origComment);
     m_batchUpdating = false;
 }
@@ -582,7 +730,8 @@ void MpvBindingDialog::refreshRowVisuals() {
         if (hidden)
             continue;
 
-        // 三行判据的视觉一次性组装：删除线与加粗同在一个 QFont 上
+        // 三行判据的视觉一次性组装：删除线与加粗同在一个 QFont 上；键列非法红由
+        // 委托 paint 现算（灰优先），此处只管字体与灰标记
         QFont f = plain;
         f.setStrikeOut(strike);
         f.setBold(bold);
@@ -592,27 +741,17 @@ void MpvBindingDialog::refreshRowVisuals() {
                 it->setData(kGrayRole, gray);
             }
         }
-        if (auto *edit = qobject_cast<QKeySequenceEdit *>(m_table->cellWidget(row, 2))) {
-            edit->setFont(f);
-            QPalette pal = edit->palette();
-            const QColor text = gray ? palette().color(QPalette::Disabled, QPalette::Text)
-                                     : palette().color(QPalette::Text);
-            pal.setColor(QPalette::Text, text);
-            edit->setPalette(pal);
-        }
         // 状态话术给来源列，条目 tooltip 给完整内容：列宽裁不下的长命令由此可读，
-        // 自定义行的键列给 mpv 键名原文（反解不出而显示留空的行也由此可读）
+        // 键列给 mpv 键名原文
         m_table->item(row, 0)->setToolTip(stateTip);
         m_table->item(row, 1)->setToolTip(command);
+        m_table->item(row, 2)->setToolTip(key);
         m_table->item(row, 3)->setToolTip(comment);
-        if (auto *edit = qobject_cast<QKeySequenceEdit *>(m_table->cellWidget(row, 2)))
-            edit->setToolTip(key);
-        else
-            m_table->item(row, 2)->setToolTip(key);
     }
     // 末尾空白录入行恒不隐藏（过滤与归并都不隐藏它）
     m_table->setRowHidden(blankRow(), false);
     m_table->item(blankRow(), 1)->setToolTip(m_blankCommand);
+    m_table->item(blankRow(), 2)->setToolTip(m_blankKey);
     m_table->item(blankRow(), 3)->setToolTip(m_blankComment);
     m_batchUpdating = wasBatch;
 }
@@ -636,7 +775,7 @@ bool MpvBindingDialog::isDirty() const {
 }
 
 void MpvBindingDialog::updateApplyButton() {
-    // Apply 的可用判据 = 可编辑 且 有脏态 且 未失败锁定（§4.1）；锁定位不随脏态解除
+    // Apply 的可用判据 = 可编辑 且 有脏态 且 未失败锁定（N89）；锁定位不随脏态解除
     const bool canWrite = editable() && !m_failedLock;
     m_applyButton->setEnabled(canWrite && isDirty());
     m_okButton->setEnabled(canWrite);
@@ -784,9 +923,9 @@ bool MpvBindingDialog::apply() {
     if (!isDirty())
         return true; // 无脏态：无改动可写，不弹任何框（Ok 直接收尾）
 
-    // —— 第 0 步：不完整行校验（§3.4：只作用在用户改过的行与空白录入行上）——
+    // —— 第 0 步：不完整行校验（只作用在用户改过的行与空白录入行上）——
     // 只填命令未填键（含键被清空的行）→ 报错；只填键未填命令 → 静默丢弃该行改动。
-    // 载入时因反解失败而显示留空的行不在校验之列，Apply 按原文写回（§3.2）。
+    // 载入即非法的行不在校验之列，Apply 按原文写回。
     // 报错按命令串点名该行：表格行号含内置 / 脚本档，对用户没有指向性
     const auto describe = [this](const QString &cmd) {
         return cmd.isEmpty() ? tr("(empty command)") : cmd;
@@ -800,8 +939,7 @@ bool MpvBindingDialog::apply() {
         if (customRowDirty(r, l) && l.key.isEmpty())
             keyless << describe(l.command);
     }
-    if (m_blankEditor && MpvKey::nameFromSequence(m_blankEditor->keySequence()).isEmpty() &&
-        !m_blankCommand.isEmpty())
+    if (m_blankKey.trimmed().isEmpty() && !m_blankCommand.isEmpty())
         keyless << tr("%1 (new entry)").arg(m_blankCommand);
     if (!keyless.isEmpty()) {
         QMessageBox::warning(this, tr("Missing Key"),
@@ -823,7 +961,35 @@ bool MpvBindingDialog::apply() {
     if (!isDirty())
         return true;
 
-    // —— 第 1 步：键位冲突提示（只读、仅提示、不阻断；§4.1）——
+    // —— 第 0.5 步：非法键名确认——自定义行键名不合 isValidKeyName 即算；disabled 行
+    // （mpv 不解析）、键空行与空白行不参与。取消即中止本次 Apply，不动文件、保留脏态 ——
+    int firstInvalid = -1;
+    for (int row = 0; row < m_rows.size(); ++row) {
+        const Row &r = m_rows.at(row);
+        if (r.tier != Row::Tier::Custom)
+            continue;
+        const InputConfLine &l = m_conf->lines().at(r.line);
+        if (l.disabled || l.key.isEmpty())
+            continue;
+        if (!MpvKey::isValidKeyName(l.key)) {
+            firstInvalid = row;
+            break;
+        }
+    }
+    if (firstInvalid >= 0) {
+        const auto choice = QMessageBox::question(
+            this, tr("Invalid Key Names"), tr("Some key names are invalid. Save anyway?"),
+            QMessageBox::Save | QMessageBox::Cancel, QMessageBox::Cancel);
+        if (choice != QMessageBox::Save) {
+            // 中止：不动文件、脏态保留；锚到键列即可见即指
+            m_table->scrollToItem(m_table->item(firstInvalid, 0), QAbstractItemView::EnsureVisible);
+            m_table->setCurrentCell(firstInvalid, 2);
+            return false;
+        }
+        // 继续 → 照写，mpv 启动时自当废行
+    }
+
+    // —— 第 1 步：键位冲突提示（只读、仅提示、不阻断；N89）——
     // 判据：本次将写盘的生效自定义行键集 ∩ 插件侧当前键位表（ActionManager 运行期
     // 真值，不是声明默认）。N138：键表走 claimedKeys 单点，工具实际安装的键一并并入
     // （被 AM 盖住的不占 mpv 键位）；不读不写 [shortcuts] 节、不改 ActionManager
@@ -868,7 +1034,7 @@ bool MpvBindingDialog::apply() {
 
     // —— 第 2 步：commit() 写文件（Apply 全程不向 mpv 下发任何命令）——
     if (!m_conf->commit()) {
-        // 失败支（§4.1 / §7）：只弹一句通用的写出失败提示，不回滚快照（脏态与加粗
+        // 失败支（N89）：只弹一句通用的写出失败提示，不回滚快照（脏态与加粗
         // 标记原样保留），Apply 与 Ok 永久禁用——锁定位在本对话框生命周期内不解除
         m_failedLock = true;
         updateApplyButton();
