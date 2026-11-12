@@ -509,18 +509,9 @@ bool TaskbarIntegration::eventFilter(QObject *watched, QEvent *event) {
     auto &d = *m_impl;
     if (watched == d.host) {
         switch (event->type()) {
-        case QEvent::WinIdChange:
-            // 平台窗口重建：旧按钮随旧窗口消失，等新窗口的 TaskbarButtonCreated 再整体落
-            OXBOW_LOG_DEBUG() << "窗口句柄重建，等新任务栏按钮";
-            d.taskbarReady = false;
-            d.appliedProgress = -1;
-            d.overlayShown = false;
-            d.buttonsHwnd = nullptr;
-            d.buttonsFailedHwnd = nullptr;
-            break;
         case QEvent::Show:
-            // 补加工具条并整体重放：WinIdChange 落在窗口隐藏期，任务栏按钮尚未建立，
-            // 覆盖与进度可能被 shell 丢弃，可见后补一次才稳（幂等，代价几次 COM 调用）
+            // 补加工具条并整体重放：可见后补一次才稳（幂等，代价几次 COM 调用）。
+            // N156：WinIdChange 分支退役——句柄终身稳定后不再有"重建"事件
             ensureButtons();
             reapplyAll();
             break;
@@ -534,6 +525,33 @@ bool TaskbarIntegration::eventFilter(QObject *watched, QEvent *event) {
         }
     }
     return false;
+}
+
+void TaskbarIntegration::invalidateButton() {
+    auto &d = *m_impl;
+    // N156：迷你壳进入前的缓存重置（原 WinIdChange 重放体，句柄稳定后改挂公开方法）——
+    // 进度 / 覆盖 / 工具条归属全部作废，等退出重放
+    d.taskbarReady = false;
+    d.appliedProgress = -1;
+    d.overlayShown = false;
+    d.buttonsHwnd = nullptr;
+    d.buttonsFailedHwnd = nullptr;
+}
+
+void TaskbarIntegration::replayAfterMiniExit() {
+    auto &d = *m_impl;
+    if (d.disabled || !d.taskbar)
+        return;
+    if (d.taskbarReady)
+        return; // shell 已重发 TaskbarButtonCreated，既有 buttonReady 路径已整体重放
+    // 未重放（原地恢复按钮不重发消息，实测项 g）：句柄稳定（N156），同 HWND 无需
+    // 再等首建消息，直接重臂并整体重放；shell 连按钮都不恢复时经 AddTab 兜底
+    // （实测项 c 定夺保留与否）
+    invalidateButton();
+    d.taskbarReady = true;
+    reapplyAll();
+    ensureButtons();
+    d.taskbar->AddTab(hostHwnd(d.host));
 }
 
 bool TaskbarIntegration::nativeEventFilter(const QByteArray &eventType, void *message,

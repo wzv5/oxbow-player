@@ -1,6 +1,6 @@
 #pragma once
 
-#include <QString>
+#include "pch.h"
 
 namespace App {
 

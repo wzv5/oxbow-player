@@ -2,7 +2,9 @@
 
 #include "pch.h"
 
-// 全局程序常量唯一出处：改名只动这里。
+// 跨模块共享常量唯一出处（N156 起）：改名只动这里。仅单模块消费的数值落所在
+// .cpp 的文件内常量（不因"改名只动一处"的便利污染全局头）；主题派生色函数仍按
+// N143 纪律归 AppearanceManager。
 // 覆盖：窗口基名（初始/停止态）、关于对话框、applicationName、INI 文件名前缀。
 namespace App {
 
@@ -119,37 +121,28 @@ inline int recursiveDepthLimitDefault() { return 3; }
 // 是语义本身而非配置值，故不抽常量、直接写死
 inline int recursiveDepthLimitMax() { return 20; }
 
-// ——N66 全屏浮窗——
-// 右缘唤出播放列表浮窗的触发带宽（客户区像素）：底区与右区以此为界互斥，
-// 右下角 (W−t, H−h) 以下为死区，两个浮窗都不触发
-inline int fullscreenEdgeTriggerWidth() { return 16; }
-// 播放列表浮窗左缘拖宽热区宽度（客户区像素）
-inline int fullscreenResizeHotspotWidth() { return 6; }
-
 // ——N67 视频区光标自动隐藏——
 // 播放中光标停在视频区且持续该时长无鼠标活动即隐藏（Qt::BlankCursor）；
 // 任何鼠标活动立即恢复并重新计时
 inline int cursorAutoHideMs() { return 3000; }
 
-// ——N68 小窗模式——
-// 默认客户区宽（逻辑 px）：每次进入恢复默认，不记忆
-inline int miniDefaultWidth() { return 400; }
-// 等比缩放宽下限（逻辑 px）：WM_SIZING 修正时的客户区宽钳制
+// ——N156 全程无框自绘 chrome——
+// 迷你模式标题栏高度（逻辑 px）：迷你窗口顶部的自绘条。跨模块共享——
+// WindowTitleBar 的 setMode(Mini) 高度与 WindowChromeMetrics::miniChromeSize
+// 同读此处；普通态标题栏高 32 是 WindowTitleBar.cpp 文件内常量，不在此列
+inline int miniTitleBarHeight() { return 24; }
+// 自绘非客户区的外圈缩放热区带宽（逻辑 px）：WindowChromeMetrics::hotZoneEdges
+// 单点读取（WM_NCHITTEST 与自驱动形态的子控件边缘转发共用）；与可见边框宽度解耦
+inline int windowResizeBand() { return 6; }
+// 自绘 chrome 的可见边缘宽度（逻辑 px）：容器边距、paintEvent 的直角描边、
+// WindowChromeMetrics::miniChromeSize 三处共享，全平台一致
+inline int windowBorderWidth() { return 1; }
+// 迷你等比缩放的视频区宽下限（逻辑 px）：MainWindow 自驱动环路与 WinFramelessMessages
+// 的 WM_SIZING 共用（判定数学在 WindowChromeMetrics，下限由调用方传参）
 inline int miniMinWidth() { return 200; }
-// 吸附触发距离（逻辑 px）：拖动中窗口边与工作区边距离不超过此值即贴齐
-// （与 N66 边缘触发带宽同风格）。仅 Windows 主路径生效——降级形态不做吸附
+// 迷你拖动吸附触发距离（逻辑 px）：窗口边与工作区边距离不超过此值即贴齐。
+// MainWindow 自驱动环路与 WinFramelessMessages 的 WM_MOVING 共用
 inline int miniSnapDistancePx() { return 16; }
-// 降级路径收口去抖时长：move/resize 事件静默达此时长即触发一轮结果驱动收口
-// （N83：不判松手、只判收敛，非 Windows 无原生松手信号，见
-// MainWindow::scheduleMiniRefit）；进窗后的贴角收口同用这一延时
-inline int miniRefitDebounceMs() { return 250; }
-// N83：结果驱动收口的空转保险丝——自最近一次外部几何唤醒（位置变化，或与上次
-// 请求不符的尺寸事件）起，未收敛的收口轮数上限。自家 resize 的回声不清预算；
-// 两轮之间没有外部几何事件而收敛判定仍不过（比例在轮次中途改变、或钳制由 Qt
-// 内部完成且不产生事件）才会连续计数，耗尽即停。注意它**不是**「WM 拒绝场景的
-// 上界」：平台把请求钳回必然带一个与请求不符的尺寸事件 → 清预算，该场景轮询
-// 无上界（罕见且每轮代价极小，极端比例复测项见规格实测清单）
-inline int miniRefitMaxAttempts() { return 3; }
 
 // ——N121 起播预适配——
 // on_preloaded hook 内等待 GUI 线程完成窗口预适配的上限（毫秒）。正常适配在

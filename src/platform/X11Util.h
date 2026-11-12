@@ -23,3 +23,17 @@ void setWindowAboveEwmh(unsigned long long win, bool on);
 // 退出反向只发 REMOVE；代价是 Qt 侧窗口态与实际不再一致（全屏期间记作最大化），"是否全屏"
 // 的真相须由调用方自持
 void setWindowFullscreenEwmh(unsigned long long win, bool on);
+
+// EWMH 直发隐藏任务栏 / 分页器条目（N156）：同一条 _NET_WM_STATE 通道，一条
+// client message 携带 SKIP_TASKBAR + SKIP_PAGER 双 atom，迷你期任务栏不显示
+// 本窗口条目。实现镜像 setWindowAboveEwmh（自建 Xlib 连接），X 环境不可用时
+// 静默跳过
+void setWindowSkipTaskbarEwmh(unsigned long long win, bool on);
+
+// N156：直发 _NET_WM_MOVERESIZE（move/resize 交互抓取）。绕开 Qt xcb 通道——实测
+// mutter/XWayland 对 Qt 发的消息只认左上角：Qt 发送前 xcb_ungrab_pointer 释放了按键
+// 隐式 grab、resize 用窗内指针坐标，均不合 mutter 预期。本函数不 ungrab（保留按键隐式
+// grab 供 WM 接管），坐标与方向由调用方算好（resize 投影到窗口外边界）。direction: 0-7
+// 缩放、8 移动。data.l[4] 是 source indication（本消息无 timestamp 字段），取 1=application。
+// X 环境不可用时静默跳过
+void sendMoveResizeEwmh(unsigned long long win, int rootX, int rootY, int direction);

@@ -213,7 +213,7 @@ cmake --build build
 | `OXBOW_STATIC` | `OFF` | 静态链接 Qt 与加密依赖（libsodium）。减小体积、加快启动，建议开启——需要静态版 Qt 与预编译包中的静态 libsodium。**仅 Windows。** 自动部署只拷核心并改名为 `main.dll`，加载壳照常构建但不部署。 |
 | `OXBOW_WITH_RCLONE_CRYPT` | `ON` | 是否构建 Rclone Crypt 后端（rclone `crypt` 加密目录的只读提供者）。置 `OFF` 时整条撤除：不再查找 libsodium 与 OpenSSL，也不需要 `LIBSODIUM_ROOT`。 |
 | `OXBOW_BUILD_TESTS` | `OFF` | 构建单元测试可执行文件。 |
-| `OXBOW_PUREQT` | `OFF` | 强制部分功能（如小窗）走纯 Qt 降级路径（开发辅助）。 |
+| `OXBOW_PUREQT` | `OFF` | 强制主窗与迷你窗口都走纯 Qt 自驱动回退（无原生手势通道，开发辅助）。 |
 | `MPV_BIN_DIR` | *（空）* | mpv.exe 所在目录；设置后启用构建后自动部署。**仅 Windows**——Linux 只产出文件。 |
 
 ## 名字的由来

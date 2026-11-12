@@ -8,7 +8,8 @@ set(CMAKE_AUTOMOC ON)
 option(OXBOW_BUILD_TESTS "Build Qt Test unit tests for oxbow" OFF)
 option(OXBOW_STATIC "Link Qt and crypto dependencies statically (skip windeployqt at deploy time)" OFF)
 # N68：强行令 Windows 也走小窗的纯 Qt 降级路径（无等比缩放/边缘吸附），便于本机验证降级形态
-option(OXBOW_PUREQT "Use the pure-Qt implementation path for the mini window" OFF)
+# N156：主窗与迷你都强制纯 Qt 自驱动回退（开发辅助，验证无原生手势通道的形态）
+option(OXBOW_PUREQT "Force the pure-Qt self-driven fallback for the main window and the mini window (dev aid)" OFF)
 # N98：rclone crypt 只读后端（rclone crypt 加密的本地目录）整条特性可关。关掉即不找
 # libsodium / OpenSSL、不链 bcrypt、src/rclonecrypt 与解密流与提供者一概不入列；
 # 存量 rclonecrypt:// 列表在关掉的构建里按"键未知"回落登记表第 0 项（静态表）
@@ -137,6 +138,10 @@ add_library(oxbowcore MODULE
     src/MainWindow.cpp
     src/MainWindow.h
     src/ui/MenuSpec.h # N119：菜单描述表（header-only，唯一消费者是 MainWindow）
+    src/ui/WindowTitleBar.cpp
+    src/ui/WindowTitleBar.h
+    src/ui/WindowChromeMetrics.h
+    src/GesturePolicy.h
     src/mpvbridge/MpvController.cpp
     src/mpvbridge/MpvController.h
     src/mpvbridge/MpvKeyName.cpp
@@ -402,6 +407,10 @@ if(WIN32)
         src/platform/TaskbarIntegration.cpp
         src/platform/TaskbarIntegration.h
         src/platform/TaskbarState.h
+        src/platform/WinFrameless.cpp
+        src/platform/WinFrameless.h
+        src/platform/WinFramelessMessages.cpp
+        src/platform/WinFramelessMessages.h
     )
 endif()
 
@@ -598,6 +607,8 @@ if(OXBOW_BUILD_TESTS)
         src/ui/FilterListWidget.h
         src/ui/ThemedIconEngine.cpp
         src/ui/ThemedIconEngine.h
+        src/ui/WindowTitleBar.cpp
+        src/ui/WindowTitleBar.h
         src/streams/StreamTransit.cpp
         src/streams/StreamTransit.h
         src/streams/ByteStream.h
@@ -704,6 +715,8 @@ if(OXBOW_BUILD_TESTS)
     oxbow_add_test(ReporterSwitchCatalog)
     oxbow_add_test(PlaybackSnapshot)
     oxbow_add_test(TaskbarIntegration)
+    oxbow_add_test(WindowTitleBar)
+    oxbow_add_test(WindowChromeMetrics)
     oxbow_add_test(ExternalTool)
     oxbow_add_test(AiSubtitleCatalog)
     oxbow_add_test(SrtAssembler)

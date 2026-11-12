@@ -274,7 +274,8 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle) {
 
     // N83：全平台先装伴生组件再 show——xcb 下原生窗口链 show 时才定型，过早取
     // winId 可能被 Qt 重建而失效。N127：任务栏集成必须早于 show()，
-    // TaskbarButtonCreated 的原生事件过滤器要先就位；父对象设为主窗，与进程同寿命
+    // TaskbarButtonCreated 的原生事件过滤器要先就位；父对象设为主窗，与进程同寿命。
+    // N156：主窗句柄终身稳定（全程无框），过滤器装上后全程有效，无重建补装
 #ifdef Q_OS_WIN
     new TaskbarIntegration(controller, window);
 #endif

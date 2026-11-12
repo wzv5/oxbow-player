@@ -44,3 +44,44 @@ void setWindowFullscreenEwmh(unsigned long long win, bool on) {
                SubstructureRedirectMask | SubstructureNotifyMask, &xev);
     XFlush(dpy);
 }
+
+// N156：见头注释。不 ungrab（保留按键隐式 grab）；坐标/方向由调用方给定
+void sendMoveResizeEwmh(unsigned long long win, int rootX, int rootY, int direction) {
+    static Display *dpy = XOpenDisplay(nullptr);
+    if (!dpy)
+        return;
+    XEvent xev{};
+    xev.xclient.type = ClientMessage;
+    xev.xclient.window = static_cast<Window>(win);
+    xev.xclient.message_type = XInternAtom(dpy, "_NET_WM_MOVERESIZE", False);
+    xev.xclient.format = 32;
+    xev.xclient.data.l[0] = rootX;
+    xev.xclient.data.l[1] = rootY;
+    xev.xclient.data.l[2] = direction;
+    xev.xclient.data.l[3] = Button1;
+    xev.xclient.data.l[4] = 1; // source indication: 1 = application（本消息无 timestamp 字段）
+    XSendEvent(dpy, DefaultRootWindow(dpy), False,
+               SubstructureRedirectMask | SubstructureNotifyMask, &xev);
+    XFlush(dpy);
+}
+
+// N156：与 setWindowAboveEwmh 同一条通道，一条消息携带 SKIP_TASKBAR 与
+// SKIP_PAGER 两个 atom
+void setWindowSkipTaskbarEwmh(unsigned long long win, bool on) {
+    static Display *dpy = XOpenDisplay(nullptr);
+    if (!dpy)
+        return;
+    XEvent xev{};
+    xev.xclient.type = ClientMessage;
+    xev.xclient.window = static_cast<Window>(win);
+    xev.xclient.message_type = XInternAtom(dpy, "_NET_WM_STATE", False);
+    xev.xclient.format = 32;
+    xev.xclient.data.l[0] = on ? 1 : 0; // _NET_WM_STATE_ADD / _NET_WM_STATE_REMOVE
+    xev.xclient.data.l[1] =
+        static_cast<long>(XInternAtom(dpy, "_NET_WM_STATE_SKIP_TASKBAR", False));
+    xev.xclient.data.l[2] = static_cast<long>(XInternAtom(dpy, "_NET_WM_STATE_SKIP_PAGER", False));
+    xev.xclient.data.l[3] = 1; // source indication: 1 = application
+    XSendEvent(dpy, DefaultRootWindow(dpy), False,
+               SubstructureRedirectMask | SubstructureNotifyMask, &xev);
+    XFlush(dpy);
+}

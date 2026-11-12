@@ -70,6 +70,20 @@ class AppearanceManager {
         return brightenForDark(QColor(0xC4, 0x6A, 0x6A), p);
     }
 
+    // ——N156 主窗自绘 chrome 三色——
+    // 窗口边框：仅自绘直角描边形态（圆角未生效 / X11）取用；圆角态由 DWM 组合器
+    // 用系统色描边，不手设。标题栏文字按宿主激活态取色：激活用主文本色，失活用
+    // 列表域的次要灰（失焦语义），按钮悬停底复用列表选中色。初值，行为面由维护者
+    // 手动核校准
+    static QColor windowFrameBorder(const QPalette &p) {
+        return mixBaseText(p, isDark(p) ? 0.30 : 0.20);
+    }
+    static QColor titleBarForeground(const QPalette &p) { return p.color(QPalette::WindowText); }
+    static QColor titleBarInactiveForeground(const QPalette &p) { return propValueForeground(p); }
+    static QColor titleBarButtonHoverBackground(const QPalette &p) {
+        return selectionBackground(p);
+    }
+
   private:
     // trim 后精确匹配（auto 不分大小写），空串与未命中落 fallbackName
     static QString resolveStyle(const QString &raw, const QStringList &available,

@@ -213,7 +213,7 @@ The version number is defined solely in `project(oxbow-player VERSION …)` at t
 | `OXBOW_STATIC` | `OFF` | Link Qt and crypto dependencies (libsodium) statically. Smaller footprint, faster startup; recommended — requires a static Qt build and the static libsodium library. **Windows only.** Automatic deployment then ships a single `main.dll` (the core); the loader still gets built but is not deployed. |
 | `OXBOW_WITH_RCLONE_CRYPT` | `ON` | Build the Rclone Crypt backend (the rclone `crypt` read-only folder provider). Set to `OFF` to drop it entirely: libsodium and OpenSSL are then not looked for at all and `LIBSODIUM_ROOT` is not needed. |
 | `OXBOW_BUILD_TESTS` | `OFF` | Build the unit-test executables. |
-| `OXBOW_PUREQT` | `OFF` | Force some features (e.g. the mini window) onto the pure-Qt fallback path (development aid). |
+| `OXBOW_PUREQT` | `OFF` | Force the main window and the mini window onto the pure-Qt self-driven fallback (no native gesture channels; development aid). |
 | `MPV_BIN_DIR` | *(empty)* | Directory containing `mpv.exe`; enables automatic post-build deployment. **Windows only** — Linux builds artifacts only. |
 
 ## Why the name
