@@ -639,14 +639,14 @@ class MainWindow : public QMainWindow
     // N156：进小窗前快照（仿 m_preFs* 一套，独立不混用）；面板可见性复用
     // m_playlistVisibleTruth。flags 快照退役——主窗 flags 构造期定死，运行期不切换
     bool m_preMiniMaximized = false; // 进小窗前是否最大化（退出分流依据）
-    QRect m_preMiniRect;             // 进小窗前完整几何（最大化时取 normalGeometry）
+    QRect m_preMiniRect;             // 进小窗前完整几何（最大化来源取平台还原位，其余取 geometry）
     double m_savedZoom = 0.0;        // 进全屏前 zoom/pan 快照（先存后写零）
     double m_savedPanX = 0.0;
     double m_savedPanY = 0.0;
     bool m_preFsMaximized = false; // 进全屏前是否最大化（Win 退出分流 / 非 Win 走不走直发）
     // A18 无框全屏：进全屏前完整几何快照（含位置，普通态恢复用）；N156 起 flags
     // 快照退役（主窗 flags 构造期定死），该矩形同时是 setPlacementAtomic 的
-    // 平台侧还原位来源（2.8）
+    // 平台侧还原位来源（最大化来源取平台还原位，普通来源取 geometry）
     QRect m_preFsRect;
     // N141：置真 ⟹ 本轮全屏走的是 EWMH 直发（不进 Qt 的 WindowFullScreen 状态机），
     // Qt 侧窗口态全程记作最大化、全屏的真相只在 m_fullscreen；退出侧据此对称收口

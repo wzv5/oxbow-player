@@ -44,11 +44,16 @@ void showSystemMenu(unsigned long long win, const QPoint &globalPosLogical, qrea
 // 用途只剩"已最大化窗口上的还原矩形补记"：窗已是最大化时 showCmd 无状态转移、
 // 仅更新 rcNormalPosition 记录，无视觉动作（全屏 / 小窗退出到最大化后由调用点
 // 先行 setWindowState 一步到位，再调本函数记账）。
-// normalRectWorkspaceLogical 是**workspace 原点**的逻辑坐标——调用点按工作区
-// 原点把 Qt 屏幕坐标换算后再入参（工作区随窗口所在屏，多屏不同任务栏位置不踩
-// 空指针）。返回成败，调用点按需处置
+// normalRectWorkspaceLogical 是 workspace 原点的逻辑坐标，与 normalPlacementRect
+// 返回值同域。返回成败，调用点按需处置
 bool setPlacementAtomic(unsigned long long win, const QRect &normalRectWorkspaceLogical, qreal dpr,
                         bool maximized);
+
+// 读平台还原位（GetWindowPlacement 的 rcNormalPosition）：workspace 物理坐标
+// ÷ dpr → workspace 逻辑。与 setPlacementAtomic 读写同源——不能用 normalGeometry()
+// 代替：最大化态被 Qt 按 frame 折算，本仓窗口还原后客户区 == 窗口矩形、无 frame
+// 可减，折算值写回即每边少 8px。失败返回空矩形，调用点兜底
+QRect normalPlacementRect(unsigned long long win, qreal dpr);
 
 // 原地解除最大化：清 WS_MAXIMIZE style + SWP_FRAMECHANGED，NOMOVE|NOSIZE——
 // 窗口停在最大化矩形上原地变成普通窗，不回普通矩形、无还原动画。随后的

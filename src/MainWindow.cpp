@@ -3506,10 +3506,19 @@ void MainWindow::toggleFullscreen() {
     }
     if (!m_fullscreen) {
         // 全屏态落盘守卫：快照进全屏前几何（saveSettings 落盘 + 退出恢复共用）。
-        // N156：该矩形同时是 setPlacementAtomic 的平台侧还原位来源（最大化来源取
-        // normalGeometry()，与平台 rcNormalPosition 同源同值，2.8）
+        // 最大化来源取平台还原位（与 setPlacementAtomic 同域，原值进出），普通
+        // 来源取 Qt 屏幕几何
         m_preFsMaximized = isMaximized();
         m_preFsRect = m_preFsMaximized ? normalGeometry() : geometry();
+#ifdef Q_OS_WIN
+        // normalGeometry() 最大化态被 Qt 折算、不可写回 rcNormalPosition，改读
+        // 平台原值（成因见 WinFrameless::normalPlacementRect）
+        if (m_preFsMaximized) {
+            const QRect normal = WinFrameless::normalPlacementRect(winId(), devicePixelRatioF());
+            if (!normal.isNull())
+                m_preFsRect = normal;
+        }
+#endif
         // N66 §二-2：窗口态真相快照——顶端快照点（与 m_preFsRect 同点，主窗仍是
         // 普通几何）。落定后主窗已重排成全屏尺度，左 pane 宽度那时读到的是
         // "屏宽 − 列表宽"，拿它作退出锚点会把窗口重新撑大。面板可见性读真相成员
@@ -3598,9 +3607,7 @@ void MainWindow::toggleFullscreen() {
                 m_refitAfterMaximize = true;
             }
             setWindowState(Qt::WindowMaximized);
-            const QRect work = screen()->availableGeometry();
-            WinFrameless::setPlacementAtomic(winId(), m_preFsRect.translated(-work.topLeft()),
-                                             devicePixelRatioF(), true);
+            WinFrameless::setPlacementAtomic(winId(), m_preFsRect, devicePixelRatioF(), true);
         } else {
             setGeometry(m_preFsRect);
         }
@@ -3710,10 +3717,17 @@ void MainWindow::toggleMini() {
         return;
     }
     if (!m_mini) {
-        // 快照（仿全屏：整矩形含位置，最大化取 normalGeometry 作还原位）；
-        // N156：该矩形同时是 setPlacementAtomic 的平台侧还原位来源
+        // 快照（仿全屏：最大化取平台还原位、普通取 Qt 屏幕几何）
         m_preMiniMaximized = isMaximized();
         m_preMiniRect = m_preMiniMaximized ? normalGeometry() : geometry();
+#ifdef Q_OS_WIN
+        // 同 toggleFullscreen 进入侧
+        if (m_preMiniMaximized) {
+            const QRect normal = WinFrameless::normalPlacementRect(winId(), devicePixelRatioF());
+            if (!normal.isNull())
+                m_preMiniRect = normal;
+        }
+#endif
         // 收起非视频 UI（只隐藏不重挂；面板可见性真相 m_playlistVisibleTruth 不动，
         // 退出按真相恢复）。mini 全程禁用 N66 浮窗机制，不触碰任何 overlay；
         // 菜单栏与菜单按钮由 applyWindowChrome 统一收口
@@ -3821,9 +3835,7 @@ void MainWindow::toggleMini() {
             // 同全屏退出侧：迷你矩形直接进最大化（一拍），还原矩形随后补记
             // （窗已最大化，仅更新记录、无视觉动作）
             setWindowState(Qt::WindowMaximized);
-            const QRect work = screen()->availableGeometry();
-            WinFrameless::setPlacementAtomic(winId(), m_preMiniRect.translated(-work.topLeft()),
-                                             devicePixelRatioF(), true);
+            WinFrameless::setPlacementAtomic(winId(), m_preMiniRect, devicePixelRatioF(), true);
         } else {
             setGeometry(m_preMiniRect);
         }

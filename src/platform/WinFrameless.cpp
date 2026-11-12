@@ -99,6 +99,16 @@ bool WinFrameless::setPlacementAtomic(unsigned long long win,
     return SetWindowPlacement(hwnd, &wp) != FALSE;
 }
 
+QRect WinFrameless::normalPlacementRect(unsigned long long win, qreal dpr) {
+    WINDOWPLACEMENT wp{};
+    wp.length = sizeof(wp);
+    if (!GetWindowPlacement(hwndOf(win), &wp))
+        return QRect();
+    const RECT &r = wp.rcNormalPosition;
+    return QRect(QPoint(qRound(r.left / dpr), qRound(r.top / dpr)),
+                 QSize(qRound((r.right - r.left) / dpr), qRound((r.bottom - r.top) / dpr)));
+}
+
 void WinFrameless::clearMaximized(unsigned long long win) {
     const HWND hwnd = hwndOf(win);
     const LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_STYLE);
