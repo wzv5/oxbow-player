@@ -72,8 +72,8 @@ Oxbow runs as a plugin inside mpv and has to coexist with other plugins while ke
 
 - **It steps aside instead of fighting for the output window.** On load it reads mpv's `wid` property first; if a window is already assigned — either by the user's `--wid` or because another plugin got there first — Oxbow exits before any initialization, so the two never end up covering each other's output.
 - **Keyboard events pass through.** Shortcuts Oxbow claims are handled by itself; every other key is handed back to mpv, so bindings in `input.conf` and mpv's default key map keep working.
-- **Mouse events do not pass through.** The mouse is handled entirely by Oxbow's interface and never forwarded to mpv, so mpv-side mouse bindings do not take effect.
-- **Script menus are supported.** It reads mpv's `menu-data` property and renders the context menu a script provides into the **Tools** menu.
+- **Mouse events can pass through (off by default).** By default the mouse is handled entirely by Oxbow's interface; enable **Forward mouse events to mpv** in the settings to hand video-area mouse events back to mpv, so mouse bindings in `input.conf` take effect. Oxbow's built-in mouse actions and fullscreen overlays then step aside.
+- **Script menus are supported (off by default).** Enable **Show mpv menu-data in the Tools menu** in the settings, and Oxbow reads mpv's `menu-data` property and renders the context menu a script provides into the **Tools** menu.
 
 ## Installation
 
