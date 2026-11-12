@@ -1524,6 +1524,8 @@ void MainWindow::showVideoContextMenu(const QPoint &globalPos) {
     QMenu root(window());
     for (const MenuSpec::Group &group : MenuSpec::kGroups)
         renderMenuGroup(*root.addMenu(tr(group.title)), group);
+    // 点视频区关菜单的左键不重放给视频区，避免再触发单击暂停
+    root.setNoReplayFor(m_videoWidget);
     root.exec(globalPos);
 }
 
