@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.1.3] - 2026-11-13
+
+### Added
+
+- **Forward mouse events to mpv**: a new option under **Settings → Basic**; when enabled, mouse bindings in `input.conf` take effect in the video area.
+
+### Changed
+
+- **Custom-drawn frameless window**: appearance is now consistent across platforms, and a menu button appears to the left of the minimize button when the menu bar is hidden.
+- **mpv key bindings**: bindings can now be assigned to mouse buttons, and the key field supports autocompletion.
+
+### Fixed
+
+- The window no longer flickers when entering or leaving fullscreen.
+- Left-clicking the video area to dismiss the plugin's own context menu no longer toggles playback.
+
 ## [0.1.2] - 2026-11-08
 
 ### Added
