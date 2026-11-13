@@ -41,7 +41,8 @@ QString normalizedKeyName(const QString &name);
 // 口径同 mpv `mp_input_get_key_from_name`。空串恒 false。
 bool isValidKeyName(const QString &name);
 
-// N157：补全候选——镜像表 canonical 名的去重保序清单，构造一次缓存。
+// N157：补全候选——修饰键（Shift / Ctrl / Alt / Meta）置首，其后为镜像表
+// canonical 名的去重保序清单，构造一次缓存。
 QStringList keyNameCandidates();
 
 } // namespace MpvKey

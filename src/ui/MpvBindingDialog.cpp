@@ -84,7 +84,8 @@ class KeyCompleter : public QCompleter {
             start = i;
         }
         QString tail = path.mid(start);
-        // 段内剥最后的 '+' 修饰前缀：修饰由用户手打，不进候选
+        // 段内剥最后的 '+' 修饰前缀：前缀留在 retained，尾段对全量候选（含修饰键）
+        // 补全，组合链 ctrl+shift+… 逐段可补
         const qsizetype p = tail.lastIndexOf(QLatin1Char('+'));
         if (p >= 0) {
             start += p + 1;

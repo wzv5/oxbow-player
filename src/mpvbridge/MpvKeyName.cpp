@@ -755,10 +755,12 @@ bool MpvKey::isValidKeyName(const QString &name) {
     return true;
 }
 
-// N157：补全候选——镜像表 canonical 名的去重保序清单，构造一次
+// N157：补全候选——修饰键置首（组合前缀高频入口，拼法与 assembleName 产出一致，
+// 镜像表只含键名本体不含修饰名），其后为镜像表 canonical 名的去重保序清单，构造一次
 QStringList MpvKey::keyNameCandidates() {
     static const QStringList candidates = [] {
-        QStringList list;
+        QStringList list = {QStringLiteral("Shift"), QStringLiteral("Ctrl"), QStringLiteral("Alt"),
+                            QStringLiteral("Meta")};
         for (const KeyNameAlias &e : kKeyNames) {
             const QString canon = QString::fromLatin1(e.canonical);
             if (!list.contains(canon))
