@@ -427,6 +427,12 @@ void WindowTitleBar::mouseDoubleClickEvent(QMouseEvent *event) {
 }
 
 void WindowTitleBar::contextMenuEvent(QContextMenuEvent *event) {
+    // Floating 不接右键系统菜单（N156）：全屏期系统菜单项指向非全屏窗口态，语义
+    // 失效；就地吞掉不向宿主浮窗传播，退出全屏走按钮
+    if (m_mode == Mode::Floating) {
+        event->accept();
+        return;
+    }
     emit systemMenuRequested(event->globalPos());
 }
 
