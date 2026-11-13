@@ -11,6 +11,7 @@ class WinFramelessMessages;
 class WinFrameBackend final : public FrameBackend {
   public:
     WinFrameBackend(QWidget *window, WindowTitleBar *titleBar, WindowStateHost *host);
+    ~WinFrameBackend() override;
 
     void applyCreationFixups() override;
     void setRounded(bool rounded) override;

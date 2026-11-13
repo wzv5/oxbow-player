@@ -10,6 +10,9 @@ WinFrameBackend::WinFrameBackend(QWidget *window, WindowTitleBar *titleBar, Wind
     : m_window(window), m_host(host),
       m_messages(std::make_unique<WinFramelessMessages>(window, titleBar, host, nullptr)) {}
 
+// 析构落此：头文件里 m_messages 的目标类型只有前向声明
+WinFrameBackend::~WinFrameBackend() = default;
+
 void WinFrameBackend::applyCreationFixups() {
     m_rounded = WinFrameless::applyCreationFixups(m_window->winId());
 }
