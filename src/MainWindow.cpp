@@ -4383,7 +4383,9 @@ void MainWindow::clearForwardedMouseState() {
         m_videoWidget->releaseMouse();
         m_forwardMouseGrabbed = false;
     }
-    m_controller->commandAsync({QStringLiteral("keyup")}); // 空名 = RELEASE_ALL 全清
+    // 键名显式传空串而非缺参：mpv <0.42.0 的 cmd_key 对缺参键名直接取 [0] 解引用
+    // （NULL 即 SIGSEGV）；空串在新旧实现都命中 RELEASE_ALL 分支
+    m_controller->commandAsync({QStringLiteral("keyup"), QString()});
     forwardMouseLeave();
 }
 
