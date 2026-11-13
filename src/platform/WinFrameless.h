@@ -2,11 +2,8 @@
 
 #include "pch.h"
 
-// N156：Windows 无框窗口胶合层（自由函数命名空间）。与 X11Util 同纪律：源内无
-// 平台守卫，本单元是否参与构建只由 CMakeLists 的 WIN32 段决定（错平台编进去就
-// 在缺 Win32 / DWM 处编译失败，那是要的显影）；调用方（MainWindow.cpp）的调用
-// 点自持 #ifdef Q_OS_WIN。几何入参一律逻辑坐标 + dpr，物理换算在实现内单点完成；
-// 全部操作原地生效，不 withdraw、不重建 HWND。
+// Windows 无框窗口胶合层。几何入参一律逻辑坐标 + dpr，物理换算在实现内完成；
+// 原地生效，不 withdraw、不重建 HWND
 namespace WinFrameless {
 
 // 创建后补丁（showEvent 首次分支调用一次）：原地追加 WS_CAPTION 族
@@ -29,12 +26,8 @@ bool setRounded(unsigned long long win, bool rounded);
 // 均原地生效，无 hide/show（窗口矩形 == 客户区，FRAMECHANGED 无可见副作用）
 void setMiniShell(unsigned long long win, bool mini);
 
-// 标题栏右键系统菜单（仅 Windows 接线）：GetSystemMenu + TrackPopupMenuEx
-// （TPM_RETURNCMD）+ 选中项经 WM_SYSCOMMAND 下发。每次先重置回默认菜单再裁剪——
-// 菜单句柄随窗口终身，灰置 / 删除是累积修改，不重置则退出 mini 后两项永久灰置。
-// disableMinMax 灰掉最大化 / 最小化（mini 态）；dropMoveSize 删掉移动 / 大小项
-// （GesturePolicy 判为自驱动的形态——它们依赖系统 NC 命中，自驱动没有对应修正通道）。
-// 裁剪判据留在调用点由 MainWindow 算好传入，本层不读 GesturePolicy 与窗口态（平台胶合层定位）
+// 每次先重置回默认菜单再裁剪：菜单句柄随窗口终身，灰置 / 删除是累积修改。
+// disableMinMax 灰掉最大化 / 最小化；dropMoveSize 删掉移动 / 大小项
 void showSystemMenu(unsigned long long win, const QPoint &globalPosLogical, qreal dpr,
                     bool disableMinMax, bool dropMoveSize);
 

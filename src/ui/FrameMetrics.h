@@ -4,27 +4,21 @@
 
 #include "Constants.h"
 
-// N156：迷你几何换算与手势判定的唯一口径（header-only 纯函数命名空间）。
-// 全部函数在逻辑坐标域运算，物理域取整（qRound）由调用点完成——Windows 原生
-// 消息 handler 的物理↔逻辑换算与自驱动环路的直接下发共用这一份判定数学。
-// 不持有视频区矩形：实际几何由布局 mapTo 给出，本模块只做尺寸换算与手势判定。
-// miniChromeSize() 与 hotZoneEdges() 读取共享常量（windowBorderWidth /
-// miniTitleBarHeight / windowResizeBand），其余函数不出现 App::*——minWidth /
-// snapDistance / miniDefaultWidth 一律由调用方传参。
-namespace WindowChromeMetrics {
+// 迷你几何换算与手势判定（逻辑坐标域；物理取整由调用点完成）
+namespace FrameMetrics {
 
-// 迷你 chrome 尺寸 = 视频区四周的可见边框（windowBorderWidth）+ 顶部迷你标题栏：
+// 迷你窗框尺寸 = 视频区四周的可见边框（windowBorderWidth）+ 顶部迷你标题栏：
 // 水平 = 左右两条边；垂直 = 上下两条边 + 标题栏
-inline QSize miniChromeSize() {
+inline QSize miniFrameSize() {
     const int edge = App::windowBorderWidth();
     return QSize(2 * edge, 2 * edge + App::miniTitleBarHeight());
 }
 
 // 视频区尺寸 → 迷你客户区尺寸（互逆换算对）
-inline QSize miniClientSize(const QSize &videoSize) { return videoSize + miniChromeSize(); }
+inline QSize miniClientSize(const QSize &videoSize) { return videoSize + miniFrameSize(); }
 
 // 迷你客户区尺寸 → 视频区尺寸（互逆换算对）
-inline QSize miniVideoSize(const QSize &clientSize) { return clientSize - miniChromeSize(); }
+inline QSize miniVideoSize(const QSize &clientSize) { return clientSize - miniFrameSize(); }
 
 // 自由缩放提案 → 保比修正后的窗口矩形。rawRect 是窗口矩形（无框下即客户区，
 // 逻辑域），edges 是被拖的边组合，videoRatio = 视频宽/高（无流由调用方给
@@ -33,22 +27,22 @@ inline QSize miniVideoSize(const QSize &clientSize) { return clientSize - miniCh
 // 语义与 N68 的 WM_SIZING 修正逐条对应（仅下限单位从客户区宽改为视频区宽）：
 // ① 真值维按拖边朝向选定——纯上/下边以高为准反推宽，左右边与四角以宽为准
 //    反推高（N68 变更记录第 6 条的实测结论：反着实现四边全成 no-op）；
-// ② 真值维先钳入参 minWidth 与工作区上限（上限在视频域：工作区扣 chrome）
+// ② 真值维先钳入参 minWidth 与工作区上限（上限在视频域：工作区扣窗框）
 //    再反推另一维，钳制落在反推之前才不破比例；
 // ③ 锚点两轴分治——被拖轴以对边为锚（对边不动），被反推的轴以中线为锚
 //    （两侧对称伸缩）；
 // ④ 末了按最小移动原则把整窗钳回工作区（越界多少平移多少）。
 inline QRect miniResizedRect(const QRect &rawRect, Qt::Edges edges, double videoRatio, int minWidth,
                              const QRect &workArea) {
-    const QSize chrome = miniChromeSize();
+    const QSize frame = miniFrameSize();
     const bool verticalEdge = edges & (Qt::LeftEdge | Qt::RightEdge);
     const bool horizontalEdge = edges & (Qt::TopEdge | Qt::BottomEdge);
     // 提案的视频区尺寸：真值维钳制与反推都在这个域进行
-    const int cw = rawRect.width() - chrome.width();
-    const int ch = rawRect.height() - chrome.height();
-    // 工作区上限换到视频域（无框窗口矩形即客户区，扣 chrome 即视频区上限）
-    const int maxVideoW = workArea.width() - chrome.width();
-    const int maxVideoH = workArea.height() - chrome.height();
+    const int cw = rawRect.width() - frame.width();
+    const int ch = rawRect.height() - frame.height();
+    // 工作区上限换到视频域（无框窗口矩形即客户区，扣窗框即视频区上限）
+    const int maxVideoW = workArea.width() - frame.width();
+    const int maxVideoH = workArea.height() - frame.height();
     int cwTrue;
     int chTrue;
     if (horizontalEdge && !verticalEdge) { // 纯上/下边：高为准，反推宽
@@ -65,19 +59,19 @@ inline QRect miniResizedRect(const QRect &rawRect, Qt::Edges edges, double video
     const int cy = rawRect.y() + rawRect.height() / 2;
     QRect result;
     if (edges & Qt::LeftEdge)
-        result.setLeft(rawRect.x() + rawRect.width() - chrome.width() - cwTrue);
+        result.setLeft(rawRect.x() + rawRect.width() - frame.width() - cwTrue);
     else if (edges & Qt::RightEdge)
         result.setLeft(rawRect.x());
     else
-        result.setLeft(cx - (chrome.width() + cwTrue) / 2);
+        result.setLeft(cx - (frame.width() + cwTrue) / 2);
     if (edges & Qt::TopEdge)
-        result.setTop(rawRect.y() + rawRect.height() - chrome.height() - chTrue);
+        result.setTop(rawRect.y() + rawRect.height() - frame.height() - chTrue);
     else if (edges & Qt::BottomEdge)
         result.setTop(rawRect.y());
     else
-        result.setTop(cy - (chrome.height() + chTrue) / 2);
-    result.setWidth(chrome.width() + cwTrue);
-    result.setHeight(chrome.height() + chTrue);
+        result.setTop(cy - (frame.height() + chTrue) / 2);
+    result.setWidth(frame.width() + cwTrue);
+    result.setHeight(frame.height() + chTrue);
     // 最小移动钳回工作区（两轴独立，越界多少移多少）；qMax 兜窗口宽于工作区的极端
     const int maxLeft = qMax(workArea.x(), workArea.x() + workArea.width() - result.width());
     const int maxTop = qMax(workArea.y(), workArea.y() + workArea.height() - result.height());
@@ -145,4 +139,4 @@ inline Qt::Edges hotZoneEdges(const QSize &windowSize, const QPoint &windowPos) 
     return edges;
 }
 
-} // namespace WindowChromeMetrics
+} // namespace FrameMetrics

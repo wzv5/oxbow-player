@@ -1,32 +1,28 @@
-// N156：WindowChromeMetrics 纯函数测试（迷你几何换算与手势判定的唯一口径）。
-// ctest --test-dir build -C Debug -R WindowChromeMetrics 跑本套件；
-// oxbow_tests_WindowChromeMetrics <槽名> 跑单个用例。
-// 断言数值按 windowBorderWidth=1 / miniTitleBarHeight=24（chrome = 2×26）、
-// windowResizeBand=6 与 16:9 比例手工推得，常量改动须同步重推（QCOMPARE 的期望值
-// 就是规格语义的钉子）。
+// 断言数值按 windowBorderWidth=1 / miniTitleBarHeight=24（窗框 = 2×26）、
+// windowResizeBand=6 与 16:9 比例手工推得，常量改动须同步重推
 
 #include "pch.h"
 
 #include <QtTest/QtTest>
 
 #include "Constants.h"
-#include "ui/WindowChromeMetrics.h"
+#include "ui/FrameMetrics.h"
 
-using namespace WindowChromeMetrics;
+using namespace FrameMetrics;
 
-class TestWindowChromeMetrics : public QObject {
+class TestFrameMetrics : public QObject {
     Q_OBJECT
 
   private slots:
-    // chrome 尺寸与两组互逆换算（含奇数尺寸往返）
-    void chromeSizeAndInverse();
+    // 窗框尺寸与两组互逆换算（含奇数尺寸往返）
+    void frameSizeAndInverse();
     // 右缘拖拽：宽为准反推高；反推轴（高）以中线为锚
     void rightEdgeDragWidthDriven();
     // 纯上缘拖拽：高为准反推宽、被拖轴对边为锚；等比提案幂等
     void topEdgeDragHeightDriven();
     // 视频区宽下限钳制（minWidth 语义钉为视频区宽）
     void minWidthClamp();
-    // 工作区上限钳制（视频域扣 chrome）与越界最小移动钳回
+    // 工作区上限钳制（视频域扣窗框）与越界最小移动钳回
     void workAreaCapAndPositionClamp();
     // 吸附：带内贴齐、带外空转、角部两轴同贴、越过工作区不钳回（N68 第 8 条）
     void snapping();
@@ -44,16 +40,16 @@ class TestWindowChromeMetrics : public QObject {
     static double ratio();          // 16:9
 };
 
-const QRect &TestWindowChromeMetrics::workArea() {
+const QRect &TestFrameMetrics::workArea() {
     static const QRect kWork(0, 0, 1920, 1040);
     return kWork;
 }
 
-double TestWindowChromeMetrics::ratio() { return 400.0 / 225.0; }
+double TestFrameMetrics::ratio() { return 400.0 / 225.0; }
 
-void TestWindowChromeMetrics::chromeSizeAndInverse() {
-    QCOMPARE(miniChromeSize(), QSize(2 * App::windowBorderWidth(),
-                                     2 * App::windowBorderWidth() + App::miniTitleBarHeight()));
+void TestFrameMetrics::frameSizeAndInverse() {
+    QCOMPARE(miniFrameSize(), QSize(2 * App::windowBorderWidth(),
+                                    2 * App::windowBorderWidth() + App::miniTitleBarHeight()));
     const QSize video(400, 225);
     const QSize client = miniClientSize(video);
     QCOMPARE(client, QSize(402, 251));
@@ -63,7 +59,7 @@ void TestWindowChromeMetrics::chromeSizeAndInverse() {
     QCOMPARE(miniVideoSize(miniClientSize(odd)), odd);
 }
 
-void TestWindowChromeMetrics::rightEdgeDragWidthDriven() {
+void TestFrameMetrics::rightEdgeDragWidthDriven() {
     // 提案：右缘外扩至 500 宽（(100,100,500,257)）→ cw = 498 → chTrue = round(498/r) = 280；
     // 右缘拖拽左缘不动（对边为锚），高为反推轴以中线为锚（cy = 228 → top = 75）
     const QRect fixed =
@@ -71,7 +67,7 @@ void TestWindowChromeMetrics::rightEdgeDragWidthDriven() {
     QCOMPARE(fixed, QRect(100, 75, 500, 306));
 }
 
-void TestWindowChromeMetrics::topEdgeDragHeightDriven() {
+void TestFrameMetrics::topEdgeDragHeightDriven() {
     // 等比提案原样返回（幂等）：窗口 (100,50,402,251) 上缘上移后仍恰为 16:9
     const QRect raw(100, 50, 402, 251);
     QCOMPARE(miniResizedRect(raw, Qt::TopEdge, ratio(), 200, workArea()), raw);
@@ -83,7 +79,7 @@ void TestWindowChromeMetrics::topEdgeDragHeightDriven() {
     QCOMPARE(fixed, QRect(0, 80, 1022, 600));
 }
 
-void TestWindowChromeMetrics::minWidthClamp() {
+void TestFrameMetrics::minWidthClamp() {
     // 拖窄到 60 宽提案：cw = 58 < 200 → 视频区宽钳到 200 → 窗口宽 202；
     // 右缘拖拽左缘不动；高 = 26 + round(200/r) = 26 + 113 = 139（中线锚）
     const QRect fixed =
@@ -93,7 +89,7 @@ void TestWindowChromeMetrics::minWidthClamp() {
     QCOMPARE(fixed.height(), 139);
 }
 
-void TestWindowChromeMetrics::workAreaCapAndPositionClamp() {
+void TestFrameMetrics::workAreaCapAndPositionClamp() {
     // 宽超上限：cw = 2998 → 钳到 round(maxVideoH*r) = 1803（16:9 下高上限先绑定）
     // → 窗口 1805×1040；右缘拖拽左缘 300 不动 → 右缘出界 2105 > 1920 → 最小移动钳回 115
     const QRect fixed =
@@ -103,7 +99,7 @@ void TestWindowChromeMetrics::workAreaCapAndPositionClamp() {
     QCOMPARE(fixed.left(), 115);
 }
 
-void TestWindowChromeMetrics::snapping() {
+void TestFrameMetrics::snapping() {
     // 左缘带内（dLeft = 10 ≤ 16）：贴 0
     QCOMPARE(miniSnappedTopLeft(QRect(10, 500, 408, 257), workArea(), 16), QPoint(0, 500));
     // 带外（dLeft = 20 > 16）：空转
@@ -118,7 +114,7 @@ void TestWindowChromeMetrics::snapping() {
     QCOMPARE(miniSnappedTopLeft(QRect(-5, 500, 408, 257), workArea(), 16), QPoint(-5, 500));
 }
 
-void TestWindowChromeMetrics::leftEdgeDragAnchorsRight() {
+void TestFrameMetrics::leftEdgeDragAnchorsRight() {
     // 拖窄到 60 宽提案：cw = 58 < 200 → 视频区宽钳到 200 → 窗口宽 202；左缘拖拽
     // 右缘不动（右缘 360 固定 → 左缘 360-202 = 158）；高 = 26 + round(200/r) = 139，
     // 反推轴（高）中线锚（cy = 228 → top = 228-69 = 159）
@@ -127,14 +123,14 @@ void TestWindowChromeMetrics::leftEdgeDragAnchorsRight() {
     QCOMPARE(fixed, QRect(158, 159, 202, 139));
 }
 
-void TestWindowChromeMetrics::bottomEdgeDragIdempotent() {
+void TestFrameMetrics::bottomEdgeDragIdempotent() {
     // 等比提案原样返回（幂等）：下缘拖拽上缘不动（top = 50），宽为反推轴中线锚
     // （cx = 301 → left = 301-201 = 100）
     const QRect raw(100, 50, 402, 251);
     QCOMPARE(miniResizedRect(raw, Qt::BottomEdge, ratio(), 200, workArea()), raw);
 }
 
-void TestWindowChromeMetrics::topLeftCornerAnchorsOpposite() {
+void TestFrameMetrics::topLeftCornerAnchorsOpposite() {
     // 左上角：宽为准（含左边即宽驱动），两轴各以对边为锚——右缘 360 固定 → 左 158，
     // 下缘 357 固定 → 上 357-139 = 218；最小宽钳到 200 → 窗口 202×139
     const QRect fixed = miniResizedRect(QRect(300, 100, 60, 257), Qt::TopEdge | Qt::LeftEdge,
@@ -142,7 +138,7 @@ void TestWindowChromeMetrics::topLeftCornerAnchorsOpposite() {
     QCOMPARE(fixed, QRect(158, 218, 202, 139));
 }
 
-void TestWindowChromeMetrics::hotZones() {
+void TestFrameMetrics::hotZones() {
     const QSize win(800, 600);                                  // band = 6，角 = 12
     QCOMPARE(hotZoneEdges(win, QPoint(400, 300)), Qt::Edges()); // 中心空
     QCOMPARE(hotZoneEdges(win, QPoint(3, 300)), Qt::Edges(Qt::LeftEdge));
@@ -159,6 +155,6 @@ void TestWindowChromeMetrics::hotZones() {
     QCOMPARE(hotZoneEdges(win, QPoint(13, 3)), Qt::Edges(Qt::TopEdge));
 }
 
-QTEST_GUILESS_MAIN(TestWindowChromeMetrics)
+QTEST_GUILESS_MAIN(TestFrameMetrics)
 
-#include "tst_WindowChromeMetrics.moc"
+#include "tst_FrameMetrics.moc"

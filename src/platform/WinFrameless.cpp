@@ -42,9 +42,9 @@ bool WinFrameless::setRounded(unsigned long long win, bool rounded) {
 void WinFrameless::setMiniShell(unsigned long long win, bool mini) {
     const HWND hwnd = hwndOf(win);
     const LONG_PTR exStyle = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-    const LONG_PTR updated =
-        mini ? (exStyle | WS_EX_TOOLWINDOW)
-             : ((exStyle & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW); // 恢复任务栏归属
+    // TOOLWINDOW 与 APPWINDOW 互斥，两态各自清掉对位再置本位
+    const LONG_PTR updated = mini ? ((exStyle & ~WS_EX_APPWINDOW) | WS_EX_TOOLWINDOW)
+                                  : ((exStyle & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW);
     SetWindowLongPtrW(hwnd, GWL_EXSTYLE, updated);
     // FRAMECHANGED 让 EXSTYLE 立即生效（原地切换不 hide/show，实测项 c）；顶置 /
     // 撤顶同一次调用落定（迷你置顶走原生通道，替代旧 StaysOnTop 的 Qt flags 通道——

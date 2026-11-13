@@ -21,7 +21,7 @@ class WindowTitleBar : public QWidget {
     // 三态收口：高度与按钮配置（Normal 32 / Mini miniTitleBarHeight / Floating 32）
     void setMode(Mode mode);
     // 菜单按钮显隐下发（仅 Normal 态生效；Mini / Floating 恒关）——主窗
-    // applyWindowChrome 在 Normal 态按 m_menuBarVisibleTruth 调用，组件不读主窗
+    // applyFrame 在 Normal 态按 m_menuBarVisibleTruth 调用，组件不读主窗
     // 私有成员
     void setMenuButtonVisible(bool visible);
     // 最大化 glyph 当前形态的共用判据（绘制分支与测试断言同源）：宿主最大化即真

@@ -7,8 +7,8 @@
 #include "BookmarkManager.h"
 #include "Constants.h"
 #include "CustomToolManager.h"
-#include "ExternalTool.h"  // N142：MediaInfo 条目的 ini 键名单点
-#include "GesturePolicy.h" // N156：手势后端组合判据（全仓唯一出口）
+#include "ExternalTool.h" // N142：MediaInfo 条目的 ini 键名单点
+#include "FrameBackend.h"
 #include "HttpClient.h"
 #include "Logging.h"
 #include "MediaInfoHelper.h"
@@ -41,6 +41,7 @@
 #include "ui/ChapterSlider.h"
 #include "ui/CustomToolListDialog.h"
 #include "ui/FilterListWidget.h"
+#include "ui/FrameMetrics.h"     // N156：迷你几何换算与手势判定（纯函数单源）
 #include "ui/MpvBindingDialog.h" // N89：mpv 键位编辑（input.conf）
 #include "ui/NavigatorPanel.h"
 #include "ui/OpenUrlDialog.h" // N131
@@ -49,16 +50,11 @@
 #include "ui/ShortcutsDialog.h" // N86
 #include "ui/SubtitleBrowserDialog.h"
 #include "ui/ThemedIconEngine.h"
-#include "ui/ThumbWindow.h"         // N107：缩略图宿主窗
-#include "ui/UpdateDialog.h"        // N151：检查更新对话框（按需创建）
-#include "ui/WindowChromeMetrics.h" // N156：迷你几何换算与手势判定（纯函数单源）
-#include "ui/WindowTitleBar.h"      // N156：主窗自绘标题栏
-#ifndef Q_OS_WIN
-#include "platform/X11Util.h" // N83/N156：EWMH 直发（置顶 / 全屏 / 任务栏隐藏，仅非 Windows 编译）
-#else
-#include "platform/TaskbarIntegration.h"   // N156：迷你壳进出时经 findChild 驱动任务栏重放
-#include "platform/WinFrameless.h"         // N156：无框窗口胶合层（仅 Windows 编译，见 CMakeLists）
-#include "platform/WinFramelessMessages.h" // N156：Windows 原生消息层（NC / 命中 / mini 原生循环）
+#include "ui/ThumbWindow.h"    // N107：缩略图宿主窗
+#include "ui/UpdateDialog.h"   // N151：检查更新对话框（按需创建）
+#include "ui/WindowTitleBar.h" // N156：主窗自绘标题栏
+#ifdef Q_OS_WIN
+#include "platform/TaskbarIntegration.h" // N156：迷你壳进出时经 findChild 驱动任务栏重放
 #endif
 
 namespace {
@@ -84,37 +80,13 @@ constexpr int kHoverGapPx = 2;
 // 尺寸与全屏切换变化
 constexpr int kThumbBoxPx = 200;
 
-// ——N156 窗口几何常量（只被本文件消费；跨模块共享的 miniMinWidth / miniSnapDistancePx
-// 在 Constants.h——消息层拆分后 WinFramelessMessages 也读它们）——
+// ——N156 窗口几何常量——
 // 迷你默认视频区宽（逻辑 px）：每次进入恢复默认，不记忆（语义钉为视频区宽）
 constexpr int kMiniDefaultWidth = 400;
 // N66 全屏浮窗：右缘唤出播放列表浮窗的触发带宽（本轮第三条顶边触发区同用此值）
 // 与左缘拖宽热区宽度
 constexpr int kFullscreenEdgeTriggerWidth = 16;
 constexpr int kFullscreenResizeHotspotWidth = 6;
-
-#ifndef Q_OS_WIN
-// X11 _NET_WM_MOVERESIZE 方向码（与 Qt xcb 映射同口径）：0-7 缩放、8 移动
-int x11MoveResizeDirection(Qt::Edges edges) {
-    if (edges == (Qt::TopEdge | Qt::LeftEdge))
-        return 0;
-    if (edges == Qt::TopEdge)
-        return 1;
-    if (edges == (Qt::TopEdge | Qt::RightEdge))
-        return 2;
-    if (edges == Qt::RightEdge)
-        return 3;
-    if (edges == (Qt::RightEdge | Qt::BottomEdge))
-        return 4;
-    if (edges == Qt::BottomEdge)
-        return 5;
-    if (edges == (Qt::BottomEdge | Qt::LeftEdge))
-        return 6;
-    if (edges == Qt::LeftEdge)
-        return 7;
-    return 8;
-}
-#endif
 
 // N110 画面比例内建档：比值档常量表——value 与 mpv 对同一写法的解析同源（C 双
 // 精度直除，double 可精确比），勾选比对只认 double（读回串是归一化十进制，串
@@ -751,7 +723,7 @@ class MainWindow::EdgeGestureWatch : public QObject {
             resetCursor();
             return false;
         }
-        const Qt::Edges edges = WindowChromeMetrics::hotZoneEdges(
+        const Qt::Edges edges = FrameMetrics::hotZoneEdges(
             m_main->size(), m_main->mapFromGlobal(me->globalPosition().toPoint()));
         if (!edges) {
             resetCursor();
@@ -867,7 +839,7 @@ MainWindow::MainWindow(MpvController *controller, AppearanceManager *appearance,
 
     // 视频显示区域（N3）：主窗直接子控件，脱离布局管理，几何由
     // syncVideoGeometry 手动同步。父链构造期确定后全程不动——setParent 会
-    // 销毁重建原生 HWND 使 mpv wid 失效。与后装配的 chrome 容器同为原生兄弟，
+    // 销毁重建原生 HWND 使 mpv wid 失效。与后装配的窗框容器同为原生兄弟，
     // 后创建者默认压在本窗之上，故装配末须把视频区提到同级 Z 序顶端
     m_videoWidget = new QWidget(this);
     m_videoWidget->setAttribute(Qt::WA_NativeWindow);
@@ -957,13 +929,13 @@ MainWindow::MainWindow(MpvController *controller, AppearanceManager *appearance,
     connect(m_thumbEngine, &ThumbEngine::sessionEnded, this,
             [this](quint64 seq) { m_thumbWatch->handleSessionEnded(seq); });
 
-    // ---- N156：自绘 chrome 装配 ----
+    // ---- N156：自绘窗框装配 ----
     // 标题栏容器顶替 QMainWindow 菜单区（setMenuWidget）：自绘标题栏 + 显式菜单栏。
     // 此后任何代码不得再调 QMainWindow::menuBar()——它会懒建第二个菜单栏并顶掉
     // 容器（验收含"全仓无 menuBar() 裸调用"静态判据）
     m_titleBarContainer = new QWidget(this);
     auto *titleLayout = new QVBoxLayout(m_titleBarContainer);
-    titleLayout->setContentsMargins(0, 0, 0, 0); // band 边距环由 applyWindowChrome 按形态收口
+    titleLayout->setContentsMargins(0, 0, 0, 0); // band 边距环由 applyFrame 按形态收口
     titleLayout->setSpacing(0);
     m_titleBar = new WindowTitleBar(this);
     titleLayout->addWidget(m_titleBar);
@@ -1008,16 +980,8 @@ MainWindow::MainWindow(MpvController *controller, AppearanceManager *appearance,
     });
     connect(m_titleBar, &WindowTitleBar::dragMoveFinished, this,
             [this] { dispatchGesture(GesturePhase::End, GestureKind::Move, {}, {}); });
-#ifdef Q_OS_WIN
-    // 标题栏右键系统菜单仅 Windows（原生菜单；X11 不连接即无动作）。裁剪判据
-    // mini 态禁最大化/最小化，自驱动形态不留移动/大小项
     connect(m_titleBar, &WindowTitleBar::systemMenuRequested, this,
-            [this](const QPoint &globalPos) {
-                WinFrameless::showSystemMenu(winId(), globalPos, devicePixelRatioF(), m_mini,
-                                             GesturePolicy::backend(m_mini) !=
-                                                 GesturePolicy::Backend::Native);
-            });
-#endif
+            [this](const QPoint &globalPos) { m_frameBackend->showSystemMenu(globalPos); });
 
     // N119：连接先于装配——渲染只按描述表摆条目，不连任何信号
     connectActions();
@@ -1030,18 +994,14 @@ MainWindow::MainWindow(MpvController *controller, AppearanceManager *appearance,
     // N10：启动固定默认尺寸；窗口几何/最大化状态不再持久化
     resize(960, 600);
 
+    // restoreSettings 内的 applyFrame 会用后端，须在此前就位
+    m_frameBackend = createFrameBackend(this, m_titleBar, this);
     restoreSettings();
-    applyWindowChrome(); // N156：构造装配末的初值收口（restoreSettings 的菜单回填同走此口）
+    applyFrame();
     // 两容器在视频区之后装配，Qt 把它们一并原生化；后创建的兄弟 HWND 默认压在
     // 视频 HWND 之上，黑色占位符随即盖住 mpv 输出。句柄终身稳定，装配末一次
     // 提到同级 Z 序顶端即可，运行期无需重排（N156）
     m_videoWidget->raise();
-#ifdef Q_OS_WIN
-    // N156：Windows 原生消息层——NC 命中 / 光标 / 最大化钮 / mini 原生循环的回答。
-    // 装配末创建（Host 取数此时才就位），自装应用级过滤器；子 HWND 的命中测试由它
-    // 让出、主窗窗过程那趟经 nativeEvent 转发
-    m_framelessMessages = new WinFramelessMessages(this, m_titleBar, this, this);
-#endif
     new EdgeGestureWatch(this);
     updateChapterMenuState();
     updateChapterSlider();
@@ -1057,13 +1017,9 @@ MainWindow::MainWindow(MpvController *controller, AppearanceManager *appearance,
 }
 
 MainWindow::~MainWindow() {
-#ifdef Q_OS_WIN
-    // 先拆原生消息层的应用级过滤器（恢复 N156 前的析构时序）：本层是子对象、析构晚于
-    // 本函数体，而 Host vtable 在本体结束后切片——过滤器留到那时才拆，析构期原生消息
-    // 经 m_host 虚调用即崩（0xC000041D）
-    if (m_framelessMessages)
-        m_framelessMessages->detach();
-#endif
+    // 后端析构晚于本函数体，Host vtable 已切片；须提前摘过滤器，否则析构期原生消息
+    // 经虚调用崩溃（0xC000041D）
+    m_frameBackend->detach();
     // 未经 destroySubtitleBrowser 收口就退出时，在飞的 ffmpeg 由这里击杀
     if (m_subtitleExtractor)
         m_subtitleExtractor->cancel();
@@ -1381,10 +1337,10 @@ void MainWindow::connectActions() {
         if (on != m_mini)
             toggleMini();
     });
-    // N119：菜单栏开关——勾选态即偏好，可见性与菜单按钮同源收口走 applyWindowChrome
+    // 菜单栏开关：勾选态即偏好
     connect(act(AM::Id::MenuBar), &QAction::toggled, this, [this](bool on) {
         m_menuBarVisibleTruth = on;
-        applyWindowChrome();
+        applyFrame();
     });
     // 状态信息叠加层：转发 script-message 给 mpv 侧 stats 脚本，插件不持有开关状态
     connect(act(AM::Id::ToggleStats), &QAction::triggered, this, [this] {
@@ -1529,26 +1485,22 @@ void MainWindow::showVideoContextMenu(const QPoint &globalPos) {
     root.exec(globalPos);
 }
 
-// 进出覆盖态的调用点全走这里，不再盲 show / hide（隐藏偏好不被退出推翻）。
-// N156 起降为 applyWindowChrome 的内部步骤，不再有外部调用点
+// 隐藏偏好不被退出推翻
 void MainWindow::applyMenuBarVisibility() {
     m_menuBar->setVisible(m_menuBarVisibleTruth && !m_fullscreen && !m_mini);
 }
 
-// N156：窗口 chrome 唯一收口。固定判序定形态——m_fullscreen 在 isMaximized()
-// 之前（X11 直发全屏期 Qt 恒记最大化，判序在前才不会误显标题栏），否则 m_mini，
-// 否则按最大化与否收边距；标题栏三态、菜单显隐、菜单按钮显隐、Windows 圆角随
-// 同收口，末了整窗重画。改容器边距会改 minimumSizeHint()，mini 进入须在本函数
-// 之后完成可见态布局冲刷再下发几何（2.9 / 2.5）
-void MainWindow::applyWindowChrome() {
+// m_fullscreen 判在 isMaximized() 之前（X11 直发全屏期 Qt 恒记最大化）；
+// 改容器边距会动 minimumSizeHint()，mini 进入须在本函数之后冲刷布局再下发几何
+void MainWindow::applyFrame() {
     if (!m_titleBar) // 装配序即防线：构造装配前无触发路径，此处仅兜异常序
         return;
-    const bool chromeActive = !m_fullscreen && !isMaximized();
+    const bool frameActive = !m_fullscreen && !isMaximized();
     // 边距全平台只留 1px 边框线；4px 热区由系统命中测试（Windows）或
     // EdgeGestureWatch 的子控件边缘转发（Linux / PUREQT）承担
     const int edge = App::windowBorderWidth();
-    const QMargins topMargins = chromeActive ? QMargins(edge, edge, edge, 0) : QMargins();
-    const QMargins centralMargins = chromeActive ? QMargins(edge, 0, edge, edge) : QMargins();
+    const QMargins topMargins = frameActive ? QMargins(edge, edge, edge, 0) : QMargins();
+    const QMargins centralMargins = frameActive ? QMargins(edge, 0, edge, edge) : QMargins();
     m_titleBarContainer->setContentsMargins(topMargins);
     m_centralFrame->setContentsMargins(centralMargins);
     if (m_fullscreen)
@@ -1561,21 +1513,15 @@ void MainWindow::applyWindowChrome() {
     // 隐藏是形态使然，不是偏好；组件内还会按模式再裁一道）
     applyMenuBarVisibility();
     m_titleBar->setMenuButtonVisible(!m_menuBarVisibleTruth);
-#ifdef Q_OS_WIN
-    // 圆角随同收口：全屏显式 DONOTROUND（A19）；最大化由系统自动方角（标准窗口
-    // 形态 + 最大化态，DWM 忽略圆角偏好），不另设特判。调用结果即圆角记账
-    // （paintEvent 边框来源分流据它选路）；构造期窗口未创建则跳过，创建期由
-    // applyCreationFixups 落定（2.5）
-    if (windowHandle())
-        m_dwmRounded = WinFrameless::setRounded(winId(), !m_fullscreen);
-#endif
+    // 最大化态 DWM 忽略圆角偏好，不另设特判
+    m_frameBackend->setRounded(!m_fullscreen);
     update();
 }
 
 // N156：整窗底色与 1px 边框。父绘走顶层窗口 DC，视频 HWND 是它的原生子窗、
 // 已由装配末的 raise() 置于同级 Z 序顶端。边框来源分流：圆角生效 →
 // DWM 组合器描边（系统色，不手设），不自绘；未生效（Win10
-// 属性被拒）或 X11 → 自绘直角描边；chrome 非活跃（全屏 / 最大化）不画
+// 属性被拒）或 X11 → 自绘直角描边；窗框非活跃（全屏 / 最大化）不画
 void MainWindow::paintEvent(QPaintEvent *event) {
     QMainWindow::paintEvent(event);
     QPainter p(this);
@@ -1583,11 +1529,7 @@ void MainWindow::paintEvent(QPaintEvent *event) {
     if (m_fullscreen || isMaximized())
         return;
     // 圆角生效（Win11）由 DWM 组合器描边，不自绘；其余形态自绘直角描边
-#ifdef Q_OS_WIN
-    const bool selfDrawBorder = !m_dwmRounded;
-#else
-    const bool selfDrawBorder = true;
-#endif
+    const bool selfDrawBorder = !m_frameBackend->roundedCorners();
     if (selfDrawBorder) {
         QPen pen(AppearanceManager::windowFrameBorder(palette()), App::windowBorderWidth());
         pen.setCosmetic(true); // 1 设备像素：高缩放下不发虚
@@ -1608,47 +1550,18 @@ void MainWindow::toggleMaximizeRestore() {
 
 // ---- N156：手势路由与自驱动环路 ----
 
-// 手势路由单点：标题栏三信号与两容器热区事件都先落这里，按 GesturePolicy 分流。
-// Native → startSystemMove / tryStartSystemResize（进入原生模态循环）；SelfDriven
-// → begin / update / finishGesture。环路不活跃时多余信号空转吸收——原生路径下
-// 循环接管指针后组件事件链已断，残余信号一律吞掉；自驱动路径 update / finish
-// 在环路未启动时各自早退
+// 环路未启动时多余信号空转吸收
 void MainWindow::dispatchGesture(GesturePhase phase, GestureKind kind, Qt::Edges edges,
                                  const QPoint &globalPos) {
     if (m_fullscreen)
         return; // 全屏无手势（浮窗接管）；最大化不早退——原生 Move 即 restore-drag，
                 // PUREQT 形态的结论由实测项 j 记录
-    if (GesturePolicy::backend(m_mini) == GesturePolicy::Backend::Native) {
+    if (m_frameBackend->nativeGestures()) {
         if (phase == GesturePhase::Begin) {
-#ifdef Q_OS_WIN
             if (kind == GestureKind::Move)
-                windowHandle()->startSystemMove();
+                m_frameBackend->beginSystemMove(globalPos);
             else
-                tryStartSystemResize(edges);
-#else
-            // X11 自发 _NET_WM_MOVERESIZE：不 ungrab、resize 坐标投影到窗口外边界
-            // （mutter 对 Qt 的窗内坐标只认左上角，实测）；绕开 Qt 的 0 时间戳 + 提前 ungrab
-            if (kind == GestureKind::Resize && isMaximized())
-                return;
-            const QRect g = geometry();
-            const qreal dpr = devicePixelRatioF();
-            QPoint root = globalPos;
-            int direction = 8; // move
-            if (kind == GestureKind::Resize) {
-                direction = x11MoveResizeDirection(edges);
-                if (edges & Qt::LeftEdge)
-                    root.setX(g.left());
-                if (edges & Qt::RightEdge)
-                    root.setX(g.right());
-                if (edges & Qt::TopEdge)
-                    root.setY(g.top());
-                if (edges & Qt::BottomEdge)
-                    root.setY(g.bottom());
-            }
-            const int rx = qRound(root.x() * dpr);
-            const int ry = qRound(root.y() * dpr);
-            sendMoveResizeEwmh(winId(), rx, ry, direction);
-#endif
+                m_frameBackend->beginSystemResize(edges, globalPos);
         }
         return;
     }
@@ -1667,16 +1580,6 @@ void MainWindow::dispatchGesture(GesturePhase phase, GestureKind kind, Qt::Edges
     }
 }
 
-// 热区缩放的原生循环入口（仅 Native 后端调用）；m_fullscreen / 最大化早退。
-// Windows 进原生模态循环（mini 期 WM_SIZING 保比仍生效），X11 普通态走
-// _NET_WM_MOVERESIZE 并保留 Aero Snap / 系统平铺。原生手势可用性已由冻结前
-// 取证钉死，不设运行期降级分支
-bool MainWindow::tryStartSystemResize(Qt::Edges edges) {
-    if (m_fullscreen || isMaximized())
-        return false;
-    return windowHandle()->startSystemResize(edges);
-}
-
 // 自驱动环路起步：记起点矩形与全局鼠标位。按下到超阈值期间无任何几何下发，
 // 现读即起点，无陈旧锚问题
 void MainWindow::beginGesture(GestureKind kind, Qt::Edges edges, const QPoint &globalPos) {
@@ -1687,7 +1590,7 @@ void MainWindow::beginGesture(GestureKind kind, Qt::Edges edges, const QPoint &g
 }
 
 // 自驱动环路推进：raw 由起点矩形按鼠标总位移得到（判距基准恒为未吸附原始位，
-// 杜绝自反馈——同 WM_MOVING 第①条纪律）。mini 走 WindowChromeMetrics 纯函数
+// 杜绝自反馈——同 WM_MOVING 第①条纪律）。mini 走 FrameMetrics 纯函数
 // 实时吸附 / 保比（文件内常量传参）；允许拖出工作区（N68 第 8 条：
 // 用户拖动不钳回）。OXBOW_PUREQT 普通态自由移动 / 缩放，不保比、不吸附，只按
 // minimumSizeHint() 与工作区上限钳制。每一步即精确终态，视频区经
@@ -1699,8 +1602,8 @@ void MainWindow::updateGesture(const QPoint &globalPos) {
     if (m_gestureMode == GestureMode::Move) {
         const QRect raw = m_gestureOriginRect.translated(delta);
         if (m_mini) {
-            move(WindowChromeMetrics::miniSnappedTopLeft(raw, screen()->availableGeometry(),
-                                                         App::miniSnapDistancePx()));
+            move(FrameMetrics::miniSnappedTopLeft(raw, screen()->availableGeometry(),
+                                                  App::miniSnapDistancePx()));
         } else {
             move(raw.topLeft()); // PUREQT 普通态：不吸附
         }
@@ -1719,8 +1622,8 @@ void MainWindow::updateGesture(const QPoint &globalPos) {
         raw.setBottom(raw.top() + raw.height() - 1 + delta.y());
     QRect target = raw;
     if (m_mini) {
-        target = WindowChromeMetrics::miniResizedRect(
-            raw, m_gestureEdges, videoRatio(), App::miniMinWidth(), screen()->availableGeometry());
+        target = FrameMetrics::miniResizedRect(raw, m_gestureEdges, videoRatio(),
+                                               App::miniMinWidth(), screen()->availableGeometry());
     } else {
         // PUREQT 普通态：布局最小尺寸与工作区上限两道钳制，不保比。钳制锚在
         // 被拖轴的对边（右 / 下缘固定，左 / 上到限停住）——setWidth / setHeight
@@ -2627,8 +2530,8 @@ void MainWindow::applyPlaylistGeometry(bool expanding, int leftAnchor) {
         layout()->activate();
 
     const QRect avail = screen()->availableGeometry();
-    const int chromeW = frameGeometry().width() - width(); // 外框水平装饰
-    const int maxClientW = avail.width() - chromeW;        // 客户区宽度上限（桌面宽度）
+    const int frameW = frameGeometry().width() - width(); // 外框水平装饰
+    const int maxClientW = avail.width() - frameW;        // 客户区宽度上限（桌面宽度）
     const int handle = m_splitter->handleWidth();
     const int videoMinW = App::videoDefaultSize().width(); // 480，视频区最小宽度
     const int pMin = m_playlist->minimumWidth();           // 220
@@ -2950,6 +2853,9 @@ void MainWindow::repositionNavigator() {
 
 void MainWindow::moveEvent(QMoveEvent *event) {
     QMainWindow::moveEvent(event);
+    // 迁移途中提前发几何会被系统吞掉，同步落定形态只由 scheduleRestoreRefit 兑现
+    if (m_restoreRefitPending && m_frameBackend->restoreGeometryDeferred())
+        tryRestoreRefit();
     repositionNavigator();
     m_osd->reposition();
     m_cacheOsd->reposition();
@@ -2960,6 +2866,8 @@ void MainWindow::moveEvent(QMoveEvent *event) {
 
 void MainWindow::resizeEvent(QResizeEvent *event) {
     QMainWindow::resizeEvent(event);
+    if (m_restoreRefitPending && m_frameBackend->restoreGeometryDeferred())
+        tryRestoreRefit();
     repositionNavigator();
     m_osd->reposition();
     m_cacheOsd->reposition();
@@ -2969,11 +2877,7 @@ void MainWindow::resizeEvent(QResizeEvent *event) {
     syncVideoGeometry();
 }
 
-// N40 变更：还原最大化时按当前视频重新适配（跟随全屏退出重适配逻辑）。
-// 最大化期间的尺寸推送被 adaptWindowSizeToVideo 的 isMaximized 守卫拦下、
-// 只更新 pending 与 m_refitAfterMaximize；此处捕获"最大化 → 普通态"的还原
-// 瞬间补触发。singleShot(0) 与全屏退出路径同款：等还原几何落定后按最近
-// 一次发布的尺寸（pending）适配
+// 最大化期间的尺寸推送被 isMaximized 守卫拦下，此处捕获还原瞬间补触发
 void MainWindow::changeEvent(QEvent *event) {
     QMainWindow::changeEvent(event);
     // N107 §2：主窗最小化同属"没有事件的状态改变"——缩略图宿主窗是主窗的 owned
@@ -2982,10 +2886,9 @@ void MainWindow::changeEvent(QEvent *event) {
     if (event->type() == QEvent::WindowStateChange && (windowState() & Qt::WindowMinimized) &&
         m_thumbWatch)
         m_thumbWatch->invalidateSession();
-    // N156：窗口态变化统一重算 chrome——插在覆盖态早退守卫之前，覆盖态内部的
-    // 窗口态转移（Windows 全屏进入的 NoState 同步等）也幂等重算
+    // 插在覆盖态早退守卫之前，覆盖态内部的窗口态转移也幂等重算
     if (event->type() == QEvent::WindowStateChange)
-        applyWindowChrome();
+        applyFrame();
     // N116：外观事件走重染，不走下面的窗口态分支（以最后到达的 PaletteChange 收口）
     if (event->type() == QEvent::PaletteChange || event->type() == QEvent::StyleChange)
         retintIcons();
@@ -3000,8 +2903,7 @@ void MainWindow::changeEvent(QEvent *event) {
         !(windowState() & (Qt::WindowMaximized | Qt::WindowFullScreen | Qt::WindowMinimized));
     if (wasMaximized && nowNormal && m_refitAfterMaximize) {
         m_refitAfterMaximize = false;
-        QTimer::singleShot(0, this,
-                           [this] { adaptWindowSizeToVideo(m_pendingVideoW, m_pendingVideoH); });
+        scheduleRestoreRefit();
     }
 }
 
@@ -3017,12 +2919,8 @@ void MainWindow::showEvent(QShowEvent *event) {
     if (m_firstShowDone)
         return;
     m_firstShowDone = true;
-#ifdef Q_OS_WIN
-    // N156：创建后补丁——系统边框 / 系统菜单位 / APPWINDOW / DWM 常态圆角（原地
-    // 改 style 不 withdraw）；返回值即圆角记账初值，paintEvent 边框来源分流据它
-    // 选路（2.4）。DWM 描边颜色交给系统，不手设
-    m_dwmRounded = WinFrameless::applyCreationFixups(winId());
-#endif
+    // 创建后补丁：系统边框 / 菜单位 / APPWINDOW / DWM 圆角；原地改 style 不 withdraw
+    m_frameBackend->applyCreationFixups();
     applyStartupGeometry();
 }
 
@@ -3210,15 +3108,11 @@ void MainWindow::evaluateOverlayVisibility(const QPoint &clientPos) {
         setOverlayShown(Overlay::Playlist, playlistTarget);
 }
 
-// §三-3：两条带几何——控制栏贴底满宽高 h；播放列表贴右满高宽 m_fsPlaylistWidth
-// （钳制在面板下限与客户区宽 50%，§二-8）。挂载点与 OSD 叠加窗重挂（m_osd->reposition）完全并列。
-// 顶级浮窗 setGeometry 取全局屏幕坐标（OsdController::reposition 先 mapToGlobal 同口径），
-// 故按主窗客户区的全局矩形定位——本地 rect 只在全屏所在屏原点恰为 (0,0) 时数值巧合
-// 相等，副屏下两条带会整体漂到主屏原点
+// 浮窗取全局屏幕坐标；最大化态进全屏时 Qt 的客户区原点带帧偏移，按屏幕矩形定位
 void MainWindow::repositionFullscreenOverlays() {
     if (!m_fullscreen || !m_controlOverlay)
         return;
-    const QRect client(mapToGlobal(QPoint(0, 0)), rect().size());
+    const QRect client = screen()->geometry();
     const int h = m_bottomBarHeight;
     m_controlOverlay->setGeometry(QRect(client.left(), client.bottom() - h + 1, client.width(), h));
     // N156：标题栏浮窗贴顶满宽（高度取重挂时记录的 sizeHint，同 m_bottomBarHeight 记录法）
@@ -3364,8 +3258,10 @@ void MainWindow::applyVideoSize(int videoW, int videoH) {
     }
     if (m_fullscreen && videoW > 0 && videoH > 0)
         m_refitAfterFullscreen = true;
-    else if (isMaximized() && videoW > 0 && videoH > 0)
-        m_refitAfterMaximize = true;        // N40 变更：还原最大化时重适配（跟随全屏逻辑）
+    else if (isMaximized() && videoW > 0 && videoH > 0) {
+        m_refitAfterMaximize = true;
+        m_restoreRefitRect = restoredNormalRect();
+    }
     adaptWindowSizeToVideo(videoW, videoH); // (0,0) 与全屏/最大化在入口内守卫，无动作
 }
 
@@ -3382,9 +3278,9 @@ void MainWindow::resizeVideoAreaTo(const QSize &wantLogical) {
                               double(videoMin.height()) / want.height());
         want = QSize(qRound(want.width() * s), qRound(want.height() * s));
     }
-    const QSize frameChrome = frameGeometry().size() - geometry().size();
+    const QSize frameDelta = frameGeometry().size() - geometry().size();
     const QSize clientReserve = geometry().size() - m_videoWidget->size();
-    const QSize availVideo = work.size() - frameChrome - clientReserve;
+    const QSize availVideo = work.size() - frameDelta - clientReserve;
     if (availVideo.width() > 0 && availVideo.height() > 0 &&
         (want.width() > availVideo.width() || want.height() > availVideo.height()))
         want.scale(availVideo, Qt::KeepAspectRatio);
@@ -3416,6 +3312,28 @@ void MainWindow::adaptWindowSizeToVideo(int videoW, int videoH) {
     resizeVideoAreaTo(QSize(qRound(videoW / dpr), qRound(videoH / dpr)));
 }
 
+// 最大化态的还原位快照：平台还原位优先，无此通道回落 Qt 普通几何
+QRect MainWindow::restoredNormalRect() const {
+    const QRect normal = m_frameBackend->normalPlacementRect();
+    return normal.isNull() ? normalGeometry() : normal;
+}
+
+// X11 还原矩形分两拍抵达，中间帧发几何会被按旧位置钉住；等矩形回到快照再兑现。
+// Windows 同步落定，一拍即兑现
+void MainWindow::scheduleRestoreRefit() {
+    m_restoreRefitPending = true;
+    QTimer::singleShot(0, this, [this] { tryRestoreRefit(); });
+}
+
+void MainWindow::tryRestoreRefit() {
+    if (!m_restoreRefitPending)
+        return;
+    if (m_frameBackend->restoreGeometryDeferred() && QRect(pos(), size()) != m_restoreRefitRect)
+        return;
+    m_restoreRefitPending = false;
+    adaptWindowSizeToVideo(m_pendingVideoW, m_pendingVideoH);
+}
+
 // N68：小窗期换片自适应（videoSizeChanged 经 singleShot(0) 触发，等几何落定后
 // 就地调整）——保持当前视频区宽不变（N156 语义）、高按新比例重算，尺寸与位置
 // 不回默认；§6 要求换片后整窗不越出工作区，故两路径同补钳回（越出屏外只在
@@ -3427,7 +3345,7 @@ void MainWindow::refitMiniToVideo() {
     clampMiniIntoWorkArea();
 }
 
-// N156 小窗几何收口（保视频区宽调高）：视频区宽语义（当前客户区扣 chrome），
+// N156 小窗几何收口（保视频区宽调高）：视频区宽语义（当前客户区扣窗框），
 // 高按视频比例（无流按 16:9）重算后经 miniClientSize 落客户区。幂等——尺寸已
 // 合比时空转。只由换片自适应（refitMiniToVideo）触发，缩放与拖动的定框由
 // WM_SIZING / 自驱动环路在各自域保比与钳制。越界钳回**不在**本函数：松手不得把
@@ -3437,9 +3355,9 @@ void MainWindow::refitMiniToAspect() {
     if (!m_mini)
         return;
     const double ratio = videoRatio();
-    const int videoW = width() - WindowChromeMetrics::miniChromeSize().width();
+    const int videoW = width() - FrameMetrics::miniFrameSize().width();
     const int videoH = qRound(videoW / ratio);
-    const QSize client = WindowChromeMetrics::miniClientSize(QSize(videoW, videoH));
+    const QSize client = FrameMetrics::miniClientSize(QSize(videoW, videoH));
     resize(client.width(), client.height());
 }
 
@@ -3489,7 +3407,7 @@ void MainWindow::applyWindowScale(double factor) {
 // N122：倍率的小窗路径——视频区宽语义（N156），宽按有效宽乘倍率、低于
 // miniMinWidth 覆盖放大到恰好覆盖（不套 N114 普通态下限，否则 0.25x 被抬回大窗
 // 尺寸），高恒由宽反推保比，故下限只需钳宽。工作区上限优先于下限（上限在视频域：
-// 工作区扣 miniChromeSize）：紧维钳上限、另维反推（同 WM_SIZING 手法）。
+// 工作区扣 miniFrameSize）：紧维钳上限、另维反推（同 WM_SIZING 手法）。
 // 不写 m_preMiniRect，退出小窗按进窗前快照恢复
 void MainWindow::applyMiniWindowScale(double factor) {
     const qreal dpr = devicePixelRatioF();
@@ -3499,7 +3417,7 @@ void MainWindow::applyMiniWindowScale(double factor) {
         videoW = App::miniMinWidth();
     int videoH = qRound(videoW / ratio);
     const QRect work = screen()->availableGeometry();
-    const QSize availVideo = work.size() - WindowChromeMetrics::miniChromeSize();
+    const QSize availVideo = work.size() - FrameMetrics::miniFrameSize();
     if (availVideo.width() > 0 && availVideo.height() > 0 &&
         (videoW > availVideo.width() || videoH > availVideo.height())) {
         const double sW = double(availVideo.width()) / videoW;
@@ -3512,14 +3430,12 @@ void MainWindow::applyMiniWindowScale(double factor) {
             videoW = qRound(videoH * ratio);
         }
     }
-    const QSize client = WindowChromeMetrics::miniClientSize(QSize(videoW, videoH));
+    const QSize client = FrameMetrics::miniClientSize(QSize(videoW, videoH));
     resize(client.width(), client.height());
     clampMiniIntoWorkArea();
 }
 
-// 覆盖式全屏切换（N3/N156）：全程无框后不再切换 flags——窗口全程可见、句柄终身
-// 稳定、零闪烁（withdraw 根因删除）；Qt 与平台两套窗口态记账以显式同步收口
-// （2.1 不变量 1 / 3）
+// 不切 flags：窗口恒可见、句柄稳定；withdraw 会使状态请求无人受理
 void MainWindow::toggleFullscreen() {
     if (m_mini) {
         // N68：全屏与小窗互斥，小窗态忽略。早退前按真相纠正勾选项——本函数由
@@ -3531,19 +3447,8 @@ void MainWindow::toggleFullscreen() {
     }
     if (!m_fullscreen) {
         // 全屏态落盘守卫：快照进全屏前几何（saveSettings 落盘 + 退出恢复共用）。
-        // 最大化来源取平台还原位（与 setPlacementAtomic 同域，原值进出），普通
-        // 来源取 Qt 屏幕几何
         m_preFsMaximized = isMaximized();
-        m_preFsRect = m_preFsMaximized ? normalGeometry() : geometry();
-#ifdef Q_OS_WIN
-        // normalGeometry() 最大化态被 Qt 折算、不可写回 rcNormalPosition，改读
-        // 平台原值（成因见 WinFrameless::normalPlacementRect）
-        if (m_preFsMaximized) {
-            const QRect normal = WinFrameless::normalPlacementRect(winId(), devicePixelRatioF());
-            if (!normal.isNull())
-                m_preFsRect = normal;
-        }
-#endif
+        m_preFsRect = m_preFsMaximized ? restoredNormalRect() : geometry();
         // N66 §二-2：窗口态真相快照——顶端快照点（与 m_preFsRect 同点，主窗仍是
         // 普通几何）。落定后主窗已重排成全屏尺度，左 pane 宽度那时读到的是
         // "屏宽 − 列表宽"，拿它作退出锚点会把窗口重新撑大。面板可见性读真相成员
@@ -3563,30 +3468,27 @@ void MainWindow::toggleFullscreen() {
         destroySubtitleBrowser();
         m_subtitleBrowserAction->setEnabled(false);
         m_fullscreen = true;
-        finishGesture();                // 跨形态残留清理（同 toggleMini）：拖拽中进全屏不留残环
-        applyWindowChrome();            // 标题栏重挂浮窗、边距 0、菜单藏、Win 方角——一次收口（2.4）
+        finishGesture(); // 跨形态残留清理（同 toggleMini）：拖拽中进全屏不留残环
+        applyFrame();
         m_refitAfterFullscreen = false; // 进全屏清空：仅记录"本次全屏期内是否换片"
+        m_restoreRefitPending = false;
 #ifdef Q_OS_WIN
-        // N156：无框手动几何全屏——不再切 flags（评估文档的 withdraw 根因删除）。
-        // 最大化来源原地解除最大化（clearMaximized：不回普通矩形、无还原动画），
-        // 随后的 setGeometry 一拍到位——SetWindowPlacement 的还原实测两段可见
-        // （先缩普通矩形再全屏，实测项 b 结论），该路径删除；Qt 记账随
-        // WM_SIZE(SIZE_RESTORED) 同步，显式 setWindowState(NoState) 排在几何前
-        // 会触发可见还原，故不设。普通来源直接 setGeometry。全程无 show()
-        // （窗口恒可见，2.1 不变量 4）
+        // 最大化来源保持窗口态：去框后原生下发 monitor 矩形，rcNormal 不改写，
+        // 还原动画与任务栏覆盖由系统按最大化态记账；普通来源直接 setGeometry
         if (m_preFsMaximized)
-            WinFrameless::clearMaximized(winId());
-        setGeometry(screen()->geometry()); // 窗口所在屏，覆盖任务栏区
+            m_frameBackend->enterFullscreenNative();
+        else
+            setGeometry(screen()->geometry()); // 窗口所在屏，覆盖任务栏区
 #else
         // N83：X11 下手动几何盖不住底部面板——EWMH 里停靠面板由 strut 托底，
         // WM 恒把它压在"非全屏"窗口之上，没有 Windows 那套"无边框窗口铺满整屏即自动
         // 收起任务栏"的启发式。走全屏态：Qt 发 _NET_WM_STATE_FULLSCREEN，实测经
         // showFullScreen 原地生效、不重建平台窗口，wid 与 mpv 嵌入不受连坐。
         // N141：全程不碰 flags（withdraw 使 EWMH 状态请求无人受理）；最大化态改走
-        // EWMH 直发（见 X11Util），免掉 Qt 分条发状态差所导致的"缩回普通几何"中间步
+        // EWMH 直发，免掉 Qt 分条发状态差的中间帧
         m_fsStateDirect = m_preFsMaximized;
         if (m_fsStateDirect)
-            setWindowFullscreenEwmh(winId(), true);
+            m_frameBackend->enterFullscreenNative();
         else
             showFullScreen();
 #endif
@@ -3615,27 +3517,22 @@ void MainWindow::toggleFullscreen() {
         restoreOriginalParent(m_playlist);
         restoreOriginalParent(m_titleBar);
         m_fullscreen = false;
-        finishGesture();     // 跨形态残留清理（同 toggleMini）
-        applyWindowChrome(); // 圆角回 ROUND、边距回 band、菜单按偏好——不再依赖重建回归默认
-#ifdef Q_OS_WIN
-        // N156：几何按去向分流。最大化去向：先从全屏矩形直接进最大化（一拍，
-        // 系统动画接受）；SetWindowPlacement 对可见窗"落普通矩形再最大化"实测
-        // 两段可见（实测项 b 结论），还原矩形改在最大化落地后补记——窗已最大化，
-        // 仅更新 rcNormalPosition 记录、无视觉动作，普通态尺寸延后到用户还原时
-        // 兑现。普通去向直接 setGeometry。全程无 show()（2.1 不变量 4）
-        if (m_preFsMaximized) {
-            // B16：最大化去向的退出适配会被 adaptWindowSizeToVideo 的 isMaximized
-            // 守卫拦下（下方 singleShot 空转）——待办移交 N40 的还原重适配，用户
-            // 还原最大化时按当前视频兑现；普通去向仍走下方 singleShot 直适配
-            if (m_refitAfterFullscreen) {
-                m_refitAfterFullscreen = false;
-                m_refitAfterMaximize = true;
-            }
-            setWindowState(Qt::WindowMaximized);
-            WinFrameless::setPlacementAtomic(winId(), m_preFsRect, devicePixelRatioF(), true);
-        } else {
-            setGeometry(m_preFsRect);
+        finishGesture(); // 跨形态残留清理（同 toggleMini）
+        applyFrame();
+        // 最大化去向的适配会被 isMaximized 守卫拦下，待办移交还原重适配；
+        // X11 撤全屏后 Qt 记账未必回灌，判据取快照
+        if (m_preFsMaximized && m_refitAfterFullscreen) {
+            m_refitAfterFullscreen = false;
+            m_refitAfterMaximize = true;
+            m_restoreRefitRect = m_preFsRect;
         }
+#ifdef Q_OS_WIN
+        // 最大化去向保持窗口态，后端恢复窗口框后只把矩形落回工作区，rcNormal 不动；
+        // 普通去向直接 setGeometry
+        if (m_preFsMaximized)
+            m_frameBackend->exitFullscreenNative();
+        else
+            setGeometry(m_preFsRect);
 #else
         // N83：与进入侧 showFullScreen 成对——show() 不清窗口状态，全屏态若残留，WM 继续
         // 按整屏摆窗、面板不回归。N141：不切 flags，切了就先 withdraw，这句清理随即打在
@@ -3644,7 +3541,7 @@ void MainWindow::toggleFullscreen() {
             // 与进入侧对称，只发 REMOVE FULLSCREEN（MAXIMIZED 全程未离开）。此处不得再调
             // setWindowState / showMaximized——那会连 MAXIMIZED 一起撤掉，退回两步
             m_fsStateDirect = false;
-            setWindowFullscreenEwmh(winId(), false);
+            m_frameBackend->exitFullscreenNative();
         } else {
             // 一行几何都不发：窗口管理器记得进全屏前的几何并会分两拍恢复（第一拍只回尺寸、
             // 装饰仍读 0，第二拍装饰与位置才回位），按活体尺寸的下发都会抢在中间帧上把它钉歪。
@@ -3670,10 +3567,9 @@ void MainWindow::toggleFullscreen() {
         // 移交 m_refitAfterMaximize（还原最大化时兑现），此处只剩普通去向
         if (m_refitAfterFullscreen) {
             m_refitAfterFullscreen = false;
-            // N40：适配缓冲定时器已删，零延迟转发语义等价改走 singleShot——
-            // 布局落定后按最近一次收到的发布值（pending）触发
-            QTimer::singleShot(
-                0, this, [this] { adaptWindowSizeToVideo(m_pendingVideoW, m_pendingVideoH); });
+            // 等还原矩形落定后再发几何
+            m_restoreRefitRect = m_preFsRect;
+            scheduleRestoreRefit();
         }
         m_controller->setProperty(QStringLiteral("video-zoom"), m_savedZoom);
         m_controller->setProperty(QStringLiteral("video-pan-x"), m_savedPanX);
@@ -3702,36 +3598,14 @@ void MainWindow::toggleFullscreen() {
     m_controller->setProperty(QStringLiteral("fullscreen"), m_fullscreen);
 }
 
-// N156：Windows 原生消息的薄转发。NC / 命中 / 光标 / 最大化钮 / mini 原生循环的回答
-// 收在 WinFramelessMessages（平台胶合层，自装应用级过滤器收子 HWND 那趟）；本覆写
-// 只留 WM_APPCOMMAND（N137 媒体键，与无框无关）与窗过程那趟的转发。非 Windows 落基线
 bool MainWindow::nativeEvent(const QByteArray &eventType, void *message, qintptr *result) {
-#ifdef Q_OS_WIN
-    const MSG *msg = static_cast<MSG *>(message);
-    // N137：吞掉键盘来源的 appcommand——不截则落 DefWindowProc 被系统转给同进程 mpv
-    // core 的 SMTC，与伴随 keydown 经回落注入的 keypress 各执行一次。判据与 Qt 同源
-    // （QTBUG-62838）：键盘来源且非 BROWSER_HOME 的命令必有 keydown，键事件仍走既有
-    // 回落单源；鼠标 / OEM 来源无 keydown 伴随，不落本判据。主窗不在前台时消息不达
-    // 本窗，媒体键仍由 SMTC 响应；OXBOW_PUREQT 不改媒体键处理，门禁只用 Q_OS_WIN
-    if (msg->message == WM_APPCOMMAND && GET_DEVICE_LPARAM(msg->lParam) == FAPPCOMMAND_KEY &&
-        GET_APPCOMMAND_LPARAM(msg->lParam) != APPCOMMAND_BROWSER_HOME) {
-        *result = TRUE;
+    if (m_frameBackend && m_frameBackend->handleMessage(message, result))
         return true;
-    }
-    // 消息层构造装配末才创建；此前到达的原生消息（构造期窗口创建）落基线
-    if (m_framelessMessages && m_framelessMessages->handleMessage(message, result))
-        return true;
-#endif
     return QMainWindow::nativeEvent(eventType, message, result);
 }
 
-// N68：小窗模式唯一收口（I / Esc / 关闭钮三路共用）。N156：全程无框后不再切换
-// flags——迷你壳经 setMiniShell（TOOLWINDOW + TOPMOST / X11 SKIP_TASKBAR + ABOVE）
-// 原地生效，窗口恒可见、句柄稳定；几何改 metrics 口径（客户区 = 视频区 + chrome，
-// 2.3）。进入：快照 → 收 UI / 放宽占位符下限 → m_mini 置真 → applyWindowChrome →
-// 可见态布局冲刷 → 目标几何。冲刷必须在 applyWindowChrome 之后：改容器边距会改
-// minimumSizeHint，陈旧最小尺寸会把目标几何整块钳走（实测）。退出仿进入序恢复。
-// 全屏态互斥忽略；勾选项在末端按真相回写，互斥早退路径自带同样回写
+// 迷你壳原地生效，窗口恒可见、句柄稳定。布局冲刷必须在 applyFrame 之后：改容器
+// 边距会动 minimumSizeHint，陈旧最小尺寸会把目标几何整块钳走。全屏态互斥忽略
 void MainWindow::toggleMini() {
     if (m_fullscreen) {
         // 与全屏互斥：小窗入口在全屏态忽略。回写勾选项——本函数由勾选项 toggled
@@ -3744,18 +3618,8 @@ void MainWindow::toggleMini() {
     if (!m_mini) {
         // 快照（仿全屏：最大化取平台还原位、普通取 Qt 屏幕几何）
         m_preMiniMaximized = isMaximized();
-        m_preMiniRect = m_preMiniMaximized ? normalGeometry() : geometry();
-#ifdef Q_OS_WIN
-        // 同 toggleFullscreen 进入侧
-        if (m_preMiniMaximized) {
-            const QRect normal = WinFrameless::normalPlacementRect(winId(), devicePixelRatioF());
-            if (!normal.isNull())
-                m_preMiniRect = normal;
-        }
-#endif
-        // 收起非视频 UI（只隐藏不重挂；面板可见性真相 m_playlistVisibleTruth 不动，
-        // 退出按真相恢复）。mini 全程禁用 N66 浮窗机制，不触碰任何 overlay；
-        // 菜单栏与菜单按钮由 applyWindowChrome 统一收口
+        m_preMiniRect = m_preMiniMaximized ? restoredNormalRect() : geometry();
+        // 收起非视频 UI（只隐藏不重挂；面板可见性真相不动，退出按真相恢复）
         m_bottomBar->hide();
         m_playlist->hide();
         // 导航器仿全屏自动禁用（独立顶级浮窗，退出时恢复）
@@ -3780,15 +3644,14 @@ void MainWindow::toggleMini() {
         for (QWidget *w = m_videoPlaceholder; w && w != this; w = w->parentWidget())
             w->updateGeometry();
         m_mini = true;
+        m_restoreRefitPending = false;
         // 清手势状态与原生循环原点锚（同退出侧）——拖拽中进窗不留残环
         finishGesture();
         // N157：mini 下门控恒假，清透传残留——按住态无人释放，OSC 会卡在拖拽态
         if (m_forwardMouseEvents)
             clearForwardedMouseState();
-#ifdef Q_OS_WIN
-        m_framelessMessages->clearDragAnchors();
-#endif
-        applyWindowChrome(); // Mini 形态：迷你标题栏、band 边距环、菜单藏——先于冲刷（2.9）
+        m_frameBackend->clearDragAnchors();
+        applyFrame();
         // 可见态布局冲刷（现状保留）：隐藏态下 QLayout::activate() 与 LayoutRequest
         // 一律被 Qt 推迟（实测），须趁窗口可见把布局重算落地，随后的 setGeometry
         // 不被旧最小尺寸整块钳走。冲刷手法同 applyPlaylistGeometry
@@ -3806,54 +3669,34 @@ void MainWindow::toggleMini() {
             if (layout())
                 layout()->activate();
         }
+        // 先撤最大化再改壳，随后的 setGeometry 一拍到位
+        m_frameBackend->enterMiniShell(m_preMiniMaximized);
 #ifdef Q_OS_WIN
-        // N156：最大化来源原地解除最大化（clearMaximized，同全屏进入侧——
-        // SetWindowPlacement 的还原实测两段可见，"先缩普通矩形再进迷你"删除），
-        // 随后的 setGeometry 一拍到位；Qt 记账随 WM_SIZE(SIZE_RESTORED) 同步
-        if (m_preMiniMaximized)
-            WinFrameless::clearMaximized(winId());
-        // 迷你壳：TOOLWINDOW 藏任务栏按钮 + TOPMOST 置顶（原地生效，不重建——
-        // N75 §3.9 的 Qt flags 通道重建坑不再存在）
-        WinFrameless::setMiniShell(winId(), true);
-        // 任务栏按钮将随 TOOLWINDOW 消失，先废缓存；退出重放见退出侧
+        // 任务栏按钮随 TOOLWINDOW 消失，先废缓存并摘除
         if (auto *taskbar = findChild<TaskbarIntegration *>())
-            taskbar->invalidateButton();
-#else
-        if (m_preMiniMaximized)
-            setWindowState(Qt::WindowNoState); // 撤最大化须先于几何下发（N141 口径）
+            taskbar->hideButton();
 #endif
         // 目标几何 metrics 口径：视频宽 kMiniDefaultWidth，高按视频比例（无流按 16:9，
-        // 与 WM_SIZING / 自驱动环路同源），客户区 = 视频区 + 自绘 chrome；位置贴
+        // 与 WM_SIZING / 自驱动环路同源），客户区 = 视频区 + 自绘窗框；位置贴
         // 工作区右下角（无框即精确贴角，进窗贴角待办机制退役）
         const double ratio = videoRatio();
         const QSize video(kMiniDefaultWidth, qRound(kMiniDefaultWidth / ratio));
-        const QSize client = WindowChromeMetrics::miniClientSize(video);
+        const QSize client = FrameMetrics::miniClientSize(video);
         const QRect work = screen()->availableGeometry();
         const QPoint tl(work.right() + 1 - client.width(), work.bottom() + 1 - client.height());
         setGeometry(QRect(tl, client));
-#ifndef Q_OS_WIN
-        // N83：置顶与任务栏隐藏经 EWMH 直发（绕开 Qt flags 通道）——几何落定后发
-        setWindowSkipTaskbarEwmh(winId(), true);
-        setWindowAboveEwmh(winId(), true);
-#endif
         syncVideoGeometry(); // 铺满后视频区对位（同普通分支 mapTo）；随后的 resizeEvent 幂等兜底
     } else {
         m_mini = false;
         // 占位符最小尺寸恢复（普通态下限回归 videoDefaultSize）
         m_videoPlaceholder->setMinimumSize(App::videoDefaultSize());
-#ifndef Q_OS_WIN
-        // N83：退出小窗先摘置顶与任务栏隐藏（EWMH 直发，同进入侧）
-        setWindowSkipTaskbarEwmh(winId(), false);
-        setWindowAboveEwmh(winId(), false);
-#endif
         // 清手势状态与原生循环原点锚——跨形态残留会让下一次拖动按旧基准判距
         finishGesture();
+        m_frameBackend->clearDragAnchors();
+        applyFrame();
+        // 迷你壳在 applyFrame 之后、几何恢复之前摘除
+        m_frameBackend->exitMiniShell();
 #ifdef Q_OS_WIN
-        m_framelessMessages->clearDragAnchors();
-#endif
-        applyWindowChrome(); // Normal 形态：band 边距回环、菜单按偏好、圆角记账保持
-#ifdef Q_OS_WIN
-        WinFrameless::setMiniShell(winId(), false);
         // 任务栏按钮重放：shell 重发 TaskbarButtonCreated 走既有 buttonReady 路径；
         // 未重发（原地恢复不重发，实测项 g）则下一拍主动重放（含 AddTab 兜底，
         // 实测项 c 定夺保留与否）
@@ -3863,7 +3706,7 @@ void MainWindow::toggleMini() {
             // 同全屏退出侧：迷你矩形直接进最大化（一拍），还原矩形随后补记
             // （窗已最大化，仅更新记录、无视觉动作）
             setWindowState(Qt::WindowMaximized);
-            WinFrameless::setPlacementAtomic(winId(), m_preMiniRect, devicePixelRatioF(), true);
+            m_frameBackend->setPlacementAtomic(m_preMiniRect, true);
         } else {
             setGeometry(m_preMiniRect);
         }
@@ -4971,14 +4814,13 @@ void MainWindow::restoreSettings() {
 
     // N119：菜单栏偏好（缺键 true）——挡回调回放勾选态，再收口一次可见性。时点在首次
     // show 之前，布局重排经占位符事件链触发 syncVideoGeometry，与退出全屏同款。
-    // N156：收口改走 applyWindowChrome（菜单显隐已是它的内部步骤）
     m_menuBarVisibleTruth = settings.value(QStringLiteral("menuBarVisible"), true).toBool();
     QAction *menuBarAction = m_actions->action(ActionManager::Id::MenuBar);
     {
         QSignalBlocker blocker(menuBarAction);
         menuBarAction->setChecked(m_menuBarVisibleTruth);
     }
-    applyWindowChrome();
+    applyFrame();
 
     // N57 §2.7：会话键改用身份——上次播放的非默认列表按身份直查注册表，命中才换算
     // 视图坐标并切换（currentChanged 联动自动选中该表记忆的最后播放项）；查不到或

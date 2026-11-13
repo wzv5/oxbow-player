@@ -2,12 +2,19 @@
 
 #include "platform/WinFramelessMessages.h"
 
-#include "Constants.h"              // N156：miniMinWidth / miniSnapDistancePx（跨模块共享）
-#include "GesturePolicy.h"          // N156：手势后端组合判据（全仓唯一出口）
-#include "ui/WindowChromeMetrics.h" // N156：热区判定与迷你几何换算（纯函数单源）
-#include "ui/WindowTitleBar.h"      // N156：自绘标题栏（按钮矩形与 NC 回灌）
+#include "Constants.h"
+#include "WindowStateHost.h"
+#include "ui/FrameMetrics.h"
+#include "ui/WindowTitleBar.h"
 
 namespace {
+
+// OXBOW_PUREQT 是唯一的自驱动回退
+#if defined(OXBOW_PUREQT)
+constexpr bool kNativeGestures = false;
+#else
+constexpr bool kNativeGestures = true;
+#endif
 
 // 边组合 → Win32 边框命中码（缩放热区与光标共用）
 LRESULT hitTestForEdges(Qt::Edges edges) {
@@ -53,7 +60,7 @@ QPoint windowPosFromScreen(HWND window, LPARAM screenLParam, qreal dpr) {
 } // namespace
 
 WinFramelessMessages::WinFramelessMessages(QWidget *mainWindow, WindowTitleBar *titleBar,
-                                           Host *host, QObject *parent)
+                                           WindowStateHost *host, QObject *parent)
     : QObject(parent), m_main(mainWindow), m_titleBar(titleBar), m_host(host) {
     qApp->installNativeEventFilter(this);
 }
@@ -112,12 +119,10 @@ bool WinFramelessMessages::nativeEventFilter(const QByteArray &eventType, void *
         // 缩放热区优先（与标准窗口一致：按钮顶边热区仍是窗口上边）；其余位置
         // 命中最大化钮即答 NC。子窗一律让出（HTTRANSPARENT），由主窗回答——
         // 直接在子窗上返回边框码 / 按钮码，系统会去动那个子窗
-        const bool edgesActive =
-            !m_host->fullscreen() && !m_main->isMaximized() &&
-            GesturePolicy::backend(m_host->mini()) == GesturePolicy::Backend::Native;
+        const bool edgesActive = !m_host->fullscreen() && !m_main->isMaximized() && kNativeGestures;
         const QPoint local = windowPosFromScreen(main, msg->lParam, dpr);
         const Qt::Edges edges =
-            edgesActive ? WindowChromeMetrics::hotZoneEdges(m_main->size(), local) : Qt::Edges();
+            edgesActive ? FrameMetrics::hotZoneEdges(m_main->size(), local) : Qt::Edges();
         const bool overMax = !edges && maximizeButtonHit(local);
         if (m_titleBar) {
             m_titleBar->setMaximizeButtonHovered(overMax);
@@ -193,8 +198,7 @@ bool WinFramelessMessages::nativeEventFilter(const QByteArray &eventType, void *
         }
         return false; // leave 语义照常交 Qt
     }
-    if (m_host->fullscreen() || m_main->isMaximized() ||
-        GesturePolicy::backend(m_host->mini()) != GesturePolicy::Backend::Native)
+    if (m_host->fullscreen() || m_main->isMaximized() || !kNativeGestures)
         return false;
     if (!result)
         return false; // WM_SETCURSOR 同属非输入消息
@@ -227,19 +231,17 @@ bool WinFramelessMessages::nativeEventFilter(const QByteArray &eventType, void *
     return true;
 }
 
-// 窗过程那趟：主窗自身的非客户区与 mini 原生循环消息。判定数学经 WindowChromeMetrics
-// 纯函数（逻辑域），物理↔逻辑换算在此单点完成（消息 RECT 均物理像素，只用窗口 DPR）。
-// 循环外的几何回写会被原生模态循环按自己的轨迹覆写（N68 第 10 条），故 X11 mini /
-// PUREQT 不走原生通道，实时保比与吸附由主窗自驱动环路承担。两路径同一条纪律：不把
-// 已被用户拖出工作区的窗拽回（第 8 条裁决），越界收回只在程序性场景经 clampMiniIntoWorkArea
+// 窗过程那趟的消息回答：物理↔逻辑换算在此完成（消息 RECT 均物理像素）。
+// 循环外的几何回写会被原生模态循环覆写，故不走原生通道的形态由主窗自驱动环路承担
 bool WinFramelessMessages::handleMessage(void *message, qintptr *result) {
     auto *msg = static_cast<MSG *>(message);
     // 非客户区恒为 0——WS_CAPTION 族 + WS_THICKFRAME 只为让 DWM 按标准窗口处理
     // （最大化 / 还原动画、系统阴影、最大化自动方角），视觉边框由本层抹掉。
-    // 最大化态客户区恒取所在屏工作区：WM_GETMINMAXINFO 已把最大化窗口尺寸钉成
+    // 最大化态客户区取所在屏工作区：WM_GETMINMAXINFO 已把最大化窗口尺寸钉成
     // 工作区（窗口不外扩），再按 frame 度量内缩会露出一圈可见 NC，系统随即在右上角
     // 补画自己的标题栏按钮，压住自绘按钮且点不动（实测）；直接取工作区同时覆盖
-    // 系统仍外扩的形态——外扩部分留在工作区之外（屏幕外 / 任务栏下）
+    // 系统仍外扩的形态——外扩部分留在工作区之外（屏幕外 / 任务栏下）。
+    // 全屏期仍是最大化态，客户区改取 monitor，否则底部留黑带
     if (msg->message == WM_NCCALCSIZE) {
         if (msg->wParam) {
             auto *params = reinterpret_cast<NCCALCSIZE_PARAMS *>(msg->lParam);
@@ -248,7 +250,7 @@ bool WinFramelessMessages::handleMessage(void *message, qintptr *result) {
                 MONITORINFO mi{};
                 mi.cbSize = sizeof(mi);
                 if (GetMonitorInfoW(MonitorFromWindow(msg->hwnd, MONITOR_DEFAULTTONEAREST), &mi))
-                    rc = mi.rcWork;
+                    rc = m_host->fullscreen() ? mi.rcMonitor : mi.rcWork;
             }
         }
         *result = 0;
@@ -298,10 +300,10 @@ bool WinFramelessMessages::handleMessage(void *message, qintptr *result) {
     // 主窗侧的命中测试——子窗在边缘热区返回 HTTRANSPARENT 后转到这里，由主窗回答
     // 边框码，系统才会 resize 主窗而不是子窗
     if (msg->message == WM_NCHITTEST && !m_host->fullscreen() && !m_main->isMaximized() &&
-        GesturePolicy::backend(m_host->mini()) == GesturePolicy::Backend::Native) {
+        kNativeGestures) {
         const QPoint local =
             windowPosFromScreen(msg->hwnd, msg->lParam, m_main->devicePixelRatioF());
-        const Qt::Edges edges = WindowChromeMetrics::hotZoneEdges(m_main->size(), local);
+        const Qt::Edges edges = FrameMetrics::hotZoneEdges(m_main->size(), local);
         if (edges) {
             *result = hitTestForEdges(edges);
             return true;
@@ -321,18 +323,19 @@ bool WinFramelessMessages::handleMessage(void *message, qintptr *result) {
             MONITORINFO mi{};
             mi.cbSize = sizeof(mi);
             if (GetMonitorInfoW(mon, &mi)) {
-                mmi->ptMaxPosition.x = mi.rcWork.left - mi.rcMonitor.left;
-                mmi->ptMaxPosition.y = mi.rcWork.top - mi.rcMonitor.top;
-                mmi->ptMaxSize.x = mi.rcWork.right - mi.rcWork.left;
-                mmi->ptMaxSize.y = mi.rcWork.bottom - mi.rcWork.top;
+                // 全屏期报 monitor 覆盖任务栏，其余形态报工作区
+                const RECT &target = m_host->fullscreen() ? mi.rcMonitor : mi.rcWork;
+                mmi->ptMaxPosition.x = target.left - mi.rcMonitor.left;
+                mmi->ptMaxPosition.y = target.top - mi.rcMonitor.top;
+                mmi->ptMaxSize.x = target.right - target.left;
+                mmi->ptMaxSize.y = target.bottom - target.top;
             }
         }
         *result = 0;
         return true;
     }
 #if !defined(OXBOW_PUREQT)
-    // mini 原生通道（GesturePolicy 判为 Native 时启用）：拖动/缩放模态循环的起点锚
-    // 只在此刻记一次，整轮拖动都以此为原始位置基准。无框窗口矩形 == 客户区 == 可见框
+    // 拖动/缩放模态循环的起点锚只在此刻记一次，整轮拖动都以此为原始位置基准
     if (m_host->mini() && msg->message == WM_ENTERSIZEMOVE) {
         RECT now{};
         GetWindowRect(reinterpret_cast<HWND>(m_main->winId()), &now);
@@ -346,8 +349,7 @@ bool WinFramelessMessages::handleMessage(void *message, qintptr *result) {
     }
     if (m_host->mini() && msg->message == WM_SIZING) {
         // lParam 指向拖动中的 RECT（屏幕物理坐标），wParam 为拖动边（WMSZ_*）。
-        // 判定数学收进 WindowChromeMetrics::miniResizedRect（逻辑域纯函数，与自驱动
-        // 环路同源）；真值维 / 锚点两轴分治 / 工作区钳制语义与 N68 原实现逐条对应
+        // 判定数学收进 FrameMetrics::miniResizedRect
         auto *rc = reinterpret_cast<RECT *>(msg->lParam);
         const UINT edge = static_cast<UINT>(msg->wParam);
         const qreal dpr = m_main->devicePixelRatioF();
@@ -363,9 +365,9 @@ bool WinFramelessMessages::handleMessage(void *message, qintptr *result) {
             edges |= Qt::RightEdge;
         if (edge == WMSZ_BOTTOM || edge == WMSZ_BOTTOMLEFT || edge == WMSZ_BOTTOMRIGHT)
             edges |= Qt::BottomEdge;
-        const QRect fixed = WindowChromeMetrics::miniResizedRect(
-            raw, edges, m_host->videoRatio(), App::miniMinWidth(),
-            m_main->screen()->availableGeometry());
+        const QRect fixed =
+            FrameMetrics::miniResizedRect(raw, edges, m_host->videoRatio(), App::miniMinWidth(),
+                                          m_main->screen()->availableGeometry());
         rc->left = qRound(fixed.x() * dpr);
         rc->top = qRound(fixed.y() * dpr);
         rc->right = qRound((fixed.x() + fixed.width()) * dpr);
@@ -374,10 +376,8 @@ bool WinFramelessMessages::handleMessage(void *message, qintptr *result) {
         return true;
     }
     if (m_host->mini() && msg->message == WM_MOVING) {
-        // lParam 指向拖动中的 RECT（物理像素）。① 判距基准换成"未吸附原始位"=
-        // 起点矩形 + 鼠标总位移——直接拿系统给的 rc 判距会自反馈，慢速拖动永远
-        // 脱不开（N68 实测）；锚点缺失（异常序）时退回系统提案。② 判定数学收进
-        // WindowChromeMetrics::miniSnappedTopLeft（逻辑域，与自驱动环路同源）
+        // lParam 指向拖动中的 RECT（物理像素）。判距基准用"起点矩形 + 鼠标总位移"，
+        // 拿系统给的 rc 判距会自反馈，慢速拖动永远脱不开；锚点缺失时退回系统提案
         auto *rc = reinterpret_cast<RECT *>(msg->lParam);
         RECT rawP = *rc;
         if (!m_dragOriginRect.isEmpty()) {
@@ -392,7 +392,7 @@ bool WinFramelessMessages::handleMessage(void *message, qintptr *result) {
         const QRect raw(
             QPoint(qRound(rawP.left / dpr), qRound(rawP.top / dpr)),
             QSize(qRound((rawP.right - rawP.left) / dpr), qRound((rawP.bottom - rawP.top) / dpr)));
-        const QPoint tl = WindowChromeMetrics::miniSnappedTopLeft(
+        const QPoint tl = FrameMetrics::miniSnappedTopLeft(
             raw, m_main->screen()->availableGeometry(), App::miniSnapDistancePx());
         const LONG shiftX = qRound(tl.x() * dpr) - rawP.left;
         const LONG shiftY = qRound(tl.y() * dpr) - rawP.top;

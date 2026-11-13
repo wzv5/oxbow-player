@@ -8,15 +8,12 @@
 #include "ui/MenuSpec.h"          // N119：菜单描述表
 
 #include "Constants.h" // ini 默认值单点（成员初值引用访问器）
+#include "WindowStateHost.h"
 
 // N54：两处接线要用到嵌套类型（PlaylistWidget::LevelJump / JumpFailure、
 // BookmarkManager::Origin），嵌套类型必须有完整类型可见
 #include "BookmarkManager.h"
 #include "playlist/PlaylistWidget.h"
-
-#ifdef Q_OS_WIN
-#include "platform/WinFramelessMessages.h" // N156：Windows 原生消息层（Host 接口基类）
-#endif
 
 class NavigatorPanel;
 class SubtitleBrowserDialog;
@@ -24,6 +21,7 @@ class SubtitleExtractor;
 class AiSubtitleJob;           // N146：AI 字幕生成任务（主窗持有）
 class AiSubtitleDialog;        // N146：生成对话框，按需创建、关闭即销毁
 struct AiSubtitleStartContext; // N146：发车复核结果，定义在 ai/AiSubtitleJob.h
+class FrameBackend;
 class BookmarkEditorDialog;
 class ShortcutsDialog;
 class CustomToolManager; // N134：自定义工具单表（定义于 CustomToolManager.h）
@@ -46,12 +44,7 @@ class DependencyInstallerWizard; // N150：安装向导（按需创建，QPointe
 class UpdateChecker;             // N151：检查更新后端（主窗子对象）
 class UpdateDialog;              // N151：检查更新对话框（按需创建，QPointer 兜底）
 
-class MainWindow : public QMainWindow
-#ifdef Q_OS_WIN
-    ,
-                   public WinFramelessMessages::Host
-#endif
-{
+class MainWindow : public QMainWindow, public WindowStateHost {
     Q_OBJECT
     // N156：子控件边缘的缩放热区与光标转发（qApp 级过滤器；Windows 边缘由系统
     // 命中测试先行接管，此过滤器只在 Linux / PUREQT 形态实际生效）
@@ -73,8 +66,7 @@ class MainWindow : public QMainWindow
     QWidget *videoWidget() const { return m_videoWidget; }
 
   protected:
-    // N156：整窗底色与 1px 边框（来源分流见 2.4：圆角生效走 DWM 组合器描边，
-    // 未生效 / X11 自绘直角描边）
+    // 整窗底色与 1px 边框；圆角生效走 DWM 描边，否则自绘直角描边
     void paintEvent(QPaintEvent *event) override;
     void closeEvent(QCloseEvent *event) override;
     void moveEvent(QMoveEvent *event) override;
@@ -98,9 +90,6 @@ class MainWindow : public QMainWindow
     // N95：候选窗 / 组字窗位置单一应答点（视频区左上角，按当前变换折回逆变）与启用态
     // 应答，其余查询回落基类
     QVariant inputMethodQuery(Qt::InputMethodQuery query) const override;
-    // N156：Windows 原生消息的薄转发——NC / 命中 / 光标 / mini 原生循环的回答收在
-    // WinFramelessMessages（平台胶合层），本覆写只留 WM_APPCOMMAND（N137 媒体键）
-    // 与转发；非 Windows 形态整体落基线
     bool nativeEvent(const QByteArray &eventType, void *message, qintptr *result) override;
 
   private slots:
@@ -251,25 +240,18 @@ class MainWindow : public QMainWindow
     // ---- N156：手势路由与自驱动环路 ----
     enum class GestureKind { Move, Resize };
     enum class GesturePhase { Begin, Update, End };
-    // 手势路由单点：标题栏三信号与两容器热区事件都先落这里，按 GesturePolicy
-    // 分流（Native → startSystemMove / tryStartSystemResize；SelfDriven →
-    // begin / update / finishGesture）；环路不活跃时多余信号空转吸收
+    // 手势路由按后端 nativeGestures() 分流；环路不活跃时多余信号空转吸收
     void dispatchGesture(GesturePhase phase, GestureKind kind, Qt::Edges edges,
                          const QPoint &globalPos);
-    // 热区缩放的原生循环入口（仅 Native 后端调用）；m_fullscreen / 最大化早退
-    bool tryStartSystemResize(Qt::Edges edges);
     void beginGesture(GestureKind kind, Qt::Edges edges, const QPoint &globalPos);
     void updateGesture(const QPoint &globalPos);
     void finishGesture();
-    // N156：最大化·还原统一动作（标题栏 Qt 点击与原生 NC 释放共用）；Windows 下
-    // 兼作 WinFramelessMessages::Host 的动作出口
+    // N156：最大化·还原统一动作（标题栏点击与原生 NC 释放共用）
     void toggleMaximizeRestore() override;
-    // ---- N156：WinFramelessMessages::Host 实现（窗口态真相与视频比例；基类接口
-    // 仅 Windows 门禁，方法本身全平台编译——videoRatio 亦供自驱动环路与迷你几何收口）----
+    // ---- N158：WindowStateHost 实现 ----
     bool fullscreen() const override { return m_fullscreen; }
     bool mini() const override { return m_mini; }
-    // 视频宽高比（无流 16:9，与进入路径同源）——自驱动缩放 / WM_SIZING / 迷你几何
-    // 收口共用这一份，杜绝多处各写一式
+    // 无流回退 16:9
     double videoRatio() const override {
         return (m_pendingVideoW > 0 && m_pendingVideoH > 0)
                    ? double(m_pendingVideoW) / double(m_pendingVideoH)
@@ -284,16 +266,18 @@ class MainWindow : public QMainWindow
     void evaluateOverlayVisibility(const QPoint &clientPos);
     void reevaluateOverlays();
     void repositionFullscreenOverlays();
-    // N119：菜单栏可见性唯一收口——偏好真相 ∧ 非覆盖态。N156 起降为
-    // applyWindowChrome 的内部步骤，不再有外部调用点
+    // 菜单栏可见性：偏好真相 ∧ 非覆盖态
     void applyMenuBarVisibility();
-    // N156：窗口 chrome 唯一收口——按判序定标题栏三态 / 容器边距 / 菜单与菜单
-    // 按钮显隐 / Windows 圆角，再整窗重画
-    void applyWindowChrome();
+    void applyFrame();
     // N121：尺寸事实的唯一入口——权威 videoSizeChanged 与 on_preloaded 预估值共用
     void applyVideoSize(int videoW, int videoH);
     // N10：普通态窗口尺寸自适应视频（videoSizeChanged 直连触发，收口见 resizeVideoAreaTo）
     void adaptWindowSizeToVideo(int videoW, int videoH);
+    // 还原重适配：分拍形态等矩形落定，同步形态一拍兑现
+    void scheduleRestoreRefit();
+    void tryRestoreRefit();
+    // 最大化态的还原位快照：平台还原位优先，无此通道回落 Qt 普通几何
+    QRect restoredNormalRect() const;
     // N122：普通态视频区尺寸收口，N10 自适应与倍率命令共用（细节见定义处）
     void resizeVideoAreaTo(const QSize &wantLogical);
     // N122：窗口尺寸倍率命令（一次性、不记忆），最大化先还原再应用显式尺寸
@@ -532,6 +516,9 @@ class MainWindow : public QMainWindow
     // N40 变更：最大化期间若切换了视频（适配被 isMaximized 守卫拦下），还原
     // 最大化时按当前视频尺寸重新适配——跟随全屏退出重适配的同款语义
     bool m_refitAfterMaximize = false;
+    // 还原重适配等待态：X11 分拍还原，矩形回到快照前不兑现；本矩形兼作快照
+    bool m_restoreRefitPending = false;
+    QRect m_restoreRefitRect;
     ChapterSlider *m_progressSlider = nullptr; // N15：进度条（带章节/书签标记层）
     // 悬停 tooltip 合并节流：MouseMove 只记最后位置，单次定时器到期算一次
     QTimer *m_seekTipTimer = nullptr;
@@ -638,19 +625,13 @@ class MainWindow : public QMainWindow
     bool m_forwardMouseEvents = App::forwardMouseEventsDefault();
     // 按住的显式 grab 记账：过滤器吞掉按下后 Qt 不建隐式 grab；抬起且无按键才释放
     bool m_forwardMouseGrabbed = false;
-    // ---- N156：自驱动环路状态（全平台无条件编译，是否启用由 GesturePolicy 判据决定）----
+    // ---- N156：自驱动环路状态 ----
     enum class GestureMode { None, Move, Resize };
     GestureMode m_gestureMode = GestureMode::None;
     Qt::Edges m_gestureEdges;  // 当前 Resize 手势的拖边组合
     QRect m_gestureOriginRect; // 手势起点窗口矩形（几何命令一律从它推）
     QPoint m_gesturePressPos;  // 手势起点全局鼠标位
-#ifdef Q_OS_WIN
-    // N156：DWM 圆角是否生效；paintEvent 据此选边框来源。门禁与三处读写点一致
-    bool m_dwmRounded = false;
-    // N156：Windows 原生消息层（NC 命中 / 光标 / 最大化钮 / mini 原生循环）。构造
-    // 装配末创建并自装应用级过滤器，寿命随主窗子对象链；mini 拖动未吸附锚点归它持有
-    WinFramelessMessages *m_framelessMessages = nullptr;
-#endif
+    std::unique_ptr<FrameBackend> m_frameBackend;
     // N156：进小窗前快照（仿 m_preFs* 一套，独立不混用）；面板可见性复用
     // m_playlistVisibleTruth。flags 快照退役——主窗 flags 构造期定死，运行期不切换
     bool m_preMiniMaximized = false; // 进小窗前是否最大化（退出分流依据）
@@ -659,9 +640,8 @@ class MainWindow : public QMainWindow
     double m_savedPanX = 0.0;
     double m_savedPanY = 0.0;
     bool m_preFsMaximized = false; // 进全屏前是否最大化（Win 退出分流 / 非 Win 走不走直发）
-    // A18 无框全屏：进全屏前完整几何快照（含位置，普通态恢复用）；N156 起 flags
-    // 快照退役（主窗 flags 构造期定死），该矩形同时是 setPlacementAtomic 的
-    // 平台侧还原位来源（最大化来源取平台还原位，普通来源取 geometry）
+    // 进全屏前的完整几何快照（含位置）：最大化来源取平台还原位，普通来源取 geometry；
+    // 兼作还原重适配的落定判据矩形
     QRect m_preFsRect;
     // N141：置真 ⟹ 本轮全屏走的是 EWMH 直发（不进 Qt 的 WindowFullScreen 状态机），
     // Qt 侧窗口态全程记作最大化、全屏的真相只在 m_fullscreen；退出侧据此对称收口

@@ -137,11 +137,12 @@ add_library(oxbowcore MODULE
     src/ActionManager.h
     src/MainWindow.cpp
     src/MainWindow.h
+    src/WindowStateHost.h
+    src/FrameBackend.h
     src/ui/MenuSpec.h # N119：菜单描述表（header-only，唯一消费者是 MainWindow）
     src/ui/WindowTitleBar.cpp
     src/ui/WindowTitleBar.h
-    src/ui/WindowChromeMetrics.h
-    src/GesturePolicy.h
+    src/ui/FrameMetrics.h
     src/mpvbridge/MpvController.cpp
     src/mpvbridge/MpvController.h
     src/mpvbridge/MpvKeyName.cpp
@@ -407,6 +408,8 @@ if(WIN32)
         src/platform/TaskbarIntegration.cpp
         src/platform/TaskbarIntegration.h
         src/platform/TaskbarState.h
+        src/platform/WinFrameBackend.cpp
+        src/platform/WinFrameBackend.h
         src/platform/WinFrameless.cpp
         src/platform/WinFrameless.h
         src/platform/WinFramelessMessages.cpp
@@ -426,6 +429,8 @@ if(NOT WIN32)
     find_package(X11 REQUIRED)
     target_link_libraries(oxbowcore PRIVATE X11::X11)
     target_sources(oxbowcore PRIVATE
+        src/platform/X11FrameBackend.cpp
+        src/platform/X11FrameBackend.h
         src/platform/X11Util.cpp
         src/platform/X11Util.h
     )
@@ -716,7 +721,7 @@ if(OXBOW_BUILD_TESTS)
     oxbow_add_test(PlaybackSnapshot)
     oxbow_add_test(TaskbarIntegration)
     oxbow_add_test(WindowTitleBar)
-    oxbow_add_test(WindowChromeMetrics)
+    oxbow_add_test(FrameMetrics)
     oxbow_add_test(ExternalTool)
     oxbow_add_test(AiSubtitleCatalog)
     oxbow_add_test(SrtAssembler)

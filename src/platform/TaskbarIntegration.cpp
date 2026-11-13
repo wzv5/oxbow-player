@@ -538,6 +538,17 @@ void TaskbarIntegration::invalidateButton() {
     d.buttonsFailedHwnd = nullptr;
 }
 
+void TaskbarIntegration::hideButton() {
+    auto &d = *m_impl;
+    // 迷你期的推送不得再写任务栏
+    invalidateButton();
+    if (d.disabled || !d.taskbar)
+        return;
+    // 动态改样式不保证 shell 即时摘按钮，显式 DeleteTab 兜底
+    if (HWND hwnd = hostHwnd(d.host))
+        d.taskbar->DeleteTab(hwnd);
+}
+
 void TaskbarIntegration::replayAfterMiniExit() {
     auto &d = *m_impl;
     if (d.disabled || !d.taskbar)

@@ -126,22 +126,16 @@ inline int recursiveDepthLimitMax() { return 20; }
 // 任何鼠标活动立即恢复并重新计时
 inline int cursorAutoHideMs() { return 3000; }
 
-// ——N156 全程无框自绘 chrome——
-// 迷你模式标题栏高度（逻辑 px）：迷你窗口顶部的自绘条。跨模块共享——
-// WindowTitleBar 的 setMode(Mini) 高度与 WindowChromeMetrics::miniChromeSize
-// 同读此处；普通态标题栏高 32 是 WindowTitleBar.cpp 文件内常量，不在此列
+// ——N156 全程无框自绘窗框——
+// 迷你模式标题栏高度
 inline int miniTitleBarHeight() { return 24; }
-// 自绘非客户区的外圈缩放热区带宽（逻辑 px）：WindowChromeMetrics::hotZoneEdges
-// 单点读取（WM_NCHITTEST 与自驱动形态的子控件边缘转发共用）；与可见边框宽度解耦
+// 自绘非客户区的外圈缩放热区带宽
 inline int windowResizeBand() { return 6; }
-// 自绘 chrome 的可见边缘宽度（逻辑 px）：容器边距、paintEvent 的直角描边、
-// WindowChromeMetrics::miniChromeSize 三处共享，全平台一致
+// 自绘窗框的可见边缘宽度
 inline int windowBorderWidth() { return 1; }
-// 迷你等比缩放的视频区宽下限（逻辑 px）：MainWindow 自驱动环路与 WinFramelessMessages
-// 的 WM_SIZING 共用（判定数学在 WindowChromeMetrics，下限由调用方传参）
+// 迷你等比缩放的视频区宽下限
 inline int miniMinWidth() { return 200; }
-// 迷你拖动吸附触发距离（逻辑 px）：窗口边与工作区边距离不超过此值即贴齐。
-// MainWindow 自驱动环路与 WinFramelessMessages 的 WM_MOVING 共用
+// 迷你拖动吸附触发距离
 inline int miniSnapDistancePx() { return 16; }
 
 // ——N121 起播预适配——
