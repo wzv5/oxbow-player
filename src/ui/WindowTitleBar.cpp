@@ -52,10 +52,12 @@ class WindowTitleBar::TitleBarButton : public QAbstractButton {
     void paintEvent(QPaintEvent *) override {
         QPainter p(this);
         const QPalette pal = palette();
-        // hover 现读指针下的控件：菜单弹出 / 关闭后 WA_UnderMouse 可能残留脏值，
-        // 直接用 underMouse() 会让按钮停在悬停底色；原生 NC 路径另经回灌标志
-        const bool hover =
-            isDown() || m_nativeHovered || QApplication::widgetAt(QCursor::pos()) == this;
+        // hover 取事件记账 ∧ 现判的交集：XWayland 的 query_pointer 出窗即冻结在
+        // 最后一次进入 X 窗口的位置，单靠现判出窗必残留（Wayland 会话实测）；单靠
+        // 事件记账在 Windows NC 区又冻邻钮（Qt 不投递 Leave）。交集下两侧各自闭合，
+        // N156 原生补丁的重画不变；菜单弹出 / 关闭后 WA_UnderMouse 脏值仍由现判兜底
+        const bool hover = isDown() || m_nativeHovered ||
+                           (m_selfHovered && QApplication::widgetAt(QCursor::pos()) == this);
         QColor glyphColor = m_bar->titleForeground(pal);
         if (m_kind == Kind::Close) {
             // 关闭钮 hover / 按下走系统红底白叉（两主题同值）
@@ -74,6 +76,19 @@ class WindowTitleBar::TitleBarButton : public QAbstractButton {
     // 还原）、按钮右键弹系统菜单（标题栏的 dblclick / contextMenu 处理器会接到）
     void mouseDoubleClickEvent(QMouseEvent *event) override { event->accept(); }
     void contextMenuEvent(QContextMenuEvent *event) override { event->accept(); }
+
+    // Enter / Leave 维护悬停记账（判据见 paintEvent 注释）；update() 不依赖样式
+    // WA_Hover 的 HoverLeave 重画
+    void enterEvent(QEnterEvent *event) override {
+        m_selfHovered = true;
+        update();
+        QAbstractButton::enterEvent(event);
+    }
+    void leaveEvent(QEvent *event) override {
+        m_selfHovered = false;
+        update();
+        QAbstractButton::leaveEvent(event);
+    }
 
   private:
     // glyph 来源（维护者裁决）：Windows 非 PUREQT 用 Segoe 标题字体（系统正宗、
@@ -214,6 +229,7 @@ class WindowTitleBar::TitleBarButton : public QAbstractButton {
     Kind m_kind;
     WindowTitleBar *m_bar;
     bool m_nativeHovered = false;
+    bool m_selfHovered = false;
 };
 
 WindowTitleBar::WindowTitleBar(QWidget *hostWindow, QWidget *parent)
