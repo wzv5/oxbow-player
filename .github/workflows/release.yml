@@ -139,4 +139,4 @@ jobs:
           gh release delete nightly --yes >/dev/null 2>&1 || true
           gh release create nightly \
             dist/oxbow-windows-x64.7z dist/oxbow-linux-x64.zip \
-            --repo "$GITHUB_REPOSITORY" --title nightly --notes ""
+            --repo "$GITHUB_REPOSITORY" --title nightly --notes "" --prerelease
