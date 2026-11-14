@@ -287,6 +287,8 @@ class MpvController : public QObject {
     // 写 fullscreen=yes 的启动即全屏）与外部写入（终端 / IPC / 默认键 f）同走本信号，
     // MainWindow 按 Qt 侧窗口真相比对分派——相等不动（回灌守卫），不符即驱动切换或回正
     void fullscreenChanged(bool fullscreen);
+    // N160：ontop 属性的镜像推送
+    void ontopChanged(bool ontop);
     // N153：paused-for-cache 镜像推送（FLAG，注册即推初值）；事件线程发射，NONE
     // （空闲 / 停止）归 false
     void pausedForCacheChanged(bool paused);

@@ -46,6 +46,8 @@ enum ObservedProperty {
     // N153：demuxer 供包断流（仍居末尾纪律之内）——起播首填与 seek 后重填期
     // paused-for-cache 不置位（--cache-pause-initial 默认关），此属性补那个缺口
     PropCacheUnderrun,
+    // N160：置顶镜像（仍居末尾纪律之内）
+    PropOntop,
     // B18：metadata / file-format / chapter-list 三项文件级属性不 observe，
     // 改由 FILE_LOADED 主动读（见 handleFileLoaded）
 };
@@ -383,6 +385,8 @@ MpvController::MpvController(mpv_handle *mpv, QObject *parent) : QObject(parent)
     mpv_observe_property(m_mpv, PropSeeking, "seeking", MPV_FORMAT_FLAG);
     // 子路径观察：node map 字段按解析值比较，只在布尔翻转时推事件（N153 实测口径见规格）
     mpv_observe_property(m_mpv, PropCacheUnderrun, "demuxer-cache-state/underrun", MPV_FORMAT_FLAG);
+    // N160：置顶镜像。选项级属性，注册即推初值
+    mpv_observe_property(m_mpv, PropOntop, "ontop", MPV_FORMAT_FLAG);
     // B18：metadata / file-format / chapter-list 改 FILE_LOADED 主动读
     // （见 handleFileLoaded），不 observe；track-list 见上
 
@@ -1258,6 +1262,11 @@ void MpvController::handlePropertyChange(const mpv_event *event) {
         // 不发射。初值到不到、何时到由接收侧按启动时序消化，本类不读该属性判初值
         if (prop->format == MPV_FORMAT_FLAG && prop->data)
             emit fullscreenChanged(*static_cast<int *>(prop->data) != 0);
+        break;
+    case PropOntop:
+        // N160：同 fullscreen 口径，只认 FLAG 且有载荷
+        if (prop->format == MPV_FORMAT_FLAG && prop->data)
+            emit ontopChanged(*static_cast<int *>(prop->data) != 0);
         break;
     case PropPlaylistPos:
         // 停止后 playlist-pos 不可用（MPV_FORMAT_NONE），以 -1 表示无当前项

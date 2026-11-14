@@ -1337,6 +1337,28 @@ void MainWindow::connectActions() {
         if (on != m_mini)
             toggleMini();
     });
+    // N160：先效果后属性（echo 幂等）；覆盖态下条目已裁剪，快捷键仍可达由强制
+    // 分支吸收并回写勾选位
+    m_ontopAction = act(AM::Id::OnTop);
+    connect(m_ontopAction, &QAction::toggled, this, [this](bool on) {
+        if (m_fullscreen) {
+            m_frameBackend->applyTopmost(false);
+            m_controller->setProperty(QStringLiteral("ontop"), false);
+            QSignalBlocker blocker(m_ontopAction);
+            m_ontopAction->setChecked(false);
+            return;
+        }
+        if (m_mini) {
+            m_frameBackend->applyTopmost(true);
+            m_controller->setProperty(QStringLiteral("ontop"), true);
+            QSignalBlocker blocker(m_ontopAction);
+            m_ontopAction->setChecked(true);
+            return;
+        }
+        m_frameBackend->applyTopmost(on);
+        m_controller->setProperty(QStringLiteral("ontop"), on);
+        m_osd->show(on ? tr("Always on Top: On") : tr("Always on Top: Off"));
+    });
     // 菜单栏开关：勾选态即偏好
     connect(act(AM::Id::MenuBar), &QAction::toggled, this, [this](bool on) {
         m_menuBarVisibleTruth = on;
@@ -1433,6 +1455,12 @@ void MainWindow::renderMenuItems(QMenu &menu, std::span<const MenuSpec::Item> it
             continue;
         switch (item.kind) {
         case Kind::Action:
+            // N160：勾选态随展开现读回填，QSignalBlocker 防反触写属性
+            if (item.action == ActionManager::Id::OnTop) {
+                QSignalBlocker blocker(m_ontopAction);
+                m_ontopAction->setChecked(
+                    m_controller->propertyFlag(QStringLiteral("ontop"), false));
+            }
             menu.addAction(m_actions->action(item.action));
             break;
         case Kind::About:
@@ -1937,6 +1965,23 @@ void MainWindow::connectController() {
             m_controller->setProperty(QStringLiteral("fullscreen"), m_fullscreen);
         else
             toggleFullscreen();
+    });
+    // N160：ontop 镜像分派——无 Qt 侧真相，幂等即守卫；全屏恒撤顶、迷你恒置顶、
+    // 普通态驱动 applyTopmost
+    connect(m_controller, &MpvController::ontopChanged, this, [this](bool on) {
+        if (m_fullscreen) {
+            m_frameBackend->applyTopmost(false);
+            if (on)
+                m_controller->setProperty(QStringLiteral("ontop"), false);
+            return;
+        }
+        if (m_mini) {
+            m_frameBackend->applyTopmost(true);
+            if (!on)
+                m_controller->setProperty(QStringLiteral("ontop"), true);
+            return;
+        }
+        m_frameBackend->applyTopmost(on);
     });
 }
 
@@ -3596,6 +3641,9 @@ void MainWindow::toggleFullscreen() {
     // 变更二次驱动本函数，递归只从这一处来）。wid 嵌入下该属性在 mpv 侧是惰性
     // 的（值变而无窗口动作），写值安全
     m_controller->setProperty(QStringLiteral("fullscreen"), m_fullscreen);
+    // N160：全屏期置顶无意义，进出恒撤顶并写 ontop=false；先效果后属性
+    m_frameBackend->applyTopmost(false);
+    m_controller->setProperty(QStringLiteral("ontop"), false);
 }
 
 bool MainWindow::nativeEvent(const QByteArray &eventType, void *message, qintptr *result) {
@@ -3741,6 +3789,9 @@ void MainWindow::toggleMini() {
     // true）；互斥早退分支（全屏态）不经过这里，彼时属性已由 toggleFullscreen
     // 写成 true，无需重写。m_mini 已先落定，回灌由分派守卫吸收
     m_controller->setProperty(QStringLiteral("fullscreen"), false);
+    // N160：置顶随形态收口——迷你恒置顶、退出撤顶；先效果后属性
+    m_frameBackend->applyTopmost(m_mini);
+    m_controller->setProperty(QStringLiteral("ontop"), m_mini);
     // 同一收口喂给光标行为机：进小窗即解除布防并恢复已藏的指针，退出重新计时长
     m_cursorHider->setMini(m_mini);
     // N68/N113：小窗进出同一收口喂 OSD 控制器——抑制期消息照收照丢、不补显

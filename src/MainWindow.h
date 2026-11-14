@@ -559,6 +559,7 @@ class MainWindow : public QMainWindow, public WindowStateHost {
     AiSubtitleDialog *m_aiSubtitleDialog = nullptr;     // N146：按需创建，关闭即销毁
     QAction *m_fullscreenAction = nullptr;              // 视图菜单"全屏"勾选项（N3）
     QAction *m_miniAction = nullptr;                    // 视图菜单"小窗"勾选项（N68）
+    QAction *m_ontopAction = nullptr;                   // 视图菜单"置顶"勾选项（N160）
     QAction *m_aboutAction = nullptr;        // About 动作（不进登记表，两个菜单共用一份）
     QAction *m_checkUpdatesAction = nullptr; // N151：帮助菜单入口（自建，不进登记表）
 

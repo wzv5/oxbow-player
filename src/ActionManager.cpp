@@ -62,6 +62,9 @@ ActionManager::ActionManager(QWidget *host) : m_host(host) {
     // 无状态开关：显隐真相由 mpv 的 stats 脚本持有，插件侧不跟踪勾选态
     declareAction(Id::ToggleStats, QStringLiteral("ToggleStats"), tr("Toggle &Status Info"),
                   Qt::Key_T);
+    // N160：置顶开关
+    declareAction(Id::OnTop, QStringLiteral("OnTop"), tr("Always on &Top"),
+                  QStringLiteral("Ctrl+T"), true);
     // N123：画面比例七项——默认无键、可改绑；勾选态由菜单装配按 video-aspect-override 回填
     const QString aspectComment = tr("Aspect Ratio") + QStringLiteral(": ");
     declareAction(Id::AspectOriginal, QStringLiteral("AspectOriginal"), tr("Original"),

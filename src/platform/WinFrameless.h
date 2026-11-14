@@ -21,10 +21,13 @@ bool applyCreationFixups(unsigned long long win);
 // 返回本次调用后圆角是否生效（同步圆角记账）
 bool setRounded(unsigned long long win, bool rounded);
 
-// 迷你壳切换：迷你 = 加 WS_EX_TOOLWINDOW（任务栏按钮与 alt-tab 隐藏）+
-// HWND_TOPMOST；退出 = 清 TOOLWINDOW、恢复 WS_EX_APPWINDOW + HWND_NOTOPMOST。
-// 均原地生效，无 hide/show（窗口矩形 == 客户区，FRAMECHANGED 无可见副作用）
+// 迷你壳切换：迷你 = 加 WS_EX_TOOLWINDOW（任务栏按钮与 alt-tab 隐藏）；退出 =
+// 清 TOOLWINDOW、恢复 WS_EX_APPWINDOW。均原地生效，无 hide/show（窗口矩形 ==
+// 客户区，FRAMECHANGED 无可见副作用）；Z 序不在此管，由 setWindowTopmost 下发
 void setMiniShell(unsigned long long win, bool mini);
+
+// N160：置顶 / 撤顶纯 Z 序下发，幂等
+void setWindowTopmost(unsigned long long win, bool topmost);
 
 // 每次先重置回默认菜单再裁剪：菜单句柄随窗口终身，灰置 / 删除是累积修改。
 // disableMinMax 灰掉最大化 / 最小化；dropMoveSize 删掉移动 / 大小项

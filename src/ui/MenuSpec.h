@@ -126,6 +126,7 @@ inline constexpr Item kViewItems[] = {
     action(ActionManager::Id::Navigator, HideIn::Both),
     action(ActionManager::Id::SubtitleBrowser, HideIn::Both),
     action(ActionManager::Id::MenuBar, HideIn::Both),
+    action(ActionManager::Id::OnTop, HideIn::Both),
     action(ActionManager::Id::ToggleStats),
     separator(),
     subMenu(QT_TRANSLATE_NOOP("MainWindow", "Window Size"), kWindowSizeItems),

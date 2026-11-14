@@ -12,6 +12,7 @@ class X11FrameBackend final : public FrameBackend {
 
     void enterFullscreenNative() override;
     void exitFullscreenNative() override;
+    void applyTopmost(bool topmost) override;
     bool restoreGeometryDeferred() const override;
     bool nativeGestures() const override;
     void beginSystemMove(const QPoint &globalPos) override;

@@ -46,11 +46,15 @@ void WinFrameless::setMiniShell(unsigned long long win, bool mini) {
     const LONG_PTR updated = mini ? ((exStyle & ~WS_EX_APPWINDOW) | WS_EX_TOOLWINDOW)
                                   : ((exStyle & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW);
     SetWindowLongPtrW(hwnd, GWL_EXSTYLE, updated);
-    // FRAMECHANGED 让 EXSTYLE 立即生效（原地切换不 hide/show，实测项 c）；顶置 /
-    // 撤顶同一次调用落定（迷你置顶走原生通道，替代旧 StaysOnTop 的 Qt flags 通道——
-    // 后者任何变更都触发平台窗口重建，N75 §3.9 的坑）
-    SetWindowPos(hwnd, mini ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0,
-                 SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    // FRAMECHANGED 让 EXSTYLE 立即生效（原地切换不 hide/show，实测项 c）；NOZORDER
+    // 压住 nullptr（=HWND_TOP）缺省语义，Z 序由 setWindowTopmost 统一下发
+    SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                 SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+void WinFrameless::setWindowTopmost(unsigned long long win, bool topmost) {
+    SetWindowPos(hwndOf(win), topmost ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 }
 
 void WinFrameless::showSystemMenu(unsigned long long win, const QPoint &globalPosLogical, qreal dpr,

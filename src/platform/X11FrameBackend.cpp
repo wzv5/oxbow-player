@@ -71,18 +71,16 @@ void X11FrameBackend::beginSystemResize(Qt::Edges edges, const QPoint &globalPos
                        x11MoveResizeDirection(edges));
 }
 
+void X11FrameBackend::applyTopmost(bool topmost) { setWindowAboveEwmh(m_window->winId(), topmost); }
+
 void X11FrameBackend::enterMiniShell(bool fromMaximized) {
     // 撤最大化须先于几何下发（N141）
     if (fromMaximized)
         m_window->setWindowState(Qt::WindowNoState);
     setWindowSkipTaskbarEwmh(m_window->winId(), true);
-    setWindowAboveEwmh(m_window->winId(), true);
 }
 
-void X11FrameBackend::exitMiniShell() {
-    setWindowSkipTaskbarEwmh(m_window->winId(), false);
-    setWindowAboveEwmh(m_window->winId(), false);
-}
+void X11FrameBackend::exitMiniShell() { setWindowSkipTaskbarEwmh(m_window->winId(), false); }
 
 std::unique_ptr<FrameBackend> createFrameBackend(QWidget *window, WindowTitleBar *,
                                                  WindowStateHost *host) {

@@ -22,6 +22,7 @@ class WinFrameBackend final : public FrameBackend {
     void setPlacementAtomic(const QRect &normalRect, bool maximized) override;
     void enterFullscreenNative() override;
     void exitFullscreenNative() override;
+    void applyTopmost(bool topmost) override;
     bool handleMessage(void *message, qintptr *result) override;
     void clearDragAnchors() override;
     void detach() override;

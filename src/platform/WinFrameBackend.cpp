@@ -76,6 +76,10 @@ void WinFrameBackend::exitFullscreenNative() {
     applyNativeRect(m_window->screen()->availableGeometry());
 }
 
+void WinFrameBackend::applyTopmost(bool topmost) {
+    WinFrameless::setWindowTopmost(m_window->winId(), topmost);
+}
+
 bool WinFrameBackend::handleMessage(void *message, qintptr *result) {
     const MSG *msg = static_cast<MSG *>(message);
     // 键盘来源的 appcommand 落 DefWindowProc 会被转给 SMTC，与伴随 keydown 注入的

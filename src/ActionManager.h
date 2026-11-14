@@ -54,6 +54,7 @@ class ActionManager : public QObject {
         WindowSize2x,
         MenuBar,     // N119：菜单栏开关（勾选态即偏好；默认无键，键位留改绑余地）
         ToggleStats, // 视图菜单：状态信息叠加层（由 mpv 侧 stats 脚本渲染）
+        OnTop,       // N160：置顶开关
         // N123：画面比例七项（勾选态由菜单装配按 video-aspect-override 回填）
         AspectOriginal,
         Aspect4x3,

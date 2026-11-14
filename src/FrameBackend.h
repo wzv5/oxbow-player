@@ -26,6 +26,8 @@ class FrameBackend {
     virtual void enterFullscreenNative() {}
     virtual void exitFullscreenNative() {}
 
+    virtual void applyTopmost(bool /*topmost*/) {}
+
     // true = 已吞
     virtual bool handleMessage(void * /*message*/, qintptr * /*result*/) { return false; }
     virtual void clearDragAnchors() {}
