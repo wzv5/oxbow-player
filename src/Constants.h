@@ -144,6 +144,9 @@ inline int miniSnapDistancePx() { return 16; }
 // 预适配延后执行或交给 VIDEO_RECONFIG 校正
 inline int preloadResizeTimeoutMs() { return 100; }
 
+// ——N161 小窗态公开通道——
+inline constexpr char miniWindowProperty[] = "user-data/oxbow/mini-window";
+
 // ——插件 ini 设置项默认值单点——
 // 设置目录 fallback 与全部读取点（plugin.cpp / MainWindow）同引此处；键名与取值语义
 // 见 SettingsDialog 设置目录

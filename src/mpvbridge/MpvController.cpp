@@ -28,29 +28,54 @@ enum ObservedProperty {
     // 事件驱动主动读取（见 publishVideoSize），
     // R3：音量上限（mpv 自管 volume-max 属性，运行时推送驱动 MainWindow 滑条量程）
     PropVolumeMax,
-    // N87：console 开关状态。新 token 一律加在末尾——token 就是下发给 mpv 的
-    // reply_userdata，插到中间会移位既有观察项的取值
+    // N87：console 开关状态
     PropConsoleOpen,
-    // N88：fullscreen 镜像（仍居末尾纪律之内）
+    // N88：fullscreen 镜像
     PropFullscreen,
-    // N93：track-list 重回观察（仍居末尾纪律之内）——运行期增删轨道只有 observe
+    // N93：track-list 重回观察——运行期增删轨道只有 observe
     // 覆盖得到，FILE_LOADED 主动读只管装载时刻
     PropTrackList,
-    // N143：字幕偏移推送，面板显示与有效时间列重算由它驱动（仍居末尾纪律之内）
+    // N143：字幕偏移推送，面板显示与有效时间列重算由它驱动
     PropSubDelay,
-    // N153：缓冲状态显隐判据（仍居末尾纪律之内）
+    // N153：缓冲状态显隐判据
     PropPausedForCache,
-    // N153：seek 重启窗口（仍居末尾纪律之内）——低层 seek 进行中 demuxer 转 idle，
+    // N153：seek 重启窗口——低层 seek 进行中 demuxer 转 idle，
     // underrun 被强制清，此属性是那段窗口的唯一信号
     PropSeeking,
-    // N153：demuxer 供包断流（仍居末尾纪律之内）——起播首填与 seek 后重填期
+    // N153：demuxer 供包断流——起播首填与 seek 后重填期
     // paused-for-cache 不置位（--cache-pause-initial 默认关），此属性补那个缺口
     PropCacheUnderrun,
-    // N160：置顶镜像（仍居末尾纪律之内）
+    // N160：置顶镜像
     PropOntop,
+    // N161：小窗态公开（观察 NODE，见 nodeToBool）
+    PropMiniWindow,
     // B18：metadata / file-format / chapter-list 三项文件级属性不 observe，
     // 改由 FILE_LOADED 主动读（见 handleFileLoaded）
 };
+
+// N161：外部载荷归一布尔，不可判定返回空
+std::optional<bool> nodeToBool(const mpv_node *node) {
+    switch (node->format) {
+    case MPV_FORMAT_FLAG:
+        return node->u.flag != 0;
+    case MPV_FORMAT_STRING: {
+        const QString v = QString::fromUtf8(node->u.string);
+        if (v == QStringLiteral("yes") || v == QStringLiteral("true") ||
+            v == QStringLiteral("on") || v == QStringLiteral("1"))
+            return true;
+        if (v == QStringLiteral("no") || v == QStringLiteral("false") ||
+            v == QStringLiteral("off") || v == QStringLiteral("0"))
+            return false;
+        return std::nullopt;
+    }
+    case MPV_FORMAT_INT64:
+        return node->u.int64 != 0;
+    case MPV_FORMAT_DOUBLE:
+        return node->u.double_ != 0.0;
+    default:
+        return std::nullopt;
+    }
+}
 
 QVariantList parsePlaylist(const mpv_node *node) {
     QVariantList items;
@@ -387,6 +412,8 @@ MpvController::MpvController(mpv_handle *mpv, QObject *parent) : QObject(parent)
     mpv_observe_property(m_mpv, PropCacheUnderrun, "demuxer-cache-state/underrun", MPV_FORMAT_FLAG);
     // N160：置顶镜像。选项级属性，注册即推初值
     mpv_observe_property(m_mpv, PropOntop, "ontop", MPV_FORMAT_FLAG);
+    // N161：小窗态公开。观察 NODE，归一在分发处
+    mpv_observe_property(m_mpv, PropMiniWindow, App::miniWindowProperty, MPV_FORMAT_NODE);
     // B18：metadata / file-format / chapter-list 改 FILE_LOADED 主动读
     // （见 handleFileLoaded），不 observe；track-list 见上
 
@@ -1267,6 +1294,12 @@ void MpvController::handlePropertyChange(const mpv_event *event) {
         // N160：同 fullscreen 口径，只认 FLAG 且有载荷
         if (prop->format == MPV_FORMAT_FLAG && prop->data)
             emit ontopChanged(*static_cast<int *>(prop->data) != 0);
+        break;
+    case PropMiniWindow:
+        if (prop->format == MPV_FORMAT_NODE && prop->data) {
+            if (const std::optional<bool> v = nodeToBool(static_cast<mpv_node *>(prop->data)))
+                emit miniWindowChanged(*v);
+        }
         break;
     case PropPlaylistPos:
         // 停止后 playlist-pos 不可用（MPV_FORMAT_NONE），以 -1 表示无当前项

@@ -1983,6 +1983,18 @@ void MainWindow::connectController() {
         }
         m_frameBackend->applyTopmost(on);
     });
+    // N161：小窗态公开镜像分派——等值吸收回灌，全屏 / 首帧前回写真相，普通态驱动切换
+    connect(m_controller, &MpvController::miniWindowChanged, this, [this](bool v) {
+        if (v == m_mini)
+            return;
+        if (m_fullscreen || !m_firstShowDone) {
+            m_controller->setProperty(QString::fromLatin1(App::miniWindowProperty), m_mini);
+            return;
+        }
+        toggleMini();
+    });
+    // N161：启动种子——让外部脚本自启动即读到确定初值
+    m_controller->setProperty(QString::fromLatin1(App::miniWindowProperty), m_mini);
 }
 
 // N56：注册表维护（自 PlaylistWidget 上移装配顶点）。读 ini 两项构建 HttpClient
@@ -3792,6 +3804,8 @@ void MainWindow::toggleMini() {
     // N160：置顶随形态收口——迷你恒置顶、退出撤顶；先效果后属性
     m_frameBackend->applyTopmost(m_mini);
     m_controller->setProperty(QStringLiteral("ontop"), m_mini);
+    // N161：小窗态发布
+    m_controller->setProperty(QString::fromLatin1(App::miniWindowProperty), m_mini);
     // 同一收口喂给光标行为机：进小窗即解除布防并恢复已藏的指针，退出重新计时长
     m_cursorHider->setMini(m_mini);
     // N68/N113：小窗进出同一收口喂 OSD 控制器——抑制期消息照收照丢、不补显

@@ -289,6 +289,8 @@ class MpvController : public QObject {
     void fullscreenChanged(bool fullscreen);
     // N160：ontop 属性的镜像推送
     void ontopChanged(bool ontop);
+    // N161：小窗态公开通道（观察 NODE，分发处归一布尔）
+    void miniWindowChanged(bool mini);
     // N153：paused-for-cache 镜像推送（FLAG，注册即推初值）；事件线程发射，NONE
     // （空闲 / 停止）归 false
     void pausedForCacheChanged(bool paused);
