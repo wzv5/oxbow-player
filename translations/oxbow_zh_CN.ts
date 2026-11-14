@@ -168,53 +168,58 @@
     </message>
     <message>
         <location filename="../src/ActionManager.cpp" line="66"/>
+        <source>Always on &amp;Top</source>
+        <translation>置顶(&amp;T)</translation>
+    </message>
+    <message>
+        <location filename="../src/ActionManager.cpp" line="69"/>
         <source>Aspect Ratio</source>
         <translation>画面比例</translation>
     </message>
     <message>
-        <location filename="../src/ActionManager.cpp" line="67"/>
-        <location filename="../src/ActionManager.cpp" line="68"/>
+        <location filename="../src/ActionManager.cpp" line="70"/>
+        <location filename="../src/ActionManager.cpp" line="71"/>
         <source>Original</source>
         <translation>原始</translation>
     </message>
     <message>
-        <location filename="../src/ActionManager.cpp" line="79"/>
-        <location filename="../src/ActionManager.cpp" line="80"/>
+        <location filename="../src/ActionManager.cpp" line="82"/>
+        <location filename="../src/ActionManager.cpp" line="83"/>
         <source>Custom</source>
         <translation>自定义</translation>
     </message>
     <message>
-        <location filename="../src/ActionManager.cpp" line="83"/>
+        <location filename="../src/ActionManager.cpp" line="86"/>
         <source>Escape</source>
         <translation></translation>
     </message>
     <message>
-        <location filename="../src/ActionManager.cpp" line="84"/>
+        <location filename="../src/ActionManager.cpp" line="87"/>
         <source>Seek Forward</source>
         <translation>快进</translation>
     </message>
     <message>
-        <location filename="../src/ActionManager.cpp" line="86"/>
+        <location filename="../src/ActionManager.cpp" line="89"/>
         <source>Seek Backward</source>
         <translation>快退</translation>
     </message>
     <message>
-        <location filename="../src/ActionManager.cpp" line="89"/>
+        <location filename="../src/ActionManager.cpp" line="92"/>
         <source>Add &amp;Bookmark</source>
         <translation>添加书签(&amp;P)</translation>
     </message>
     <message>
-        <location filename="../src/ActionManager.cpp" line="90"/>
+        <location filename="../src/ActionManager.cpp" line="93"/>
         <source>Bookmark &amp;Editor…</source>
         <translation>书签编辑器(&amp;E)…</translation>
     </message>
     <message>
-        <location filename="../src/ActionManager.cpp" line="92"/>
+        <location filename="../src/ActionManager.cpp" line="95"/>
         <source>&amp;Subtitle Browser</source>
         <translation>字幕浏览器(&amp;S)</translation>
     </message>
     <message>
-        <location filename="../src/ActionManager.cpp" line="96"/>
+        <location filename="../src/ActionManager.cpp" line="99"/>
         <source>Generate Subtitle from Audio…</source>
         <translation>声音生成字幕…</translation>
     </message>
@@ -1484,390 +1489,400 @@
 <context>
     <name>MainWindow</name>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1164"/>
+        <location filename="../src/MainWindow.cpp" line="1120"/>
         <source>Play/Pause</source>
         <translation>播放/暂停</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1167"/>
-        <location filename="../src/MainWindow.cpp" line="1896"/>
+        <location filename="../src/MainWindow.cpp" line="1123"/>
+        <location filename="../src/MainWindow.cpp" line="1827"/>
         <source>Stop</source>
         <translation>停止</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1170"/>
+        <location filename="../src/MainWindow.cpp" line="1126"/>
         <source>Previous File</source>
         <translation>上一个文件</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1173"/>
+        <location filename="../src/MainWindow.cpp" line="1129"/>
         <source>Next File</source>
         <translation>下一个文件</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1177"/>
+        <location filename="../src/MainWindow.cpp" line="1133"/>
         <source>Switch Stream</source>
         <translation>切换流</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1181"/>
+        <location filename="../src/MainWindow.cpp" line="1137"/>
         <source>Settings</source>
         <translation>设置</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1184"/>
+        <location filename="../src/MainWindow.cpp" line="1140"/>
         <source>Show/Hide Playlist</source>
         <translation>显示/隐藏播放列表</translation>
     </message>
     <message>
-        <location filename="../src/ui/MenuSpec.h" line="150"/>
+        <location filename="../src/ui/MenuSpec.h" line="151"/>
         <source>&amp;File</source>
         <translation>文件(&amp;F)</translation>
     </message>
     <message>
-        <location filename="../src/ui/MenuSpec.h" line="151"/>
+        <location filename="../src/ui/MenuSpec.h" line="152"/>
         <source>&amp;Play</source>
         <translation>播放(&amp;P)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5113"/>
-        <location filename="../src/MainWindow.cpp" line="5235"/>
+        <location filename="../src/MainWindow.cpp" line="5008"/>
+        <location filename="../src/MainWindow.cpp" line="5130"/>
         <source>Video</source>
         <translation>视频</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5120"/>
-        <location filename="../src/MainWindow.cpp" line="5243"/>
+        <location filename="../src/MainWindow.cpp" line="5015"/>
+        <location filename="../src/MainWindow.cpp" line="5138"/>
         <source>Audio</source>
         <translation>音频</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5125"/>
-        <location filename="../src/MainWindow.cpp" line="5251"/>
+        <location filename="../src/MainWindow.cpp" line="5020"/>
+        <location filename="../src/MainWindow.cpp" line="5146"/>
         <source>Subtitle</source>
         <translation>字幕</translation>
     </message>
     <message>
-        <location filename="../src/ui/MenuSpec.h" line="131"/>
+        <location filename="../src/ui/MenuSpec.h" line="132"/>
         <source>Window Size</source>
         <translation>窗口尺寸</translation>
     </message>
     <message>
-        <location filename="../src/ui/MenuSpec.h" line="152"/>
+        <location filename="../src/ui/MenuSpec.h" line="153"/>
         <source>&amp;Chapter</source>
         <translation>章节(&amp;C)</translation>
     </message>
     <message>
-        <location filename="../src/ui/MenuSpec.h" line="153"/>
+        <location filename="../src/ui/MenuSpec.h" line="154"/>
         <source>&amp;View</source>
         <translation>视图(&amp;V)</translation>
     </message>
     <message>
-        <location filename="../src/ui/MenuSpec.h" line="154"/>
+        <location filename="../src/ui/MenuSpec.h" line="155"/>
         <source>&amp;Tools</source>
         <translation>工具(&amp;T)</translation>
     </message>
     <message>
-        <location filename="../src/ui/MenuSpec.h" line="155"/>
+        <location filename="../src/ui/MenuSpec.h" line="156"/>
         <source>&amp;Help</source>
         <translation>帮助(&amp;H)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1784"/>
+        <location filename="../src/MainWindow.cpp" line="1715"/>
         <source>Pause</source>
         <translation>暂停</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1784"/>
+        <location filename="../src/MainWindow.cpp" line="1715"/>
         <source>Play</source>
         <translation>播放</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="4356"/>
+        <location filename="../src/MainWindow.cpp" line="4250"/>
         <source>Unknown File</source>
         <translation>未知文件</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2259"/>
+        <location filename="../src/MainWindow.cpp" line="2207"/>
         <source>Open File</source>
         <translation>打开文件</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1143"/>
+        <location filename="../src/MainWindow.cpp" line="1099"/>
         <source>Mute</source>
         <translation>静音</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1314"/>
+        <location filename="../src/MainWindow.cpp" line="1270"/>
         <source>Mute: On</source>
         <translation>静音: 开启</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1314"/>
+        <location filename="../src/MainWindow.cpp" line="1270"/>
         <source>Mute: Off</source>
         <translation>静音: 关闭</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5540"/>
+        <location filename="../src/MainWindow.cpp" line="5435"/>
         <source>Video Filters</source>
         <translation>视频滤镜</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5541"/>
+        <location filename="../src/MainWindow.cpp" line="5436"/>
         <source>Audio Filters</source>
         <translation>音频滤镜</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5140"/>
-        <location filename="../src/MainWindow.cpp" line="5256"/>
+        <location filename="../src/MainWindow.cpp" line="5035"/>
+        <location filename="../src/MainWindow.cpp" line="5151"/>
         <source>Secondary Subtitle</source>
         <translation>第二字幕</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="3259"/>
+        <location filename="../src/MainWindow.cpp" line="3198"/>
         <source>Aspect Ratio</source>
         <translation>画面比例</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1429"/>
+        <location filename="../src/MainWindow.cpp" line="1407"/>
         <source>&amp;About</source>
         <translation>关于(&amp;A)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1434"/>
+        <location filename="../src/MainWindow.cpp" line="1360"/>
+        <source>Always on Top: On</source>
+        <translation>置顶: 开启</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="1360"/>
+        <source>Always on Top: Off</source>
+        <translation>置顶: 关闭</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="1412"/>
         <source>Check for Updates…</source>
         <translation>检查更新…</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1439"/>
+        <location filename="../src/MainWindow.cpp" line="1417"/>
         <source>Install Optional Dependencies…</source>
         <translation>安装可选依赖…</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2259"/>
+        <location filename="../src/MainWindow.cpp" line="2207"/>
         <source>Media files (%1);;All files (*)</source>
         <translation>媒体文件 (%1);;所有文件 (*)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2271"/>
+        <location filename="../src/MainWindow.cpp" line="2219"/>
         <source>Open URL</source>
         <translation>打开链接</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2298"/>
+        <location filename="../src/MainWindow.cpp" line="2246"/>
         <source>No screenshot available</source>
         <translation>屏幕截图不可用</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2307"/>
+        <location filename="../src/MainWindow.cpp" line="2255"/>
         <source>Screenshot copied to clipboard</source>
         <translation>屏幕截图已复制到剪切板</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2356"/>
+        <location filename="../src/MainWindow.cpp" line="2304"/>
         <source>Save Screenshot</source>
         <translation>保存屏幕截图</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2385"/>
+        <location filename="../src/MainWindow.cpp" line="2333"/>
         <source>Failed to save screenshot</source>
         <translation>保存屏幕截图失败</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2388"/>
+        <location filename="../src/MainWindow.cpp" line="2336"/>
         <source>Screenshot saved</source>
         <translation>屏幕截图已保存</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2529"/>
-        <location filename="../src/MainWindow.cpp" line="4376"/>
+        <location filename="../src/MainWindow.cpp" line="2477"/>
+        <location filename="../src/MainWindow.cpp" line="4270"/>
         <source>Seek: %1</source>
         <translation>进度跳转: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="3312"/>
+        <location filename="../src/MainWindow.cpp" line="3251"/>
         <source>Custom Aspect Ratio</source>
         <translation>自定义画面比例</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="3313"/>
+        <location filename="../src/MainWindow.cpp" line="3252"/>
         <source>Aspect ratio (e.g. 16:9, 2.35:1 or 1.85):</source>
         <translation>画面比例（如 16:9、2.35:1 或 1.85）：</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="3342"/>
+        <location filename="../src/MainWindow.cpp" line="3281"/>
         <source>Invalid aspect ratio</source>
         <translation>无效的画面比例</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="3343"/>
+        <location filename="../src/MainWindow.cpp" line="3282"/>
         <source>Enter a positive ratio up to 10, as w:h or a decimal (e.g. 16:9 or 2.35).</source>
         <translation>请输入不超过 10 的正数比例，格式为 w:h 或小数（例如 16:9 或 2.35）。</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="4271"/>
+        <location filename="../src/MainWindow.cpp" line="4165"/>
         <source>Volume: %1%</source>
         <translation>音量: %1%</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="4371"/>
-        <location filename="../src/MainWindow.cpp" line="4375"/>
+        <location filename="../src/MainWindow.cpp" line="4265"/>
+        <location filename="../src/MainWindow.cpp" line="4269"/>
         <source>+%1s</source>
         <translation>+%1秒</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="4371"/>
-        <location filename="../src/MainWindow.cpp" line="4375"/>
+        <location filename="../src/MainWindow.cpp" line="4265"/>
+        <location filename="../src/MainWindow.cpp" line="4269"/>
         <source>%1s</source>
         <translation>%1秒</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="4372"/>
+        <location filename="../src/MainWindow.cpp" line="4266"/>
         <source>Seek: %1 / %2</source>
         <translation>进度跳转: %1 / %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="4393"/>
+        <location filename="../src/MainWindow.cpp" line="4287"/>
         <source>Speed: %1x</source>
         <translation>播放速度: %1倍</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="4398"/>
+        <location filename="../src/MainWindow.cpp" line="4292"/>
         <source>Speed: 1x</source>
         <translation>播放速度: 1倍</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5153"/>
+        <location filename="../src/MainWindow.cpp" line="5048"/>
         <source>Add Subtitle…</source>
         <translation>添加字幕…</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5153"/>
+        <location filename="../src/MainWindow.cpp" line="5048"/>
         <source>Add Audio…</source>
         <translation>添加音频…</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5186"/>
+        <location filename="../src/MainWindow.cpp" line="5081"/>
         <source>None</source>
         <translation>无</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5273"/>
+        <location filename="../src/MainWindow.cpp" line="5168"/>
         <source>Video: </source>
         <translation>视频: </translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5276"/>
-        <location filename="../src/MainWindow.cpp" line="5350"/>
+        <location filename="../src/MainWindow.cpp" line="5171"/>
+        <location filename="../src/MainWindow.cpp" line="5245"/>
         <source>Audio: </source>
         <translation>音频: </translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5279"/>
-        <location filename="../src/MainWindow.cpp" line="5377"/>
+        <location filename="../src/MainWindow.cpp" line="5174"/>
+        <location filename="../src/MainWindow.cpp" line="5272"/>
         <source>Subtitle: </source>
         <translation>字幕: </translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5293"/>
+        <location filename="../src/MainWindow.cpp" line="5188"/>
         <source>Subtitle: None</source>
         <translation>字幕: 无</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5302"/>
+        <location filename="../src/MainWindow.cpp" line="5197"/>
         <source>Secondary Subtitle: </source>
         <translation>第二字幕: </translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5307"/>
+        <location filename="../src/MainWindow.cpp" line="5202"/>
         <source>Secondary Subtitle: None</source>
         <translation>第二字幕: 无</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5330"/>
+        <location filename="../src/MainWindow.cpp" line="5225"/>
         <source>Subtitle files (%1);;All files (*)</source>
         <translation>字幕文件 (%1);;所有文件 (*)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5331"/>
+        <location filename="../src/MainWindow.cpp" line="5226"/>
         <source>Audio files (%1);;All files (*)</source>
         <translation>音频文件 (%1);;所有文件 (*)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5339"/>
+        <location filename="../src/MainWindow.cpp" line="5234"/>
         <source>Add Audio</source>
         <translation>添加音频</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5347"/>
+        <location filename="../src/MainWindow.cpp" line="5242"/>
         <source>Failed to add audio: %1</source>
         <translation>添加音频失败：%1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5355"/>
+        <location filename="../src/MainWindow.cpp" line="5250"/>
         <source>Add Subtitle</source>
         <translation>添加字幕</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5372"/>
+        <location filename="../src/MainWindow.cpp" line="5267"/>
         <source>Failed to add subtitle: %1</source>
         <translation>添加字幕失败：%1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5463"/>
+        <location filename="../src/MainWindow.cpp" line="5358"/>
         <source>Failed to run tool &quot;%1&quot;: %2</source>
         <translation>运行工具 &quot;%1&quot; 失败：%2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5750"/>
+        <location filename="../src/MainWindow.cpp" line="5645"/>
         <source>The bookmarked file no longer exists on disk.</source>
         <translation>已加书签的文件在磁盘上已不存在。</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5782"/>
-        <location filename="../src/MainWindow.cpp" line="5840"/>
+        <location filename="../src/MainWindow.cpp" line="5677"/>
+        <location filename="../src/MainWindow.cpp" line="5735"/>
         <source>The playlist this bookmark belongs to no longer exists.</source>
         <translation>此书签所属的播放列表已不存在。</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5845"/>
+        <location filename="../src/MainWindow.cpp" line="5740"/>
         <source>Failed to load the playlist.</source>
         <translation>加载播放列表失败。</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5848"/>
+        <location filename="../src/MainWindow.cpp" line="5743"/>
         <source>The bookmarked item could not be found in its playlist.</source>
         <translation>已加书签的项目在其播放列表中无法找到。</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5873"/>
+        <location filename="../src/MainWindow.cpp" line="5768"/>
         <source>Bookmark Jump</source>
         <translation>书签跳转</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5954"/>
-        <location filename="../src/MainWindow.cpp" line="5962"/>
-        <location filename="../src/MainWindow.cpp" line="5967"/>
+        <location filename="../src/MainWindow.cpp" line="5849"/>
+        <location filename="../src/MainWindow.cpp" line="5857"/>
+        <location filename="../src/MainWindow.cpp" line="5862"/>
         <source>This item does not support bookmarks.</source>
         <translation>该项目不支持书签。</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5983"/>
+        <location filename="../src/MainWindow.cpp" line="5878"/>
         <source>Bookmark %1</source>
         <translation>书签 %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5983"/>
+        <location filename="../src/MainWindow.cpp" line="5878"/>
         <source>Bookmark </source>
         <translation>书签 </translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5996"/>
+        <location filename="../src/MainWindow.cpp" line="5891"/>
         <source>Bookmark added: [%1] %2</source>
         <translation>已添加书签: [%1] %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6016"/>
+        <location filename="../src/MainWindow.cpp" line="5911"/>
         <source>Closing…</source>
         <translation>正在关闭…</translation>
     </message>
@@ -1875,185 +1890,185 @@
 <context>
     <name>MpvBindingDialog</name>
     <message>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="114"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="116"/>
         <source>Record Key</source>
         <translation>录制按键</translation>
     </message>
     <message>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="253"/>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="417"/>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="422"/>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="1041"/>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="1047"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="255"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="419"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="424"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="1043"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="1049"/>
         <source>mpv Key Bindings</source>
         <translation>mpv 按键绑定</translation>
     </message>
     <message>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="261"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="263"/>
         <source>Filter</source>
         <translation>过滤器</translation>
     </message>
     <message>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="276"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="278"/>
         <source>Source</source>
         <translation>来源</translation>
     </message>
     <message>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="276"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="278"/>
         <source>Command</source>
         <translation>命令</translation>
     </message>
     <message>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="276"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="278"/>
         <source>Key</source>
         <translation>按键</translation>
     </message>
     <message>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="276"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="278"/>
         <source>Comment</source>
         <translation>注释</translation>
     </message>
     <message>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="287"/>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="449"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="289"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="451"/>
         <source>Custom</source>
         <translation>自定义</translation>
     </message>
     <message>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="350"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="352"/>
         <source>No writable configuration directory; key bindings cannot be edited.</source>
         <translation>配置目录不可写；无法编辑按键绑定。</translation>
     </message>
     <message>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="356"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="358"/>
         <source>Could not read the configuration file; key bindings cannot be edited.</source>
         <translation>无法读取配置文件；无法编辑按键绑定。</translation>
     </message>
     <message>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="418"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="420"/>
         <source>Some key sequences could not be parsed.</source>
         <translation>部分按键序列无法解析。</translation>
     </message>
     <message>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="447"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="449"/>
         <source>Builtin</source>
         <translation>内置</translation>
     </message>
     <message>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="448"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="450"/>
         <source>Script</source>
         <translation>脚本</translation>
     </message>
     <message>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="687"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="689"/>
         <source>Disabled by your own ignore entry; this command will not run after restart.</source>
         <translation>已被您自己的忽略条目禁用；重启后此命令将不会运行。</translation>
     </message>
     <message>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="690"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="692"/>
         <source>Your own binding for this key overrides the builtin one; the builtin command will not run after restart.</source>
         <translation>您为此键自定义的绑定会覆盖内置绑定；重启后内置命令将不会运行。</translation>
     </message>
     <message>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="710"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="712"/>
         <source>Commented out; after restart this key falls back to its builtin binding.</source>
         <translation>已注释掉；重启后此键将回退到其内置绑定。</translation>
     </message>
     <message>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="712"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="714"/>
         <source>Commented out; after restart this key has no action.</source>
         <translation>已注释掉；重启后此键无任何操作。</translation>
     </message>
     <message>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="714"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="716"/>
         <source>A later line binds the same key; that later line is the one that applies.</source>
         <translation>后面的某一行绑定了同一个键；以那一行为准。</translation>
     </message>
     <message>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="832"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="834"/>
         <source>Duplicate</source>
         <translation>复制</translation>
     </message>
     <message>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="833"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="835"/>
         <source>Disable</source>
         <translation>禁用</translation>
     </message>
     <message>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="834"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="836"/>
         <source>Enable</source>
         <translation>启用</translation>
     </message>
     <message>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="835"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="837"/>
         <source>Delete</source>
         <translation>删除</translation>
     </message>
     <message>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="853"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="855"/>
         <source>Comment out this line; the key falls back to the builtin binding after restart.</source>
         <translation>注释掉此行；重启后该键将回退到内置绑定。</translation>
     </message>
     <message>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="855"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="857"/>
         <source>Comment out this line; the key has no action after restart.</source>
         <translation>注释掉此行；重启后该键无任何操作。</translation>
     </message>
     <message>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="931"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="933"/>
         <source>(empty command)</source>
         <translation>（空命令）</translation>
     </message>
     <message>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="943"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="945"/>
         <source>%1 (new entry)</source>
         <translation>%1（新条目）</translation>
     </message>
     <message>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="945"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="947"/>
         <source>Missing Key</source>
         <translation>缺少按键</translation>
     </message>
     <message>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="946"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="948"/>
         <source>These entries have a command but no key:
 %1</source>
         <translation>以下条目有命令但没有按键：
 %1</translation>
     </message>
     <message>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="981"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="983"/>
         <source>Invalid Key Names</source>
         <translation>无效的按键名称</translation>
     </message>
     <message>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="981"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="983"/>
         <source>Some key names are invalid. Save anyway?</source>
         <translation>部分按键无效。仍要保存吗？</translation>
     </message>
     <message>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="1029"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="1031"/>
         <source>Conflicting Keys</source>
         <translation>按键冲突</translation>
     </message>
     <message>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="1030"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="1032"/>
         <source>These keys are also claimed by the plugin, so these bindings will never trigger:
 %1
 
 The file will be written anyway.</source>
-        <translation>这些按键也已被插件占用，因此这些绑定将永远不会触发：
+        <translation>这些按键已被插件占用，因此这些绑定将永远不会触发：
 %1
 
 文件仍会被写入。</translation>
     </message>
     <message>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="1042"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="1044"/>
         <source>Writing the configuration file failed.</source>
         <translation>写入配置文件失败。</translation>
     </message>
     <message>
-        <location filename="../src/ui/MpvBindingDialog.cpp" line="1048"/>
+        <location filename="../src/ui/MpvBindingDialog.cpp" line="1050"/>
         <source>Changes were written to input.conf. They take effect after restarting mpv.</source>
         <translation>更改已写入 input.conf。重启 mpv 后生效。</translation>
     </message>
@@ -3669,33 +3684,33 @@ These values were not written to mpv.conf.</source>
 <context>
     <name>WindowTitleBar</name>
     <message>
-        <location filename="../src/ui/WindowTitleBar.cpp" line="233"/>
+        <location filename="../src/ui/WindowTitleBar.cpp" line="249"/>
         <source>Menu</source>
         <translation>菜单</translation>
     </message>
     <message>
-        <location filename="../src/ui/WindowTitleBar.cpp" line="235"/>
+        <location filename="../src/ui/WindowTitleBar.cpp" line="251"/>
         <source>Minimize</source>
         <translation>最小化</translation>
     </message>
     <message>
-        <location filename="../src/ui/WindowTitleBar.cpp" line="237"/>
-        <location filename="../src/ui/WindowTitleBar.cpp" line="333"/>
+        <location filename="../src/ui/WindowTitleBar.cpp" line="253"/>
+        <location filename="../src/ui/WindowTitleBar.cpp" line="349"/>
         <source>Maximize</source>
         <translation>最大化</translation>
     </message>
     <message>
-        <location filename="../src/ui/WindowTitleBar.cpp" line="239"/>
+        <location filename="../src/ui/WindowTitleBar.cpp" line="255"/>
         <source>Exit Full Screen</source>
         <translation>退出全屏</translation>
     </message>
     <message>
-        <location filename="../src/ui/WindowTitleBar.cpp" line="241"/>
+        <location filename="../src/ui/WindowTitleBar.cpp" line="257"/>
         <source>Close</source>
         <translation>关闭</translation>
     </message>
     <message>
-        <location filename="../src/ui/WindowTitleBar.cpp" line="333"/>
+        <location filename="../src/ui/WindowTitleBar.cpp" line="349"/>
         <source>Restore</source>
         <translation>还原</translation>
     </message>
