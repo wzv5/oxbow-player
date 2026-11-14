@@ -5,7 +5,7 @@
 // 跨模块共享常量唯一出处（N156 起）：改名只动这里。仅单模块消费的数值落所在
 // .cpp 的文件内常量（不因"改名只动一处"的便利污染全局头）；主题派生色函数仍按
 // N143 纪律归 AppearanceManager。
-// 覆盖：窗口基名（初始/停止态）、关于对话框、applicationName、INI 文件名前缀。
+// 覆盖：窗口基名（初始/停止态）、关于对话框、applicationName。
 namespace App {
 
 // 窄字符名：QApplication 的 argv 签名要求可写 char*，故为非 const 数组（勿运行期改写）
@@ -18,9 +18,6 @@ inline QString name() { return QStringLiteral("Oxbow"); }
 // N151：repo 串单点——更新检查的 latest release API 由它拼出
 inline QString projectRepo() { return QStringLiteral("wzv5/oxbow-player"); }
 inline QString projectUrl() { return QStringLiteral("https://github.com/%1").arg(projectRepo()); }
-
-// 配置文件名：小写基名（oxbow.ini），与翻译基名（oxbow_<locale>.qm）同族
-inline QString iniFileName() { return QStringLiteral("oxbow.ini"); }
 
 // ——扩展名默认清单（无点、小写；三张表 + 一份合并表）——
 // 一律以逗号紧拼书写再 split：split 不去空白，逗号后加空格会产出坏过滤器。清单只出
@@ -95,15 +92,6 @@ inline QString iconPath(const QString &key) {
     return QStringLiteral(":/icons/%1/%2.svg").arg(defaultIconPack(), key);
 }
 
-// 播放列表展开宽度默认值（客户区像素，A20）：展开时主窗口向右扩展该宽度；用户拖动过 splitter
-// 把手则用进程内记忆宽度。 实测 win11 下 336 宽度正好可以让 16:9 的视频在最大化时播放区无黑边。
-inline int playlistDefaultWidth() { return 336; }
-
-// 视频区默认尺寸（A20）：启动时视频区恰好为此尺寸；同时作为视频区最小尺寸下限
-// （占位符最小尺寸取此值，也是空间不足时压缩视频区的下限）。
-// 宽度 480 为实测下限——再窄底部控制栏即显示不全，勿再下调
-inline QSize videoDefaultSize() { return QSize(480, 320); }
-
 // ——N35 远端请求设置缺省值——
 // iniKey: remoteTimeoutSec（秒）；设置目录 fallback 与 PlaylistWidget 初装配同源。
 // 缺省 10 秒：GitHub API 在慢网络下 5 秒常超时，更新检查与远端浏览共用此值（N151）
@@ -121,11 +109,6 @@ inline int recursiveDepthLimitDefault() { return 3; }
 // 是语义本身而非配置值，故不抽常量、直接写死
 inline int recursiveDepthLimitMax() { return 20; }
 
-// ——N67 视频区光标自动隐藏——
-// 播放中光标停在视频区且持续该时长无鼠标活动即隐藏（Qt::BlankCursor）；
-// 任何鼠标活动立即恢复并重新计时
-inline int cursorAutoHideMs() { return 3000; }
-
 // ——N156 全程无框自绘窗框——
 // 迷你模式标题栏高度
 inline int miniTitleBarHeight() { return 24; }
@@ -137,12 +120,6 @@ inline int windowBorderWidth() { return 1; }
 inline int miniMinWidth() { return 200; }
 // 迷你拖动吸附触发距离
 inline int miniSnapDistancePx() { return 16; }
-
-// ——N121 起播预适配——
-// on_preloaded hook 内等待 GUI 线程完成窗口预适配的上限（毫秒）。正常适配在
-// 几毫秒内完成；上限只兜 GUI 无法处理投递事件的极端情形，超时即放行播放，
-// 预适配延后执行或交给 VIDEO_RECONFIG 校正
-inline int preloadResizeTimeoutMs() { return 100; }
 
 // ——N161 小窗态公开通道——
 inline constexpr char miniWindowProperty[] = "user-data/oxbow/mini-window";

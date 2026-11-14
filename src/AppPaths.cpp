@@ -2,14 +2,16 @@
 
 #include "AppPaths.h"
 
-#include "Constants.h"
-
 #ifndef Q_OS_WIN
 #include <dlfcn.h> // dladdr：定位核心插件自身 .so
 #endif
 
 namespace App {
 namespace {
+
+// 配置文件名：小写基名（oxbow.ini），与翻译基名（oxbow_<locale>.qm）同族。
+// 只在本文件两处落点使用，故为文件内常量
+const QString kIniFileName = QStringLiteral("oxbow.ini");
 
 // 以本函数地址反查核心插件自身模块目录（动态形态 oxbowcore.dll、静态形态部署为
 // main.dll 的核心本身、Linux 的 .so，同一份代码全覆盖）
@@ -77,13 +79,13 @@ void initializePaths() {
     if (!self.m_pluginDir.isEmpty()) {
         QTemporaryFile probe(self.m_pluginDir + QStringLiteral("/oxbow-XXXXXX.tmp"));
         if (probe.open())
-            iniFile = QDir(self.m_pluginDir).filePath(iniFileName());
+            iniFile = QDir(self.m_pluginDir).filePath(kIniFileName);
     }
     if (iniFile.isEmpty()) {
         const QString fallback =
             QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
         QDir().mkpath(fallback);
-        iniFile = QDir(fallback).filePath(iniFileName());
+        iniFile = QDir(fallback).filePath(kIniFileName);
     }
     self.m_iniFile = iniFile;
     self.m_iniDir = QFileInfo(iniFile).absolutePath();

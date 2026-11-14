@@ -80,6 +80,10 @@ constexpr int kHoverGapPx = 2;
 // 尺寸与全屏切换变化
 constexpr int kThumbBoxPx = 200;
 
+// N67 视频区光标自动隐藏：播放中光标停在视频区且持续该时长无鼠标活动即隐藏
+// （Qt::BlankCursor）；任何鼠标活动立即恢复并重新计时
+constexpr int kCursorAutoHideMs = 3000;
+
 // ——N156 窗口几何常量——
 // 迷你默认视频区宽（逻辑 px）：每次进入恢复默认，不记忆（语义钉为视频区宽）
 constexpr int kMiniDefaultWidth = 400;
@@ -87,6 +91,15 @@ constexpr int kMiniDefaultWidth = 400;
 // 与左缘拖宽热区宽度
 constexpr int kFullscreenEdgeTriggerWidth = 16;
 constexpr int kFullscreenResizeHotspotWidth = 6;
+
+// 播放列表展开宽度默认值（客户区像素，A20）：展开时主窗口向右扩展该宽度；用户拖动过
+// splitter 把手则用进程内记忆宽度。实测 win11 下 336 宽度正好可以让 16:9 的视频在
+// 最大化时播放区无黑边
+constexpr int kPlaylistDefaultWidth = 336;
+// 视频区默认尺寸（A20）：启动时视频区恰好为此尺寸；同时作为视频区最小尺寸下限
+// （占位符最小尺寸取此值，也是空间不足时压缩视频区的下限）。
+// 宽度 480 为实测下限——再窄底部控制栏即显示不全，勿再下调
+constexpr QSize kVideoDefaultSize(480, 320);
 
 // N110 画面比例内建档：比值档常量表——value 与 mpv 对同一写法的解析同源（C 双
 // 精度直除，double 可精确比），勾选比对只认 double（读回串是归一化十进制，串
@@ -325,7 +338,7 @@ class CursorAutoHider : public QObject {
   public:
     explicit CursorAutoHider(QWidget *video, QObject *parent) : QObject(parent), m_video(video) {
         m_timer.setSingleShot(true);
-        m_timer.setInterval(App::cursorAutoHideMs());
+        m_timer.setInterval(kCursorAutoHideMs);
         connect(&m_timer, &QTimer::timeout, this, &CursorAutoHider::onTimeout);
         // WA_NativeWindow 置位即有 QWindow；N156 起主窗句柄终身稳定，该 QWindow
         // 全程存活、过滤器无须重装。QPointer 仅作悬空兜底（失效模式退化为自动
@@ -1054,7 +1067,7 @@ QWidget *MainWindow::createLeftArea() {
     m_videoPlaceholder = new QWidget;
     // A20：最小尺寸按常量设置——默认尺寸即下限（480 为控制栏不裁切的实测下限，
     // 原值 480×270 的高度下限由 270 抬到 320）
-    m_videoPlaceholder->setMinimumSize(App::videoDefaultSize());
+    m_videoPlaceholder->setMinimumSize(kVideoDefaultSize);
     m_videoPlaceholder->setAutoFillBackground(true);
     QPalette pal = m_videoPlaceholder->palette();
     pal.setColor(QPalette::Window, Qt::black);
@@ -2590,10 +2603,10 @@ void MainWindow::applyPlaylistGeometry(bool expanding, int leftAnchor) {
     const int frameW = frameGeometry().width() - width(); // 外框水平装饰
     const int maxClientW = avail.width() - frameW;        // 客户区宽度上限（桌面宽度）
     const int handle = m_splitter->handleWidth();
-    const int videoMinW = App::videoDefaultSize().width(); // 480，视频区最小宽度
-    const int pMin = m_playlist->minimumWidth();           // 220
+    const int videoMinW = kVideoDefaultSize.width(); // 480，视频区最小宽度
+    const int pMin = m_playlist->minimumWidth();     // 220
 
-    int p = m_playlistWidth > 0 ? m_playlistWidth : App::playlistDefaultWidth();
+    int p = m_playlistWidth > 0 ? m_playlistWidth : kPlaylistDefaultWidth;
     int videoW = leftAnchor; // 左 pane（视频区）目标宽度
     int clientW;
     if (expanding) {
@@ -2646,8 +2659,8 @@ void MainWindow::applyPlaylistGeometry(bool expanding, int leftAnchor) {
 // 一次定死（setSizes 锁定左 pane），高度单独迭代收敛（只动高度：若顺手改宽度，
 // splitter 会重新分配、视频区宽度被破坏），最后居中。只在首次 show 执行
 void MainWindow::applyStartupGeometry() {
-    const int wantW = App::videoDefaultSize().width();
-    const int wantH = App::videoDefaultSize().height();
+    const int wantW = kVideoDefaultSize.width();
+    const int wantH = kVideoDefaultSize.height();
     if (m_playlistGeometryPending) {
         m_playlistGeometryPending = false;
         applyPlaylistGeometry(true, wantW); // 展开：视频区 480 + 播放列表 + 把手
@@ -3323,13 +3336,13 @@ void MainWindow::applyVideoSize(int videoW, int videoH) {
 }
 
 // N122：普通态视频区尺寸收口，N10 自适应与倍率命令共用；want 为目标视频区逻辑尺寸，
-// 调用方须保证普通态且各维 > 0。低于 videoDefaultSize 按两维覆盖系数的较大者等比放大
+// 调用方须保证普通态且各维 > 0。低于 kVideoDefaultSize 按两维覆盖系数的较大者等比放大
 // 到恰好覆盖（N114，保比无黑边），超出工作区视频域整窗等比缩回——上限须同时扣外框
 // 装饰与客户区非视频域，只扣外框会撑破工作区；B16 迭代收敛与最小移动钳回沿用 N10
 void MainWindow::resizeVideoAreaTo(const QSize &wantLogical) {
     const QRect work = screen()->availableGeometry();
     QSize want = wantLogical;
-    const QSize videoMin = App::videoDefaultSize();
+    const QSize videoMin = kVideoDefaultSize;
     if (want.width() < videoMin.width() || want.height() < videoMin.height()) {
         const double s = qMax(double(videoMin.width()) / want.width(),
                               double(videoMin.height()) / want.height());
@@ -3559,7 +3572,7 @@ void MainWindow::toggleFullscreen() {
         reparentIntoOverlay(m_playlist, m_playlistOverlay);            // §二-2：面板同批重挂
         m_bottomBarHeight = qMax(1, m_bottomBar->sizeHint().height()); // 记录时钳位，判据与几何同源
         if (m_fsPlaylistWidth <= 0) // 进程内记忆首取窗口态宽度（为零用默认值，§二-8）
-            m_fsPlaylistWidth = m_playlistWidth > 0 ? m_playlistWidth : App::playlistDefaultWidth();
+            m_fsPlaylistWidth = m_playlistWidth > 0 ? m_playlistWidth : kPlaylistDefaultWidth;
         repositionFullscreenOverlays();
     } else {
         // N66 §二-2 ①：先收浮窗、把控件挂回原位（②只恢复对象树形状，播放列表
@@ -3697,7 +3710,7 @@ void MainWindow::toggleMini() {
         m_controller->setProperty(QStringLiteral("video-zoom"), 0.0);
         m_controller->setProperty(QStringLiteral("video-pan-x"), 0.0);
         m_controller->setProperty(QStringLiteral("video-pan-y"), 0.0);
-        // 占位符最小尺寸放宽（videoDefaultSize 480×320 会把 400px 视频宽钳住），退出恢复
+        // 占位符最小尺寸放宽（kVideoDefaultSize 480×320 会把 400px 视频宽钳住），退出恢复
         m_videoPlaceholder->setMinimumSize(QSize(0, 0));
         // QWidget::updateGeometry 只失效直接父布局：占位符到主窗布局隔着左 pane 与
         // splitter，须逐层补失效，主窗布局才会重算最小尺寸（N125 陷阱同源）
@@ -3748,8 +3761,8 @@ void MainWindow::toggleMini() {
         syncVideoGeometry(); // 铺满后视频区对位（同普通分支 mapTo）；随后的 resizeEvent 幂等兜底
     } else {
         m_mini = false;
-        // 占位符最小尺寸恢复（普通态下限回归 videoDefaultSize）
-        m_videoPlaceholder->setMinimumSize(App::videoDefaultSize());
+        // 占位符最小尺寸恢复（普通态下限回归 kVideoDefaultSize）
+        m_videoPlaceholder->setMinimumSize(kVideoDefaultSize);
         // 清手势状态与原生循环原点锚——跨形态残留会让下一次拖动按旧基准判距
         finishGesture();
         m_frameBackend->clearDragAnchors();

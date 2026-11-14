@@ -346,7 +346,7 @@ class MpvController : public QObject {
     QString fileOptionEcho(const QString &name) const;
     // N121：on_preloaded 的 demux 尺寸估算（仅事件线程）；无视频 / 无尺寸返回空
     QSize preloadSizeHint() const;
-    // N121：把预估值有界阻塞交接给 GUI 线程（上限见 App::preloadResizeTimeoutMs）
+    // N121：把预估值有界阻塞交接给 GUI 线程（上限见实现处 kPreloadResizeTimeoutMs）
     void requestPreloadResize();
 
     // N147：配置目录与两条文件路径的一次求值——构造期各跑一遍后填入下方缓存成员，

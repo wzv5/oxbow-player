@@ -11,6 +11,11 @@
 
 namespace {
 
+// N121 起播预适配：on_preloaded hook 内等待 GUI 线程完成窗口预适配的上限（毫秒）。
+// 正常适配在几毫秒内完成；上限只兜 GUI 无法处理投递事件的极端情形，超时即放行播放，
+// 预适配延后执行或交给 VIDEO_RECONFIG 校正
+constexpr int kPreloadResizeTimeoutMs = 100;
+
 enum ObservedProperty {
     PropTimePos = 1,
     PropDuration, // duration（B18：双通道 observe 半程，留守）
@@ -715,7 +720,7 @@ void MpvController::requestPreloadResize() {
             done->release();
         },
         Qt::QueuedConnection);
-    if (!done->tryAcquire(1, App::preloadResizeTimeoutMs()))
+    if (!done->tryAcquire(1, kPreloadResizeTimeoutMs))
         OXBOW_LOG_DEBUG() << "preload resize wait timeout";
 }
 
