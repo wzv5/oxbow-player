@@ -22,7 +22,7 @@ jobs:
       run:
         shell: pwsh
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Fetch deps
         run: |
@@ -47,7 +47,7 @@ jobs:
           Copy-Item "$env:RUNNER_TEMP/mediainfo/MediaInfo.dll" staging/oxbow/MediaInfo.dll
           7z a oxbow-windows-x64.7z ./staging/oxbow
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows-x64
           path: oxbow-windows-x64.7z
@@ -56,7 +56,7 @@ jobs:
   build-linux:
     runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install deps
         run: |
@@ -76,7 +76,7 @@ jobs:
           strip staging/oxbow/main.so
           (cd staging && zip -r ../oxbow-linux-x64.zip oxbow)
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: linux-x64
           path: oxbow-linux-x64.zip
@@ -89,9 +89,9 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
@@ -111,7 +111,7 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" \
             dist/oxbow-windows-x64.7z dist/oxbow-linux-x64.zip \
-            --repo "$GITHUB_REPOSITORY" --draft --title "$GITHUB_REF_NAME" --notes-file release-notes.md
+            --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes-file release-notes.md
 
   nightly:
     needs: [build-windows, build-linux]
@@ -120,9 +120,9 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
@@ -139,4 +139,4 @@ jobs:
           gh release delete nightly --yes >/dev/null 2>&1 || true
           gh release create nightly \
             dist/oxbow-windows-x64.7z dist/oxbow-linux-x64.zip \
-            --repo "$GITHUB_REPOSITORY" --draft --title nightly --notes ""
+            --repo "$GITHUB_REPOSITORY" --title nightly --notes ""
