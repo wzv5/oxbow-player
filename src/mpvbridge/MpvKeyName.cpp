@@ -176,35 +176,27 @@ std::optional<int> codeFromSegment(const QString &seg) {
     return *base | mods;
 }
 
-// 组合键切分：mpv 以 '-' 分隔多键序列，'-' 键自身写作 "--"（切分成对识别）。
-// 孤立的段首 '-'（畸形）并入下段、交由段解析判失败；末尾悬空 '-' 切分时丢弃。
+// 组合键切分：照 mpv `mp_input_get_keys_from_string`（input/keycodes.c）的口径，
+// 只有后面还有字符的 '-' 才是分隔符；串尾 '-' 属于当前键名（"Ctrl+-" 是
+// Ctrl + 字面减号的单键）。段首 "--" 是字面减号键：首枚 '-' 作键名、第二枚 '-'
+// 作分隔符，下一段从其后开始。孤立的段首 '-' 交出空段，由段解析判失败。
 QStringList splitCombo(const QString &name) {
     QStringList segs;
     qsizetype start = 0;
-    qsizetype i = 0;
-    while (i < name.size()) {
-        if (name.at(i) != QLatin1Char('-')) {
-            ++i;
+    while (start < name.size()) {
+        const qsizetype dash = name.indexOf(QLatin1Char('-'), start);
+        if (dash < 0 || dash + 1 == name.size()) {
+            segs.append(name.mid(start)); // 无分隔符，或 '-' 落在串尾：整段收口
+            break;
+        }
+        if (dash == start && name.at(dash + 1) == QLatin1Char('-')) {
+            segs.append(QStringLiteral("-"));
+            start = dash + 2;
             continue;
         }
-        if (i == start) {
-            if (i + 1 < name.size() && name.at(i + 1) == QLatin1Char('-')) {
-                segs.append(QStringLiteral("-")); // "--" → 一个 '-' 键
-                i += 2;
-                if (i < name.size() && name.at(i) == QLatin1Char('-'))
-                    ++i; // 后随的分隔符
-                start = i;
-            } else {
-                ++i;
-            }
-            continue;
-        }
-        segs.append(name.mid(start, i - start));
-        ++i;
-        start = i;
+        segs.append(name.mid(start, dash - start));
+        start = dash + 1;
     }
-    if (start < name.size())
-        segs.append(name.mid(start));
     return segs;
 }
 
@@ -708,8 +700,8 @@ QKeySequence MpvKey::sequenceFromName(const QString &name) {
 QString MpvKey::normalizedKeyName(const QString &name) {
     if (name.isEmpty())
         return name;
-    // 末尾悬空分隔符先删：'-' 由 splitCombo 收，'+' 在此收（"Ctrl+P+" → "Ctrl+P"）；
-    // "++" 与裸 "+" 的末字符是字面加号键本身，不删
+    // 末尾悬空 '+' 先删（"Ctrl+P+" → "Ctrl+P"）；"++" 与裸 "+" 的末字符是
+    // 字面加号键本身，不删。串尾 '-' 不是分隔符，留在键名里（见 splitCombo）
     QString text = name;
     if (text.endsWith(QLatin1Char('+')) &&
         (text.size() < 2 || text.at(text.size() - 2) != QLatin1Char('+')))

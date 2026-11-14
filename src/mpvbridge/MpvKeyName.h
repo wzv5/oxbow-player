@@ -31,14 +31,15 @@ QString nameFromSequence(const QKeySequence &sequence);
 // JOY_*、表外符号键、非法键名行、0x<hex> 与非 ASCII 裸字符都在这一支）。
 QKeySequence sequenceFromName(const QString &name);
 
-// mpv 键名 → 归一化名：'-' 切分（"-" 键自身写作 "--"）、修饰名与主键名大小写不
-// 敏感、修饰按 mpv 顺序重排、ASCII 区间 Shift 折进（Shift+v ≡ V、Shift+2 ≡ 2）。
+// mpv 键名 → 归一化名：'-' 切分（段中 "-" 键写作 "--"，串尾 '-' 归键名本身）、
+// 修饰名与主键名大小写不敏感、修饰按 mpv 顺序重排、ASCII 区间 Shift 折进
+// （Shift+v ≡ V、Shift+2 ≡ 2）。
 // 段级两路取名：码点路径解不出的段查名字层镜像（鼠标键 / 别名 / 媒体键名），仍
 // 解不出的段交原文（自成一组，永不与内置集匹配）。
 QString normalizedKeyName(const QString &name);
 
 // N157：键名合法性——段数 ≤ 16，逐段剥修饰后基名须为镜像表名、单个码点或 0x 形态，
-// 口径同 mpv `mp_input_get_key_from_name`。空串恒 false。
+// 口径同 mpv `mp_input_get_key_from_name`（'-' 切分同 mpv：串尾 '-' 归键名）。空串恒 false。
 bool isValidKeyName(const QString &name);
 
 // N157：补全候选——修饰键（Shift / Ctrl / Alt / Meta）置首，其后为镜像表

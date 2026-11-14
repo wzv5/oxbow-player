@@ -60,8 +60,9 @@ class KeyCompleter : public QCompleter {
 
   protected:
     QStringList splitPath(const QString &path) const override {
-        // 尾段起点：按 mpv 的 '-' 切分语义（"--" 是字面减号）扫到最后一段，刚敲完
-        // '-' 时尾段为空，空前缀不自动弹
+        // 尾段起点：编辑态按 '-' 切分（"--" 是字面减号）扫到最后一段，刚敲完
+        // '-' 时尾段为空，空前缀不自动弹。串尾 '-' 在此按分隔符处理（好让下一段
+        // 接着补全），与键名合法性判定把串尾 '-' 归键名本身的口径不同
         qsizetype start = 0;
         qsizetype i = 0;
         while (i < path.size()) {
