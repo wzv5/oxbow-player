@@ -237,6 +237,7 @@ class MainWindow : public QMainWindow, public WindowStateHost {
     // N68：小窗模式进出唯一收口（I/Esc/关闭钮三路共用）；全屏与小窗互斥
     void toggleMini();
     void syncVideoGeometry();
+    void requestVideoGeometrySync(); // N162：合并落位请求，同一轮事件循环只落一次位
     // ---- N156：手势路由与自驱动环路 ----
     enum class GestureKind { Move, Resize };
     enum class GesturePhase { Begin, Update, End };
@@ -300,6 +301,8 @@ class MainWindow : public QMainWindow, public WindowStateHost {
     // A20：播放列表显隐几何联动——左 pane 宽度不变、主窗口向右扩展，
     // 空间不足先压视频区触底再压播放列表宽度（实测值写回记忆）
     void applyPlaylistGeometry(bool expanding, int leftAnchor);
+    // N162：程序性几何变更前的布局收口，解除主窗最小尺寸的旧钉（N125 同因）
+    void settleLayoutNow(QWidget *from);
     // A20：启动几何收口（定宽 → 定高 → 居中），仅首次 show 执行
     void applyStartupGeometry();
     // A20：主窗口居中到所在屏工作区（外框口径，居中后钳回兜底）

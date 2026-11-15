@@ -59,6 +59,9 @@
 
 namespace {
 
+// N162：视频几何合并落位事件（registerEventType 只动原子计数，静态期可用）
+const QEvent::Type kVideoGeometrySyncEvent = static_cast<QEvent::Type>(QEvent::registerEventType());
+
 // ——文件级调档值——唯一使用点均在本文件，故不入 Constants.h（那里只放跨文件共享的
 // 全局常量与默认清单）。集中置顶：调档只动这一处
 
@@ -881,12 +884,11 @@ MainWindow::MainWindow(MpvController *controller, AppearanceManager *appearance,
     // 的两条转发 connect 喂入
     m_cursorHider = new CursorAutoHider(m_videoWidget, this);
 
-    // N113：OSD 控制器——紧跟视频区装配就位。必须早于 ThumbWindow 创建（其内部
-    // hostWid() 会触发主窗 QMoveEvent，moveEvent 里的 reposition 要求 m_osd 已
-    // 存在）；这些调用点不做空指针容错，装配序就是防线，错序靠崩溃显影
+    // N113：OSD 控制器——紧跟视频区装配就位。必须早于 ThumbWindow 创建：其内部
+    // hostWid() 会触发主窗 QMoveEvent，落位末尾要读 m_osd；这些调用点不做空指针
+    // 容错，装配序就是防线，错序靠崩溃显影
     m_osd = new OsdController(this, m_videoWidget, m_controller);
-    // N153：缓冲状态 OSD——与 m_osd 同一装配序约束（同吃 moveEvent / resizeEvent
-    // 的 reposition），同样必须早于 ThumbWindow
+    // N153：缓冲状态 OSD——与 m_osd 同一装配序约束，同样必须早于 ThumbWindow
     m_cacheOsd = new CacheStatusOsd(this, m_videoWidget, m_controller);
 
     // N66 §三-4：弹层关闭补重评经 qApp 级过滤器观察——观察器为独立对象（原因见
@@ -1072,7 +1074,7 @@ QWidget *MainWindow::createLeftArea() {
     QPalette pal = m_videoPlaceholder->palette();
     pal.setColor(QPalette::Window, Qt::black);
     m_videoPlaceholder->setPalette(pal);
-    m_videoPlaceholder->installEventFilter(this); // Resize/Move → syncVideoGeometry
+    m_videoPlaceholder->installEventFilter(this); // Resize/Move → 合并落位请求
     layout->addWidget(m_videoPlaceholder, 1);
 
     // 第二行：进度条 + 音量条（行固定高度，音量条固定宽度）
@@ -1634,8 +1636,8 @@ void MainWindow::beginGesture(GestureKind kind, Qt::Edges edges, const QPoint &g
 // 杜绝自反馈——同 WM_MOVING 第①条纪律）。mini 走 FrameMetrics 纯函数
 // 实时吸附 / 保比（文件内常量传参）；允许拖出工作区（N68 第 8 条：
 // 用户拖动不钳回）。OXBOW_PUREQT 普通态自由移动 / 缩放，不保比、不吸附，只按
-// minimumSizeHint() 与工作区上限钳制。每一步即精确终态，视频区经
-// resizeEvent → syncVideoGeometry 同帧跟随
+// minimumSizeHint() 与工作区上限钳制。每一步即精确终态，视频区经 resizeEvent
+// 请求合并落位跟随
 void MainWindow::updateGesture(const QPoint &globalPos) {
     if (m_gestureMode == GestureMode::None)
         return;
@@ -2582,22 +2584,8 @@ void MainWindow::applyPlaylistGeometry(bool expanding, int leftAnchor) {
         return;
     }
 
-    // A20 修正（实测日志定位）：setVisible 引发的 splitter 重排是延迟事件
-    // （LayoutRequest 入队，事件循环才派发），而主窗布局每次 activate 都会把
-    // 当时的布局最小宽"钉"成主窗显式 minimumWidth（QLayout::activate 的
-    // SetDefaultConstraint 行为），且该最小宽存在多跳缓存（splitter 重排 →
-    // 主窗布局缓存失效逐级传播）。显隐后立即 resize 会被旧钉钳住——实测隐藏后
-    // minimumWidth 仍钉着可见态的 705，窗口收不回 480、视频区被动右扩。
-    // 故循环冲刷延迟布局事件直至最小尺寸稳定（每轮推进一跳），再手动 activate
-    // 一次重钉新值，随后的 resize 收敛才不被旧值拦截
-    for (int k = 0; k < 4; ++k) {
-        const QSize minBefore = minimumSizeHint();
-        QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
-        if (minimumSizeHint() == minBefore)
-            break;
-    }
-    if (layout())
-        layout()->activate();
+    // A20 修正：先收口布局再改几何，否则 resize 被旧最小宽钳出横跳、视频区被动右扩
+    settleLayoutNow(m_playlist);
 
     const QRect avail = screen()->availableGeometry();
     const int frameW = frameGeometry().width() - width(); // 外框水平装饰
@@ -2655,6 +2643,24 @@ void MainWindow::applyPlaylistGeometry(bool expanding, int leftAnchor) {
         move(tl); // move() 对外框坐标（N1⑥），resize() 对客户区坐标（N10）
 }
 
+// N162：程序性几何变更前的布局收口。主窗最小尺寸缓存在 widget item 里，顶层 activate()
+// 的递归失效碰不到（N125 同因），须沿父链逐层标脏、冲掉入队重排，再先失效后激活重钉。
+// 只用于程序性几何变更，resizeEvent 不得调用
+void MainWindow::settleLayoutNow(QWidget *from) {
+    for (QWidget *w = from; w && w != this; w = w->parentWidget())
+        w->updateGeometry();
+    for (int k = 0; k < 4; ++k) {
+        const QSize minBefore = minimumSizeHint();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+        if (minimumSizeHint() == minBefore)
+            break;
+    }
+    if (layout()) {
+        layout()->invalidate();
+        layout()->activate();
+    }
+}
+
 // 启动几何收口：视频区恰好为默认尺寸 480×320——宽度经 applyPlaylistGeometry
 // 一次定死（setSizes 锁定左 pane），高度单独迭代收敛（只动高度：若顺手改宽度，
 // splitter 会重新分配、视频区宽度被破坏），最后居中。只在首次 show 执行
@@ -2667,20 +2673,22 @@ void MainWindow::applyStartupGeometry() {
     } else {
         applyPlaylistGeometry(false, wantW); // 隐藏：左 pane 独占，客户区宽 = 480
     }
-    // 高度：以 m_videoWidget 实测高度补残差（B16 同款，通常 1 步到位）。
-    // 读数依赖占位符 resize 事件链触发的 syncVideoGeometry，前置定宽流程已布局落地
+    // 高度：以占位符实测高度补残差（B16 同款，通常 1 步到位）——视频区镜像已延后到
+    // 合并落位，读不到本轮值
     int lastAchieved = -1;
     for (int i = 0; i < 4; ++i) {
-        const int delta = wantH - m_videoWidget->height();
+        const int delta = wantH - m_videoPlaceholder->height();
         resize(width(), height() + delta);
         if (layout())
             layout()->activate();
-        const int achieved = m_videoWidget->height();
+        const int achieved = m_videoPlaceholder->height();
         if (achieved == wantH || achieved == lastAchieved)
             break;
         lastAchieved = achieved;
     }
     centerOnScreen();
+    // show() 返回后入口即把 wid 交给 mpv：须在嵌入前当场兑现一次，不留未对位的句柄（N162）
+    QCoreApplication::sendPostedEvents(this, kVideoGeometrySyncEvent);
 }
 
 // 窗口居中到所在屏工作区：外框居中（move 定位外框左上角，故按外框尺寸算）。
@@ -2927,11 +2935,14 @@ void MainWindow::moveEvent(QMoveEvent *event) {
     if (m_restoreRefitPending && m_frameBackend->restoreGeometryDeferred())
         tryRestoreRefit();
     repositionNavigator();
-    m_osd->reposition();
-    m_cacheOsd->reposition();
-    repositionFullscreenOverlays(); // N66：全屏期两条带贴边跟随
     if (m_thumbWatch)
         m_thumbWatch->notifyLeft(); // N107 §2：主窗挪位使热区挪位，无事件按"已离开"起复核
+    // 纯移动不改视频矩形，落位只为 OSD 浮窗跟随全局位置（N162）
+    requestVideoGeometrySync();
+    // OS 驱动的几何当场兑现：模态拖拽循环里 posted 事件整段不派发。须窗口已可见——
+    // 构造期有 spontaneous 回声，那时布局未收敛，落位会写进中间态
+    if (event->spontaneous() && isVisible())
+        QCoreApplication::sendPostedEvents(this, kVideoGeometrySyncEvent);
 }
 
 void MainWindow::resizeEvent(QResizeEvent *event) {
@@ -2939,12 +2950,11 @@ void MainWindow::resizeEvent(QResizeEvent *event) {
     if (m_restoreRefitPending && m_frameBackend->restoreGeometryDeferred())
         tryRestoreRefit();
     repositionNavigator();
-    m_osd->reposition();
-    m_cacheOsd->reposition();
-    repositionFullscreenOverlays(); // N66：全屏期两条带贴边跟随
-    // N3：showFullScreen/showNormal 改变的是主窗尺寸，主窗 resize 是
-    // 全屏/还原后视频区几何同步的可靠最终触发点（幂等）
-    syncVideoGeometry();
+    // N3：主窗 resize 是全屏/还原后视频区对位的可靠最终触发点。只请求合并落位——
+    // 同一同步栈内的尺寸变化只写一次，浮窗定位随落位末尾收口
+    requestVideoGeometrySync();
+    if (event->spontaneous() && isVisible()) // 同 moveEvent
+        QCoreApplication::sendPostedEvents(this, kVideoGeometrySyncEvent);
 }
 
 // 最大化期间的尺寸推送被 isMaximized 守卫拦下，此处捕获还原瞬间补触发
@@ -2994,22 +3004,27 @@ void MainWindow::showEvent(QShowEvent *event) {
     applyStartupGeometry();
 }
 
-// 视频区几何手动同步（N3）：按窗口模式分支计算目标几何。
-// 全屏铺满整个客户区；普通与小窗（N156）同走布局对位——占位符 geometry 相对其
-// 父容器，须 mapTo 主窗坐标系，容器边距（band 环 + 迷你标题栏）经 mapTo 自动含，
-// 与 miniClientSize 换算同源
+// 视频区几何手动同步（N3）：全屏铺满客户区；普通与小窗（N156）同走布局对位，占位符
+// mapTo 主窗后自动含容器边距。N162：唯一落位函数，幂等判断只管 setGeometry（一次写入
+// 即一次 SetWindowPos 加一次 mpv VO 重配）；末尾三句定位恒执行——OSD 浮窗按全局坐标
+// 定位，纯移动时相对矩形不变也要跟随
 void MainWindow::syncVideoGeometry() {
     if (!m_videoWidget || !m_videoPlaceholder)
         return;
-    if (m_fullscreen) {
-        m_videoWidget->setGeometry(rect());
-    } else {
-        const QPoint origin = m_videoPlaceholder->mapTo(this, QPoint(0, 0));
-        m_videoWidget->setGeometry(QRect(origin, m_videoPlaceholder->size()));
-    }
+    const QRect target = m_fullscreen ? rect()
+                                      : QRect(m_videoPlaceholder->mapTo(this, QPoint(0, 0)),
+                                              m_videoPlaceholder->size());
+    if (target != m_videoWidget->geometry())
+        m_videoWidget->setGeometry(target);
     m_osd->reposition();
     m_cacheOsd->reposition();
     repositionFullscreenOverlays(); // N66：两条带几何与视频区对位同源（§三-3 挂载点并列）
+}
+
+// N162：撤掉未派发的同类事件再投一份，同一轮只留一个；不带几何数据，落位时现场读终态
+void MainWindow::requestVideoGeometrySync() {
+    QCoreApplication::removePostedEvents(this, kVideoGeometrySyncEvent);
+    QCoreApplication::postEvent(this, new QEvent(kVideoGeometrySyncEvent));
 }
 
 // ---- N66：全屏浮窗控制栏与播放列表 ----
@@ -3338,7 +3353,8 @@ void MainWindow::applyVideoSize(int videoW, int videoH) {
 // N122：普通态视频区尺寸收口，N10 自适应与倍率命令共用；want 为目标视频区逻辑尺寸，
 // 调用方须保证普通态且各维 > 0。低于 kVideoDefaultSize 按两维覆盖系数的较大者等比放大
 // 到恰好覆盖（N114，保比无黑边），超出工作区视频域整窗等比缩回——上限须同时扣外框
-// 装饰与客户区非视频域，只扣外框会撑破工作区；B16 迭代收敛与最小移动钳回沿用 N10
+// 装饰与客户区非视频域，只扣外框会撑破工作区；B16 迭代收敛与最小移动钳回沿用 N10。
+// 收敛读数取占位符（布局真值），视频区镜像已延后到合并落位（N162）
 void MainWindow::resizeVideoAreaTo(const QSize &wantLogical) {
     const QRect work = screen()->availableGeometry();
     QSize want = wantLogical;
@@ -3349,18 +3365,18 @@ void MainWindow::resizeVideoAreaTo(const QSize &wantLogical) {
         want = QSize(qRound(want.width() * s), qRound(want.height() * s));
     }
     const QSize frameDelta = frameGeometry().size() - geometry().size();
-    const QSize clientReserve = geometry().size() - m_videoWidget->size();
+    const QSize clientReserve = geometry().size() - m_videoPlaceholder->size();
     const QSize availVideo = work.size() - frameDelta - clientReserve;
     if (availVideo.width() > 0 && availVideo.height() > 0 &&
         (want.width() > availVideo.width() || want.height() > availVideo.height()))
         want.scale(availVideo, Qt::KeepAspectRatio);
-    QSize target = size() + want - m_videoWidget->size();
+    QSize target = size() + want - m_videoPlaceholder->size();
     QSize lastAchieved;
     for (int i = 0; i < 4; ++i) {
         resize(target);
         if (layout())
-            layout()->activate(); // 同步落实子布局（含 splitter/播放列表重分布 + 视频区对位）
-        const QSize achieved = m_videoWidget->size();
+            layout()->activate(); // 同步落实子布局（含 splitter/播放列表重分布）
+        const QSize achieved = m_videoPlaceholder->size();
         if (achieved == want || achieved == lastAchieved)
             break;
         lastAchieved = achieved;
@@ -3562,7 +3578,7 @@ void MainWindow::toggleFullscreen() {
         else
             showFullScreen();
 #endif
-        syncVideoGeometry(); // 铺满后视频区对位；随后的 resizeEvent 幂等兜底
+        requestVideoGeometrySync();
         // N66 §二-2：主窗落定后装配浮窗（含 N156 第三宿主标题栏）——重挂标题栏 /
         // 控制栏 / 播放列表、记高度与全屏宽度初值、定几何；浮窗恒 Hidden 进全屏
         ensureFullscreenOverlays();
@@ -3619,7 +3635,7 @@ void MainWindow::toggleFullscreen() {
             setWindowState(Qt::WindowNoState);
         }
 #endif
-        syncVideoGeometry();
+        requestVideoGeometrySync();
         // N66 §二-2 ④：主窗几何落定后按窗口态恢复面板可见性与宽度。锚点用进全屏前
         // 记下的左 pane 宽度直调（挂回后现读必被新默认分配污染，A20 坑 2）。
         // 最大化分支经既有 isMaximized 守卫早退，与 A20 窗口态语义一致
@@ -3712,10 +3728,6 @@ void MainWindow::toggleMini() {
         m_controller->setProperty(QStringLiteral("video-pan-y"), 0.0);
         // 占位符最小尺寸放宽（kVideoDefaultSize 480×320 会把 400px 视频宽钳住），退出恢复
         m_videoPlaceholder->setMinimumSize(QSize(0, 0));
-        // QWidget::updateGeometry 只失效直接父布局：占位符到主窗布局隔着左 pane 与
-        // splitter，须逐层补失效，主窗布局才会重算最小尺寸（N125 陷阱同源）
-        for (QWidget *w = m_videoPlaceholder; w && w != this; w = w->parentWidget())
-            w->updateGeometry();
         m_mini = true;
         m_restoreRefitPending = false;
         // 清手势状态与原生循环原点锚（同退出侧）——拖拽中进窗不留残环
@@ -3725,23 +3737,9 @@ void MainWindow::toggleMini() {
             clearForwardedMouseState();
         m_frameBackend->clearDragAnchors();
         applyFrame();
-        // 可见态布局冲刷（现状保留）：隐藏态下 QLayout::activate() 与 LayoutRequest
-        // 一律被 Qt 推迟（实测），须趁窗口可见把布局重算落地，随后的 setGeometry
-        // 不被旧最小尺寸整块钳走。冲刷手法同 applyPlaylistGeometry
-        {
-            const QSize minBefore = minimumSizeHint();
-            QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
-            if (minimumSizeHint() != minBefore) {
-                for (int k = 0; k < 4; ++k) {
-                    const QSize again = minimumSizeHint();
-                    QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
-                    if (minimumSizeHint() == again)
-                        break;
-                }
-            }
-            if (layout())
-                layout()->activate();
-        }
+        // 隐藏态下 QLayout::activate() 与 LayoutRequest 一律被 Qt 推迟（实测），须趁
+        // 窗口可见把布局收口，随后的 setGeometry 才不被旧最小尺寸整块钳走（N125 同源）
+        settleLayoutNow(m_videoPlaceholder);
         // 先撤最大化再改壳，随后的 setGeometry 一拍到位
         m_frameBackend->enterMiniShell(m_preMiniMaximized);
 #ifdef Q_OS_WIN
@@ -3758,7 +3756,7 @@ void MainWindow::toggleMini() {
         const QRect work = screen()->availableGeometry();
         const QPoint tl(work.right() + 1 - client.width(), work.bottom() + 1 - client.height());
         setGeometry(QRect(tl, client));
-        syncVideoGeometry(); // 铺满后视频区对位（同普通分支 mapTo）；随后的 resizeEvent 幂等兜底
+        requestVideoGeometrySync();
     } else {
         m_mini = false;
         // 占位符最小尺寸恢复（普通态下限回归 kVideoDefaultSize）
@@ -3790,6 +3788,7 @@ void MainWindow::toggleMini() {
 #endif
         m_bottomBar->show();
         m_playlist->setVisible(m_playlistVisibleTruth);
+        settleLayoutNow(m_playlist);
         if (m_navigator) { // 非 null ⟹ 必为被本方案隐藏的小窗前可见面板
             m_navigator->show();
             repositionNavigator();
@@ -3800,7 +3799,7 @@ void MainWindow::toggleMini() {
         m_controller->setProperty(QStringLiteral("video-zoom"), m_savedZoom);
         m_controller->setProperty(QStringLiteral("video-pan-x"), m_savedPanX);
         m_controller->setProperty(QStringLiteral("video-pan-y"), m_savedPanY);
-        syncVideoGeometry(); // 兜底：退出后视频区对位回占位符
+        requestVideoGeometrySync();
         // N117：焦点复位同 toggleFullscreen 退出分支（预置 + FocusIn 自清归 null）
         if (!m_inputYielded)
             m_videoWidget->setFocus(Qt::OtherFocusReason);
@@ -3854,6 +3853,11 @@ void MainWindow::onVideoClickTimeout() {
 // （N156 起句柄终身稳定、无重建缺位期，本覆写留作幂等兜底）。
 // 判据同出 yieldOwnsKeyboard，接受即跳过本次 shortcut 匹配、键照常投递；忽略则快捷键照常触发
 bool MainWindow::event(QEvent *event) {
+    // N162：合并落位事件的派发点，事件循环取回控制权后才执行
+    if (event->type() == kVideoGeometrySyncEvent) {
+        syncVideoGeometry();
+        return true;
+    }
     if (event->type() == QEvent::ShortcutOverride && yieldOwnsKeyboard()) {
         event->accept();
         return true;
@@ -3962,7 +3966,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
             reevaluateOverlays();
     } else if (watched == m_videoPlaceholder) {
         if (event->type() == QEvent::Resize || event->type() == QEvent::Move)
-            syncVideoGeometry();
+            requestVideoGeometrySync();
     } else if (watched == m_videoWidget) {
         switch (event->type()) {
         // N97：视频区拖放三类。一律消费（return true）——Qt 的父链传播看的是
@@ -4893,7 +4897,7 @@ void MainWindow::restoreSettings() {
         setPlaylistVisible(true);
 
     // N119：菜单栏偏好（缺键 true）——挡回调回放勾选态，再收口一次可见性。时点在首次
-    // show 之前，布局重排经占位符事件链触发 syncVideoGeometry，与退出全屏同款。
+    // show 之前，布局重排经占位符事件链触发合并落位，与退出全屏同款。
     m_menuBarVisibleTruth = settings.value(QStringLiteral("menuBarVisible"), true).toBool();
     QAction *menuBarAction = m_actions->action(ActionManager::Id::MenuBar);
     {
