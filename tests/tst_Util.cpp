@@ -129,6 +129,10 @@ class TestUtil : public QObject {
     // ——N151：Util::GitHub 三件——latest 地址按 repo 拼全、UA 以 oxbow/ 前缀起步、
     // 去 v 只在后接数字时生效
     void githubHelpers();
+    // ——N164：Util::parseBoolString——八值表全部命中，大小写混排同解
+    void parseBoolStringValues();
+    // 八值之外一律不可判定：空串、"2"、乱串、带空白（trimmed 由调用方做）
+    void parseBoolStringInvalid();
 };
 
 void TestUtil::emptyInputYieldsNoSegments() {
@@ -1127,6 +1131,26 @@ void TestUtil::githubHelpers() {
     QCOMPARE(Util::GitHub::releaseVersion(QStringLiteral("vbeta")), QStringLiteral("vbeta"));
     QCOMPARE(Util::GitHub::releaseVersion(QStringLiteral("v")), QStringLiteral("v"));
     QCOMPARE(Util::GitHub::releaseVersion(QStringLiteral("b5454")), QStringLiteral("b5454"));
+}
+
+// ——N164：Util::parseBoolString——
+void TestUtil::parseBoolStringValues() {
+    // 真值四形态；大小写混排先归一小写再比对，同解
+    for (const char *v : {"yes", "true", "on", "1", "YES", "True", "ON"})
+        QCOMPARE(Util::parseBoolString(QString::fromLatin1(v)).value_or(false), true);
+    // 假值四形态；大小写混排同解
+    for (const char *v : {"no", "false", "off", "0", "NO", "False", "OFF"})
+        QCOMPARE(Util::parseBoolString(QString::fromLatin1(v)).value_or(true), false);
+}
+
+// 八值之外一律不可判定（std::nullopt）
+void TestUtil::parseBoolStringInvalid() {
+    // 空串、"2"（ini 手写档位字面量在 toBool 口径下另走真值，本函数不认）、乱串
+    for (const char *v : {"", "2", "3", "junk", "y", "n", "enabled"})
+        QVERIFY(!Util::parseBoolString(QString::fromLatin1(v)).has_value());
+    // 带空白不可判定：公共函数只做大小写归一不吞空白，trimmed 由调用方做
+    QVERIFY(!Util::parseBoolString(QStringLiteral(" yes ")).has_value());
+    QVERIFY(!Util::parseBoolString(QStringLiteral(" ")).has_value());
 }
 
 // 一类一可执行（R5）：自带 main（QTEST_GUILESS_MAIN）

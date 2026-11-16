@@ -264,6 +264,17 @@ bool parseTimeHMSms(const QString &text, double *outSeconds) {
     return true;
 }
 
+std::optional<bool> parseBoolString(const QString &value) {
+    const QString v = value.toLower();
+    if (v == QLatin1String("yes") || v == QLatin1String("true") || v == QLatin1String("on") ||
+        v == QLatin1String("1"))
+        return true;
+    if (v == QLatin1String("no") || v == QLatin1String("false") || v == QLatin1String("off") ||
+        v == QLatin1String("0"))
+        return false;
+    return std::nullopt;
+}
+
 QString trimTrailingZeros(const QString &fixed) {
     QString s = fixed;
     if (s.contains(QLatin1Char('.'))) {

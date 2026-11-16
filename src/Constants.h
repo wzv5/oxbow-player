@@ -139,6 +139,8 @@ inline bool quadraticVolumeCurveDefault() { return false; }
 inline bool showMpvMenuDataDefault() { return false; }
 // N157：视频区鼠标事件向 mpv 透传（缺省关；开启后视频区鼠标语义归 mpv）
 inline bool forwardMouseEventsDefault() { return false; }
+// N164：安全模式缺省关；无条件禁用档只由环境变量 OXBOW_SAFE_MODE 给出
+inline bool safeModeDefault() { return false; }
 
 // ——N151 检查更新——
 // iniKey: updateCheckInterval（整数天）；设置目录 fallback 与 UpdateChecker 读侧同源。

@@ -88,6 +88,10 @@ QString formatTimeHMSms(double seconds);
 // 合法返回 true 并写回秒数，否则 false
 bool parseTimeHMSms(const QString &text, double *outSeconds);
 
+// N164：字符串布尔解析——yes / true / on / 1 → 真，no / false / off / 0 → 假
+// （大小写不敏感），其余返回 nullopt；不吞空白，trimmed 由调用方做
+std::optional<bool> parseBoolString(const QString &value);
+
 // 通用：定点小数去末尾 0（"24.00" -> "24"、"44.10" -> "44.1"）
 QString trimTrailingZeros(const QString &fixed);
 

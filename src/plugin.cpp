@@ -17,6 +17,7 @@
 #include "Logging.h"
 #include "MainWindow.h"
 #include "MediaInfoHelper.h"
+#include "Util.h" // N164：安全模式环境变量解析复用公共字符串布尔出口
 #include "Version.h"
 #include "mpvbridge/MpvController.h"
 #include "streams/StreamRelay.h"
@@ -109,6 +110,141 @@ static void installTranslator(const QString &configFile) {
     }
 }
 
+// ——N164：安全模式——
+// 启动期发现外部控制面（窗口族选项、IPC、运行形态）命中即整体让位：wid 嵌入下这些
+// 属性的回读是假真相，把窗口与控制权交回 mpv。清单与白名单是全仓唯一表，判定只此一次
+
+// 判据 2 的命令行清单；fs 与 script 是别名，标记落在 fullscreen / scripts 上，不单列
+constexpr const char *const kSafeModeCmdlineAvoid[] = {
+    // A：窗口状态与几何
+    "border",
+    "title-bar",
+    "fullscreen",
+    "ontop",
+    "window-maximized",
+    "window-minimized",
+    "window-scale",
+    "geometry",
+    "autofit",
+    "autofit-larger",
+    "autofit-smaller",
+    "screen",
+    "screen-name",
+    "fs-screen",
+    "fs-screen-name",
+    "keepaspect-window",
+    "snap-window",
+    "force-window-position",
+    "auto-window-resize",
+    "hidpi-window-scale",
+    "title",
+    "show-in-taskbar",
+    "window-dragging",
+    "focus-on",
+    "on-all-workspaces",
+    // B：外部控制入口与运行形态
+    "input-ipc-server",
+    "input-ipc-client",
+    "scripts",
+    "idle",
+    "keep-open",
+    "force-window",
+    "o",
+    "input-vo-keyboard",
+};
+
+// 读取失败按不命中处理
+static bool safeModeSetFromCmdline(mpv_handle *handle, const char *name) {
+    const QByteArray prop = QByteArray("option-info/") + name + "/set-from-commandline";
+    int flag = 0;
+    if (mpv_get_property(handle, prop.constData(), MPV_FORMAT_FLAG, &flag) < 0)
+        return false;
+    return flag != 0;
+}
+
+// 读不到返回空串
+static QString safeModeStringProperty(mpv_handle *handle, const char *name) {
+    char *raw = mpv_get_property_string(handle, name);
+    const QString value = raw ? QString::fromUtf8(raw) : QString();
+    mpv_free(raw);
+    return value;
+}
+
+// 候选逐项与白名单比对，逐字节相等；拆分不丢空段（尾部逗号是回退列表外）
+static bool safeModeEntriesWhitelisted(const QStringList &entries,
+                                       std::initializer_list<const char *> allowed) {
+    for (const QString &entry : entries) {
+        bool ok = false;
+        for (const char *const name : allowed) {
+            if (entry == QLatin1String(name)) {
+                ok = true;
+                break;
+            }
+        }
+        if (!ok)
+            return false;
+    }
+    return true;
+}
+
+// 档位与三条判据。返回让位原因（档位 + 判据 / 属性名），空串即不避让
+static QString safeModeShouldYield(mpv_handle *handle, const QString &iniFile) {
+    // OXBOW_SAFE_MODE 优先于 ini；档 2 只由环境变量给出。值不等于 2 且解析不出真伪
+    // （空串 / 乱串）按未设置处理，继续走 ini
+    const QString raw = qEnvironmentVariable("OXBOW_SAFE_MODE").trimmed();
+    if (raw == QLatin1String("2"))
+        return QStringLiteral("tier 2: OXBOW_SAFE_MODE=2, plugin disabled");
+    const std::optional<bool> env = Util::parseBoolString(raw);
+    if (env && !*env)
+        return QString(); // 显式假覆盖 ini 的开，是档 2 之外的逃生口
+    if (!env) {
+        // ini 只吃 bool（QVariant 口径），手写其余非空串同落档 1、不产生档 2
+        QSettings s(iniFile, QSettings::IniFormat);
+        if (!s.value(QStringLiteral("safeMode"), App::safeModeDefault()).toBool())
+            return QString();
+    }
+
+    // 判据 1：形态。读不到按保守命中；不问 set-from-commandline——pseudo-gui 由宿主
+    // 注入 argv，问了会把正常 GUI 启动误判成外部控制
+    const QString opMode = safeModeStringProperty(handle, "player-operation-mode");
+    if (opMode != QLatin1String("pseudo-gui"))
+        return QStringLiteral("tier 1: player-operation-mode=%1 (not pseudo-gui)").arg(opMode);
+
+    // 判据 2：命令行控制面，逐项查、命中即让位，不读满整表
+    for (const char *const name : kSafeModeCmdlineAvoid) {
+        if (safeModeSetFromCmdline(handle, name))
+            return QStringLiteral("tier 1: command-line option '%1'").arg(QLatin1String(name));
+    }
+
+    // vo / gpu-context 单独判：白名单（并集口径不按平台过滤）内不构成避让，白名单外
+    // 才让位
+    if (safeModeSetFromCmdline(handle, "vo")) {
+        const QString value = safeModeStringProperty(handle, "options/vo");
+        if (!safeModeEntriesWhitelisted(
+                value.split(u',', Qt::KeepEmptyParts),
+                {"gpu", "gpu-next", "direct3d", "x11", "xv", "vdpau", "vaapi"}))
+            return QStringLiteral("tier 1: command-line option 'vo'=%1 (not wid-compatible)")
+                .arg(value);
+    }
+    if (safeModeSetFromCmdline(handle, "gpu-context")) {
+        const QString value = safeModeStringProperty(handle, "options/gpu-context");
+        // auto 仅单值豁免；混列与尾部逗号都过不了白名单，仍避让
+        const QStringList entries = value.split(u',', Qt::KeepEmptyParts);
+        const bool autoOnly = entries.size() == 1 && entries.first() == QLatin1String("auto");
+        if (!autoOnly && !safeModeEntriesWhitelisted(entries, {"win", "winvk", "angle", "dxinterop",
+                                                               "d3d11", "x11", "x11vk", "x11egl"}))
+            return QStringLiteral("tier 1: command-line option 'gpu-context'=%1 "
+                                  "(not wid-compatible)")
+                .arg(value);
+    }
+
+    // 判据 3：IPC 现值非空即命中，不检测来源
+    if (!safeModeStringProperty(handle, "options/input-ipc-server").isEmpty() ||
+        !safeModeStringProperty(handle, "options/input-ipc-client").isEmpty())
+        return QStringLiteral("tier 1: input-ipc-server/input-ipc-client present");
+    return QString();
+}
+
 extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle) {
 #ifdef MPV_CPLUGIN_DYNAMIC_SYM
     if (!checkMpvSymbols())
@@ -164,6 +300,15 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle) {
 
     // N126：日志出口在一切子系统出生前装配，模式只读一次
     Logging::install(configFile);
+
+    // N164：安全模式命中即让位（return 0 不算失败）：不建窗口、不下发定值、不注册
+    // 协议、不起事件线程；已构造的 QApplication 允许残留（DLL 不卸载）
+    const QString yieldReason = safeModeShouldYield(handle, configFile);
+    if (!yieldReason.isEmpty()) {
+        OXBOW_LOG_INFO().noquote()
+            << QStringLiteral("safe mode: %1, yielding to mpv").arg(yieldReason);
+        return 0;
+    }
 
 #ifdef OXBOW_WITH_OPTIONAL_DEPENDENCY_INSTALLER
     // N150：启动清理——删上轮安装器留在插件目录的整个 .oxbow-install/（含 backup /

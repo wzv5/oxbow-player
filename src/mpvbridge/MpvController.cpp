@@ -63,16 +63,8 @@ std::optional<bool> nodeToBool(const mpv_node *node) {
     switch (node->format) {
     case MPV_FORMAT_FLAG:
         return node->u.flag != 0;
-    case MPV_FORMAT_STRING: {
-        const QString v = QString::fromUtf8(node->u.string);
-        if (v == QStringLiteral("yes") || v == QStringLiteral("true") ||
-            v == QStringLiteral("on") || v == QStringLiteral("1"))
-            return true;
-        if (v == QStringLiteral("no") || v == QStringLiteral("false") ||
-            v == QStringLiteral("off") || v == QStringLiteral("0"))
-            return false;
-        return std::nullopt;
-    }
+    case MPV_FORMAT_STRING:
+        return Util::parseBoolString(QString::fromUtf8(node->u.string));
     case MPV_FORMAT_INT64:
         return node->u.int64 != 0;
     case MPV_FORMAT_DOUBLE:
