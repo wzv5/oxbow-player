@@ -74,6 +74,9 @@ Oxbow runs as a plugin inside mpv and has to coexist with other plugins while ke
 - **Keyboard events pass through.** Shortcuts Oxbow claims are handled by itself; every other key is handed back to mpv, so bindings in `input.conf` and mpv's default key map keep working.
 - **Mouse events can pass through (off by default).** By default the mouse is handled entirely by Oxbow's interface; enable **Forward mouse events to mpv** in the settings to hand video-area mouse events back to mpv, so mouse bindings in `input.conf` take effect. Oxbow's built-in mouse actions and fullscreen overlays then step aside.
 - **Script menus are supported (off by default).** Enable **Show mpv menu-data in the Tools menu** in the settings, and Oxbow reads mpv's `menu-data` property and renders the context menu a script provides into the **Tools** menu.
+- **Safe mode (off by default).** When enabled, Oxbow stays out of the way if mpv is started in a shape the plugin cannot take over — a non-GUI run, command-line window or control options, an IPC server, or a video backend that cannot embed. The `OXBOW_SAFE_MODE` environment variable overrides the setting at startup.
+
+See [docs/mpv-compatibility.md](docs/mpv-compatibility.md) for the full list of mpv features and properties Oxbow supports, the window properties it cannot honor, and how safe mode affects loading.
 
 ## Installation
 
