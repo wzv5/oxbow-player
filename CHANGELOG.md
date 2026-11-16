@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.4] - 2026-11-16
+
+### Added
+
+- **Safe mode**: a new option under **Settings → Basic**. When enabled, the plugin stays out of the way if mpv is started in a shape the plugin cannot take over. The `OXBOW_SAFE_MODE` environment variable overrides the setting at startup; a value of `2` always keeps the plugin disabled. See [mpv compatibility](docs/mpv-compatibility.md#safe-mode) for the trigger conditions and the full avoid list.
+- **Always on top** in the View menu, mirrored with mpv's `ontop` property; entering fullscreen or mini mode keeps its own stacking and the change is echoed in the OSD.
+- **Mini-window state as a public property**: the plugin publishes `user-data/oxbow/mini-window`, so scripts and IPC clients can read the mini state and toggle it; the published value always follows the real window.
+
+### Fixed
+
+- The video area no longer jumps several times when entering or leaving fullscreen or mini mode, or when showing or hiding the playlist.
+- `Ctrl+-` and `Alt+-` are no longer rejected as invalid key names, and no longer break conflict detection in the shortcut dialog.
+
 ## [0.1.3] - 2026-11-13
 
 ### Added
