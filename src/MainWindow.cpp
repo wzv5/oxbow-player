@@ -1144,6 +1144,14 @@ QWidget *MainWindow::createLeftArea() {
     m_nextButton->setToolTip(tr("Next File"));
     m_nextButton->setFixedSize(36, 36);
     m_timeLabel = new QLabel(QStringLiteral("00:00 / 00:00"));
+    // N166：按两侧满 3 位小时的最宽形态量一次定宽；余量吸收渲染亚像素，不随字体 / 样式变化重算
+    {
+        constexpr int kTimeLabelSlackPx = 8;
+        const QFontMetricsF fm(m_timeLabel->font());
+        const int width = qCeil(fm.horizontalAdvance(QStringLiteral("999:59:59 / 999:59:59"))) +
+                          kTimeLabelSlackPx;
+        m_timeLabel->setFixedWidth(width);
+    }
     m_streamButton = new QPushButton(QString());
     m_streamButton->setToolTip(tr("Switch Stream"));
     m_streamButton->setFixedSize(36, 36);
@@ -2501,7 +2509,8 @@ void MainWindow::seekReleased() {
     // 停止态滑条禁用后不可达，残余场景（直播流）下 absolute-percent 本就无效
     if (m_duration > 0.0)
         m_osd->show(
-            tr("Seek: %1").arg(Util::formatTimePercent(m_duration * percent / 100.0, m_duration)));
+            tr("Seek: %1")
+                .arg(Util::Time::formatTimePercent(m_duration * percent / 100.0, m_duration)));
 }
 
 void MainWindow::setPlaylistVisible(bool visible) {
@@ -4115,7 +4124,7 @@ void MainWindow::flushSeekToolTip() {
     if (const auto hit = m_marks->hit(hoverTime, playingListUuid(), cur ? cur->key() : QString());
         hit && !hit->title.isEmpty())
         tip = hit->title + QStringLiteral("\n");
-    tip += Util::formatTimePercent(hoverTime, m_duration);
+    tip += Util::Time::formatTimePercent(hoverTime, m_duration);
     QToolTip::showText(m_seekTipGlobal, tip, m_progressSlider);
 }
 
@@ -4294,7 +4303,8 @@ void MainWindow::seekRelative(int deltaSeconds) {
         const double target = qBound(0.0, m_timePos + deltaSeconds, m_duration);
         const QString sign =
             deltaSeconds >= 0 ? tr("+%1s").arg(deltaSeconds) : tr("%1s").arg(deltaSeconds);
-        m_osd->show(tr("Seek: %1 / %2").arg(sign, Util::formatTimePercent(target, m_duration)));
+        m_osd->show(
+            tr("Seek: %1 / %2").arg(sign, Util::Time::formatTimePercent(target, m_duration)));
     } else {
         const QString sign =
             deltaSeconds >= 0 ? tr("+%1s").arg(deltaSeconds) : tr("%1s").arg(deltaSeconds);
@@ -4929,13 +4939,32 @@ void MainWindow::restoreSettings() {
 }
 
 void MainWindow::updateTimeDisplay() {
-    m_timeLabel->setText(
-        QStringLiteral("%1 / %2").arg(Util::formatTime(m_timePos), Util::formatTime(m_duration)));
+    m_timeLabel->setText(formatTimePair(m_timePos, m_duration));
     if (!m_seeking && m_duration > 0.0)
         m_progressSlider->setValue(int(m_timePos / m_duration * 1000.0));
 }
 
-QString MainWindow::formatTime(double seconds) { return Util::formatTime(seconds); }
+// N166：控制栏形态小时不补零、封顶只看总时长折得的小时数达 1000（已播照实），
+// 与 Util::Time 格式化出口的小时补零形态不同，只复用其拆解、自行拼串
+namespace {
+QString joinClock(const Util::Time::Parts &p) {
+    if (p.hours > 0)
+        return QStringLiteral("%1:%2:%3")
+            .arg(p.hours)
+            .arg(p.minutes, 2, 10, QLatin1Char('0'))
+            .arg(p.seconds, 2, 10, QLatin1Char('0'));
+    return QStringLiteral("%1:%2")
+        .arg(p.minutes, 2, 10, QLatin1Char('0'))
+        .arg(p.seconds, 2, 10, QLatin1Char('0'));
+}
+} // namespace
+
+QString MainWindow::formatTimePair(double position, double duration) {
+    const QString elapsed = joinClock(Util::Time::split(position));
+    const Util::Time::Parts totalParts = Util::Time::split(duration);
+    const QString total = totalParts.hours >= 1000 ? QStringLiteral("-") : joinClock(totalParts);
+    return QStringLiteral("%1 / %2").arg(elapsed, total);
+}
 
 // ---- N13：轨道文案与切换 ----
 
@@ -5547,7 +5576,7 @@ void MainWindow::buildChapterSection(QMenu &target) {
     auto addSection = [&](const QList<MarkAggregator::Mark> &items) {
         for (const auto &it : items) {
             const QString text =
-                QStringLiteral("[%1] %2").arg(Util::formatTimeHMSms(it.time), it.title);
+                QStringLiteral("[%1] %2").arg(Util::Time::formatTimeHMSms(it.time), it.title);
             QAction *a = target.addAction(text);
             a->setCheckable(true);
             a->setData(it.time);
@@ -5919,7 +5948,7 @@ void MainWindow::onAddBookmark() {
     if (const Playlist *playing = m_playlist->listOf(playingTab))
         origin = {playing->uuid(), m_playlist->queueRootIdsOf(playingTab)};
     m_bookmarkMgr->addBookmark(rawPath, t, title, origin);
-    m_osd->show(tr("Bookmark added: [%1] %2").arg(Util::formatTimeHMSms(t), title));
+    m_osd->show(tr("Bookmark added: [%1] %2").arg(Util::Time::formatTimeHMSms(t), title));
 }
 
 void MainWindow::closeEvent(QCloseEvent *event) {

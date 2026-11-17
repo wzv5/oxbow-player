@@ -133,6 +133,11 @@ class TestUtil : public QObject {
     void parseBoolStringValues();
     // 八值之外一律不可判定：空串、"2"、乱串、带空白（trimmed 由调用方做）
     void parseBoolStringInvalid();
+    // N166：时间格式化——取整边界、小时位数、毫秒分隔符、percent 两分支与负值
+    void timeFormatRounding();
+    void timeFormatHours();
+    void timeFormatMillisSeparator();
+    void timeFormatPercentAndInvalid();
 };
 
 void TestUtil::emptyInputYieldsNoSegments() {
@@ -1151,6 +1156,71 @@ void TestUtil::parseBoolStringInvalid() {
     // 带空白不可判定：公共函数只做大小写归一不吞空白，trimmed 由调用方做
     QVERIFY(!Util::parseBoolString(QStringLiteral(" yes ")).has_value());
     QVERIFY(!Util::parseBoolString(QStringLiteral(" ")).has_value());
+}
+
+// N166：秒取整——59.4 → 59、59.6 → 60 并进位到分；毫秒取整避开恰在半毫秒的二进制歧义值
+void TestUtil::timeFormatRounding() {
+    QCOMPARE(Util::Time::formatTime(59.4), QStringLiteral("00:59"));
+    QCOMPARE(Util::Time::formatTime(59.6), QStringLiteral("01:00"));
+    QCOMPARE(Util::Time::formatTimeHMS(59.4), QStringLiteral("00:00:59"));
+    QCOMPARE(Util::Time::formatTimeHMS(59.6), QStringLiteral("00:01:00"));
+    QCOMPARE(Util::Time::formatTimeHMSms(1.2344), QStringLiteral("00:00:01.234"));
+    QCOMPARE(Util::Time::formatTimeHMSms(1.2346), QStringLiteral("00:00:01.235"));
+}
+
+// 小时位数：0 / 1 / 9 / 10 / 99 / 100 / 999 / 1000 各形态；自适应出口小时为 0 用 MM:SS
+void TestUtil::timeFormatHours() {
+    QCOMPARE(Util::Time::formatTime(0.0), QStringLiteral("00:00"));
+    QCOMPARE(Util::Time::formatTime(65.0), QStringLiteral("01:05"));
+    QCOMPARE(Util::Time::formatTime(3600.0), QStringLiteral("1:00:00"));
+    QCOMPARE(Util::Time::formatTime(32400.0), QStringLiteral("9:00:00"));
+    QCOMPARE(Util::Time::formatTime(36000.0), QStringLiteral("10:00:00"));
+    QCOMPARE(Util::Time::formatTime(356400.0), QStringLiteral("99:00:00"));
+    QCOMPARE(Util::Time::formatTimeHMS(65.0), QStringLiteral("00:01:05"));
+    QCOMPARE(Util::Time::formatTimeHMS(360000.0), QStringLiteral("100:00:00"));
+    QCOMPARE(Util::Time::formatTimeHMS(3599940.0), QStringLiteral("999:59:00"));
+    QCOMPARE(Util::Time::formatTimeHMS(3600000.0), QStringLiteral("1000:00:00"));
+    // 超过 quint16 上限的小时段（错值）钳 0，不回绕成小数
+    QCOMPARE(Util::Time::formatTimeHMS(65536.0 * 3600.0), QStringLiteral("00:00:00"));
+}
+
+// 毫秒分隔符：'.' 与 ',' 输出仅分隔符不同
+void TestUtil::timeFormatMillisSeparator() {
+    QCOMPARE(Util::Time::formatTimeHMSms(1.5), QStringLiteral("00:00:01.500"));
+    QCOMPARE(Util::Time::formatTimeHMSms(1.5, QLatin1Char(',')), QStringLiteral("00:00:01,500"));
+}
+
+// percent 两分支、分子分母钳 0、非有限值钳 0
+void TestUtil::timeFormatPercentAndInvalid() {
+    QCOMPARE(Util::Time::formatTimePercent(50.0, 100.0), QStringLiteral("00:00:50(50%)"));
+    // duration<=0 退化为仅时间；duration<0 钳 0 后走同一分支
+    QCOMPARE(Util::Time::formatTimePercent(50.0, 0.0), QStringLiteral("00:00:50"));
+    QCOMPARE(Util::Time::formatTimePercent(50.0, -10.0), QStringLiteral("00:00:50"));
+    // 负分子钳 0 → 0%，不再出现负百分比
+    QCOMPARE(Util::Time::formatTimePercent(-1.0, 10.0), QStringLiteral("00:00:00(0%)"));
+    // 负值与非有限一律钳 0，四个出口都不出负号、不产生怪串
+    QCOMPARE(Util::Time::formatTime(-1.0), QStringLiteral("00:00"));
+    QCOMPARE(Util::Time::formatTimeHMS(-1.0), QStringLiteral("00:00:00"));
+    QCOMPARE(Util::Time::formatTimeHMSms(-1.0), QStringLiteral("00:00:00.000"));
+    QCOMPARE(Util::Time::formatTimeHMS(std::numeric_limits<double>::quiet_NaN()),
+             QStringLiteral("00:00:00"));
+    QCOMPARE(Util::Time::formatTimeHMS(std::numeric_limits<double>::infinity()),
+             QStringLiteral("00:00:00"));
+    QCOMPARE(Util::Time::formatTime(std::numeric_limits<double>::quiet_NaN()),
+             QStringLiteral("00:00"));
+    QCOMPARE(Util::Time::formatTime(std::numeric_limits<double>::infinity()),
+             QStringLiteral("00:00"));
+    QCOMPARE(Util::Time::formatTimeHMSms(std::numeric_limits<double>::quiet_NaN()),
+             QStringLiteral("00:00:00.000"));
+    QCOMPARE(Util::Time::formatTimeHMSms(-std::numeric_limits<double>::infinity()),
+             QStringLiteral("00:00:00.000"));
+    // 非有限分子 / 分母钳 0：分子 NaN 出 0%，分母 NaN / Inf 走仅时间分支
+    QCOMPARE(Util::Time::formatTimePercent(std::numeric_limits<double>::quiet_NaN(), 10.0),
+             QStringLiteral("00:00:00(0%)"));
+    QCOMPARE(Util::Time::formatTimePercent(50.0, std::numeric_limits<double>::quiet_NaN()),
+             QStringLiteral("00:00:50"));
+    QCOMPARE(Util::Time::formatTimePercent(50.0, std::numeric_limits<double>::infinity()),
+             QStringLiteral("00:00:50"));
 }
 
 // 一类一可执行（R5）：自带 main（QTEST_GUILESS_MAIN）

@@ -3,27 +3,7 @@
 #include "SrtAssembler.h"
 
 #include "SubtitleExtractor.h"
-
-namespace {
-
-// HH:MM:SS,mmm（负值钳 0；小时位超两位照实展开）
-QString formatSrtClock(double seconds) {
-    if (seconds < 0)
-        seconds = 0;
-    const qint64 totalMs = qRound64(seconds * 1000.0);
-    const qint64 ms = totalMs % 1000;
-    const qint64 totalSeconds = totalMs / 1000;
-    const qint64 s = totalSeconds % 60;
-    const qint64 m = (totalSeconds / 60) % 60;
-    const qint64 h = totalSeconds / 3600;
-    return QStringLiteral("%1:%2:%3,%4")
-        .arg(h, 2, 10, QLatin1Char('0'))
-        .arg(m, 2, 10, QLatin1Char('0'))
-        .arg(s, 2, 10, QLatin1Char('0'))
-        .arg(ms, 3, 10, QLatin1Char('0'));
-}
-
-} // namespace
+#include "Util.h"
 
 void SrtAssembler::feed(const QByteArray &bytes) {
     m_byteBuffer += bytes;
@@ -165,8 +145,9 @@ QString SrtAssembler::renderSrt(const QList<Entry> &entries) {
                                ? entry.startSeconds
                                : entry.endSeconds;
         out += QStringLiteral("%1\n%2 --> %3\n%4\n\n")
-                   .arg(QString::number(i + 1), formatSrtClock(entry.startSeconds),
-                        formatSrtClock(end), entry.text);
+                   .arg(QString::number(i + 1),
+                        Util::Time::formatTimeHMSms(entry.startSeconds, QLatin1Char(',')),
+                        Util::Time::formatTimeHMSms(end, QLatin1Char(',')), entry.text);
     }
     return out;
 }

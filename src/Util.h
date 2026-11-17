@@ -71,18 +71,38 @@ int naturalCompare(const SegmentedName &a, const SegmentedName &b);
 // 其他平台或失败时降级为打开所在目录。返回是否成功定位选中
 bool openFileLocation(const QString &path, QWidget *parent);
 
-// 时间格式化：自适应 mm:ss / hh:mm:ss（进度标签用）
+// ——时间族（N166）：统一拆解 + 各出口格式化——
+namespace Time {
+
+// 拆解分段；入参负值 / 非有限 / hours 超限一律钳 0，秒级拆解的 millis 恒 0
+struct Parts {
+    quint16 hours;
+    quint8 minutes;
+    quint8 seconds;
+    quint16 millis;
+};
+
+// 秒级拆解（四舍五入到整秒）。自定义显示出口复用它取分段，再按己方形态拼串
+Parts split(double seconds);
+// 毫秒级拆解（四舍五入到整毫秒）
+Parts splitMillis(double seconds);
+
+// 自适应 mm:ss / hh:mm:ss（进度标签用）
 QString formatTime(double seconds);
 
 // OSD 专用：固定 hh:mm:ss（小时补零，00:01:05）
 QString formatTimeHMS(double seconds);
 
 // 进度标记统一格式 hh:mm:ss(pct%)（N8）：pct 四舍五入取整。
-// duration<=0 时退化为仅时间。三处共用：进度条 tooltip / N7 #6 尾段 / N7 #7 主体
+// duration<=0 时退化为仅时间。三处共用：进度条 tooltip / N7 #6 尾段 / N7 #7 主体。
+// 分子分母均按非有限与负值钳 0（N166）
 QString formatTimePercent(double seconds, double duration);
 
 // N15：固定 hh:mm:ss.zzz（毫秒三位，四舍五入）
-QString formatTimeHMSms(double seconds);
+// 毫秒分隔符可指定（N166，SRT 传 ','），缺省 '.'
+QString formatTimeHMSms(double seconds, QChar msSeparator = QLatin1Char('.'));
+
+} // namespace Time
 
 // N16：严格时间解析（书签编辑用），仅接受 hh:mm:ss.zzz（3 段、毫秒恰 3 位、分秒<60）；
 // 合法返回 true 并写回秒数，否则 false

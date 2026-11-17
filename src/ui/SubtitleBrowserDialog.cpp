@@ -81,7 +81,7 @@ class SubtitleBrowserModel : public QAbstractTableModel {
 
     // 负数时间（offset 后起点早于 0）：整个时间串前显示负号
     static QString formatOffsetTime(double seconds) {
-        QString text = Util::formatTimeHMSms(qAbs(seconds));
+        QString text = Util::Time::formatTimeHMSms(qAbs(seconds));
         if (seconds < 0)
             text.prepend(u'-');
         return text;

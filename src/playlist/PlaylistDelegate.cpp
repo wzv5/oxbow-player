@@ -12,18 +12,9 @@ constexpr int kMarginH = 6;
 constexpr int kMarginV = 4;
 constexpr int kItemPadding = 4;
 
+// 负值 / 非有限返空串，不走钳 0
 QString formatDuration(double seconds) {
-    if (seconds < 0 || !qIsFinite(seconds))
-        return QString();
-    const qint64 total = qint64(seconds + 0.5);
-    const qint64 h = total / 3600;
-    const qint64 m = (total % 3600) / 60;
-    const qint64 s = total % 60;
-    // 小时恒两位起步，超 99 小时自然扩展为三位及以上
-    return QStringLiteral("%1:%2:%3")
-        .arg(h, 2, 10, QLatin1Char('0'))
-        .arg(int(m), 2, 10, QLatin1Char('0'))
-        .arg(int(s), 2, 10, QLatin1Char('0'));
+    return seconds < 0 || !qIsFinite(seconds) ? QString() : Util::Time::formatTimeHMS(seconds);
 }
 } // namespace
 

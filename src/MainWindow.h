@@ -357,7 +357,8 @@ class MainWindow : public QMainWindow, public WindowStateHost {
     // 循环模式："none" / "file" / "playlist"
     void applyLoopMode(const QString &mode);
     QString currentLoopMode() const;
-    static QString formatTime(double seconds);
+    // N166：控制栏时间串唯一出口
+    static QString formatTimePair(double position, double duration);
     // N13：轨道文案与切换
     QString formatTrackText(const MpvController::TrackInfo &t) const;
     qint64 trackBitrate(const MpvController::TrackInfo &t) const;

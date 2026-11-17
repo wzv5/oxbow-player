@@ -192,50 +192,69 @@ bool openFileLocation(const QString &path, QWidget *parent) {
     return !dir.isEmpty() && QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
 }
 
+namespace {
+constexpr qint64 kHourMax = (std::numeric_limits<quint16>::max)();
+
+// 负值与非有限一律钳 0（N166），Time 族拆解共用
+double clampSeconds(double seconds) { return qIsFinite(seconds) && seconds > 0.0 ? seconds : 0.0; }
+
+// 只有 hours 可能超 quint16 量程，错值钳 0 不回绕；分、秒、毫秒经取模恒在界内
+quint16 clampHour(qint64 hours) { return hours > kHourMax ? 0 : quint16(hours); }
+} // namespace
+
+namespace Time {
+// 全仓唯一的时间拆解（N166），各显示出口取分段后按己方形态拼串
+Parts split(double seconds) {
+    const qint64 total = qint64(clampSeconds(seconds) + 0.5);
+    return {clampHour(total / 3600), quint8((total % 3600) / 60), quint8(total % 60), 0};
+}
+
+Parts splitMillis(double seconds) {
+    const qint64 totalMs = qint64(clampSeconds(seconds) * 1000.0 + 0.5);
+    const qint64 totalS = totalMs / 1000;
+    return {clampHour(totalS / 3600), quint8((totalS % 3600) / 60), quint8(totalS % 60),
+            quint16(totalMs % 1000)};
+}
+
 QString formatTime(double seconds) {
-    const int total = int(seconds + 0.5);
-    const int h = total / 3600;
-    const int m = (total % 3600) / 60;
-    const int s = total % 60;
-    if (h > 0)
+    const Parts p = split(seconds);
+    if (p.hours > 0)
         return QStringLiteral("%1:%2:%3")
-            .arg(h)
-            .arg(m, 2, 10, QLatin1Char('0'))
-            .arg(s, 2, 10, QLatin1Char('0'));
-    return QStringLiteral("%1:%2").arg(m, 2, 10, QLatin1Char('0')).arg(s, 2, 10, QLatin1Char('0'));
+            .arg(p.hours)
+            .arg(p.minutes, 2, 10, QLatin1Char('0'))
+            .arg(p.seconds, 2, 10, QLatin1Char('0'));
+    return QStringLiteral("%1:%2")
+        .arg(p.minutes, 2, 10, QLatin1Char('0'))
+        .arg(p.seconds, 2, 10, QLatin1Char('0'));
 }
 
 QString formatTimeHMS(double seconds) {
-    const int total = int(seconds + 0.5);
-    const int h = total / 3600;
-    const int m = (total % 3600) / 60;
-    const int s = total % 60;
+    const Parts p = split(seconds);
     return QStringLiteral("%1:%2:%3")
-        .arg(h, 2, 10, QLatin1Char('0'))
-        .arg(m, 2, 10, QLatin1Char('0'))
-        .arg(s, 2, 10, QLatin1Char('0'));
+        .arg(p.hours, 2, 10, QLatin1Char('0'))
+        .arg(p.minutes, 2, 10, QLatin1Char('0'))
+        .arg(p.seconds, 2, 10, QLatin1Char('0'));
 }
 
 QString formatTimePercent(double seconds, double duration) {
-    if (duration <= 0.0)
-        return formatTimeHMS(seconds);
-    const int pct = int(seconds / duration * 100.0 + 0.5);
-    return QStringLiteral("%1(%2%)").arg(formatTimeHMS(seconds)).arg(pct);
+    const double pos = clampSeconds(seconds);
+    const double dur = clampSeconds(duration);
+    if (dur <= 0.0)
+        return formatTimeHMS(pos);
+    const int pct = int(pos / dur * 100.0 + 0.5);
+    return QStringLiteral("%1(%2%)").arg(formatTimeHMS(pos)).arg(pct);
 }
 
-QString formatTimeHMSms(double seconds) {
-    const qint64 totalMs = qint64(seconds * 1000.0 + 0.5);
-    const qint64 ms = totalMs % 1000;
-    const qint64 totalS = totalMs / 1000;
-    const int h = int(totalS / 3600);
-    const int m = int((totalS % 3600) / 60);
-    const int s = int(totalS % 60);
-    return QStringLiteral("%1:%2:%3.%4")
-        .arg(h, 2, 10, QLatin1Char('0'))
-        .arg(m, 2, 10, QLatin1Char('0'))
-        .arg(s, 2, 10, QLatin1Char('0'))
-        .arg(int(ms), 3, 10, QLatin1Char('0'));
+QString formatTimeHMSms(double seconds, QChar msSeparator) {
+    const Parts p = splitMillis(seconds);
+    return QStringLiteral("%1:%2:%3%4%5")
+        .arg(p.hours, 2, 10, QLatin1Char('0'))
+        .arg(p.minutes, 2, 10, QLatin1Char('0'))
+        .arg(p.seconds, 2, 10, QLatin1Char('0'))
+        .arg(msSeparator)
+        .arg(p.millis, 3, 10, QLatin1Char('0'));
 }
+} // namespace Time
 
 bool parseTimeHMSms(const QString &text, double *outSeconds) {
     const QString s = text.trimmed();

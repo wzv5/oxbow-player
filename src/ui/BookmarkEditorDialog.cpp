@@ -101,8 +101,8 @@ void BookmarkEditorDialog::refresh() {
         for (int i = 0; i < list.size(); ++i) {
             const auto &bm = list[i];
             auto *leaf = new QTreeWidgetItem(root);
-            leaf->setText(0,
-                          QStringLiteral("[%1] %2").arg(Util::formatTimeHMSms(bm.time), bm.title));
+            leaf->setText(
+                0, QStringLiteral("[%1] %2").arg(Util::Time::formatTimeHMSms(bm.time), bm.title));
             leaf->setData(0, Qt::UserRole, group.key);
             leaf->setData(0, Qt::UserRole + 1,
                           group.listUuid.toString(QUuid::StringFormat::WithoutBraces));
@@ -136,7 +136,7 @@ void BookmarkEditorDialog::onSelectionChanged() {
         m_selGroup = groupOfItem(cur);
         m_selIndex = cur->data(0, Qt::UserRole + 2).toInt();
         const double t = cur->data(0, Qt::UserRole + 3).toDouble();
-        m_timeEdit->setText(Util::formatTimeHMSms(t));
+        m_timeEdit->setText(Util::Time::formatTimeHMSms(t));
         // 标题从 BookmarkManager 取原始值回填（leaf 文本为 "[time] title" 合成，不直接拆）
         const auto list = m_mgr->bookmarks(m_selGroup);
         if (m_selIndex >= 0 && m_selIndex < list.size())

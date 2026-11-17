@@ -3905,13 +3905,6 @@ void PlaylistWidget::showPropertiesDialog(const PlaylistEntity::Ptr &entityPtr) 
         auto formatKbpsSpaced = [](qint64 bps) -> QString {
             return QString::number((bps + 500) / 1000) + QStringLiteral(" kbps");
         };
-        auto formatHMS = [](double s) -> QString {
-            return QStringLiteral("%1:%2:%3")
-                .arg(qint64(s) / 3600)
-                .arg((qint64(s) % 3600) / 60, 2, 10, QLatin1Char('0'))
-                .arg(qint64(s) % 60, 2, 10, QLatin1Char('0'));
-        };
-
         // ——常规组：路径 / 大小 / 创建 / 修改 走实体 fileMeta；
         // 文件格式 / 总时长 走实体 mediaMeta
         QList<Row> general;
@@ -3939,7 +3932,7 @@ void PlaylistWidget::showPropertiesDialog(const PlaylistEntity::Ptr &entityPtr) 
                 general.append({tr("Modified"), t});
         }
         if (mi && mi->duration.has_value())
-            general.append({tr("Duration"), formatHMS(*mi->duration)});
+            general.append({tr("Duration"), Util::Time::formatTimeHMS(*mi->duration)});
 
         // 流"大小"格式化："1.23 GB (82%)"，百分比相对文件总大小
         auto formatStreamSize = [&](qint64 sz, qint64 filesize) -> QString {
@@ -4062,7 +4055,7 @@ void PlaylistWidget::showPropertiesDialog(const PlaylistEntity::Ptr &entityPtr) 
                 cur.setCharFormat(valueFmt);
                 cur.insertText(QStringLiteral("["));
                 cur.setCharFormat(nameFmt);
-                cur.insertText(Util::formatTimeHMSms(c.timeSeconds));
+                cur.insertText(Util::Time::formatTimeHMSms(c.timeSeconds));
                 cur.setCharFormat(valueFmt);
                 cur.insertText(QStringLiteral("]\t") + c.title);
                 cur.insertBlock();
