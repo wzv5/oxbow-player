@@ -58,39 +58,28 @@ inline QStringList defaultMediaExtensions() {
     return all;
 }
 
-// ——N49 图标包——
-// 素材落在 icons/<包名>/<语义键>.svg，包目录即"一套图"的替换单元。
-// 各包按同一批语义键名整理文件——跨包的文件名差异在整理入库时吸收，
-// 代码不做"语义键 → 包内文件名"映射表，换包即换目录
-inline QString defaultIconPack() { return QStringLiteral("icons8"); }
-inline QString iconLocatePlaying() { return QStringLiteral("locate-playing"); }
+// ——内置图标出口——
+// 图标源是 Material Symbols Rounded Filled 字体的连字名
+inline QString iconMyLocation() { return QStringLiteral("my_location"); }
 inline QString iconSearch() { return QStringLiteral("search"); }
-inline QString iconPlaylist() { return QStringLiteral("playlist"); }
+inline QString iconFormatListBulleted() { return QStringLiteral("format_list_bulleted"); }
 inline QString iconSettings() { return QStringLiteral("settings"); }
 inline QString iconAdd() { return QStringLiteral("add"); }
-inline QString iconRemove() { return QStringLiteral("remove"); }
-inline QString iconPlay() { return QStringLiteral("play"); }
+inline QString iconDeleteForever() { return QStringLiteral("delete_forever"); }
+inline QString iconPlayArrow() { return QStringLiteral("play_arrow"); }
 inline QString iconPause() { return QStringLiteral("pause"); }
 inline QString iconStop() { return QStringLiteral("stop"); }
-inline QString iconSkipBackward() { return QStringLiteral("skip-backward"); }
-inline QString iconSkipForward() { return QStringLiteral("skip-forward"); }
-// N143 字幕浏览器工具栏：偏移步进（快进 / 倒带）
-inline QString iconFastForward() { return QStringLiteral("fast-forward"); }
-inline QString iconRewind() { return QStringLiteral("rewind"); }
+inline QString iconSkipPrevious() { return QStringLiteral("skip_previous"); }
+inline QString iconSkipNext() { return QStringLiteral("skip_next"); }
+inline QString iconFastForward() { return QStringLiteral("fast_forward"); }
+inline QString iconFastRewind() { return QStringLiteral("fast_rewind"); }
 inline QString iconStream() { return QStringLiteral("stream"); }
-inline QString iconVolume() { return QStringLiteral("volume"); }
-inline QString iconVolumeMuted() { return QStringLiteral("volume-muted"); }
-inline QString iconMoveUp() { return QStringLiteral("move-up"); }
-inline QString iconMoveDown() { return QStringLiteral("move-down"); }
-// 设置项逐项重置（单色 24×24，经 Ui::themedIcon 染色）
-inline QString iconReset() { return QStringLiteral("reset"); }
-// 时间回退语义（N145：字幕偏移重置）——是 time-rollback，不是通用 rollback，
-// 不得挪作刷新等其它语义使用
-inline QString iconTimeRollback() { return QStringLiteral("time-rollback"); }
-// 解析单点：语义键 → 资源路径。将来加"图标包"设置项时只改 defaultIconPack 的取值来源
-inline QString iconPath(const QString &key) {
-    return QStringLiteral(":/icons/%1/%2.svg").arg(defaultIconPack(), key);
-}
+inline QString iconVolumeUp() { return QStringLiteral("volume_up"); }
+inline QString iconVolumeOff() { return QStringLiteral("volume_off"); }
+inline QString iconKeyboardArrowUp() { return QStringLiteral("keyboard_arrow_up"); }
+inline QString iconKeyboardArrowDown() { return QStringLiteral("keyboard_arrow_down"); }
+inline QString iconRefresh() { return QStringLiteral("refresh"); }
+inline QString iconSettingsBackupRestore() { return QStringLiteral("settings_backup_restore"); }
 
 // ——N35 远端请求设置缺省值——
 // iniKey: remoteTimeoutSec（秒）；设置目录 fallback 与 PlaylistWidget 初装配同源。

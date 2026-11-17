@@ -229,7 +229,7 @@ This project was started purely to test Ox Alpha's capabilities — the test wen
 - [Qt](https://www.qt.io/) — the application framework
 - [MediaInfo](https://mediaarea.net/en/MediaInfo) — optional media metadata
 - [libsodium](https://libsodium.org/) · [OpenSSL](https://www.openssl.org/) — cryptographic primitives for the Rclone Crypt backend
-- [Icons8](https://icons8.com/) — the default icon pack
+- [Google Material Symbols](https://fonts.google.com/icons) — the built-in icon font (Apache-2.0)
 
 ## License
 

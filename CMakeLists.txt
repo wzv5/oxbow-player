@@ -86,8 +86,7 @@ if(OXBOW_WITH_RCLONE_CRYPT)
     endif()
 endif()
 
-# Svg：把 QtSvg 模块写进 oxbowcore 的导入表（用法见下面 oxbowcore 的链接处）
-find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets LinguistTools Concurrent Network Svg)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets LinguistTools Concurrent Network)
 
 # ---------------------------------------------------------------------------
 # 目标 1：加载壳 loader.dll（纯 Win32，无 Qt 依赖，两种链接形态都编）
@@ -363,11 +362,7 @@ if(OXBOW_PUREQT)
     target_compile_definitions(oxbowcore PRIVATE OXBOW_PUREQT)
 endif()
 
-# Svg：svg 图标的两个插件（iconengines / imageformats）静态导入 QtSvg，而插件自身的
-# 依赖由 OS 按标准搜索序解析、不含插件目录——模块不先常驻，那两个插件就加载不上、图标
-# 全空。让它进本模块的导入表，即可在壳载入本模块时一并按 DLL_LOAD_DIR 解析（plugin.cpp
-# 入口的那次 QSvgRenderer 构造是同一件事的另一半：只链接不引用留不下导入项）
-target_link_libraries(oxbowcore PRIVATE Qt6::Widgets Qt6::Concurrent Qt6::Network Qt6::Svg)
+target_link_libraries(oxbowcore PRIVATE Qt6::Widgets Qt6::Concurrent Qt6::Network)
 # N98：rclone crypt 后端整块受 OXBOW_WITH_RCLONE_CRYPT 门禁——scrypt 与 secretbox 交
 # libsodium（形态与 SODIUM_STATIC 宏随 Sodium::Sodium 的导入面决定，OXBOW_STATIC 单
 # 旋钮），AES 后端按平台取 bcrypt / OpenSSL::Crypto；宏同时是 ProviderCatalog 与
@@ -448,32 +443,12 @@ else()
     set_target_properties(oxbowcore PROPERTIES OUTPUT_NAME "main")
 endif()
 
-# N49：图标素材内嵌为资源（icons/<包名>/<语义键>.svg → :/icons/<包名>/<语义键>.svg）。
-# 与 qt_add_translations 生成的资源并存；静态构建下随二进制内嵌，无外部文件与部署路径问题
-qt_add_resources(oxbowcore "icons"
-    PREFIX "/icons"
-    BASE "icons"
-    FILES
-        icons/icons8/locate-playing.svg
-        icons/icons8/search.svg
-        icons/icons8/playlist.svg
-        icons/icons8/reset.svg
-        icons/icons8/time-rollback.svg
-        icons/icons8/settings.svg
-        icons/icons8/add.svg
-        icons/icons8/remove.svg
-        icons/icons8/play.svg
-        icons/icons8/pause.svg
-        icons/icons8/stop.svg
-        icons/icons8/skip-backward.svg
-        icons/icons8/skip-forward.svg
-        icons/icons8/fast-forward.svg
-        icons/icons8/rewind.svg
-        icons/icons8/stream.svg
-        icons/icons8/volume.svg
-        icons/icons8/volume-muted.svg
-        icons/icons8/move-up.svg
-        icons/icons8/move-down.svg
+# 图标字体内嵌为资源（fonts/MaterialSymbolsRounded_Filled-Regular.ttf → :/fonts/...）；
+# 静态构建下随二进制内嵌，无外部文件与部署路径问题
+qt_add_resources(oxbowcore "fonts"
+    PREFIX "/fonts"
+    BASE "fonts"
+    FILES fonts/MaterialSymbolsRounded_Filled-Regular.ttf
 )
 
 qt_add_translations(oxbowcore MERGE_QT_TRANSLATIONS
@@ -668,6 +643,13 @@ if(OXBOW_BUILD_TESTS)
     # （-Winvalid-pch，维护者 Linux 构建实测）
     target_compile_definitions(oxbow_testlib PUBLIC UNICODE _UNICODE)
     target_precompile_headers(oxbow_testlib PRIVATE src/pch.h)
+    # 测试库同挂一份：tst_IconSource 需要 :/fonts/...；静态库资源不被引用不入链接，
+    # 由测试侧 Q_INIT_RESOURCE 兜底
+    qt_add_resources(oxbow_testlib "fonts"
+        PREFIX "/fonts"
+        BASE "fonts"
+        FILES fonts/MaterialSymbolsRounded_Filled-Regular.ttf
+    )
     if(MSVC)
         target_compile_options(oxbow_testlib PRIVATE /utf-8)
     endif()
@@ -723,6 +705,7 @@ if(OXBOW_BUILD_TESTS)
     oxbow_add_test(WindowTitleBar)
     oxbow_add_test(FrameMetrics)
     oxbow_add_test(ExternalTool)
+    oxbow_add_test(IconSource)
     oxbow_add_test(AiSubtitleCatalog)
     oxbow_add_test(SrtAssembler)
     # rclone crypt 的两套件与特性同进退（关掉就没有被测对象）；FileByteStream 是通用

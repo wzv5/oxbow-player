@@ -229,7 +229,7 @@ cmake --build build
 - [Qt](https://www.qt.io/)——应用框架
 - [MediaInfo](https://mediaarea.net/en/MediaInfo)——可选的媒体元数据
 - [libsodium](https://libsodium.org/) · [OpenSSL](https://www.openssl.org/)——Rclone Crypt 后端的加密原语
-- [Icons8](https://icons8.com/)——默认图标包
+- [Google Material Symbols](https://fonts.google.com/icons)——内置图标字体（Apache-2.0）
 
 ## 开源协议
 

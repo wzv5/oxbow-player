@@ -27,8 +27,7 @@ QString ExtensionFilterEdit::text() const { return m_edit->text(); }
 void ExtensionFilterEdit::setText(const QString &text) { m_edit->setText(text); }
 
 void ExtensionFilterEdit::retintResetButton() {
-    m_resetBtn->setIcon(
-        Ui::themedIcon(App::iconPath(App::iconReset()), palette().color(QPalette::WindowText)));
+    m_resetBtn->setIcon(Ui::themedIcon(App::iconRefresh(), palette().color(QPalette::WindowText)));
 }
 
 void ExtensionFilterEdit::changeEvent(QEvent *event) {

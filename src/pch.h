@@ -144,6 +144,7 @@
 #include <QTemporaryFile>
 #include <QTextCursor>
 #include <QTextEdit>
+#include <QTextLayout>
 #include <QTextOption>
 #include <QTextStream>
 #include <QThread>

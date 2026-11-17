@@ -3654,9 +3654,9 @@ void PlaylistWidget::retintIcons() {
     if (!m_locateButton || !m_searchAction)
         return;
     QColor tint = palette().color(QPalette::Text);
-    m_locateButton->setIcon(Ui::themedIcon(App::iconPath(App::iconLocatePlaying()), tint));
+    m_locateButton->setIcon(Ui::themedIcon(App::iconMyLocation(), tint));
     tint.setAlpha(128);
-    m_searchAction->setIcon(Ui::themedIcon(App::iconPath(App::iconSearch()), tint));
+    m_searchAction->setIcon(Ui::themedIcon(App::iconSearch(), tint));
 }
 
 // 正播中判据（§2.4）：按钮启用态与定位入口的守卫共用，判据只此一份

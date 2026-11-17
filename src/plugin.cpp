@@ -8,9 +8,6 @@
 #include <mpv/client.h>
 #include <mpv/stream_cb.h> // N52：mpv_stream_cb_add_ro 声明
 
-// 让本模块导入表含 QtSvg（原因见入口处的锚点调用）
-#include <QtSvg/QSvgRenderer>
-
 #include "AppPaths.h"
 #include "Constants.h"
 #include "ExternalTool.h"
@@ -262,14 +259,6 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle) {
     int64_t existingWid = -1;
     if (mpv_get_property(handle, "wid", MPV_FORMAT_INT64, &existingWid) >= 0 && existingWid > 0)
         return 0; // 让位不算失败
-
-    // 本模块不用 QSvgRenderer，构造一次只为留下 QtSvg 导入项：svg 图标依赖的
-    // iconengines / imageformats 插件须先有 QtSvg 常驻才加载得上；必须真调用——
-    // 裸取地址会被优化器折叠，导入项静默消失（表现：图标全空且构建无异常）
-    {
-        QSvgRenderer svgAnchor;
-        Q_UNUSED(svgAnchor);
-    }
 
     // argc/argv 的生命周期必须覆盖整个进程
     static int argc = 1;

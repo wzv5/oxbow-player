@@ -1732,7 +1732,7 @@ void SettingsDialog::showResetMenu(const SettingItem *item, QToolButton *button)
 
 void SettingsDialog::retintResetIcons() {
     const QColor tint = palette().color(QPalette::WindowText);
-    const QIcon icon = Ui::themedIcon(App::iconPath(App::iconReset()), tint);
+    const QIcon icon = Ui::themedIcon(App::iconRefresh(), tint);
     for (auto *btn : m_resetButtons)
         btn->setIcon(icon);
 }

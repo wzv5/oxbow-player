@@ -55,18 +55,18 @@ QImage renderBadge(bool paused, int px, bool dark) {
 
     const int glyph = qRound(px * 0.70);
     const QRect target((px - glyph) / 2, (px - glyph) / 2, glyph, glyph);
-    Ui::themedIcon(App::iconPath(paused ? App::iconPause() : App::iconPlay()), glyphTint(dark))
+    Ui::themedIcon(paused ? App::iconPause() : App::iconPlayArrow(), glyphTint(dark))
         .paint(&painter, target, Qt::AlignCenter, QIcon::Normal, QIcon::Off);
     return image;
 }
 
 // 工具条图标：透明底 + 按系统深浅色染色的 glyph
-QImage renderGlyph(const QString &iconKey, int px, const QColor &tint) {
+QImage renderGlyph(const QString &name, int px, const QColor &tint) {
     QImage image(px, px, QImage::Format_ARGB32_Premultiplied);
     image.fill(Qt::transparent);
 
     QPainter painter(&image);
-    Ui::themedIcon(App::iconPath(iconKey), tint)
+    Ui::themedIcon(name, tint)
         .paint(&painter, image.rect(), Qt::AlignCenter, QIcon::Normal, QIcon::Off);
     return image;
 }
@@ -410,9 +410,9 @@ void TaskbarIntegration::buildButtonIcons() {
         return;
 
     const QColor tint = glyphTint(dark);
-    HICON prev = createHIcon(renderGlyph(App::iconSkipBackward(), px, tint));
-    HICON next = createHIcon(renderGlyph(App::iconSkipForward(), px, tint));
-    HICON play = createHIcon(renderGlyph(App::iconPlay(), px, tint));
+    HICON prev = createHIcon(renderGlyph(App::iconSkipPrevious(), px, tint));
+    HICON next = createHIcon(renderGlyph(App::iconSkipNext(), px, tint));
+    HICON play = createHIcon(renderGlyph(App::iconPlayArrow(), px, tint));
     HICON pause = createHIcon(renderGlyph(App::iconPause(), px, tint));
     if (!prev || !next || !play || !pause) {
         // 建不出新的：旧图标与旧尺寸记账原样留着（下一次再试），不让工具条握着已销毁句柄

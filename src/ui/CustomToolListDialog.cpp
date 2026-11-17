@@ -122,10 +122,10 @@ QString CustomToolListDialog::listText(const QString &name) {
 
 void CustomToolListDialog::retintIcons() {
     const QColor tint = palette().color(QPalette::WindowText);
-    m_addButton->setIcon(Ui::themedIcon(App::iconPath(App::iconAdd()), tint));
-    m_deleteButton->setIcon(Ui::themedIcon(App::iconPath(App::iconRemove()), tint));
-    m_upButton->setIcon(Ui::themedIcon(App::iconPath(App::iconMoveUp()), tint));
-    m_downButton->setIcon(Ui::themedIcon(App::iconPath(App::iconMoveDown()), tint));
+    m_addButton->setIcon(Ui::themedIcon(App::iconAdd(), tint));
+    m_deleteButton->setIcon(Ui::themedIcon(App::iconDeleteForever(), tint));
+    m_upButton->setIcon(Ui::themedIcon(App::iconKeyboardArrowUp(), tint));
+    m_downButton->setIcon(Ui::themedIcon(App::iconKeyboardArrowDown(), tint));
 }
 
 // m_addButton 为空即控件树尚未建成，无事可做

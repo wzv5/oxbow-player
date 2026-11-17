@@ -4221,7 +4221,7 @@ void MainWindow::changeVolume(int delta) { applyVolume(m_volumeSlider->value() +
 // 供 retintIcons 重灌
 void MainWindow::applyPlayIcon(bool paused) {
     m_playIconPaused = paused;
-    m_playButton->setIcon(Ui::themedIcon(App::iconPath(paused ? App::iconPlay() : App::iconPause()),
+    m_playButton->setIcon(Ui::themedIcon(paused ? App::iconPlayArrow() : App::iconPause(),
                                          palette().color(QPalette::WindowText)));
 }
 
@@ -4233,12 +4233,12 @@ void MainWindow::retintIcons() {
         return;
     const QColor tint = palette().color(QPalette::WindowText);
     applyPlayIcon(m_playIconPaused);
-    m_stopButton->setIcon(Ui::themedIcon(App::iconPath(App::iconStop()), tint));
-    m_prevButton->setIcon(Ui::themedIcon(App::iconPath(App::iconSkipBackward()), tint));
-    m_nextButton->setIcon(Ui::themedIcon(App::iconPath(App::iconSkipForward()), tint));
-    m_streamButton->setIcon(Ui::themedIcon(App::iconPath(App::iconStream()), tint));
-    m_settingsButton->setIcon(Ui::themedIcon(App::iconPath(App::iconSettings()), tint));
-    m_playlistToggle->setIcon(Ui::themedIcon(App::iconPath(App::iconPlaylist()), tint,
+    m_stopButton->setIcon(Ui::themedIcon(App::iconStop(), tint));
+    m_prevButton->setIcon(Ui::themedIcon(App::iconSkipPrevious(), tint));
+    m_nextButton->setIcon(Ui::themedIcon(App::iconSkipNext(), tint));
+    m_streamButton->setIcon(Ui::themedIcon(App::iconStream(), tint));
+    m_settingsButton->setIcon(Ui::themedIcon(App::iconSettings(), tint));
+    m_playlistToggle->setIcon(Ui::themedIcon(App::iconFormatListBulleted(), tint,
                                              palette().color(QPalette::HighlightedText)));
     applyMuteState(m_muteAction->isChecked());
 }
@@ -4249,9 +4249,8 @@ void MainWindow::retintIcons() {
 void MainWindow::applyMuteState(bool muted) {
     QSignalBlocker blocker(m_muteAction);
     m_muteAction->setChecked(muted);
-    m_muteButton->setIcon(
-        Ui::themedIcon(App::iconPath(muted ? App::iconVolumeMuted() : App::iconVolume()),
-                       palette().color(QPalette::WindowText)));
+    m_muteButton->setIcon(Ui::themedIcon(muted ? App::iconVolumeOff() : App::iconVolumeUp(),
+                                         palette().color(QPalette::WindowText)));
 }
 
 // B11 / N56 §2.7：取名一律读正播实体的显示名 title()（与列表行同一字段，标题与 OSD #2

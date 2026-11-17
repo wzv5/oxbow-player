@@ -299,13 +299,13 @@ bool SubtitleBrowserDialog::eventFilter(QObject *watched, QEvent *event) {
 void SubtitleBrowserDialog::retintIcons() {
     // 六枚图标的唯一赋值点（外观事件重染与初值共用，与播放列表底栏同款）
     QColor tint = palette().color(QPalette::Text);
-    m_earlierButton->setIcon(Ui::themedIcon(App::iconPath(App::iconRewind()), tint));
-    m_laterButton->setIcon(Ui::themedIcon(App::iconPath(App::iconFastForward()), tint));
-    m_resetButton->setIcon(Ui::themedIcon(App::iconPath(App::iconTimeRollback()), tint));
-    m_locateButton->setIcon(Ui::themedIcon(App::iconPath(App::iconLocatePlaying()), tint));
-    m_reloadButton->setIcon(Ui::themedIcon(App::iconPath(App::iconReset()), tint));
+    m_earlierButton->setIcon(Ui::themedIcon(App::iconFastRewind(), tint));
+    m_laterButton->setIcon(Ui::themedIcon(App::iconFastForward(), tint));
+    m_resetButton->setIcon(Ui::themedIcon(App::iconSettingsBackupRestore(), tint));
+    m_locateButton->setIcon(Ui::themedIcon(App::iconMyLocation(), tint));
+    m_reloadButton->setIcon(Ui::themedIcon(App::iconRefresh(), tint));
     tint.setAlpha(128);
-    m_searchAction->setIcon(Ui::themedIcon(App::iconPath(App::iconSearch()), tint));
+    m_searchAction->setIcon(Ui::themedIcon(App::iconSearch(), tint));
     updateMaskTint();
 }
 
