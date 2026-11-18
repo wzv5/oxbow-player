@@ -11,6 +11,10 @@ ProviderSettingsPage::ProviderSettingsPage(QWidget *parent) : QWidget(parent) {}
 void ProviderSettingsPage::enableTransitOption(std::optional<bool> initial) {
     auto *box = qobject_cast<QVBoxLayout *>(layout());
     Q_ASSERT(box);
+    auto *separator = new QFrame(this);
+    separator->setFrameShape(QFrame::HLine);
+    separator->setFrameShadow(QFrame::Sunken);
+    box->addWidget(separator);
     if (initial.has_value()) {
         m_transitCheck = new QCheckBox(tr("Relay through plugin (custom protocol)"));
         m_transitCheck->setChecked(*initial);

@@ -958,15 +958,11 @@ class JellyfinSettingsPage : public ProviderSettingsPage {
 
         // 扩展名过滤（与本地目录表同款：空 = 不过滤；复位回全局默认清单）
         m_extFilter = new ExtensionFilterEdit;
+        form->addRow(tr("Filter"), m_extFilter);
         auto *extNote =
             new QLabel(tr("Space-separated file extensions; leave empty for no filter"));
-        // 不开 wordWrap：备注按单行计入宽度，由它把表单区（进而对话框）撑宽
-        // （WebDAV 页同款口径）
-        extNote->setEnabled(false); // 禁用态即取调色板的灰，跟随主题不硬编码颜色
-        auto *extField = new QVBoxLayout;
-        extField->addWidget(m_extFilter);
-        extField->addWidget(extNote);
-        form->addRow(tr("Filter"), extField);
+        extNote->setEnabled(false);
+        form->addRow(extNote);
 
         layout->addLayout(form);
         // 转接行（Required = 底部说明行，无勾选框，N52 §2.8 契约）

@@ -83,21 +83,11 @@ class DirSettingsPage : public ProviderSettingsPage {
         form->addRow(tr("Browse Mode"), m_modeCombo);
 
         m_extFilter = new ExtensionFilterEdit;
-        // 说明文字移到编辑框下方单独一行（原在标题的括号里），灰色显示：
-        // 标题只写 Filter，扩展名这一层含义由本行说明承担
+        form->addRow(tr("Filter"), m_extFilter);
         auto *extNote =
             new QLabel(tr("Space-separated file extensions; leave empty for no filter"));
-        // 不开 wordWrap：备注按单行计入宽度，由它把表单区（进而对话框）撑宽。
-        // 开换行会让 QLabel 变成"用高度换宽度"，布局反而不为它撑宽、把它压到折行
-        extNote->setEnabled(false); // 禁用态即取调色板的灰，跟随主题不硬编码颜色
-        // 备注右侧留 12px：它是本列最宽的一项，不留就会直接贴住窗口右边
-        auto *noteRow = new QHBoxLayout;
-        noteRow->addWidget(extNote);
-        noteRow->addSpacing(12);
-        auto *extField = new QVBoxLayout;
-        extField->addWidget(m_extFilter);
-        extField->addLayout(noteRow);
-        form->addRow(tr("Filter"), extField);
+        extNote->setEnabled(false);
+        form->addRow(extNote);
 
         layout->addLayout(form);
         // 表单区在对话框里被纵向拉伸：不加尾部伸缩项，多余空间会被均摊到各行之间

@@ -781,19 +781,10 @@ class ExternalSettingsPage : public ProviderSettingsPage {
         row->addWidget(m_pathEdit, 1);
         auto *browseBtn = new QPushButton(tr("Browse…"));
         row->addWidget(browseBtn);
-        // 说明文字在编辑框下方单独一行，灰色显示（与本地目录过滤器的备注同格式，
-        // 变更记录 V6）：不开 wordWrap——备注按单行计入宽度，由它把表单区（进而
-        // 对话框）撑宽；开换行会让 QLabel 变成"用高度换宽度"，布局反而不为它撑宽
+        form->addRow(tr("Path"), row);
         auto *pathNote = new QLabel(tr("Supports m3u and txt playlist formats, or an http(s) URL"));
-        pathNote->setEnabled(false); // 禁用态即取调色板的灰，跟随主题不硬编码颜色
-        // 备注右侧留 12px：它是本列最宽的一项，不留就会直接贴住窗口右边
-        auto *noteRow = new QHBoxLayout;
-        noteRow->addWidget(pathNote);
-        noteRow->addSpacing(12);
-        auto *pathField = new QVBoxLayout;
-        pathField->addLayout(row);
-        pathField->addLayout(noteRow);
-        form->addRow(tr("Path"), pathField);
+        pathNote->setEnabled(false);
+        form->addRow(pathNote);
         layout->addLayout(form);
         // 同目录页：把被拉伸出来的余量压到内容之下，避免行间距被均摊撑大
         layout->addStretch(1);

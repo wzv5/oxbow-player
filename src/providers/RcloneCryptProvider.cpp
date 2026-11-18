@@ -366,8 +366,7 @@ class RcloneCryptSettingsPage : public ProviderSettingsPage {
         m_rootEdit = new QLineEdit;
         auto *rootRow = new QHBoxLayout;
         rootRow->addWidget(m_rootEdit, 1);
-        auto *browseBtn = new QPushButton(QStringLiteral("…"));
-        browseBtn->setFixedWidth(28);
+        auto *browseBtn = new QPushButton(tr("Browse…"));
         browseBtn->setToolTip(tr("Browse for encrypted directory"));
         rootRow->addWidget(browseBtn);
         form->addRow(tr("Encrypted Directory"), rootRow);
@@ -396,35 +395,24 @@ class RcloneCryptSettingsPage : public ProviderSettingsPage {
         m_encodingCombo->addItem(tr("base64"));
         form->addRow(tr("Filename Encoding"), m_encodingCombo);
 
-        m_dirNamesCheck =
-            new QCheckBox(tr("Encrypt directory names (only when filename encryption is on)"));
-        form->addRow(QString(), m_dirNamesCheck);
+        m_dirNamesCheck = new QCheckBox(tr("Encrypt directory names"));
+        form->addRow(m_dirNamesCheck);
 
         m_suffixEdit = new QLineEdit;
-        auto *suffixNote = new QLabel(tr("Only used when filename encryption is off"));
-        suffixNote->setEnabled(false);
-        auto *suffixField = new QVBoxLayout;
-        suffixField->addWidget(m_suffixEdit);
-        suffixField->addWidget(suffixNote);
-        form->addRow(tr("Suffix"), suffixField);
+        form->addRow(tr("Suffix"), m_suffixEdit);
 
         m_strictCheck = new QCheckBox(tr("Fail on undecryptable names (strict names)"));
-        form->addRow(QString(), m_strictCheck);
+        form->addRow(m_strictCheck);
         m_passBadBlocksCheck =
             new QCheckBox(tr("Deliver zeroed block on MAC failure (pass bad blocks)"));
-        form->addRow(QString(), m_passBadBlocksCheck);
+        form->addRow(m_passBadBlocksCheck);
 
         m_extFilter = new ExtensionFilterEdit;
+        form->addRow(tr("Filter"), m_extFilter);
         auto *extNote =
             new QLabel(tr("Space-separated file extensions; leave empty for no filter"));
         extNote->setEnabled(false);
-        auto *noteRow = new QHBoxLayout;
-        noteRow->addWidget(extNote);
-        noteRow->addSpacing(12);
-        auto *extField = new QVBoxLayout;
-        extField->addWidget(m_extFilter);
-        extField->addLayout(noteRow);
-        form->addRow(tr("Filter"), extField);
+        form->addRow(extNote);
 
         layout->addLayout(form);
         // N52 §2.8：Required 类型不给勾选框，只在页底加一行说明
@@ -451,6 +439,10 @@ class RcloneCryptSettingsPage : public ProviderSettingsPage {
             m_suffixEdit->setText(QStringLiteral(".bin"));
             m_extFilter->setText(App::defaultMediaExtensions().join(QLatin1Char(' ')));
         }
+
+        connect(m_nameModeCombo, &QComboBox::currentIndexChanged, this,
+                [this] { updateModeDependentEnabled(); });
+        updateModeDependentEnabled();
 
         connect(browseBtn, &QPushButton::clicked, this, [this] {
             const QString dir = QFileDialog::getExistingDirectory(this, tr("Encrypted Directory"),
@@ -500,6 +492,13 @@ class RcloneCryptSettingsPage : public ProviderSettingsPage {
     }
     QStringList extensionsValue() const {
         return RcloneCryptProvider::parseExtensions(m_extFilter->text());
+    }
+
+    void updateModeDependentEnabled() {
+        const RcloneCrypt::NameMode mode = nameModeValue();
+        m_encodingCombo->setEnabled(mode == RcloneCrypt::NameMode::Standard);
+        m_dirNamesCheck->setEnabled(mode != RcloneCrypt::NameMode::Off);
+        m_suffixEdit->setEnabled(mode == RcloneCrypt::NameMode::Off);
     }
 
     const RcloneCryptProvider *m_seed = nullptr;
