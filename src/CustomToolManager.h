@@ -2,14 +2,20 @@
 
 #include "pch.h"
 
+// N168：控制栏按钮的插入侧
+enum class BarSide { Left, Right };
+
 // N134：单条自定义工具。name 是 '>' 分层的菜单路径——加载期只去首尾空白、保留手写
-// 原样，经编辑对话框确定时按 normalizedPath 重组；note 仅编辑对话框可见，不进任何展示面；
-// key 是可选插件快捷键（N138），空序列即"仅菜单项"
+// 原样，经编辑对话框确定时按 normalizedPath 重组；key 是可选插件快捷键（N138），空
+// 序列即"仅菜单项"。N168 的 barIcon 为 Material Symbols 连字名，与 name / command
+// 同口径 trim 且不校验字形，留空即无字形按钮
 struct CustomTool {
     QString name;
     QString command;
-    QString note;
     QKeySequence key;
+    bool barShow = false;
+    BarSide barSide = BarSide::Left;
+    QString barIcon;
 };
 
 // N134：自定义工具单表（oxbow.ini 的 [Tools]，形态与 BookmarkManager 同构）；
@@ -52,9 +58,9 @@ class CustomToolManager : public QObject {
         QString key;             // DuplicateKey 的键（PortableText，提示文案用）
         QList<CustomTool> tools; // 通过时的保留行（已规范化）；违规时为空
     };
-    // 确定语义的唯一收口：逐条规范化（名称重组、命令 trim、备注与键原样）→ 按表序校验
-    // → 丢弃占位条目。名称与命令皆空的占位条目（等待输入）连备注与键一并丢弃、不判违规，
-    // 故可以产出空表；恰一者为空即违规、tools 留空交调用方原地处置
+    // 确定语义的唯一收口：逐条规范化（名称重组、命令与图标 trim、其余字段原样）→
+    // 按表序校验 → 丢弃占位条目。名称与命令皆空的占位条目（等待输入）连同其余字段
+    // 一并丢弃、不判违规，故可以产出空表；恰一者为空即违规、tools 留空交调用方原地处置
     static Sanitized sanitize(const QList<CustomTool> &tools);
 
     // N138：键位规划——"装不装键"与"算不算工具间重键"的唯一判据。按表序逐条：空键不安装

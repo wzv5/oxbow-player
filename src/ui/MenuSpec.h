@@ -141,10 +141,10 @@ inline constexpr Item kHelpItems[] = {installDependencies(), checkUpdates(), abo
 inline constexpr Item kHelpItems[] = {checkUpdates(), about()};
 #endif
 
-// N134：Tools 组
+// N134：Tools 组。N168：覆盖态裁掉编辑入口，键位通路由 customizeTools 守卫
 inline constexpr Item kToolsItems[] = {
     section(Item::Kind::Tools),
-    action(ActionManager::Id::CustomizeTools),
+    action(ActionManager::Id::CustomizeTools, HideIn::Both),
 };
 
 inline constexpr Group kGroups[] = {

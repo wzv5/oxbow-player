@@ -926,7 +926,8 @@ MainWindow::MainWindow(MpvController *controller, AppearanceManager *appearance,
     // N134
     m_toolMgr = new CustomToolManager(App::paths().iniFile(), this);
     m_toolMgr->load();
-    rebuildToolActions(); // N138：AM 键位已在此前 applyShortcutOverrides 落定
+    rebuildToolActions();       // N138：AM 键位已在此前 applyShortcutOverrides 落定
+    rebuildControlBarButtons(); // N168：首帧前按默认视频宽兜底一次显隐
 
     m_marks = new MarkAggregator(m_bookmarkMgr); // N15：标记聚合器
 
@@ -1203,10 +1204,20 @@ QWidget *MainWindow::createLeftArea() {
     controlLayout->addWidget(m_nextButton);
     controlLayout->addSpacing(8);
     controlLayout->addWidget(m_timeLabel);
+    // N168：左组紧随时间标签，右组顶在流钮之前
+    m_leftToolBar = new ControlBarToolBox;
+    m_rightToolBar = new ControlBarToolBox;
+    controlLayout->addWidget(m_leftToolBar);
     controlLayout->addStretch(1);
+    controlLayout->addWidget(m_rightToolBar);
     controlLayout->addWidget(m_streamButton);
     controlLayout->addWidget(m_settingsButton);
     controlLayout->addWidget(m_playlistToggle);
+    // N168：两基准一次算定，此后不随布局变化。304 是零按钮且流钮隐藏时控制行除
+    // 标签外的最小宽（边距、四钮、加隔、设置与列表钮及八道间距之和）；标签宽经
+    // N166 setFixedWidth 落在 minimumWidth 上，构造期读它而非 crect
+    m_controlSlotStride = 36 + controlLayout->spacing();
+    m_controlBaseMinWidth = m_timeLabel->minimumWidth() + 304;
     bottomLayout->addWidget(controlRow);
     layout->addWidget(m_bottomBar); // 左 pane 布局末项（N66 容器）
 
@@ -3865,6 +3876,7 @@ bool MainWindow::event(QEvent *event) {
     // N162：合并落位事件的派发点，事件循环取回控制权后才执行
     if (event->type() == kVideoGeometrySyncEvent) {
         syncVideoGeometry();
+        reflowControlBarButtons(); // N168：显隐重算的唯一触发点
         return true;
     }
     if (event->type() == QEvent::ShortcutOverride && yieldOwnsKeyboard()) {
@@ -4241,6 +4253,9 @@ void MainWindow::retintIcons() {
     m_playlistToggle->setIcon(Ui::themedIcon(App::iconFormatListBulleted(), tint,
                                              palette().color(QPalette::HighlightedText)));
     applyMuteState(m_muteAction->isChecked());
+    // N168：按表位重染，含当前隐藏的按钮
+    for (int i = 0; i < m_customToolButtons.size(); ++i)
+        m_customToolButtons.at(i)->setIcon(Ui::themedIcon(m_customToolIconNames.at(i), tint));
 }
 
 // N38：静音状态联动单一出口——菜单勾选与图标按钮同一处刷新，两者共用同一
@@ -5407,6 +5422,59 @@ void MainWindow::rebuildToolActions() {
                             << "not installed; already claimed by" << c.owner;
 }
 
+ControlBarToolBox::ControlBarToolBox(QWidget *parent) : QWidget(parent) {
+    m_layout = new QHBoxLayout(this);
+    m_layout->setContentsMargins(0, 0, 0, 0);
+    m_layout->setSpacing(8);
+}
+
+// N168：先删后建，只换容器内容不动锚点；barShow 行才出生，表序即按钮序。建完隐藏，
+// 显隐交 reflow；点击复用 runToolCommand，tooltip 取名字末段
+void MainWindow::rebuildControlBarButtons() {
+    qDeleteAll(m_customToolButtons);
+    m_customToolButtons.clear();
+    m_customToolIconNames.clear();
+    if (!m_leftToolBar || !m_rightToolBar)
+        return;
+    const QList<CustomTool> &tools = m_toolMgr->tools();
+    m_customToolButtons.reserve(tools.size());
+    m_customToolIconNames.reserve(tools.size());
+    for (const CustomTool &tool : tools) {
+        if (!tool.barShow)
+            continue;
+        auto *button = new QPushButton(QString());
+        button->setToolTip(CustomToolManager::pathSegments(tool.name).constLast());
+        button->setFixedSize(36, 36);
+        button->setIconSize(QSize(24, 24));
+        button->setFocusPolicy(Qt::NoFocus);
+        button->setIcon(Ui::themedIcon(tool.barIcon, palette().color(QPalette::WindowText)));
+        connect(button, &QAbstractButton::pressed, button, [] {
+            if (auto *fw = QApplication::focusWidget())
+                fw->clearFocus();
+        });
+        connect(button, &QPushButton::clicked, this,
+                [this, name = tool.name, cmd = tool.command] { runToolCommand(name, cmd); });
+        (tool.barSide == BarSide::Right ? m_rightToolBar : m_leftToolBar)->addButton(button);
+        button->hide();
+        m_customToolButtons.append(button);
+        m_customToolIconNames.append(tool.barIcon);
+    }
+    reflowControlBarButtons();
+}
+
+// N168：显隐唯一判定点。W 与 syncVideoGeometry 同源；恒预留流钮一槽（-1），故其
+// 显隐不增减按钮数。显隐只认全局表序、不按 barSide 分层
+void MainWindow::reflowControlBarButtons() {
+    if (!m_videoPlaceholder)
+        return;
+    const int w = m_fullscreen ? width() : m_videoPlaceholder->width();
+    const int budget = m_controlSlotStride > 0
+                           ? qMax(0, (w - m_controlBaseMinWidth) / m_controlSlotStride - 1)
+                           : 0;
+    for (int i = 0; i < m_customToolButtons.size(); ++i)
+        m_customToolButtons.at(i)->setVisible(i < budget);
+}
+
 // N134：同步下发；失败走 OSD 与日志，日志只记 label 与错误码——不记命令原文
 // （可能含凭据）
 void MainWindow::runToolCommand(const QString &label, const QString &command) {
@@ -5467,12 +5535,15 @@ void MainWindow::buildMpvMenuItems(QMenu &menu, const QList<MpvController::MenuD
 }
 
 void MainWindow::customizeTools() {
+    if (m_mini || m_fullscreen) // N168：菜单已裁剪，此处兜键位通路
+        return;
     CustomToolListDialog dlg(m_toolMgr->tools(), m_actions, this);
     if (dlg.exec() != QDialog::Accepted)
         return;
     if (!m_toolMgr->replaceTools(dlg.tools()))
         OXBOW_LOG_WARNING() << "failed to save custom tool list to ini";
-    rebuildToolActions(); // 落盘失败时内存表仍生效，动作照常重建
+    rebuildToolActions();       // 落盘失败时内存表仍生效，动作照常重建
+    rebuildControlBarButtons(); // N168：落盘失败也按内存表重建
 }
 
 // N43：滤镜动态段——两个子菜单按 af / vf 现读重建，勾选态即启用位；无条目则该子菜单

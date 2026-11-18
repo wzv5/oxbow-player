@@ -28,6 +28,7 @@ class CustomToolListDialog : public QDialog {
     void moveTool(int delta);
     void loadRow(int row);
     void updateButtons();
+    void updateBarControlsEnabled();
     void retintIcons();
     static QString listText(const QString &name);
 
@@ -35,7 +36,10 @@ class CustomToolListDialog : public QDialog {
     QLineEdit *m_nameEdit = nullptr;
     QLineEdit *m_commandEdit = nullptr;
     QKeySequenceEdit *m_keyEdit = nullptr;
-    QLineEdit *m_noteEdit = nullptr;
+    // N168：后两项的启用态由勾选框驱动
+    QCheckBox *m_barShowCheck = nullptr;
+    QComboBox *m_barSideCombo = nullptr;
+    QLineEdit *m_barIconEdit = nullptr;
     QToolButton *m_addButton = nullptr;
     QToolButton *m_deleteButton = nullptr;
     QToolButton *m_upButton = nullptr;

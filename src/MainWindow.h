@@ -44,6 +44,18 @@ class DependencyInstallerWizard; // N150：安装向导（按需创建，QPointe
 class UpdateChecker;             // N151：检查更新后端（主窗子对象）
 class UpdateDialog;              // N151：检查更新对话框（按需创建，QPointer 兜底）
 
+// N168：控制行按钮组容器。minimumSizeHint 恒为 0，使按钮显隐不顶高视频区 480 下限；
+// 须保留默认 Preferred 策略、不显式设最小宽，否则最小贡献非零
+class ControlBarToolBox : public QWidget {
+  public:
+    explicit ControlBarToolBox(QWidget *parent = nullptr);
+    void addButton(QPushButton *button) { m_layout->addWidget(button); }
+    QSize minimumSizeHint() const override { return QSize(0, 0); }
+
+  private:
+    QHBoxLayout *m_layout = nullptr;
+};
+
 class MainWindow : public QMainWindow, public WindowStateHost {
     Q_OBJECT
     // N156：子控件边缘的缩放热区与光标转发（qApp 级过滤器；Windows 边缘由系统
@@ -208,6 +220,10 @@ class MainWindow : public QMainWindow, public WindowStateHost {
     void buildToolSection(QMenu &menu);
     // N138：常驻工具动作组重建——与 tools() 等长，装不装键由 planKeys 单点判定
     void rebuildToolActions();
+    // N168：工具表变化时重建控制栏按钮
+    void rebuildControlBarButtons();
+    // N168：按视频区宽重算显隐；唯一判定点，触发在几何同步出口与重建末尾
+    void reflowControlBarButtons();
     // N134：工具命令执行唯一收口——失败 OSD，日志不记命令原文；N135 的 mpv
     // menu-data 条目同走这里
     void runToolCommand(const QString &label, const QString &command);
@@ -663,6 +679,15 @@ class MainWindow : public QMainWindow, public WindowStateHost {
     CustomToolManager *m_toolMgr = nullptr;
     // N138：常驻工具动作组，与 tools() 等长；parent 是主窗，菜单 clear() 只摘除不销毁
     QList<QAction *> m_toolActions;
+    // N168：两表与全部 barShow 工具按表序对应，不随预算截断删减
+    ControlBarToolBox *m_leftToolBar = nullptr;
+    ControlBarToolBox *m_rightToolBar = nullptr;
+    QList<QPushButton *> m_customToolButtons;
+    QList<QString> m_customToolIconNames;
+    // N168：预算基准——零按钮且流钮隐藏时的控制行最小宽，步长为钮宽加一间距；
+    // createLeftArea 一次算定
+    int m_controlBaseMinWidth = 0;
+    int m_controlSlotStride = 0;
     // R3：设置对话框（非模态，按需创建）
     class SettingsDialog *m_settingsDialog = nullptr;
     // N86：快捷键编辑对话框（非模态，按需创建）

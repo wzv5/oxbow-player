@@ -18,7 +18,11 @@ void CustomToolManager::load() {
         CustomTool tool;
         tool.name = s.value(bp + QStringLiteral("/name")).toString().trimmed();
         tool.command = s.value(bp + QStringLiteral("/command")).toString().trimmed();
-        tool.note = s.value(bp + QStringLiteral("/note")).toString(); // 原样保留，不 trim
+        // N168：旧配置缺这些键时取默认值
+        tool.barShow = s.value(bp + QStringLiteral("/barShow")).toBool();
+        tool.barSide =
+            s.value(bp + QStringLiteral("/barSide")).toInt() == 1 ? BarSide::Right : BarSide::Left;
+        tool.barIcon = s.value(bp + QStringLiteral("/barIcon")).toString().trimmed();
         // 手改坏的数据不参与菜单
         if (tool.command.isEmpty() || pathSegments(tool.name).isEmpty()) {
             OXBOW_LOG_WARNING() << "custom tool entry" << i
@@ -74,8 +78,9 @@ CustomToolManager::Sanitized CustomToolManager::sanitize(const QList<CustomTool>
     kept.reserve(tools.size());
     for (int i = 0; i < tools.size(); ++i) {
         const QStringList segments = pathSegments(tools[i].name);
-        const CustomTool tool{joinPath(segments), tools[i].command.trimmed(), tools[i].note,
-                              tools[i].key};
+        const CustomTool tool{joinPath(segments), tools[i].command.trimmed(),
+                              tools[i].key,       tools[i].barShow,
+                              tools[i].barSide,   tools[i].barIcon.trimmed()};
         const bool nameEmpty = tool.name.isEmpty();
         const bool commandEmpty = tool.command.isEmpty();
         if (nameEmpty && commandEmpty)
@@ -170,9 +175,11 @@ bool CustomToolManager::save() const {
         const QString bp = QStringLiteral("Tools/%1").arg(i);
         s.setValue(bp + QStringLiteral("/name"), m_tools[i].name);
         s.setValue(bp + QStringLiteral("/command"), m_tools[i].command);
-        s.setValue(bp + QStringLiteral("/note"), m_tools[i].note);
         s.setValue(bp + QStringLiteral("/key"),
                    m_tools[i].key.toString(QKeySequence::PortableText));
+        s.setValue(bp + QStringLiteral("/barShow"), m_tools[i].barShow);
+        s.setValue(bp + QStringLiteral("/barSide"), m_tools[i].barSide == BarSide::Right ? 1 : 0);
+        s.setValue(bp + QStringLiteral("/barIcon"), m_tools[i].barIcon);
     }
     s.sync();
     return s.status() == QSettings::NoError;

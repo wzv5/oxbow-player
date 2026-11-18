@@ -53,7 +53,15 @@ CustomToolListDialog::CustomToolListDialog(const QList<CustomTool> &tools,
     if (auto *le = m_keyEdit->findChild<QLineEdit *>())
         le->setContextMenuPolicy(Qt::NoContextMenu); // 内建右键菜单会遮住记录器自身
     m_keyEdit->installEventFilter(this);
-    m_noteEdit = new QLineEdit(this);
+    // N168：下拉两项顺序对齐 BarSide 的 0 / 1；图标提示恒禁用，不随勾选翻转
+    m_barShowCheck = new QCheckBox(tr("Show as control bar button"), this);
+    m_barSideCombo = new QComboBox(this);
+    m_barSideCombo->addItem(tr("Left"));
+    m_barSideCombo->addItem(tr("Right"));
+    m_barIconEdit = new QLineEdit(this);
+    auto *iconHint = new QLabel(tr("Material Symbols ligature name, e.g. play_arrow"), this);
+    iconHint->setEnabled(false);
+    iconHint->setFocusPolicy(Qt::NoFocus);
 
     auto *form = new QFormLayout;
     form->addRow(tr("Name"), m_nameEdit);
@@ -61,7 +69,10 @@ CustomToolListDialog::CustomToolListDialog(const QList<CustomTool> &tools,
     form->addRow(tr("Command"), m_commandEdit);
     form->addRow(QString(), commandHint);
     form->addRow(tr("Key"), m_keyEdit);
-    form->addRow(tr("Note"), m_noteEdit);
+    form->addRow(QString(), m_barShowCheck);
+    form->addRow(tr("Button position"), m_barSideCombo);
+    form->addRow(tr("Button icon"), m_barIconEdit);
+    form->addRow(QString(), iconHint);
 
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
@@ -87,10 +98,21 @@ CustomToolListDialog::CustomToolListDialog(const QList<CustomTool> &tools,
             return;
         m_tools[m_list->currentRow()].command = text;
     });
-    connect(m_noteEdit, &QLineEdit::textChanged, this, [this](const QString &text) {
+    connect(m_barShowCheck, &QCheckBox::toggled, this, [this](bool on) {
+        updateBarControlsEnabled();
         if (m_updating)
             return;
-        m_tools[m_list->currentRow()].note = text;
+        m_tools[m_list->currentRow()].barShow = on;
+    });
+    connect(m_barSideCombo, &QComboBox::currentIndexChanged, this, [this](int index) {
+        if (m_updating)
+            return;
+        m_tools[m_list->currentRow()].barSide = index == 1 ? BarSide::Right : BarSide::Left;
+    });
+    connect(m_barIconEdit, &QLineEdit::textChanged, this, [this](const QString &text) {
+        if (m_updating)
+            return;
+        m_tools[m_list->currentRow()].barIcon = text;
     });
     connect(m_keyEdit, &QKeySequenceEdit::keySequenceChanged, this,
             [this](const QKeySequence &seq) {
@@ -161,7 +183,10 @@ void CustomToolListDialog::loadRow(int row) {
     m_nameEdit->setText(m_tools[row].name);
     m_commandEdit->setText(m_tools[row].command);
     m_keyEdit->setKeySequence(m_tools[row].key);
-    m_noteEdit->setText(m_tools[row].note);
+    m_barShowCheck->setChecked(m_tools[row].barShow);
+    m_barSideCombo->setCurrentIndex(m_tools[row].barSide == BarSide::Right ? 1 : 0);
+    m_barIconEdit->setText(m_tools[row].barIcon);
+    updateBarControlsEnabled();
     updateButtons();
     m_updating = false;
 }
@@ -170,6 +195,12 @@ void CustomToolListDialog::updateButtons() {
     const int row = m_list->currentRow();
     m_upButton->setEnabled(row > 0);
     m_downButton->setEnabled(row >= 0 && row < m_tools.size() - 1);
+}
+
+void CustomToolListDialog::updateBarControlsEnabled() {
+    const bool on = m_barShowCheck->isChecked();
+    m_barSideCombo->setEnabled(on);
+    m_barIconEdit->setEnabled(on);
 }
 
 void CustomToolListDialog::addTool() {
@@ -208,7 +239,9 @@ void CustomToolListDialog::moveTool(int delta) {
     m_tools[row].name = m_nameEdit->text(); // 未提交的编辑随行带走
     m_tools[row].command = m_commandEdit->text();
     m_tools[row].key = m_keyEdit->keySequence();
-    m_tools[row].note = m_noteEdit->text();
+    m_tools[row].barShow = m_barShowCheck->isChecked();
+    m_tools[row].barSide = m_barSideCombo->currentIndex() == 1 ? BarSide::Right : BarSide::Left;
+    m_tools[row].barIcon = m_barIconEdit->text();
     m_tools.swapItemsAt(row, target);
     m_updating = true;
     QListWidgetItem *item = m_list->takeItem(row);

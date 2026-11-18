@@ -1,7 +1,9 @@
 // CustomToolManager 单元测试（N134）：INI 往返、pathSegments 切段规则、写失败
-// 不回滚、坏行跳过、note 不 trim、名称命令两端 trim、size 缺失 / 非数字按 0，
-// 以及确定语义收口 sanitize 的规范化 / 占位条目 / 缺失字段 / 前缀冲突判定。
+// 不回滚、坏行跳过、名称命令两端 trim、size 缺失 / 非数字按 0，以及确定语义收口
+// sanitize 的规范化 / 占位条目 / 缺失字段 / 前缀冲突判定。
 // N138：键的 PortableText 往返、坏键只丢键、sanitize 重键判定与 planKeys 优先级。
+// N168：控制栏三新字段的 INI 往返与 trim、旧配置缺省与 barSide 坏值钳制、
+// sanitize 收下三新字段。
 // 一类一可执行（R5）：oxbow_tests_CustomToolManager <槽名> 跑单个用例。
 
 #include "pch.h"
@@ -24,7 +26,8 @@ class TestCustomToolManager : public QObject {
     void emptyList();
     void saveFailure();
     void skipsEmptyNameOrCommand();
-    void missingNoteIsEmpty();
+    void barFieldsRoundTrip();
+    void barFieldsDefaultsAndClamp();
     void trimsOnLoad();
     void invalidSize();
     void normalizedPath();
@@ -34,6 +37,7 @@ class TestCustomToolManager : public QObject {
     void sanitizeInvalidPathCountsAsMissingName();
     void sanitizeReportsPrefixConflict();
     void sanitizeReportsDuplicateKey();
+    void sanitizeKeepsBarFields();
     void planKeysPriority();
 
   private:
@@ -50,11 +54,9 @@ void TestCustomToolManager::init() {
 void TestCustomToolManager::roundTrip() {
     CustomToolManager mgr(m_ini);
     const QList<CustomTool> tools = {
-        {QStringLiteral("Show text"), QStringLiteral("show-text \"hello\""),
-         QStringLiteral("demo 引号\"与中文")},
-        {QStringLiteral("Playback > Speed"), QStringLiteral("set speed 1.5"), QString()},
-        {QStringLiteral("A > B > C"), QStringLiteral("cycle pause"),
-         QStringLiteral("note with spaces")},
+        {QStringLiteral("Show text"), QStringLiteral("show-text \"hello\"")},
+        {QStringLiteral("Playback > Speed"), QStringLiteral("set speed 1.5")},
+        {QStringLiteral("A > B > C"), QStringLiteral("cycle pause")},
     };
     QVERIFY(mgr.replaceTools(tools));
     CustomToolManager reader(m_ini);
@@ -63,7 +65,6 @@ void TestCustomToolManager::roundTrip() {
     for (int i = 0; i < tools.size(); ++i) {
         QCOMPARE(reader.tools()[i].name, tools[i].name);
         QCOMPARE(reader.tools()[i].command, tools[i].command);
-        QCOMPARE(reader.tools()[i].note, tools[i].note);
     }
 }
 
@@ -98,8 +99,7 @@ void TestCustomToolManager::saveFailure() {
     file.close();
 
     CustomToolManager mgr(blocker + QStringLiteral("/tools.ini"));
-    const QList<CustomTool> tools = {
-        {QStringLiteral("A"), QStringLiteral("cycle pause"), QString()}};
+    const QList<CustomTool> tools = {{QStringLiteral("A"), QStringLiteral("cycle pause")}};
     QVERIFY(!mgr.replaceTools(tools));
     QCOMPARE(mgr.tools().size(), 1);
     QCOMPARE(mgr.tools()[0].name, QStringLiteral("A"));
@@ -125,16 +125,58 @@ void TestCustomToolManager::skipsEmptyNameOrCommand() {
     QCOMPARE(mgr.tools()[0].name, QStringLiteral("A"));
 }
 
-void TestCustomToolManager::missingNoteIsEmpty() {
-    QSettings s(m_ini, QSettings::IniFormat);
-    s.setValue(QStringLiteral("Tools/size"), 1);
-    s.setValue(QStringLiteral("Tools/0/name"), QStringLiteral("A"));
-    s.setValue(QStringLiteral("Tools/0/command"), QStringLiteral("cycle pause"));
-    s.sync();
+// N168：三新字段 INI 往返；带首尾空格的图标名 load 后 trim（与 name / command 同口径）
+void TestCustomToolManager::barFieldsRoundTrip() {
+    CustomToolManager mgr(m_ini);
+    const QList<CustomTool> tools = {
+        {QStringLiteral("A"), QStringLiteral("a"), QKeySequence(), true, BarSide::Left,
+         QStringLiteral("play_arrow")},
+        {QStringLiteral("B"), QStringLiteral("b"), QKeySequence(), false, BarSide::Right,
+         QStringLiteral("Bolt_2")},
+    };
+    QVERIFY(mgr.replaceTools(tools));
+    CustomToolManager reader(m_ini);
+    reader.load();
+    QCOMPARE(reader.tools().size(), tools.size());
+    for (int i = 0; i < tools.size(); ++i) {
+        QCOMPARE(reader.tools()[i].barShow, tools[i].barShow);
+        QVERIFY(reader.tools()[i].barSide == tools[i].barSide);
+        QCOMPARE(reader.tools()[i].barIcon, tools[i].barIcon);
+    }
+    {
+        QSettings s(m_ini, QSettings::IniFormat);
+        s.setValue(QStringLiteral("Tools/0/barIcon"), QStringLiteral("  edit_note  "));
+        s.sync();
+    }
+    CustomToolManager trimmed(m_ini);
+    trimmed.load();
+    QCOMPARE(trimmed.tools()[0].barIcon, QStringLiteral("edit_note"));
+}
+
+// N168：旧配置缺省与坏值钳制——无三新键按默认值；barSide 只认 1 为 Right，其余（含
+// 坏值与非数字）一律 Left
+void TestCustomToolManager::barFieldsDefaultsAndClamp() {
+    {
+        QSettings s(m_ini, QSettings::IniFormat);
+        s.setValue(QStringLiteral("Tools/size"), 3);
+        s.setValue(QStringLiteral("Tools/0/name"), QStringLiteral("A"));
+        s.setValue(QStringLiteral("Tools/0/command"), QStringLiteral("a"));
+        s.setValue(QStringLiteral("Tools/1/name"), QStringLiteral("B"));
+        s.setValue(QStringLiteral("Tools/1/command"), QStringLiteral("b"));
+        s.setValue(QStringLiteral("Tools/1/barSide"), 7);
+        s.setValue(QStringLiteral("Tools/2/name"), QStringLiteral("C"));
+        s.setValue(QStringLiteral("Tools/2/command"), QStringLiteral("c"));
+        s.setValue(QStringLiteral("Tools/2/barSide"), QStringLiteral("abc"));
+        s.sync();
+    }
     CustomToolManager mgr(m_ini);
     mgr.load();
-    QCOMPARE(mgr.tools().size(), 1);
-    QVERIFY(mgr.tools()[0].note.isEmpty());
+    QCOMPARE(mgr.tools().size(), 3);
+    QVERIFY(!mgr.tools()[0].barShow);
+    QVERIFY(mgr.tools()[0].barSide == BarSide::Left);
+    QVERIFY(mgr.tools()[0].barIcon.isEmpty());
+    QVERIFY(mgr.tools()[1].barSide == BarSide::Left);
+    QVERIFY(mgr.tools()[2].barSide == BarSide::Left);
 }
 
 void TestCustomToolManager::trimsOnLoad() {
@@ -142,13 +184,11 @@ void TestCustomToolManager::trimsOnLoad() {
     s.setValue(QStringLiteral("Tools/size"), 1);
     s.setValue(QStringLiteral("Tools/0/name"), QStringLiteral("  Spaced >  Name  "));
     s.setValue(QStringLiteral("Tools/0/command"), QStringLiteral("\t cycle pause "));
-    s.setValue(QStringLiteral("Tools/0/note"), QStringLiteral("  raw note  "));
     s.sync();
     CustomToolManager mgr(m_ini);
     mgr.load();
     QCOMPARE(mgr.tools()[0].name, QStringLiteral("Spaced >  Name"));
     QCOMPARE(mgr.tools()[0].command, QStringLiteral("cycle pause"));
-    QCOMPARE(mgr.tools()[0].note, QStringLiteral("  raw note  "));
 }
 
 void TestCustomToolManager::invalidSize() {
@@ -184,15 +224,17 @@ void TestCustomToolManager::sanitizeNormalizesAndKeeps() {
     using M = CustomToolManager;
     const QList<CustomTool> drafts = {
         CustomTool{QStringLiteral("  Playback >Speed  "), QStringLiteral("\tcycle pause\t"),
-                   QStringLiteral("  keep  ")},
-        CustomTool{QStringLiteral("Show text"), QStringLiteral("show-text \"hi\""), QString()},
+                   QKeySequence(), true, BarSide::Right, QStringLiteral("  play_arrow  ")},
+        CustomTool{QStringLiteral("Show text"), QStringLiteral("show-text \"hi\"")},
     };
     const M::Sanitized out = M::sanitize(drafts);
     QVERIFY(out.problem == M::Problem::None);
     QCOMPARE(out.tools.size(), 2);
     QCOMPARE(out.tools[0].name, QStringLiteral("Playback > Speed"));
     QCOMPARE(out.tools[0].command, QStringLiteral("cycle pause"));
-    QCOMPARE(out.tools[0].note, QStringLiteral("  keep  ")); // 备注原样保留，不 trim
+    QCOMPARE(out.tools[0].barIcon, QStringLiteral("play_arrow")); // 图标随命令同口径 trim
+    QVERIFY(out.tools[0].barShow);
+    QVERIFY(out.tools[0].barSide == BarSide::Right);
     QCOMPARE(out.tools[1].name, QStringLiteral("Show text"));
 }
 
@@ -200,9 +242,9 @@ void TestCustomToolManager::sanitizeIgnoresPlaceholder() {
     using M = CustomToolManager;
     // 占位条目混在有效行之间：不判违规，也不作为空前缀把整表拦下
     const QList<CustomTool> drafts = {
-        CustomTool{QStringLiteral("A"), QStringLiteral("cycle pause"), QString()},
-        CustomTool{QString(), QString(), QStringLiteral("只有备注的占位行")},
-        CustomTool{QStringLiteral("B > C"), QStringLiteral("set speed 1.5"), QString()},
+        CustomTool{QStringLiteral("A"), QStringLiteral("cycle pause")},
+        CustomTool{QString(), QString()},
+        CustomTool{QStringLiteral("B > C"), QStringLiteral("set speed 1.5")},
     };
     const M::Sanitized out = M::sanitize(drafts);
     QVERIFY(out.problem == M::Problem::None);
@@ -212,7 +254,7 @@ void TestCustomToolManager::sanitizeIgnoresPlaceholder() {
 
     const QList<CustomTool> allPlaceholders = {
         CustomTool{},
-        CustomTool{QString(), QString(), QStringLiteral("note")},
+        CustomTool{QString(), QString()},
     };
     const M::Sanitized emptied = M::sanitize(allPlaceholders);
     QVERIFY(emptied.problem == M::Problem::None);
@@ -222,8 +264,8 @@ void TestCustomToolManager::sanitizeIgnoresPlaceholder() {
 void TestCustomToolManager::sanitizeReportsMissingField() {
     using M = CustomToolManager;
     const QList<CustomTool> missingName = {
-        CustomTool{QStringLiteral("A"), QStringLiteral("cycle pause"), QString()},
-        CustomTool{QString(), QStringLiteral("cycle pause"), QString()},
+        CustomTool{QStringLiteral("A"), QStringLiteral("cycle pause")},
+        CustomTool{QString(), QStringLiteral("cycle pause")},
     };
     const M::Sanitized nameOut = M::sanitize(missingName);
     QVERIFY(nameOut.problem == M::Problem::MissingName);
@@ -231,8 +273,8 @@ void TestCustomToolManager::sanitizeReportsMissingField() {
     QVERIFY(nameOut.tools.isEmpty());
 
     const QList<CustomTool> missingCommand = {
-        CustomTool{QStringLiteral("A"), QString(), QString()},
-        CustomTool{QStringLiteral("B"), QStringLiteral("cycle pause"), QString()},
+        CustomTool{QStringLiteral("A"), QString()},
+        CustomTool{QStringLiteral("B"), QStringLiteral("cycle pause")},
     };
     const M::Sanitized commandOut = M::sanitize(missingCommand);
     QVERIFY(commandOut.problem == M::Problem::MissingCommand);
@@ -244,7 +286,7 @@ void TestCustomToolManager::sanitizeInvalidPathCountsAsMissingName() {
     using M = CustomToolManager;
     // 纯 '>' / 全空段：规范化后名称为空，视同缺名称（聚焦名称框那一侧）
     const QList<CustomTool> drafts = {
-        CustomTool{QStringLiteral(" > "), QStringLiteral("cycle pause"), QString()},
+        CustomTool{QStringLiteral(" > "), QStringLiteral("cycle pause")},
     };
     const M::Sanitized out = M::sanitize(drafts);
     QVERIFY(out.problem == M::Problem::MissingName);
@@ -255,9 +297,9 @@ void TestCustomToolManager::sanitizeInvalidPathCountsAsMissingName() {
 void TestCustomToolManager::sanitizeReportsPrefixConflict() {
     using M = CustomToolManager;
     const QList<CustomTool> drafts = {
-        CustomTool{QStringLiteral("X"), QStringLiteral("x"), QString()},
-        CustomTool{QStringLiteral("A > B"), QStringLiteral("b"), QString()},
-        CustomTool{QStringLiteral("A"), QStringLiteral("a"), QString()},
+        CustomTool{QStringLiteral("X"), QStringLiteral("x")},
+        CustomTool{QStringLiteral("A > B"), QStringLiteral("b")},
+        CustomTool{QStringLiteral("A"), QStringLiteral("a")},
     };
     const M::Sanitized out = M::sanitize(drafts);
     QVERIFY(out.problem == M::Problem::PrefixConflict);
@@ -267,8 +309,8 @@ void TestCustomToolManager::sanitizeReportsPrefixConflict() {
 
     // 逐段比而非字符串前缀：Ab 不是 A > B 的前缀
     const QList<CustomTool> notConflict = {
-        CustomTool{QStringLiteral("Ab"), QStringLiteral("a"), QString()},
-        CustomTool{QStringLiteral("A > B"), QStringLiteral("b"), QString()},
+        CustomTool{QStringLiteral("Ab"), QStringLiteral("a")},
+        CustomTool{QStringLiteral("A > B"), QStringLiteral("b")},
     };
     const M::Sanitized ok = M::sanitize(notConflict);
     QVERIFY(ok.problem == M::Problem::None);
@@ -276,8 +318,8 @@ void TestCustomToolManager::sanitizeReportsPrefixConflict() {
 
     // 同路径两条（重名）不判冲突，照常保留
     const QList<CustomTool> duplicates = {
-        CustomTool{QStringLiteral("A > B"), QStringLiteral("b1"), QString()},
-        CustomTool{QStringLiteral("A >B"), QStringLiteral("b2"), QString()},
+        CustomTool{QStringLiteral("A > B"), QStringLiteral("b1")},
+        CustomTool{QStringLiteral("A >B"), QStringLiteral("b2")},
     };
     const M::Sanitized twice = M::sanitize(duplicates);
     QVERIFY(twice.problem == M::Problem::None);
@@ -288,9 +330,8 @@ void TestCustomToolManager::keyRoundTrip() {
     using M = CustomToolManager;
     CustomToolManager mgr(m_ini);
     const QList<CustomTool> tools = {
-        {QStringLiteral("A"), QStringLiteral("a"), QString(),
-         QKeySequence(QStringLiteral("Ctrl+Alt+H"))},
-        {QStringLiteral("B"), QStringLiteral("b"), QString(), QKeySequence()},
+        {QStringLiteral("A"), QStringLiteral("a"), QKeySequence(QStringLiteral("Ctrl+Alt+H"))},
+        {QStringLiteral("B"), QStringLiteral("b"), QKeySequence()},
     };
     QVERIFY(mgr.replaceTools(tools));
     CustomToolManager reader(m_ini);
@@ -333,10 +374,8 @@ void TestCustomToolManager::invalidStoredKey() {
 void TestCustomToolManager::sanitizeReportsDuplicateKey() {
     using M = CustomToolManager;
     const QList<CustomTool> dup = {
-        {QStringLiteral("A"), QStringLiteral("a"), QString(),
-         QKeySequence(QStringLiteral("Ctrl+J"))},
-        {QStringLiteral("B"), QStringLiteral("b"), QString(),
-         QKeySequence(QStringLiteral("Ctrl+J"))},
+        {QStringLiteral("A"), QStringLiteral("a"), QKeySequence(QStringLiteral("Ctrl+J"))},
+        {QStringLiteral("B"), QStringLiteral("b"), QKeySequence(QStringLiteral("Ctrl+J"))},
     };
     const M::Sanitized out = M::sanitize(dup);
     QVERIFY(out.problem == M::Problem::DuplicateKey);
@@ -346,21 +385,43 @@ void TestCustomToolManager::sanitizeReportsDuplicateKey() {
 
     // 空键不参与查重
     const QList<CustomTool> emptyKeys = {
-        {QStringLiteral("A"), QStringLiteral("a"), QString(), QKeySequence()},
-        {QStringLiteral("B"), QStringLiteral("b"), QString(), QKeySequence()},
+        {QStringLiteral("A"), QStringLiteral("a"), QKeySequence()},
+        {QStringLiteral("B"), QStringLiteral("b"), QKeySequence()},
     };
     QVERIFY(M::sanitize(emptyKeys).problem == M::Problem::None);
 
     // 占位空条目先被丢弃、不参与查重；另一条照常保留
     const QList<CustomTool> placeholder = {
-        {QStringLiteral("A"), QStringLiteral("a"), QString(),
-         QKeySequence(QStringLiteral("Ctrl+J"))},
-        {QString(), QString(), QString(), QKeySequence(QStringLiteral("Ctrl+J"))},
+        {QStringLiteral("A"), QStringLiteral("a"), QKeySequence(QStringLiteral("Ctrl+J"))},
+        {QString(), QString(), QKeySequence(QStringLiteral("Ctrl+J"))},
     };
     const M::Sanitized ok = M::sanitize(placeholder);
     QVERIFY(ok.problem == M::Problem::None);
     QCOMPARE(ok.tools.size(), 1);
     QCOMPARE(ok.tools[0].key, QKeySequence(QStringLiteral("Ctrl+J")));
+}
+
+// N168：sanitize 收下三新字段——barShow / barSide 原样、barIcon trim，不参与名称 /
+// 命令 / 前缀 / 重键任何判据；缺省行（对话框新增行未勾选的形态）照常收下
+void TestCustomToolManager::sanitizeKeepsBarFields() {
+    using M = CustomToolManager;
+    const QList<CustomTool> drafts = {
+        CustomTool{QStringLiteral("A"), QStringLiteral("a"), QKeySequence(), true, BarSide::Right,
+                   QStringLiteral("  bolt  ")},
+    };
+    const M::Sanitized out = M::sanitize(drafts);
+    QVERIFY(out.problem == M::Problem::None);
+    QCOMPARE(out.tools.size(), 1);
+    QVERIFY(out.tools[0].barShow);
+    QVERIFY(out.tools[0].barSide == BarSide::Right);
+    QCOMPARE(out.tools[0].barIcon, QStringLiteral("bolt"));
+
+    const M::Sanitized defaults =
+        M::sanitize({CustomTool{QStringLiteral("B"), QStringLiteral("b")}});
+    QVERIFY(defaults.problem == M::Problem::None);
+    QVERIFY(!defaults.tools[0].barShow);
+    QVERIFY(defaults.tools[0].barSide == BarSide::Left);
+    QVERIFY(defaults.tools[0].barIcon.isEmpty());
 }
 
 void TestCustomToolManager::planKeysPriority() {
@@ -369,13 +430,10 @@ void TestCustomToolManager::planKeysPriority() {
         {QKeySequence(QStringLiteral("Ctrl+C")), QStringLiteral("Copy Screenshot")},
     };
     const QList<CustomTool> tools = {
-        {QStringLiteral("AM 冲突"), QStringLiteral("a"), QString(),
-         QKeySequence(QStringLiteral("Ctrl+C"))},
-        {QStringLiteral("先到"), QStringLiteral("b"), QString(),
-         QKeySequence(QStringLiteral("Ctrl+J"))},
-        {QStringLiteral("后到"), QStringLiteral("c"), QString(),
-         QKeySequence(QStringLiteral("Ctrl+J"))},
-        {QStringLiteral("空键"), QStringLiteral("d"), QString(), QKeySequence()},
+        {QStringLiteral("AM 冲突"), QStringLiteral("a"), QKeySequence(QStringLiteral("Ctrl+C"))},
+        {QStringLiteral("先到"), QStringLiteral("b"), QKeySequence(QStringLiteral("Ctrl+J"))},
+        {QStringLiteral("后到"), QStringLiteral("c"), QKeySequence(QStringLiteral("Ctrl+J"))},
+        {QStringLiteral("空键"), QStringLiteral("d"), QKeySequence()},
     };
     const M::KeyPlan plan = M::planKeys(tools, occupied);
     QCOMPARE(plan.installed.size(), tools.size());
