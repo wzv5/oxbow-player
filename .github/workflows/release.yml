@@ -33,11 +33,15 @@ jobs:
           curl.exe -L --fail --retry 3 -o "$env:RUNNER_TEMP/mediainfo.7z" "$env:MEDIAINFO_URL"
           7z x "$env:RUNNER_TEMP/mediainfo.7z" "-o$env:RUNNER_TEMP/mediainfo" -y
 
-      - name: Configure
-        run: cmake -B build -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release -DQt6_ROOT="$env:RUNNER_TEMP/qt/$env:QT_SUBDIR" -DLIBSODIUM_ROOT="$env:RUNNER_TEMP/sodium/libsodium" -DOXBOW_STATIC=ON
-
-      - name: Build
-        run: cmake --build build
+      - name: Configure and build
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          Import-Module (Join-Path $vsPath 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
+          Enter-VsDevShell -VsInstallPath $vsPath -SkipAutomaticLocation -DevCmdArguments '-arch=x64'
+          cmake -B build -G Ninja -DCMAKE_CXX_COMPILER=cl -DCMAKE_BUILD_TYPE=Release -DQt6_ROOT="$env:RUNNER_TEMP/qt/$env:QT_SUBDIR" -DLIBSODIUM_ROOT="$env:RUNNER_TEMP/sodium/libsodium" -DOXBOW_STATIC=ON
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cmake --build build
 
       # 静态形态核心即插件本体，部署名 main.dll
       - name: Package
