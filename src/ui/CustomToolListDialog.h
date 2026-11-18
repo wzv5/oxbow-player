@@ -40,6 +40,7 @@ class CustomToolListDialog : public QDialog {
     QCheckBox *m_barShowCheck = nullptr;
     QComboBox *m_barSideCombo = nullptr;
     QLineEdit *m_barIconEdit = nullptr;
+    QToolButton *m_barIconButton = nullptr;
     QToolButton *m_addButton = nullptr;
     QToolButton *m_deleteButton = nullptr;
     QToolButton *m_upButton = nullptr;

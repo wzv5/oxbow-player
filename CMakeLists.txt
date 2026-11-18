@@ -257,6 +257,10 @@ add_library(oxbowcore MODULE
     src/thumb/ThumbEngine.h
     src/ui/ThemedIconEngine.cpp
     src/ui/ThemedIconEngine.h
+    src/ui/MaterialIconCatalog.cpp
+    src/ui/MaterialIconCatalog.h
+    src/ui/IconBrowserDialog.cpp
+    src/ui/IconBrowserDialog.h
     src/ai/AiSubtitleCatalog.cpp
     src/ai/AiSubtitleCatalog.h
     src/ai/SrtAssembler.cpp
@@ -587,6 +591,9 @@ if(OXBOW_BUILD_TESTS)
         src/ui/FilterListWidget.h
         src/ui/ThemedIconEngine.cpp
         src/ui/ThemedIconEngine.h
+        # N169：tst_MaterialIconCatalog / tst_IconSource 需要 MaterialIconCatalog
+        src/ui/MaterialIconCatalog.cpp
+        src/ui/MaterialIconCatalog.h
         src/ui/WindowTitleBar.cpp
         src/ui/WindowTitleBar.h
         src/streams/StreamTransit.cpp
@@ -706,6 +713,7 @@ if(OXBOW_BUILD_TESTS)
     oxbow_add_test(FrameMetrics)
     oxbow_add_test(ExternalTool)
     oxbow_add_test(IconSource)
+    oxbow_add_test(MaterialIconCatalog)
     oxbow_add_test(AiSubtitleCatalog)
     oxbow_add_test(SrtAssembler)
     # rclone crypt 的两套件与特性同进退（关掉就没有被测对象）；FileByteStream 是通用

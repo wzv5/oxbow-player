@@ -1,4 +1,3 @@
-// 内置图标源测试：出口 → 连字名映射、字体连字解析、渲染 DPR 记账与染色系数。
 // 字体资源在静态库内，不被引用不入链接——initTestCase 显式 Q_INIT_RESOURCE 兜底。
 
 #include "pch.h"
@@ -6,6 +5,7 @@
 #include <QtTest/QtTest>
 
 #include "Constants.h"
+#include "ui/MaterialIconCatalog.h"
 #include "ui/ThemedIconEngine.h"
 
 namespace {
@@ -45,10 +45,8 @@ class TestIconSource : public QObject {
     Q_OBJECT
 
   private slots:
-    // 静态库资源兜底：重复调用无害
     void initTestCase() { Q_INIT_RESOURCE(fonts); }
 
-    // 20 个出口的返回值逐一等于映射表连字名——裸连字名，不带资源前缀、不以 .svg 结尾
     void exportReturnsLigatureName() {
         struct Row {
             QString (*fn)();
@@ -84,8 +82,6 @@ class TestIconSource : public QObject {
         }
     }
 
-    // 每个连字名在图标字体里解析成单个 glyph run 且只有一个字形：拼错名或字体缺项
-    // 会当场变成多字母字形
     void ligatureResolvesToSingleGlyph() {
         const int id = QFontDatabase::addApplicationFont(
             QStringLiteral(":/fonts/MaterialSymbolsRounded_Filled-Regular.ttf"));
@@ -136,7 +132,6 @@ class TestIconSource : public QObject {
         }
     }
 
-    // 多逻辑尺寸 × 多 DPR 取图：非空、恰为逻辑尺寸 × DPR、存在非透明像素
     void renderSizesAndDpr() {
         const QIcon icon = Ui::themedIcon(App::iconVolumeUp(), QColor(31, 111, 214));
         const QList<int> sizes = {16, 24, 32};
@@ -155,7 +150,6 @@ class TestIconSource : public QObject {
         }
     }
 
-    // 染色：实心内部像素颜色恰为 tint；Disabled 态最不透明 alpha 恒为 255 × 0.4 系数
     void tintAndDisabledFactor() {
         const QColor red(210, 40, 40);
         const QColor blue(30, 80, 200);
@@ -173,6 +167,46 @@ class TestIconSource : public QObject {
         const QIcon icon = Ui::themedIcon(App::iconVolumeUp(), red);
         const QPixmap disabled = icon.pixmap(QSize(32, 32), 1.0, QIcon::Disabled);
         QCOMPARE(maxAlpha(disabled), qRound(255 * 0.4));
+    }
+
+    void invalidNameRendersErrorGlyph() {
+        const QColor tint(31, 111, 214);
+        for (const QString &bad : {QStringLiteral("a"), QStringLiteral("A"),
+                                   QStringLiteral("definitely_not_a_ligature")}) {
+            const QIcon icon = Ui::themedIcon(bad, tint);
+            const QPixmap pixmap = icon.pixmap(QSize(32, 32));
+            QVERIFY2(!pixmap.isNull(), qPrintable(bad));
+            QVERIFY2(maxAlpha(pixmap) > 0, qPrintable(bad));
+            QCOMPARE(colorAtMaxAlpha(pixmap), tint);
+        }
+        const QPixmap empty = Ui::themedIcon(QString(), tint).pixmap(QSize(32, 32));
+        QVERIFY(!empty.isNull());
+        QCOMPARE(maxAlpha(empty), 0);
+    }
+
+    // 清单全员满足字形判定——清单查表与渲染侧判定的等价护栏
+    void catalogNamesResolveToSingleGlyph() {
+        const QString family = MaterialIconCatalog::family();
+        QVERIFY(!family.isEmpty());
+        QFont font(family);
+        font.setPixelSize(32);
+        font.setStyleStrategy(QFont::StyleStrategy(font.styleStrategy() | QFont::NoFontMerging));
+        const QStringList &names = MaterialIconCatalog::names();
+        QCOMPARE(names.size(), 4319);
+        for (const QString &name : names) {
+            QVERIFY2(name.size() >= 2, qPrintable(name));
+            QTextOption option;
+            option.setUseDesignMetrics(true);
+            QTextLayout layout(name, font);
+            layout.setTextOption(option);
+            layout.beginLayout();
+            QTextLine line = layout.createLine();
+            line.setLineWidth(std::numeric_limits<qreal>::max() / 1024);
+            layout.endLayout();
+            const QList<QGlyphRun> runs = layout.glyphRuns();
+            QVERIFY2(runs.size() == 1, qPrintable(name));
+            QVERIFY2(runs.first().glyphIndexes().size() == 1, qPrintable(name));
+        }
     }
 };
 

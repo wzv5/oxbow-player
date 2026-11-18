@@ -3,6 +3,8 @@
 #include "Constants.h"
 #include "ThemedIconEngine.h"
 #include "ui/CustomToolListDialog.h"
+#include "ui/IconBrowserDialog.h"
+#include "ui/MaterialIconCatalog.h"
 
 CustomToolListDialog::CustomToolListDialog(const QList<CustomTool> &tools,
                                            const ActionManager *actions, QWidget *parent)
@@ -59,20 +61,36 @@ CustomToolListDialog::CustomToolListDialog(const QList<CustomTool> &tools,
     m_barSideCombo->addItem(tr("Left"));
     m_barSideCombo->addItem(tr("Right"));
     m_barIconEdit = new QLineEdit(this);
+    // 连字名无 '-' 分段，用裸 QCompleter、不覆写 splitPath；候选与校验同源
+    auto *iconCompleter = new QCompleter(MaterialIconCatalog::names(), m_barIconEdit);
+    iconCompleter->setCompletionMode(QCompleter::PopupCompletion);
+    iconCompleter->setCaseSensitivity(Qt::CaseInsensitive);
+    iconCompleter->setFilterMode(Qt::MatchStartsWith);
+    m_barIconEdit->setCompleter(iconCompleter);
+    m_barIconButton = new QToolButton(this);
+    m_barIconButton->setText(QStringLiteral("…"));
+    m_barIconButton->setToolTip(tr("Browse Icons"));
+    m_barIconButton->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::MinimumExpanding);
     auto *iconHint = new QLabel(tr("Material Symbols ligature name, e.g. play_arrow"), this);
     iconHint->setEnabled(false);
     iconHint->setFocusPolicy(Qt::NoFocus);
 
+    auto *iconRow = new QHBoxLayout;
+    iconRow->setContentsMargins(0, 0, 0, 0);
+    iconRow->addWidget(m_barIconEdit, 1);
+    iconRow->addWidget(m_barIconButton);
+
+    // 勾选框与提示走单件行跨两列，与列表区左对齐；字段行保持两列形态
     auto *form = new QFormLayout;
     form->addRow(tr("Name"), m_nameEdit);
-    form->addRow(QString(), nameHint);
+    form->addRow(nameHint);
     form->addRow(tr("Command"), m_commandEdit);
-    form->addRow(QString(), commandHint);
+    form->addRow(commandHint);
     form->addRow(tr("Key"), m_keyEdit);
-    form->addRow(QString(), m_barShowCheck);
+    form->addRow(m_barShowCheck);
     form->addRow(tr("Button position"), m_barSideCombo);
-    form->addRow(tr("Button icon"), m_barIconEdit);
-    form->addRow(QString(), iconHint);
+    form->addRow(tr("Button icon"), iconRow);
+    form->addRow(iconHint);
 
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
@@ -124,6 +142,12 @@ CustomToolListDialog::CustomToolListDialog(const QList<CustomTool> &tools,
     connect(m_deleteButton, &QAbstractButton::clicked, this, [this] { deleteTool(); });
     connect(m_upButton, &QAbstractButton::clicked, this, [this] { moveTool(-1); });
     connect(m_downButton, &QAbstractButton::clicked, this, [this] { moveTool(+1); });
+    connect(m_barIconButton, &QToolButton::clicked, this, [this] {
+        IconBrowserDialog dialog(m_barIconEdit->text(), this);
+        if (dialog.exec() != QDialog::Accepted)
+            return;
+        m_barIconEdit->setText(dialog.selectedName());
+    });
 
     for (const CustomTool &tool : m_tools)
         m_list->addItem(listText(tool.name));
@@ -201,6 +225,7 @@ void CustomToolListDialog::updateBarControlsEnabled() {
     const bool on = m_barShowCheck->isChecked();
     m_barSideCombo->setEnabled(on);
     m_barIconEdit->setEnabled(on);
+    m_barIconButton->setEnabled(on);
 }
 
 void CustomToolListDialog::addTool() {
@@ -273,6 +298,24 @@ void CustomToolListDialog::accept() {
                 ? tr("\"%1\" cannot be both a tool and a submenu.").arg(sanitized.path)
                 : tr("Each tool needs both a name and a command."));
         return;
+    }
+    // 名称或命令有空的行只会被 sanitize 静默丢弃，坏图标随占位行丢弃；跳过校验。
+    // 其余行 barShow 且图标非空时名字必须在清单内；m_tools 下标即对话框行号
+    for (int i = 0; i < m_tools.size(); ++i) {
+        const QString icon = m_tools[i].barIcon.trimmed();
+        if (!m_tools[i].barShow || icon.isEmpty())
+            continue;
+        if (CustomToolManager::normalizedPath(m_tools[i].name).isEmpty() ||
+            m_tools[i].command.trimmed().isEmpty())
+            continue;
+        if (!MaterialIconCatalog::contains(icon)) {
+            m_list->setCurrentRow(i);
+            m_barIconEdit->setFocus();
+            QMessageBox::warning(
+                this, windowTitle(),
+                tr("\"%1\" is not a valid Material Symbols ligature name.").arg(icon));
+            return;
+        }
     }
     // 重键已被 sanitize 拦下，此处 conflict 只会是 AM 占用；提示不拦截
     const CustomToolManager::KeyPlan plan =
