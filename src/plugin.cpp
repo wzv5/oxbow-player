@@ -202,8 +202,9 @@ static QString safeModeShouldYield(mpv_handle *handle, const QString &iniFile) {
     }
 
     // 判据 1：形态。读不到按保守命中；不问 set-from-commandline——pseudo-gui 由宿主
-    // 注入 argv，问了会把正常 GUI 启动误判成外部控制
-    const QString opMode = safeModeStringProperty(handle, "player-operation-mode");
+    // 注入 argv，问了会把正常 GUI 启动误判成外部控制。
+    // 走 options/ 通道：裸名到 mpv 0.42 才是只读属性
+    const QString opMode = safeModeStringProperty(handle, "options/player-operation-mode");
     if (opMode != QLatin1String("pseudo-gui"))
         return QStringLiteral("tier 1: player-operation-mode=%1 (not pseudo-gui)").arg(opMode);
 
