@@ -224,7 +224,7 @@ SubtitleExtractor::resolveRequest(const MpvController::TrackInfo &track, const Q
                                 versioned ? QStringLiteral("|%1|%2")
                                                 .arg(options.version.mtimeSecs)
                                                 .arg(options.version.bytes)
-                                          : QStringLiteral());
+                                          : QStringLiteral(""));
         return resolved;
     }
 
