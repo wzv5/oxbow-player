@@ -2382,12 +2382,30 @@ void MainWindow::saveScreenshotToFile() {
     m_osd->show(tr("Screenshot saved"));
 }
 
-void MainWindow::playAt(int index) {
-    m_pendingSeekRow = -1; // 手动播放丢弃未执行的挂起 seek，防陈旧跳转
-    m_controller->setProperty(QStringLiteral("playlist-pos"), index);
-    m_controller->setProperty(QStringLiteral("pause"), false);
-    // 若 pause 原本就是 no，mpv 不会再推送属性变化，图标需手动更新
-    applyPlayIcon(false);
+void MainWindow::locateInQueue(int index, double seekTo, bool startPlaying) {
+    if (startPlaying) {
+        m_pendingSeekRow = -1; // 丢弃未执行的挂起 seek，防陈旧跳转
+        m_pendingSeekTime = -1.0;
+    }
+    if (index == m_playlistPos) {
+        // 同值写 playlist-pos mpv 不推送，改就地 seek；文件已就绪，不走挂起。
+        // seekTo<0 语义为从头播：负值 absolute 按手册是"从文件末尾起"，不得透传
+        m_controller->command({QStringLiteral("seek"), QString::number(seekTo < 0.0 ? 0.0 : seekTo),
+                               QStringLiteral("absolute")});
+    } else {
+        m_controller->setProperty(QStringLiteral("playlist-pos"), index);
+        if (seekTo >= 0.0) {
+            // 换条后新文件异步加载，立即 seek 会作用于尚未卸载的旧文件——
+            // 挂起待新条目 duration 推送且行号匹配时执行一次
+            m_pendingSeekRow = index;
+            m_pendingSeekTime = seekTo;
+        }
+    }
+    if (startPlaying) {
+        // 同值写 pause 不触发推送，图标需手动更新
+        m_controller->setProperty(QStringLiteral("pause"), false);
+        applyPlayIcon(false);
+    }
 }
 
 void MainWindow::togglePause() {
@@ -4531,12 +4549,18 @@ QVariant MainWindow::inputMethodQuery(Qt::InputMethodQuery query) const {
 }
 
 void MainWindow::onPlayRequested(const PlaylistEntity::List &entities, int tab, int index,
-                                 double seekTo, bool keepPaused) {
-    // 统一播放入口（N4 合并）：整表载入 → 跳转 index → 挂起恢复进度。
+                                 double seekTo, PlaylistWidget::PlayMode mode) {
     m_pendingSeekRow = -1; // 丢弃未执行的挂起 seek
     m_pendingSeekTime = -1.0;
+    // 同 tab + 同层已由发射侧判过，此处补正播态。轻量支从头播，不开会话——
+    // 它不改队列内容，开会话会把有用的回显吞掉（N60）
+    if (mode == PlaylistWidget::PlayMode::SwitchInQueue && m_playlistPos >= 0) {
+        locateInQueue(index, -1.0, true);
+        return;
+    }
     if (entities.empty())
         return;
+    const bool keepPaused = mode == PlaylistWidget::PlayMode::RebuildPaused;
     // N60 §2.4：整表载入是多命令序列（stop→clear→N×append→pos），以推送会话守卫
     // 覆盖整个函数体——析构关批并发屏障读，终点由 onPushBarrier 按屏障自带终值对账。
     // 守卫作用域含末尾的 pause 与图标更新：本批的迟投回显全在吞域之内
@@ -4567,7 +4591,7 @@ void MainWindow::onPlayRequested(const PlaylistEntity::List &entities, int tab, 
     m_controller->setProperty(QStringLiteral("playlist-pos"), index);
     // N30：pause 状态在文件切换后仍然保持——双击播放时显式恢复播放（keepPaused 为假）；
     // 四步式在暂停态下重推则写入 pause=yes 保持暂停。
-    // 同值写入不触发属性变化推送，故无多余 pauseChanged / OSD，图标需手动更新（同 playAt）
+    // 同值写入不触发属性变化推送，故无多余 pauseChanged / OSD，图标需手动更新（同 locateInQueue）
     m_controller->setProperty(QStringLiteral("pause"), keepPaused);
     applyPlayIcon(keepPaused);
 }
@@ -5736,19 +5760,8 @@ void MainWindow::jumpToChapter(const QString &path, double time) {
     if (targetTab >= 0) {
         // 复用既有播放路径
         if (targetTab == playingIdx) {
-            // 同一播放列表内跳转：仅切换条目或 seek
-            const bool isAlreadyPlaying = (m_playlistPos == targetRow);
-            if (isAlreadyPlaying) {
-                m_controller->command(
-                    {QStringLiteral("seek"), QString::number(time), QStringLiteral("absolute")});
-            } else {
-                // 同列表切文件：复用 playAt（不重建列表）。seek 走挂起机制：
-                // playlist-pos 触发的加载是异步的，立即 seek 会作用于尚未
-                // 卸载的旧文件，待新条目 duration 推送且行号匹配时执行一次
-                playAt(targetRow);
-                m_pendingSeekRow = targetRow;
-                m_pendingSeekTime = time;
-            }
+            // 同项就地 seek 保持暂停态；换条恢复播放，进度走挂起 seek
+            locateInQueue(targetRow, time, targetRow != m_playlistPos);
         } else {
             // 跨列表跳转：复用 onPlayRequested 整表载入（与双击条目同路径）
             const PlaylistEntity::List entities = m_playlist->queueEntitiesOf(targetTab);
@@ -5820,16 +5833,8 @@ void MainWindow::onLevelItemReady(const PlaylistWidget::LevelJump &req, int tabI
     const bool sameQueue = tabIndex == m_playlist->playingTabIndex() &&
                            req.levelIds == m_playlist->queueRootIdsOf(tabIndex);
     if (sameQueue) {
-        // 目标层就是此刻这份队列：内容基准没变，重推纯属自扰（重载文件、转接流重开、
-        // 可听中断）——同列表内只切条目
-        if (entityIndex == m_playlistPos) {
-            m_controller->command(
-                {QStringLiteral("seek"), QString::number(req.time), QStringLiteral("absolute")});
-        } else {
-            playAt(entityIndex);
-            m_pendingSeekRow = entityIndex;
-            m_pendingSeekTime = req.time;
-        }
+        // 内容基准没变，重推会重载文件、重开转接流并造成可听中断——同队列内只切条目
+        locateInQueue(entityIndex, req.time, entityIndex != m_playlistPos);
         return;
     }
     m_playlist->markPlayingTab(tabIndex); // 队列根在此重锚到该层（N45 §2.1）

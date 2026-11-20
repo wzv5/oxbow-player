@@ -228,6 +228,11 @@ class PlaylistWidget : public QTabWidget {
     // N56 §2.7：键由调用方取正播实体的 key() 传入（不再吃 mpv 路径现归一）
     void applyDuration(const QString &key, double seconds);
 
+    // 播放请求意图，发起处定死（N171）：Rebuild 整表重推并起播；RebuildPaused 整表
+    // 重推但保持暂停；SwitchInQueue 复用队列只切条或就地重播。
+    enum class PlayMode { Rebuild, RebuildPaused, SwitchInQueue };
+    Q_ENUM(PlayMode)
+
   protected:
     // N5：ShortcutOverride 认领导航键——焦点在列表上时 ↑↓←→/PgUp/PgDn/Home/End
     // 走列表原生导航，全局音量动作（↑/↓）本次不触发。
@@ -235,15 +240,13 @@ class PlaylistWidget : public QTabWidget {
     bool eventFilter(QObject *watched, QEvent *event) override;
 
   signals:
-    // 请求整表载入并播放 entities 中第 index 个；seekTo > 0 时就绪后恢复到该进度
-    // （N4 四步式的进度恢复与此同一通道；发出前已将 tab 标记为正在播放列表）。
-    // N56 §2.7：播放链路改传实体表——MainWindow 据此经 playTargets(tab, entities)
-    // 在喂 mpv 前最后一刻映射播放形态（凭据注入在提供者侧）。
-    // N30：keepPaused 为真时载入后保持暂停（四步式在 stop 前读到的 pause 状态）。
-    // N62 §2.7 C 档：入参 tab 是**发射时刻由身份现场换算的视图坐标**（与 levelItemReady
-    // 同一句钉法），接收方不得跨事件持有
+    // 请求播放 entities 中第 index 个，mode 定路线。SwitchInQueue 的同 tab + 同层判据在
+    // markPlayingTab 重锚前取，携带的 entities 即队列根层实体；MainWindow 正播态下只切条，
+    // 停止态回退整表重推，轻量支从头播、不读 seekTo（N171）。seekTo > 0 为整表支的续播进度。
+    // 实体表由 MainWindow 在喂 mpv 前一刻映射播放形态（N56）；tab 是发射时刻现场换算的
+    // 视图坐标，接收方不得跨事件持有（N62）。
     void playRequested(const PlaylistEntity::List &entities, int tab, int index, double seekTo,
-                       bool keepPaused = false);
+                       PlayMode mode = PlayMode::Rebuild);
     // 当前 tab 收到新文件（菜单添加或拖放），携建好的实体表
     void filesAdded(const PlaylistEntity::List &entities);
     // "正在播放"tab 请求移除指定行 / 清空（需同步到 mpv 播放列表，由 MainWindow 执行；

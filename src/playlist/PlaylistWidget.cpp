@@ -1807,6 +1807,11 @@ void PlaylistWidget::activateItem(QListWidgetItem *item, bool useResume) {
         navigateDown(list, item);
         return;
     }
+    // N171：轻量切条判据必须在 markPlayingTab 之前取——它会把队列根重锚到当前浏览层，
+    // 之后再判同层恒为真，从子层双击会被误判成同表切条。判层用 displayedIds 不用
+    // browsePathIds：与 index 的实体序同源，也与底栏定位按钮的判层同口径
+    const bool reuseQueue =
+        tab == playingTabIndex() && list->displayedIds() == list->queueRootIds();
     markPlayingTab(tab);
     // N45 §2.8：入队单位即当前层（markPlayingTab 已把队列根锚定到该层）；index 由行序
     // 换算为实体序。续播判据必须在 markPlayingTab 之后再问——resumeEntityIndexOf 定位
@@ -1815,17 +1820,18 @@ void PlaylistWidget::activateItem(QListWidgetItem *item, bool useResume) {
     double seekTo = -1.0;
     if (useResume && target == resumeEntityIndexOf(tab))
         seekTo = lastTimePosOf(tab);
-    // N56 §2.7：播放链路传实体表，下发形态由 MainWindow 在喂 mpv 前一刻映射
-    emit playRequested(currentLayerEntitiesOf(tab), tab, target, seekTo); // 回显由 MainWindow
-    // 统一入口登记（N25）
+    // reuseQueue 时携带的队列根层实体供 MainWindow 在停止态回退整表重推（N171）
+    emit playRequested(currentLayerEntitiesOf(tab), tab, target, seekTo,
+                       reuseQueue ? PlayMode::SwitchInQueue : PlayMode::Rebuild);
 }
 
 // 回车的落点：焦点在列表时该视图即当前页，焦点在 tab 条时（切 tab 后焦点常留在那里）
-// 取当前 tab 的视图——两种情形同一条路，选中行由 setCurrentRow 落过，无需焦点在场
+// 取当前 tab 的视图——两种情形同一条路，选中行由 setCurrentRow 落过，无需焦点在场。
+// N171：useResume 按播放态定——停止态带续播，正播 / 暂停态与双击同路（从头播）
 void PlaylistWidget::activateCurrentRow() {
     PlaylistListView *list = viewAt(currentIndex());
     if (list)
-        activateItem(list->currentItem(), true);
+        activateItem(list->currentItem(), !hasPlayingItem());
 }
 
 // N19：程序化切 tab 统一入口。忙时目标非当前则排队（last-wins），空闲后补执行。
@@ -2252,7 +2258,8 @@ void PlaylistWidget::runFourStep(PlaylistListView *list, int tab,
     // N56 §2.7：播放链路传实体表
     const int idx = resumeEntityIndexOf(tab);
     if (idx >= 0)
-        emit playRequested(queueEntitiesOf(tab), tab, idx, lastTimePosOf(tab), keepPaused);
+        emit playRequested(queueEntitiesOf(tab), tab, idx, lastTimePosOf(tab),
+                           keepPaused ? PlayMode::RebuildPaused : PlayMode::Rebuild);
     // idx < 0：记忆条目已在本次变更中消失，保持停止，标记保持清除态
 }
 

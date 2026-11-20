@@ -129,16 +129,11 @@ class MainWindow : public QMainWindow, public WindowStateHost {
     void resetSpeed();
     // N38：静音状态联动单一出口（菜单勾选 + 图标按钮同一处刷新，不播报 OSD）
     void applyMuteState(bool muted);
-    // 统一播放入口：整表载入 → 跳转 index → seekTo>0 时经挂起机制恢复进度。
-    // N56 §2.7：播放链路传实体表——下发的 loadfile 取 playTargets(tab, entities)，即喂
-    // mpv 前最后一刻映射的播放形态（与回显同源同形；N65 起 PlayTarget 整体含逐文件
-    // 选项）。
-    // N60 §2.4：本入口是四个喂入点之一，整批由 PlaylistWidget::PushSession 守卫
-    // 开闭推送会话（会话期内 playlist 回显吞掉，终点由屏障 reply 对账）。
-    // N30：keepPaused 为真时载入后保持暂停（四步式在 stop 前读到的 pause 状态），
-    // 使暂停态下的刷新 / 排序 / 移除无效项不误起播
+    // 统一播放入口：SwitchInQueue 且正播态走轻量切条，否则整表载入 → 跳转 index →
+    // seekTo>0 时挂起恢复进度。整表支由 PushSession 守卫推送会话（N60），RebuildPaused
+    // 载入后保持暂停以免暂停态的刷新 / 排序 / 移除误起播（N30）；轻量支不开会话。
     void onPlayRequested(const PlaylistEntity::List &entities, int tab, int index, double seekTo,
-                         bool keepPaused = false);
+                         PlaylistWidget::PlayMode mode = PlaylistWidget::PlayMode::Rebuild);
     void onFilesAdded(const PlaylistEntity::List &entities);
     void onRemoveRequested(QList<int> rows);
     void onClearRequested();
@@ -240,7 +235,11 @@ class MainWindow : public QMainWindow, public WindowStateHost {
     // 导航器浮窗定位到主窗口右下角（N1）
     void repositionNavigator();
     void updateTimeDisplay();
-    void playAt(int index);
+    // 队列内定位，不重建队列、不开会话（N171）。index 为 playlist-pos 实体序：换条写
+    // playlist-pos，seekTo>=0 登记挂起 seek 恢复进度、<0 从头播；当前项就地 seek 到
+    // seekTo（<0 归一为 0——负值 absolute 按手册语义是从文件末尾起）。startPlaying 为真
+    // 先丢弃挂起 seek、收尾写 pause=no 并同步图标；为假保持当前暂停态。
+    void locateInQueue(int index, double seekTo, bool startPlaying);
     // 停止态的上一个/下一个步进（A9/A16）：以当前选中列表为基准并开始播放；
     // 列表循环开启时首尾互绕，否则越界无动作
     void stepStopped(bool next);
