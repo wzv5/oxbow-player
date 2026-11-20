@@ -54,6 +54,8 @@ enum ObservedProperty {
     PropOntop,
     // N161：小窗态公开（观察 NODE，见 nodeToBool）
     PropMiniWindow,
+    // N174：脚本侧可见的版本镜像
+    PropScriptVersion,
     // B18：metadata / file-format / chapter-list 三项文件级属性不 observe，
     // 改由 FILE_LOADED 主动读（见 handleFileLoaded）
 };
@@ -354,6 +356,18 @@ class MpvController::EventThread : public QThread {
                     emit m_ctrl->playFailed(m_ctrl->m_currentFile);
                 break;
             }
+            case MPV_EVENT_CLIENT_MESSAGE: {
+                // N174：总线唯一读取点
+                const auto *msg = static_cast<const mpv_event_client_message *>(e->data);
+                QStringList args;
+                if (msg) {
+                    args.reserve(msg->num_args);
+                    for (int n = 0; n < msg->num_args; ++n)
+                        args.append(QString::fromUtf8(msg->args[n]));
+                }
+                emit m_ctrl->clientMessage(args);
+                break;
+            }
             default:
                 break;
             }
@@ -411,6 +425,8 @@ MpvController::MpvController(mpv_handle *mpv, QObject *parent) : QObject(parent)
     mpv_observe_property(m_mpv, PropOntop, "ontop", MPV_FORMAT_FLAG);
     // N161：小窗态公开。观察 NODE，归一在分发处
     mpv_observe_property(m_mpv, PropMiniWindow, App::miniWindowProperty, MPV_FORMAT_NODE);
+    // N174：版本镜像
+    mpv_observe_property(m_mpv, PropScriptVersion, App::versionProperty, MPV_FORMAT_NODE);
     // B18：metadata / file-format / chapter-list 改 FILE_LOADED 主动读
     // （见 handleFileLoaded），不 observe；track-list 见上
 
@@ -1375,6 +1391,14 @@ void MpvController::handlePropertyChange(const mpv_event *event) {
         else if (prop->format == MPV_FORMAT_NONE)
             emit cacheUnderrunChanged(false);
         break;
+    case PropScriptVersion: {
+        const auto *node = (prop->format == MPV_FORMAT_NODE && prop->data)
+                               ? static_cast<const mpv_node *>(prop->data)
+                               : nullptr;
+        const bool stringNode = node && node->format == MPV_FORMAT_STRING && node->u.string;
+        emit versionEcho(stringNode ? QString::fromUtf8(node->u.string) : QString(), stringNode);
+        break;
+    }
     // N40：PropWidth / PropHeight 分支已随 observe 移除，视频尺寸改由
     // publishVideoSize 统一取值发布；B18：PropMetadata / PropFileFormat /
     // PropChapterList 分支已随 observe 移除，改由 handleFileLoaded 主动读

@@ -43,6 +43,8 @@ class DependencyInstallJob;      // N150：可选依赖安装作业（主窗持�
 class DependencyInstallerWizard; // N150：安装向导（按需创建，QPointer 兜底）
 class UpdateChecker;             // N151：检查更新后端（主窗子对象）
 class UpdateDialog;              // N151：检查更新对话框（按需创建，QPointer 兜底）
+class ScriptMessageBus;          // N174：脚本客户端消息总线
+class ScriptVersionHost;         // N174：版本协议宿主
 
 // N168：控制行按钮组容器。minimumSizeHint 恒为 0，使按钮显隐不顶高视频区 480 下限；
 // 须保留默认 Preferred 策略、不显式设最小宽，否则最小贡献非零
@@ -76,6 +78,9 @@ class MainWindow : public QMainWindow, public WindowStateHost {
 
     // 视频显示区域（mpv 通过 wid 嵌入的目标窗口）
     QWidget *videoWidget() const { return m_videoWidget; }
+
+    // N174：就绪公告出口
+    void announceScriptReady();
 
   protected:
     // 整窗底色与 1px 边框；圆角生效走 DWM 描边，否则自绘直角描边
@@ -460,6 +465,9 @@ class MainWindow : public QMainWindow, public WindowStateHost {
     void onAddBookmark();
 
     MpvController *m_controller;
+    // N174：脚本消息总线与版本宿主——先于任何业务宿主出生
+    ScriptMessageBus *m_scriptBus = nullptr;
+    ScriptVersionHost *m_scriptVersion = nullptr;
     // N147：配置路径不再由本类持有，消费者一律取 App::paths().iniFile() / iniDir()
     // N52：转接协议适配层（寿命归 plugin.cpp 的 shared_ptr，覆盖 exec 全程）
     std::shared_ptr<StreamRelay> m_relay;

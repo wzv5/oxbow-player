@@ -300,6 +300,10 @@ class MpvController : public QObject {
     // N153：demuxer 供包断流镜像（demuxer-cache-state/underrun 子路径观察，FLAG，
     // 只在布尔翻转时推事件）；事件线程发射，NONE（空闲 / 停止 / 无 demuxer）归 false
     void cacheUnderrunChanged(bool underrun);
+    // N174：CLIENT_MESSAGE 唯一读取点的出口
+    void clientMessage(const QStringList &args);
+    // N174：user-data 版本镜像推送
+    void versionEcho(const QString &value, bool available);
     void mpvShutdown();
 
   public:

@@ -433,6 +433,10 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle *handle) {
     // 会让 mpv 在 wid 生效前先自建窗口再重建，启动闪现原生窗口
     controller->startEventThread();
 
+    // N174：事件线程启动后才公告就绪——装配完成且读取点已在跑，两件事此刻才
+    // 同时成立
+    window->announceScriptReady();
+
     // 只由 SHUTDOWN 收口（onMpvShutdown 内 exit()）：抢先返回会与拆核心互等死锁
     QApplication::exec();
     return 0;

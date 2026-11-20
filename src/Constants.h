@@ -113,6 +113,9 @@ inline int miniSnapDistancePx() { return 16; }
 // ——N161 小窗态公开通道——
 inline constexpr char miniWindowProperty[] = "user-data/oxbow/mini-window";
 
+// ——N174 版本镜像属性——
+inline constexpr char versionProperty[] = "user-data/oxbow/version";
+
 // ——插件 ini 设置项默认值单点——
 // 设置目录 fallback 与全部读取点（plugin.cpp / MainWindow）同引此处；键名与取值语义
 // 见 SettingsDialog 设置目录

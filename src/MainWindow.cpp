@@ -20,6 +20,8 @@
 #include "ai/AiSubtitleJob.h"     // N146：任务归主窗持有
 #include "mpvbridge/MpvController.h"
 #include "mpvbridge/MpvKeyName.h"                    // N87：未认领按键的 mpv 键名翻译
+#include "mpvbridge/ScriptMessageBus.h"              // N174：脚本客户端消息总线装配
+#include "mpvbridge/ScriptVersionHost.h"             // N174：版本协议宿主装配
 #include "playbackreport/PlaybackReportDriver.h"     // N74：上报驱动器装配与退出序
 #include "playbackreport/PlaybackReporterRegistry.h" // N74：报告者注册表 provide 与判据现查
 #include "playbackreport/ReporterSwitchCatalog.h"    // N99：上报开关账目（登记与聚合单点）
@@ -998,6 +1000,10 @@ MainWindow::MainWindow(MpvController *controller, AppearanceManager *appearance,
             [this] { dispatchGesture(GesturePhase::End, GestureKind::Move, {}, {}); });
     connect(m_titleBar, &WindowTitleBar::systemMenuRequested, this,
             [this](const QPoint &globalPos) { m_frameBackend->showSystemMenu(globalPos); });
+
+    // N174：总线与版本宿主，先于任何业务宿主出生
+    m_scriptBus = new ScriptMessageBus(controller, this);
+    m_scriptVersion = new ScriptVersionHost(m_scriptBus, controller, this);
 
     // N119：连接先于装配——渲染只按描述表摆条目，不连任何信号
     connectActions();
@@ -4814,6 +4820,8 @@ void MainWindow::updateVolumeSliderRange() {
         m_quadraticVolumeCurve ? qRound(Util::Volume::mpvToMpc(m_volumeMax)) : m_volumeMax;
     m_volumeSlider->setRange(0, sliderMax);
 }
+
+void MainWindow::announceScriptReady() { m_scriptVersion->announce(); }
 
 void MainWindow::onMpvShutdown() {
     // mpv 侧发起退出（终端按 q、其他脚本发 quit）时 closeEvent 不会触发，

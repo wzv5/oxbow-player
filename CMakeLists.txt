@@ -146,6 +146,10 @@ add_library(oxbowcore MODULE
     src/mpvbridge/MpvController.h
     src/mpvbridge/MpvKeyName.cpp
     src/mpvbridge/MpvKeyName.h
+    src/mpvbridge/ScriptMessageBus.cpp
+    src/mpvbridge/ScriptMessageBus.h
+    src/mpvbridge/ScriptVersionHost.cpp
+    src/mpvbridge/ScriptVersionHost.h
     src/HttpClient.cpp
     src/HttpClient.h
     src/ui/NavigatorPanel.cpp
