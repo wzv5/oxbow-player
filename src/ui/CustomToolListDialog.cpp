@@ -45,7 +45,7 @@ CustomToolListDialog::CustomToolListDialog(const QList<CustomTool> &tools,
     nameHint->setEnabled(false);
     nameHint->setFocusPolicy(Qt::NoFocus);
     m_commandEdit = new QLineEdit(this);
-    auto *commandHint = new QLabel(tr("Same as in input.conf"), this);
+    auto *commandHint = new QLabel(tr("mpv command, or @id to bind a script action"), this);
     commandHint->setEnabled(false);
     commandHint->setFocusPolicy(Qt::NoFocus);
     m_keyEdit = new QKeySequenceEdit(this);

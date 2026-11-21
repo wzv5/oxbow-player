@@ -571,8 +571,8 @@
     </message>
     <message>
         <location filename="../src/ui/CustomToolListDialog.cpp" line="48"/>
-        <source>Same as in input.conf</source>
-        <translation>与 input.conf 中相同</translation>
+        <source>mpv command, or @id to bind a script action</source>
+        <translation>mpv 命令，或用 @id 绑定脚本动作</translation>
     </message>
     <message>
         <location filename="../src/ui/CustomToolListDialog.cpp" line="59"/>
