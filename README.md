@@ -21,6 +21,7 @@
   - [Requirements](#requirements)
   - [Configure and build](#configure-and-build)
   - [Build options](#build-options)
+- [Script interface](#script-interface)
 - [Why the name](#why-the-name)
 - [Acknowledgements](#acknowledgements)
 - [License](#license)
@@ -219,9 +220,21 @@ The version number is defined solely in `project(oxbow-player VERSION …)` at t
 | `OXBOW_PUREQT` | `OFF` | Force the main window and the mini window onto the pure-Qt self-driven fallback (no native gesture channels; development aid). |
 | `MPV_BIN_DIR` | *(empty)* | Directory containing `mpv.exe`; enables automatic post-build deployment. **Windows only** — Linux builds artifacts only. |
 
+## Script interface
+
+Oxbow and scripts talk over mpv's own `script-message` channel. A script sends with `mp.commandv("script-message-to", "oxbow", ...)`, the plugin replies with `oxbow-<protocol>:<event>`. Two protocols are available:
+
+- **script-action**: puts a script action on the control bar. A custom tool whose command is `@<id>` binds to that action; a click runs an mpv command or calls back the script, and the button icon, tooltip and the checked / disabled / hidden state are all maintained by the script at runtime.
+- **context-menu**: the script hands over a JSON menu and the plugin pops it up at the cursor. Entries run mpv commands or call back the script, with submenus, separators, and checked and disabled entries.
+
+The mini window state has a public mirror too: the mpv property `user-data/oxbow/mini-window`. Read it to see whether the mini window is on; write a different boolean value to toggle it.
+
+- Full documentation: [docs/script-interface.md](docs/script-interface.md)
+- Example script: [example/scripts/track-picker.lua](example/scripts/track-picker.lua)
+
 ## Why the name
 
-This project was started purely to test Ox Alpha's capabilities — the test went so well that it simply grew into a player. The name keeps the ox: an *oxbow* is the U-shaped bow of an ox yoke, the part that fits around the ox's neck and connects its pulling power to the plow — mpv is the ox pulling the cart, and Oxbow is that yoke.
+This project was started purely to test Ox Alpha (GLM 5.3 Flash) — the test went so well that it simply grew into a player. The name keeps the ox: an *oxbow* is the U-shaped bow of an ox yoke, the part that fits around the ox's neck and connects its pulling power to the plow — mpv is the ox pulling the cart, and Oxbow is that yoke.
 
 ## Acknowledgements
 

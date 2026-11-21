@@ -21,6 +21,7 @@
   - [环境要求](#环境要求)
   - [配置与构建](#配置与构建)
   - [构建选项](#构建选项)
+- [脚本接口](#脚本接口)
 - [名字的由来](#名字的由来)
 - [致谢](#致谢)
 - [开源协议](#开源协议)
@@ -219,9 +220,21 @@ cmake --build build
 | `OXBOW_PUREQT` | `OFF` | 强制主窗与迷你窗口都走纯 Qt 自驱动回退（无原生手势通道，开发辅助）。 |
 | `MPV_BIN_DIR` | *（空）* | mpv.exe 所在目录；设置后启用构建后自动部署。**仅 Windows**——Linux 只产出文件。 |
 
+## 脚本接口
+
+Oxbow 与脚本之间走 mpv 自己的消息通道 `script-message` 系列。脚本用 `mp.commandv("script-message-to", "oxbow", ...)` 发给插件，插件用 `oxbow-<协议>:<事件>` 回投。目前提供两条协议：
+
+- **script-action**：把脚本动作挂到控制栏。自定义工具的命令写 `@<id>` 即绑定该动作；点击时执行 mpv 命令或回调脚本，按钮图标、tooltip 以及勾选、禁用、隐藏状态都由脚本在运行期维护。
+- **context-menu**：脚本交出 JSON 菜单，由插件在光标处弹出。条目可执行 mpv 命令或回调脚本，支持子菜单、分割线、勾选与禁用。
+
+小窗状态另有公开镜像：mpv 属性 `user-data/oxbow/mini-window`。读它可知当前是否处于小窗，写入不同的布尔值即切换。
+
+- 完整文档：[docs/script-interface.md](docs/script-interface.md)
+- 示例脚本：[example/scripts/track-picker.lua](example/scripts/track-picker.lua)
+
 ## 名字的由来
 
-这个项目最初只是为了测试 Ox Alpha 的能力而建——测完发现能力非常强，索性一路做成了播放器。名字里留下了这头牛：oxbow 本义是牛轭上的 U 形弓板，套在牛颈上、把牛的力气接到犁上的那个部件——mpv 是埋头拉车的牛，Oxbow 就是那副轭。
+这个项目最初只是为了测试 Ox Alpha (GLM 5.3 Flash) 的能力而建——测完发现能力非常强，索性一路做成了播放器。名字里留下了这头牛：oxbow 本义是牛轭上的 U 形弓板，套在牛颈上、把牛的力气接到犁上的那个部件——mpv 是埋头拉车的牛，Oxbow 就是那副轭。
 
 ## 致谢
 
