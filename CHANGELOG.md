@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.1.5] - 2026-11-21
+
+### Added
+
+- **Script interface**: scripts can put an action on the control bar, with command, callback, icon, tooltip and checked / disabled / hidden state kept up to date at runtime (`script-action`, bound from a tool via `@<id>`), and can ask the plugin to pop up a menu at the cursor with submenus, separators and per-entry commands or callbacks (`context-menu`). See [script interface](docs/script-interface.md).
+- **Custom tools on the control bar**, with side and icon settings in the tool editor.
+- **Icon browser** for custom tool icons, with ligature-name completion and validation.
+
+### Changed
+
+- Built-in icons now use Material Symbols Rounded ligatures; the bundled SVG assets and the Qt SVG dependency are gone.
+- Time formatting is unified across the interface, and the control bar clock keeps a fixed width instead of squeezing the buttons.
+- Playlist and provider settings pages are left-aligned across both columns; rclone crypt options follow the filename-encryption mode.
+- The custom tool editor drops its unused note field.
+
+### Fixed
+
+- Safe mode no longer skips loading on mpv versions before 0.42.0.
+- Switching to another item in the same playlist no longer rebuilds the queue: no flicker, and playback starts sooner.
+
 ## [0.1.4] - 2026-11-16
 
 ### Added
