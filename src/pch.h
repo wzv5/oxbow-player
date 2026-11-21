@@ -45,6 +45,7 @@
 #include <QDropEvent>
 #include <QElapsedTimer>
 #include <QEvent>
+#include <QEventLoop>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileIconProvider>

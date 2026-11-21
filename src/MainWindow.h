@@ -48,6 +48,7 @@ class UpdateChecker;             // N151：检查更新后端（主窗子对象�
 class UpdateDialog;              // N151：检查更新对话框（按需创建，QPointer 兜底）
 class ScriptMessageBus;          // N174：脚本客户端消息总线
 class ScriptVersionHost;         // N174：版本协议宿主
+class ScriptMenuHost;            // N172：脚本上下文菜单宿主
 
 // N168：控制行按钮组容器。minimumSizeHint 恒为 0，使按钮显隐不顶高视频区 480 下限；
 // 须保留默认 Preferred 策略、不显式设最小宽，否则最小贡献非零
@@ -483,6 +484,8 @@ class MainWindow : public QMainWindow, public WindowStateHost {
     ScriptVersionHost *m_scriptVersion = nullptr;
     // N173：script-action 宿主与动作表——动作出现 / 变更经 actionsChanged 合并通知
     ScriptActionHost *m_scriptActions = nullptr;
+    // N172：脚本上下文菜单宿主——同一时刻只保留一个脚本菜单
+    ScriptMenuHost *m_scriptMenu = nullptr;
     // N147：配置路径不再由本类持有，消费者一律取 App::paths().iniFile() / iniDir()
     // N52：转接协议适配层（寿命归 plugin.cpp 的 shared_ptr，覆盖 exec 全程）
     std::shared_ptr<StreamRelay> m_relay;

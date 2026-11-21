@@ -36,6 +36,7 @@
 #include "ui/AiSubtitleDialog.h" // N146：AI 字幕生成对话框（按需创建，视图侧收步骤与进度）
 #include "ui/ScriptActionHost.h" // N173：script-action 协议宿主装配
 #include "ui/ScriptActionSpec.h" // N173：@id 绑定识别与动作查表
+#include "ui/ScriptMenuHost.h"   // N172：脚本上下文菜单宿主装配
 #ifdef OXBOW_WITH_OPTIONAL_DEPENDENCY_INSTALLER
 #include "installer/DependencyInstallJob.h" // N150：安装作业（主窗持有）
 #include "ui/DependencyInstallerWizard.h"   // N150：安装向导（按需创建）
@@ -1013,6 +1014,9 @@ MainWindow::MainWindow(MpvController *controller, AppearanceManager *appearance,
             &MainWindow::refreshToolActionStates);
     connect(m_scriptActions, &ScriptActionHost::actionsChanged, this,
             &MainWindow::rebuildControlBarButtons);
+
+    // N172：脚本上下文菜单宿主，视频区已就绪（弹出与派发全归总线）
+    m_scriptMenu = new ScriptMenuHost(m_scriptBus, controller, this, m_videoWidget);
 
     // N119：连接先于装配——渲染只按描述表摆条目，不连任何信号
     connectActions();
