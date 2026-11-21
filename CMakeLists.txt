@@ -217,6 +217,10 @@ add_library(oxbowcore MODULE
     src/CustomToolManager.h
     src/ui/CustomToolListDialog.cpp
     src/ui/CustomToolListDialog.h
+    src/ui/ScriptActionSpec.cpp
+    src/ui/ScriptActionSpec.h
+    src/ui/ScriptActionHost.cpp
+    src/ui/ScriptActionHost.h
     src/ui/ChapterSlider.cpp
     src/ui/ChapterSlider.h
     src/ui/BookmarkEditorDialog.cpp
@@ -556,6 +560,8 @@ if(OXBOW_BUILD_TESTS)
         src/BookmarkManager.h
         src/CustomToolManager.cpp
         src/CustomToolManager.h
+        src/ui/ScriptActionSpec.cpp
+        src/ui/ScriptActionSpec.h
         src/entities/PlaylistEntity.cpp
         src/entities/PlaylistEntity.h
         src/playlist/Playlist.cpp
@@ -713,6 +719,7 @@ if(OXBOW_BUILD_TESTS)
     oxbow_add_test(ReporterSwitchCatalog)
     oxbow_add_test(PlaybackSnapshot)
     oxbow_add_test(TaskbarIntegration)
+    oxbow_add_test(ScriptActionSpec)
     oxbow_add_test(WindowTitleBar)
     oxbow_add_test(FrameMetrics)
     oxbow_add_test(ExternalTool)

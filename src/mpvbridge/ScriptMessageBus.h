@@ -12,9 +12,6 @@ class ScriptMessageBus : public QObject {
 
     explicit ScriptMessageBus(MpvController *controller, QObject *parent = nullptr);
 
-    // 出站消息名构造；构造不做校验
-    static QString eventName(const QString &protocol, const QString &event);
-
     // 同名重复注册覆盖旧处理器；关停后不再受理
     void registerHandler(const QString &inbound, QObject *context, Handler handler);
 

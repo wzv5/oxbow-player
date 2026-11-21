@@ -34,6 +34,8 @@
 #include "thumb/ThumbEngine.h"     // N107：缩略图第二 core 引擎
 #include "ui/AboutDialog.h"
 #include "ui/AiSubtitleDialog.h" // N146：AI 字幕生成对话框（按需创建，视图侧收步骤与进度）
+#include "ui/ScriptActionHost.h" // N173：script-action 协议宿主装配
+#include "ui/ScriptActionSpec.h" // N173：@id 绑定识别与动作查表
 #ifdef OXBOW_WITH_OPTIONAL_DEPENDENCY_INSTALLER
 #include "installer/DependencyInstallJob.h" // N150：安装作业（主窗持有）
 #include "ui/DependencyInstallerWizard.h"   // N150：安装向导（按需创建）
@@ -1004,6 +1006,13 @@ MainWindow::MainWindow(MpvController *controller, AppearanceManager *appearance,
     // N174：总线与版本宿主，先于任何业务宿主出生
     m_scriptBus = new ScriptMessageBus(controller, this);
     m_scriptVersion = new ScriptVersionHost(m_scriptBus, controller, this);
+
+    // N173：script-action 宿主，actionsChanged 接简化刷新与按钮重建
+    m_scriptActions = new ScriptActionHost(m_scriptBus, controller, this);
+    connect(m_scriptActions, &ScriptActionHost::actionsChanged, this,
+            &MainWindow::refreshToolActionStates);
+    connect(m_scriptActions, &ScriptActionHost::actionsChanged, this,
+            &MainWindow::rebuildControlBarButtons);
 
     // N119：连接先于装配——渲染只按描述表摆条目，不连任何信号
     connectActions();
@@ -4268,18 +4277,20 @@ void MainWindow::retintIcons() {
     if (!m_playButton)
         return;
     const QColor tint = palette().color(QPalette::WindowText);
+    const QColor onTint = palette().color(QPalette::HighlightedText);
     applyPlayIcon(m_playIconPaused);
     m_stopButton->setIcon(Ui::themedIcon(App::iconStop(), tint));
     m_prevButton->setIcon(Ui::themedIcon(App::iconSkipPrevious(), tint));
     m_nextButton->setIcon(Ui::themedIcon(App::iconSkipNext(), tint));
     m_streamButton->setIcon(Ui::themedIcon(App::iconStream(), tint));
     m_settingsButton->setIcon(Ui::themedIcon(App::iconSettings(), tint));
-    m_playlistToggle->setIcon(Ui::themedIcon(App::iconFormatListBulleted(), tint,
-                                             palette().color(QPalette::HighlightedText)));
+    m_playlistToggle->setIcon(Ui::themedIcon(App::iconFormatListBulleted(), tint, onTint));
     applyMuteState(m_muteAction->isChecked());
-    // N168：按表位重染，含当前隐藏的按钮
+    // N168：按表位重染，含当前隐藏的按钮；N173：工具按钮可被脚本置成 checkable，
+    // 与列表开关同取 On 态配套前景
     for (int i = 0; i < m_customToolButtons.size(); ++i)
-        m_customToolButtons.at(i)->setIcon(Ui::themedIcon(m_customToolIconNames.at(i), tint));
+        m_customToolButtons.at(i)->setIcon(
+            Ui::themedIcon(m_customToolIconNames.at(i), tint, onTint));
 }
 
 // N38：静音状态联动单一出口——菜单勾选与图标按钮同一处刷新，两者共用同一
@@ -5416,6 +5427,8 @@ void MainWindow::buildToolSection(QMenu &menu) {
         const QStringList segments = CustomToolManager::pathSegments(tools.at(i).name);
         if (segments.isEmpty())
             continue;
+        if (!toolIsRenderable(tools.at(i)))
+            continue; // N173：隐藏条目不参与子菜单链创建
         QMenu *parent = &menu;
         for (int j = 0; j + 1 < segments.size(); ++j) {
             const QString prefixKey = CustomToolManager::joinPath(segments.mid(0, j + 1));
@@ -5443,10 +5456,8 @@ void MainWindow::rebuildToolActions() {
         if (!key.isEmpty())
             act->setShortcut(key);
         addAction(act);
-        connect(act, &QAction::triggered, this,
-                [this, name = tools.at(i).name, cmd = tools.at(i).command] {
-                    runToolCommand(name, cmd);
-                });
+        connect(act, &QAction::triggered, this, [this, tool = tools.at(i)] { runTool(tool); });
+        applyScriptActionState(*act, tools.at(i));
         m_toolActions.append(act);
     }
     for (const CustomToolManager::KeyConflict &c : plan.conflicts)
@@ -5474,22 +5485,41 @@ void MainWindow::rebuildControlBarButtons() {
     for (const CustomTool &tool : tools) {
         if (!tool.barShow)
             continue;
+        if (!toolIsRenderable(tool))
+            continue; // N173：绑定落空 / 隐藏不建按钮，m_customToolButtons 不留空位
         auto *button = new QPushButton(QString());
-        button->setToolTip(CustomToolManager::pathSegments(tool.name).constLast());
+        // icon / tooltip 非空即覆盖，空值回退 barIcon 与名字末段；checked 落按钮
+        // 激活态，disabled 置灰
+        const std::optional<ScriptActionSpec::ScriptAction> action = boundAction(tool);
+        QString iconName = tool.barIcon;
+        QString tooltip = CustomToolManager::pathSegments(tool.name).constLast();
+        if (action) {
+            if (!action->icon.isEmpty())
+                iconName = action->icon;
+            if (!action->tooltip.isEmpty())
+                tooltip = action->tooltip;
+            button->setCheckable(action->checkable);
+            if (action->checkable)
+                button->setChecked(action->checked);
+            button->setEnabled(!action->disabled);
+        }
+        button->setToolTip(tooltip);
         button->setFixedSize(36, 36);
         button->setIconSize(QSize(24, 24));
         button->setFocusPolicy(Qt::NoFocus);
-        button->setIcon(Ui::themedIcon(tool.barIcon, palette().color(QPalette::WindowText)));
+        // 双色染色与列表开关同理：绑定动作可把按钮置成 checkable，On 态配套前景
+        // 才压得住勾选底色；非 checkable 按钮取不到 QIcon::On，多传一参无副作用
+        button->setIcon(Ui::themedIcon(iconName, palette().color(QPalette::WindowText),
+                                       palette().color(QPalette::HighlightedText)));
         connect(button, &QAbstractButton::pressed, button, [] {
             if (auto *fw = QApplication::focusWidget())
                 fw->clearFocus();
         });
-        connect(button, &QPushButton::clicked, this,
-                [this, name = tool.name, cmd = tool.command] { runToolCommand(name, cmd); });
+        connect(button, &QPushButton::clicked, this, [this, tool] { runTool(tool); });
         (tool.barSide == BarSide::Right ? m_rightToolBar : m_leftToolBar)->addButton(button);
         button->hide();
         m_customToolButtons.append(button);
-        m_customToolIconNames.append(tool.barIcon);
+        m_customToolIconNames.append(iconName);
     }
     reflowControlBarButtons();
 }
@@ -5515,6 +5545,61 @@ void MainWindow::runToolCommand(const QString &label, const QString &command) {
         return;
     OXBOW_LOG_WARNING() << "tool failed:" << label << "err =" << err;
     m_osd->show(tr("Failed to run tool \"%1\": %2").arg(label, MpvController::errorString(err)));
+}
+
+// N173：识别与查表唯一收口——未绑定、宿主缺位（首建早于宿主出生）、id 落空三态同形
+std::optional<ScriptActionSpec::ScriptAction>
+MainWindow::boundAction(const CustomTool &tool) const {
+    const QString id = ScriptActionSpec::boundId(tool.command);
+    if (id.isEmpty() || !m_scriptActions)
+        return std::nullopt;
+    return m_scriptActions->find(id);
+}
+
+// N173：普通工具不受宿主寿命影响；绑定条目落空即不渲染，在 create 后经重建出生
+bool MainWindow::toolIsRenderable(const CustomTool &tool) const {
+    if (ScriptActionSpec::boundId(tool.command).isEmpty())
+        return true;
+    const std::optional<ScriptActionSpec::ScriptAction> action = boundAction(tool);
+    return action.has_value() && !action->hidden;
+}
+
+// N173：点击执行收口，三处出口统一走这里；callback 经 Bus::reply 回投，消息名脚本
+// 自报、不套 oxbow-script-action: 前缀
+void MainWindow::runTool(const CustomTool &tool) {
+    if (ScriptActionSpec::boundId(tool.command).isEmpty()) {
+        runToolCommand(tool.name, tool.command);
+        return;
+    }
+    const std::optional<ScriptActionSpec::ScriptAction> action = boundAction(tool);
+    if (!action || action->hidden)
+        return;
+    if (!action->command.isEmpty())
+        runToolCommand(tool.name, action->command);
+    if (!action->callback.isEmpty())
+        m_scriptBus->reply(action->owner, action->callback, {action->id});
+}
+
+// N173：勾选 / 禁用态单点——未绑定与落空一律防御复位到默认态
+void MainWindow::applyScriptActionState(QAction &action, const CustomTool &tool) {
+    const std::optional<ScriptActionSpec::ScriptAction> scriptAction = boundAction(tool);
+    if (scriptAction) {
+        action.setCheckable(scriptAction->checkable);
+        if (scriptAction->checkable)
+            action.setChecked(scriptAction->checked);
+        action.setEnabled(!scriptAction->disabled);
+    } else {
+        action.setEnabled(true);
+        action.setCheckable(false);
+    }
+}
+
+// N173：不重建动作、不跑 planKeys——那些是启动与对话框确定的全量重建路径的职责
+void MainWindow::refreshToolActionStates() {
+    const QList<CustomTool> &tools = m_toolMgr->tools();
+    Q_ASSERT(m_toolActions.size() == tools.size());
+    for (int i = 0; i < tools.size(); ++i)
+        applyScriptActionState(*m_toolActions.at(i), tools.at(i));
 }
 
 // N135：menu-data 的 state → QAction——disabled 置灰、checked 原生勾选（菜单每次

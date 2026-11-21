@@ -14,10 +14,6 @@ ScriptMessageBus::ScriptMessageBus(MpvController *controller, QObject *parent)
     }
 }
 
-QString ScriptMessageBus::eventName(const QString &protocol, const QString &event) {
-    return QStringLiteral("oxbow-") + protocol + u':' + event;
-}
-
 void ScriptMessageBus::registerHandler(const QString &inbound, QObject *context, Handler handler) {
     if (m_stopped)
         return;

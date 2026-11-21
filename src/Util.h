@@ -40,6 +40,9 @@ QString resolveExternalProgram(const QString &pluginDir, const QString &iniDir,
 // CreateProcess 的形态一致），带空格的路径这一族可按 QProcess::splitCommand 回拆
 QString commandLineForLog(const QString &program, const QStringList &args);
 
+// 脚本协议的出站消息名（N174）："oxbow-" + protocol + ":" + event，两侧不校验
+QString scriptEventName(const QString &protocol, const QString &event);
+
 // 数字化文件名的分段序列（N4）：文本段或数值段。
 // 拆分依据仅为 ASCII 0-9；数值段按十进制解析（前导零不敏感，01 与 1 相等），
 // 解析失败（超出 qlonglong 的超长数字串）时该段降级为普通文本段，

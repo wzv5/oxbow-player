@@ -6,6 +6,7 @@
 
 #include "ui/AppearanceManager.h" // N115
 #include "ui/MenuSpec.h"          // N119：菜单描述表
+#include "ui/ScriptActionSpec.h"  // N173：脚本动作存储形态（查表单点的返回类型需要完整类型）
 
 #include "Constants.h" // ini 默认值单点（成员初值引用访问器）
 #include "WindowStateHost.h"
@@ -25,6 +26,8 @@ class FrameBackend;
 class BookmarkEditorDialog;
 class ShortcutsDialog;
 class CustomToolManager; // N134：自定义工具单表（定义于 CustomToolManager.h）
+struct CustomTool;       // N134：单条自定义工具（定义于 CustomToolManager.h）
+class ScriptActionHost;  // N173：script-action 协议宿主（定义于 ui/ScriptActionHost.h）
 class ChapterSlider;
 class MarkAggregator;            // N15：章节+书签标记聚合器（定义于 MainWindow.cpp）
 class PlaylistRegistry;          // N57：列表注册表（装配顶点创建并持有，注入 PlaylistWidget）
@@ -227,6 +230,16 @@ class MainWindow : public QMainWindow, public WindowStateHost {
     // N134：工具命令执行唯一收口——失败 OSD，日志不记命令原文；N135 的 mpv
     // menu-data 条目同走这里
     void runToolCommand(const QString &label, const QString &command);
+    // N173：绑定工具 → 脚本动作的查表单点——未绑定、宿主缺位、落空一律 nullopt
+    std::optional<ScriptActionSpec::ScriptAction> boundAction(const CustomTool &tool) const;
+    // N173：绑定工具须查到动作且非 hidden，普通工具恒真
+    bool toolIsRenderable(const CustomTool &tool) const;
+    // N173：点击执行收口，落空 / 隐藏静默 no-op
+    void runTool(const CustomTool &tool);
+    // N173：勾选 / 禁用态单点，全量重建与简化刷新共用
+    void applyScriptActionState(QAction &action, const CustomTool &tool);
+    // N173：actionsChanged 的简化路径——不重建动作、不跑 planKeys
+    void refreshToolActionStates();
     // N135：mpv menu-data 段的递归渲染——hidden 整条跳过、disabled / checked 施加到
     // 条目与其子菜单、空子菜单摘除、分隔线走 appendMenuSeparator；命令条目经
     // runToolCommand 执行
@@ -468,6 +481,8 @@ class MainWindow : public QMainWindow, public WindowStateHost {
     // N174：脚本消息总线与版本宿主——先于任何业务宿主出生
     ScriptMessageBus *m_scriptBus = nullptr;
     ScriptVersionHost *m_scriptVersion = nullptr;
+    // N173：script-action 宿主与动作表——动作出现 / 变更经 actionsChanged 合并通知
+    ScriptActionHost *m_scriptActions = nullptr;
     // N147：配置路径不再由本类持有，消费者一律取 App::paths().iniFile() / iniDir()
     // N52：转接协议适配层（寿命归 plugin.cpp 的 shared_ptr，覆盖 exec 全程）
     std::shared_ptr<StreamRelay> m_relay;
