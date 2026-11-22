@@ -243,28 +243,16 @@ class PlaylistProvider {
         m_reporter = std::move(reporter);
     }
 
-    // ——N29 元数据注入口（唯一授权通道）——
-    // 实体的 setFileMeta / setMediaMeta 为 protected 且仅友元（本类）可及；
-    // 友元不继承，具体提供者经此静态转发写入——访问发生在本类成员函数体内，
-    // 友元在此生效。新增提供者无需改实体头文件，只调转发函数
+    // 元数据注入口：实体写点为 protected，友元不继承，具体提供者经此转发
     static void injectFileMeta(PlaylistEntity &e, const FileMeta &m) { e.setFileMeta(m); }
     static void injectMediaMeta(PlaylistEntity &e, const PlaylistEntity::MediaMeta &m) {
         e.setMediaMeta(m);
     }
-    // N63 / N70：显示名注入（外部清单的频道名 / 分组文本的行首名 / Jellyfin 的服务端
-    // 标题）——实体身份串是远端 URL 或 URN 时 deriveNames 派生出的只有末段或 itemId
-    // 噪声，显示名须由提供者在枚举期主动写入。与上面两个注入口同一条授权通道、同一个
-    // 类内写法（setTitle 为 protected 且友元不继承，转发必须有）。
-    // 本出口只写显示名（列表行文本、搜索命中、窗口标题与 OSD 读它）；名称类排序键读
-    // 的是另一个字段，另有 injectFileName
+    // 显示名注入（外部清单频道名 / 服务端标题）；只写 title
     static void injectDisplayName(PlaylistEntity &e, const QString &name) { e.setTitle(name); }
-    // N70：文件名注入——写 fileName 并随之重算 suffix（SortKey::FileName /
-    // FileNameNumeric / Extension 三个键的取值来源）。
-    // 联动规则在实体侧：title 未被显式设置过时本出口顺带把 title 同步成同一串，setTitle
-    // 置旗后不再联动——故两个出口无论谁先调用，两个终值都相同（调用顺序无关）
+    // 文件名注入；写 fileName 并重算 suffix。title 未显式设置时同步，两个出口顺序无关
     static void injectFileName(PlaylistEntity &e, const QString &name) { e.setFilename(name); }
-    // N65：条目级单文件选项注入——与上面三个注入口同一条授权通道、同一个类内写法。
-    // 选项是解析期一次成型的"mpv 选项名 → 取值"map，本出口只搬运不加工
+    // 条目级 mpv 选项注入；解析期一次成型，本出口只搬运
     static void injectPlayOptions(PlaylistEntity &e, QVariantMap options) {
         e.setPlayOptions(std::move(options));
     }

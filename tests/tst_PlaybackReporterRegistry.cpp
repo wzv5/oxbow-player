@@ -58,8 +58,8 @@ class StampableEntity final : public PlaylistEntity {
     Ptr clone() const override { return std::make_shared<StampableEntity>(*this); }
     bool isLocalFile() const override { return true; }
     bool exists() const override { return true; }
-    bool supportsFileMeta() const override { return false; }
-    bool supportsMediaMeta() const override { return false; }
+    bool canComputeFileMeta() const override { return false; }
+    bool canComputeMediaMeta() const override { return false; }
 
     void applyOwnership(QUuid uuid, std::weak_ptr<const PlaylistProvider> provider) {
         setOwnership(std::move(uuid), std::move(provider));

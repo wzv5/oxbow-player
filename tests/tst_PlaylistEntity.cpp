@@ -1,5 +1,5 @@
 // PlaylistEntity 单元测试（N26）：工厂分派与往返幂等、命名派生与修正联动、
-// 惰性求值与缓存清空、能力位与静态空回落、clone 深拷贝互不影响。
+// 惰性求值与缓存清空、求值能力与静态空回落、clone 深拷贝互不影响。
 // 测试无副作用：文件级 case 用 QTemporaryDir 隔离，结束时自动清理。
 // 一类一可执行（R5）：ctest --test-dir build -C Debug -R PlaylistEntity 跑本套件；
 //   oxbow_tests_PlaylistEntity <槽名> 跑单个用例。
@@ -21,7 +21,7 @@
 #include "streams/StreamRelay.h"        // N55 §九：StreamRelayIf 取用接缝（纯头，测试桩实现）
 #include "streams/StreamTransit.h"      // N61 变更记录第 1 条：回显入口的 mint / unwrap 对照
 
-// 测试桩实体：compute* 带调用计数，能力位可调，保护修正入口透出。
+// 测试桩实体：compute* 带调用计数，自主求值能力可调，保护修正入口透出。
 // 计数器 mutable（compute* 为 const 惰性入口）；随拷贝复制，断言前按需归零
 namespace {
 class TestEntity : public PlaylistEntity {
@@ -33,13 +33,13 @@ class TestEntity : public PlaylistEntity {
 
     bool isLocalFile() const override { return m_local; }
     bool exists() const override { return m_exists; }
-    bool supportsFileMeta() const override { return m_supportFile; }
-    bool supportsMediaMeta() const override { return m_supportMedia; }
+    bool canComputeFileMeta() const override { return m_canComputeFile; }
+    bool canComputeMediaMeta() const override { return m_canComputeMedia; }
 
     void setLocal(bool on) { m_local = on; }
     void setExists(bool on) { m_exists = on; }
-    void setSupportFile(bool on) { m_supportFile = on; }
-    void setSupportMedia(bool on) { m_supportMedia = on; }
+    void setCanComputeFile(bool on) { m_canComputeFile = on; }
+    void setCanComputeMedia(bool on) { m_canComputeMedia = on; }
     // 保护修正入口透出（命名派生联动测试）
     void applyFilename(const QString &name) { setFilename(name); }
     void applyTitle(const QString &title) { setTitle(title); }
@@ -73,8 +73,8 @@ class TestEntity : public PlaylistEntity {
   private:
     bool m_local = true;
     bool m_exists = true;
-    bool m_supportFile = true;
-    bool m_supportMedia = true;
+    bool m_canComputeFile = true;
+    bool m_canComputeMedia = true;
 };
 
 // 测试用注册表：按需取新实例。registry 无缺省，调用点永不省略、显式传入可用实例
@@ -123,6 +123,30 @@ class TransitTestProvider : public PlaylistProvider {
         return std::make_shared<TestEndpoint>();
     }
 };
+
+// N178 注入测试提供者：经静态转发走 PlaylistProvider::inject*Meta 的授权通道
+// （protected + 友元，派生类体内可及——与生产提供者同一条路径，不放宽可见性）。
+// 仅作注入介质，不参与 enumerate / 铸造
+class MetaTestProvider : public PlaylistProvider {
+  public:
+    explicit MetaTestProvider(const std::shared_ptr<ServiceRegistry> &registry)
+        : PlaylistProvider(registry) {}
+
+    QString typeKey() const override { return QStringLiteral("test-meta"); }
+    std::expected<Enumeration, QString> enumerate(const QStringList &parent = {}) const override {
+        Q_UNUSED(parent);
+        return Enumeration{};
+    }
+    bool supportsModify() const override { return false; }
+    void saveSettings(QSettings &settings) const override { Q_UNUSED(settings); } // 用例不落盘
+
+    static void applyFileMeta(PlaylistEntity &entity, const FileMeta &meta) {
+        injectFileMeta(entity, meta);
+    }
+    static void applyMediaMeta(PlaylistEntity &entity, const PlaylistEntity::MediaMeta &meta) {
+        injectMediaMeta(entity, meta);
+    }
+};
 } // namespace
 
 class TestPlaylistEntity : public QObject {
@@ -135,7 +159,7 @@ class TestPlaylistEntity : public QObject {
     void factoryDispatchesHttpWithRegistry();
     // N35 HttpEntity 往返不变式：fromPath(e->path(), registry)->path() 相等
     void httpEntityRoundtrip();
-    // N39 HttpEntity 能力位与元数据回落（两类能力位均为假，无网络求值）
+    // N39 HttpEntity 求值能力与元数据回落（两类求值能力均为假，无网络求值）
     void httpEntityCapabilities();
     // N35 显示名：percent-decode + query/fragment 剥离；空末段回退基类行为
     void httpEntityDisplayName();
@@ -160,11 +184,16 @@ class TestPlaylistEntity : public QObject {
     void lazyMediaMetaCachedAndRefreshed();
     // icon 惰性求值 + 实体内缓存 + refresh() 清空后重新求值
     void lazyIconCachedAndRefreshed();
-    // supportsFileMeta 为假：fileMeta() 静态空回落，compute 恒不被调，cached 恒 nullptr
+    // canComputeFileMeta 为假且缓存空：fileMeta() 静态空回落，compute 恒不被调，cached 恒 nullptr
     void unsupportedFileMetaNeverComputes();
-    // supportsMediaMeta 为假：mediaMeta() 静态空回落，compute 恒不被调，cached 恒 nullptr
+    // canComputeMediaMeta 为假且缓存空：mediaMeta() 静态空回落，compute 恒不被调，cached 恒 nullptr
     void unsupportedMediaMetaNeverComputes();
-    // UnknownEntity：能力位全假、exists 恒 true、元数据恒空、clone 身份一致
+    // N178：不可算实体经提供者静态转发注入落缓存——cached 非空、惰性直读注入值
+    // 不调 compute、refresh() 清注入值后回静态空回落
+    void injectedMetaLandsWithoutCompute();
+    // N178：派生查询三态——可算无缓存 / 纯注入 / 两者皆无，另加 None 类别恒假
+    void derivedMetaQueriesThreeStates();
+    // UnknownEntity：求值能力全假、exists 恒 true、元数据恒空、clone 身份一致
     void unknownEntityCapabilities();
     // LocalFileEntity：真实临时文件的 fileMeta 字段；不存在文件三字段全空（值未知）
     void localFileEntityFileMeta();
@@ -182,7 +211,7 @@ class TestPlaylistEntity : public QObject {
     // 转接串折回身份，补不出形态者（空 filename / 裸 file:）不撞断言而是落 UnknownEntity
     void echoEntryFallsBackToPlaceholder();
     // N124：stdin 分派——身份串仍是 mpv 原样的 "-"（与回显逐字节一致），显示面构造期
-    // 定死为 "stdin"，能力位与 clone 沿用兜底实体
+    // 定死为 "stdin"，求值能力与 clone 沿用兜底实体
     void stdinEchoDispatchesStdinEntity();
     // N55 §2.2/§2.3：归属注入口与出生属性——playUrl() 走归属现算（StaticProvider 恒等
     // 与转接提供者各验一次，断言形态出自归属提供者而非所在列表）
@@ -245,10 +274,10 @@ void TestPlaylistEntity::httpEntityCapabilities() {
     auto e = PlaylistEntity::fromPath(QStringLiteral("https://example.com/a.mp4"), registry);
     QVERIFY(!e->isLocalFile());
     QVERIFY(e->exists()); // 不可判定，恒 true（不参与失效清理）
-    // N39：两类能力位均为假——HttpEntity 已无任何取得元数据的途径（惰性 HEAD 已删），
+    // N39：两类求值能力均为假——HttpEntity 已无任何取得元数据的途径（惰性 HEAD 已删），
     // fileMeta() 因此可安全调用（静态空回落，不触碰网络）
-    QVERIFY(!e->supportsFileMeta());
-    QVERIFY(!e->supportsMediaMeta());
+    QVERIFY(!e->canComputeFileMeta());
+    QVERIFY(!e->canComputeMediaMeta());
     QVERIFY(!e->fileMeta().size.has_value());
     QVERIFY(!e->fileMeta().modified.has_value());
     QVERIFY(e->cachedFileMeta() == nullptr);
@@ -261,8 +290,8 @@ void TestPlaylistEntity::httpEntityCapabilities() {
     QCOMPARE(c->path(), e->path());
     QVERIFY(!c->isLocalFile());
     QVERIFY(c->exists());
-    QVERIFY(!c->supportsFileMeta());
-    QVERIFY(!c->supportsMediaMeta());
+    QVERIFY(!c->canComputeFileMeta());
+    QVERIFY(!c->canComputeMediaMeta());
 }
 
 void TestPlaylistEntity::httpEntityDisplayName() {
@@ -403,7 +432,7 @@ void TestPlaylistEntity::lazyIconCachedAndRefreshed() {
 
 void TestPlaylistEntity::unsupportedFileMetaNeverComputes() {
     TestEntity e(QStringLiteral("dir/y.mp4"), testRegistry());
-    e.setSupportFile(false);
+    e.setCanComputeFile(false);
     const FileMeta &fm = e.fileMeta();
     QVERIFY(!fm.size.has_value());
     QVERIFY(!fm.created.has_value());
@@ -416,7 +445,7 @@ void TestPlaylistEntity::unsupportedFileMetaNeverComputes() {
 
 void TestPlaylistEntity::unsupportedMediaMetaNeverComputes() {
     TestEntity e(QStringLiteral("dir/y.mp4"), testRegistry());
-    e.setSupportMedia(false);
+    e.setCanComputeMedia(false);
     const auto &mm = e.mediaMeta();
     QVERIFY(!mm.duration.has_value());
     QVERIFY(mm.streams.isEmpty());
@@ -426,13 +455,79 @@ void TestPlaylistEntity::unsupportedMediaMetaNeverComputes() {
     QCOMPARE(e.mediaComputeCount, 0);
 }
 
+// N178：不可算实体也承载注入——经 MetaTestProvider 静态转发（与生产提供者同一条
+// PlaylistProvider::inject*Meta 通道）写入，缓存落值、cached 非空；惰性入口缓存
+// 命中直读注入值，compute 恒不被调；refresh() 清缓存后回静态空回落（无注入不复活）
+void TestPlaylistEntity::injectedMetaLandsWithoutCompute() {
+    TestEntity e(QStringLiteral("https://example.com/a.mp4"), testRegistry());
+    e.setCanComputeFile(false);
+    e.setCanComputeMedia(false);
+
+    FileMeta fm;
+    fm.size = 4096;
+    MetaTestProvider::applyFileMeta(e, fm);
+    QVERIFY(e.cachedFileMeta() != nullptr);
+    QCOMPARE(e.cachedFileMeta()->size.value_or(0), qint64(4096));
+    QCOMPARE(e.fileMeta().size.value_or(0), qint64(4096)); // 惰性直读注入值
+    QCOMPARE(e.fileComputeCount, 0);                       // compute 恒不被调
+
+    PlaylistEntity::MediaMeta mm;
+    mm.duration = 12.5;
+    MetaTestProvider::applyMediaMeta(e, mm);
+    QVERIFY(e.cachedMediaMeta() != nullptr);
+    QCOMPARE(e.mediaMeta().duration.value_or(0), 12.5);
+    QCOMPARE(e.mediaComputeCount, 0);
+
+    e.refresh(); // 注入值随 refresh 清空，之后回静态空回落（不可算，不再求值）
+    QVERIFY(e.cachedFileMeta() == nullptr);
+    QVERIFY(!e.fileMeta().size.has_value());
+    QCOMPARE(e.fileComputeCount, 0);
+    QVERIFY(e.cachedMediaMeta() == nullptr);
+    QVERIFY(!e.mediaMeta().duration.has_value());
+    QCOMPARE(e.mediaComputeCount, 0);
+}
+
+// N178：派生查询三态（canComputeMeta / hasCachedMeta / hasMeta / needsMeta）——
+// 可算无缓存 → has/needs 皆真；纯注入（不可算 + 有缓存）→ has 真而 needs 假；
+// 两者皆无 → 双假；None 类别恒假
+void TestPlaylistEntity::derivedMetaQueriesThreeStates() {
+    TestEntity e(QStringLiteral("dir/q.mp4"), testRegistry());
+
+    // ① 可算无缓存
+    QVERIFY(e.canComputeMeta(MetaCategory::File));
+    QVERIFY(!e.hasCachedMeta(MetaCategory::File));
+    QVERIFY(e.hasMeta(MetaCategory::File));
+    QVERIFY(e.needsMeta(MetaCategory::File));
+
+    // ② 纯注入：不可算 + 缓存有值（has 真而 needs 假——属性对话框照旧直接渲染）
+    e.setCanComputeFile(false);
+    FileMeta fm;
+    fm.size = 1;
+    MetaTestProvider::applyFileMeta(e, fm);
+    QVERIFY(!e.canComputeMeta(MetaCategory::File));
+    QVERIFY(e.hasCachedMeta(MetaCategory::File));
+    QVERIFY(e.hasMeta(MetaCategory::File));
+    QVERIFY(!e.needsMeta(MetaCategory::File));
+
+    // ③ 两者皆无：媒体侧关掉能力位（TestEntity 默认可算），无注入即双假
+    e.setCanComputeMedia(false);
+    QVERIFY(!e.hasMeta(MetaCategory::Media));
+    QVERIFY(!e.needsMeta(MetaCategory::Media));
+
+    // None 类别恒假
+    QVERIFY(!e.canComputeMeta(MetaCategory::None));
+    QVERIFY(!e.hasCachedMeta(MetaCategory::None));
+    QVERIFY(!e.hasMeta(MetaCategory::None));
+    QVERIFY(!e.needsMeta(MetaCategory::None));
+}
+
 void TestPlaylistEntity::unknownEntityCapabilities() {
-    // N35：http(s) 已分派 HttpEntity，兜底能力位用例换 ftp://（UnknownEntity 形态不变）
+    // N35：http(s) 已分派 HttpEntity，兜底求值能力用例换 ftp://（UnknownEntity 形态不变）
     auto u = PlaylistEntity::fromPath(QStringLiteral("ftp://example.com/v/a.mp4"), testRegistry());
     QVERIFY(!u->isLocalFile());
     QVERIFY(u->exists()); // 不可判定，恒 true（不参与失效清理）
-    QVERIFY(!u->supportsFileMeta());
-    QVERIFY(!u->supportsMediaMeta());
+    QVERIFY(!u->canComputeFileMeta());
+    QVERIFY(!u->canComputeMediaMeta());
     QVERIFY(!u->fileMeta().size.has_value());
     QVERIFY(u->cachedFileMeta() == nullptr);
     QVERIFY(!u->mediaMeta().duration.has_value());
@@ -442,8 +537,8 @@ void TestPlaylistEntity::unknownEntityCapabilities() {
     QCOMPARE(c->path(), u->path());
     QVERIFY(!c->isLocalFile());
     QVERIFY(c->exists());
-    QVERIFY(!c->supportsFileMeta());
-    QVERIFY(!c->supportsMediaMeta());
+    QVERIFY(!c->canComputeFileMeta());
+    QVERIFY(!c->canComputeMediaMeta());
 }
 
 void TestPlaylistEntity::localFileEntityFileMeta() {
@@ -457,19 +552,19 @@ void TestPlaylistEntity::localFileEntityFileMeta() {
 
     auto e = PlaylistEntity::fromPath(path, testRegistry());
     QVERIFY(dynamic_cast<LocalFileEntity *>(e.get()) != nullptr);
-    QVERIFY(e->supportsFileMeta());
+    QVERIFY(e->canComputeFileMeta());
     const FileMeta &fm = e->fileMeta();
     QVERIFY(fm.size.has_value() && *fm.size == 2048);
     QVERIFY(fm.modified.has_value() && fm.modified->isValid());
 
-    // 不存在文件：三字段全空（"值未知"），能力位不变
+    // 不存在文件：三字段全空（"值未知"），求值能力不变
     auto missing = PlaylistEntity::fromPath(QDir(dir.path()).filePath(QStringLiteral("nope.mp4")),
                                             testRegistry());
     QVERIFY(dynamic_cast<LocalFileEntity *>(missing.get()) != nullptr);
     QVERIFY(!missing->fileMeta().size.has_value());
     QVERIFY(!missing->fileMeta().created.has_value());
     QVERIFY(!missing->fileMeta().modified.has_value());
-    QVERIFY(missing->supportsFileMeta());
+    QVERIFY(missing->canComputeFileMeta());
 }
 
 void TestPlaylistEntity::localFileEntityExists() {
@@ -593,11 +688,11 @@ void TestPlaylistEntity::echoEntryFallsBackToPlaceholder() {
     QVERIFY(dynamic_cast<UnknownEntity *>(empty.get()) != nullptr);
     QVERIFY(dynamic_cast<LocalFileEntity *>(empty.get()) == nullptr);
     QVERIFY(empty->path().isEmpty());
-    // 占位实体的能力位：不可播、不参与失效清理（exists 恒真 = 不可判定 ≠ 缺失）
+    // 占位实体的能力：不可播、不参与失效清理（exists 恒真 = 不可判定 ≠ 缺失）
     QVERIFY(!empty->isLocalFile());
     QVERIFY(empty->exists());
-    QVERIFY(!empty->supportsFileMeta());
-    QVERIFY(!empty->supportsMediaMeta());
+    QVERIFY(!empty->canComputeFileMeta());
+    QVERIFY(!empty->canComputeMediaMeta());
     // clone 身份与类型不变（回刷命中即克隆那条路对占位项同样自洽）
     auto ec = empty->clone();
     QVERIFY(dynamic_cast<UnknownEntity *>(ec.get()) != nullptr);
@@ -625,7 +720,7 @@ void TestPlaylistEntity::echoEntryFallsBackToPlaceholder() {
 }
 
 // N124：stdin 只经回显工厂落 StdinEntity。身份串保持 mpv 原样的 "-"（换成展示名即破
-// 回显逐字节比对），显示面在构造期定死为 "stdin"；能力位沿用兜底实体，clone 保类型带名
+// 回显逐字节比对），显示面在构造期定死为 "stdin"；求值能力沿用兜底实体，clone 保类型带名
 void TestPlaylistEntity::stdinEchoDispatchesStdinEntity() {
     auto registry = testRegistry();
     const QString echo = Util::Url::identityFromMpvEcho(QStringLiteral("-"));
@@ -642,8 +737,8 @@ void TestPlaylistEntity::stdinEchoDispatchesStdinEntity() {
     QCOMPARE(e->fileName(), e->displayUrl());
     QVERIFY(!e->isLocalFile());
     QVERIFY(e->exists());
-    QVERIFY(!e->supportsFileMeta());
-    QVERIFY(!e->supportsMediaMeta());
+    QVERIFY(!e->canComputeFileMeta());
+    QVERIFY(!e->canComputeMediaMeta());
     QVERIFY(!e->supportsSecondaryDecode()); // 悬停缩略图不开第二路解码
     // 键与判等仍走基类通用路径规则（记忆定位口径不变）
     QCOMPARE(e->key(), Util::Url::key(QStringLiteral("-")));

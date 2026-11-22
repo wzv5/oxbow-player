@@ -302,9 +302,6 @@ class PlaylistWidget : public QTabWidget {
     void activateItem(QListWidgetItem *item, bool useResume);
     // 回车一支的入口：取当前 tab 视图的选中行（焦点在列表或在 tab 条都走这里）
     void activateCurrentRow();
-    // N57 §2.9：排序键 / 规则 / 元数据类别（`SortKey` / `SortRule` / `MetaCategory`
-    // 与 `metaCategoryOf`）已搬到 `PlaylistEntity.h` 全局作用域——它们描述"按实体的
-    // 哪个字段排"，属实体属性层面的概念；提供者持规则值，本类只执行排序。
 
     // N30：换入前的视图快照（换入后行号语义失效，按记忆行 key 复原）
     struct ViewSnapshot {
@@ -464,8 +461,7 @@ class PlaylistWidget : public QTabWidget {
     int rowToEntityIndex(const PlaylistListView *list, int row) const;
 
     // ——N9 内部辅助——
-    // 提供者取用点（N57 §2.6：以控件指针为键的私有表与 `providerAt` 均已删除）：
-    // 经视图取其所属列表再取提供者，视图 / 列表缺失即空指针（越界防御，与现状同形）
+    // 提供者取用点：经视图取其所属列表再取提供者，缺失即空指针
     PlaylistProvider *providerOfView(const PlaylistListView *view) const;
     // N27：可修改 tab 判定——supportsModify() 的薄封装。不变式 I1（tab ⇔ 视图 ⇔
     // 列表一一对应、列表恒带提供者）已由 Playlist 构造断言与 PlaylistListView::list()
@@ -600,24 +596,16 @@ class PlaylistWidget : public QTabWidget {
     // 按行序批量删除实体（rows 必须降序；须在删行前调用）。
     // 单遍前缀计数定位各行容器下标后降序批量 erase，避免逐行 O(n·k) 重扫
     void eraseEntitiesAt(PlaylistListView *list, const QList<int> &rows);
-    // ——N26 元数据能力谓词（一对，同形）——遍历该层实体，任一支持即真；
-    // 空表 / 未加载层为假
-    bool anyEntitySupportsMediaMeta(const PlaylistListView *list, const QStringList &ids) const;
-    bool anyEntitySupportsFileMeta(const PlaylistListView *list, const QStringList &ids) const;
+    // 该层任一实体可算或有元数据即真（N178）；空表 / 未加载为假
+    bool anyEntityHasMediaMeta(const PlaylistListView *list, const QStringList &ids) const;
+    bool anyEntityHasFileMeta(const PlaylistListView *list, const QStringList &ids) const;
 
-    // N29：预读判定内核（各判定点共用）——该层该排序规则仍需预读的类别，
-    // 无需预读返回 None（类别 None、支持者缺失、对应标志已置均视为无需）。
-    // 只含"类别 / 支持者 / 标志位"三要素，busy / 已加载 / 占位等
-    // 外围条件由调用方自判；共用即保证"填充跳过直排"与"收尾补排"等各点一致。
-    // N57 §2.9：入参改值对象（判据仍只看键）；键→类别的映射 `metaCategoryOf`
-    // 已随键搬到实体侧，菜单灰态判据仍调它
-    // N45：按 (list, parent) 定位层
+    // 该层该排序规则仍需预读的类别；None = 无需预读（类别 None、无可用者、标志已置）。
+    // 只判类别 / 可得性 / 标志位，外围条件由调用方自判
     MetaCategory pendingMetaCategory(const PlaylistListView *list, const QStringList &ids,
                                      SortRule rule) const;
-    // N29：对应类别支持者谓词（收敛按类别选支持者谓词的三元散写）。
-    // N45：按 (list, parent) 定位层
-    bool anyEntitySupports(const PlaylistListView *list, const QStringList &ids,
-                           MetaCategory cat) const;
+    // 按类别取可得谓词
+    bool anyEntityHas(const PlaylistListView *list, const QStringList &ids, MetaCategory cat) const;
 
     // ——结构变更公共骨架——
     // 三步法之第 1 步：抄录记忆行对应的身份串；第 3 步：在新序列中找回并写回

@@ -4,25 +4,15 @@
 
 #include "MediaInfoHelper.h"
 
-// 文件级元数据（纯数据，任意线程可求值；字段为 nullopt 即"未知"）
+// 文件级元数据；字段 nullopt 即"未知"
 struct FileMeta {
     std::optional<qint64> size;
     std::optional<QDateTime> created;
     std::optional<QDateTime> modified;
 };
 
-// ——N57 §2.9：排序键与默认规则归位——键的定义与"键 → 元数据类别"映射属实体侧
-// （它们描述"按实体的哪个字段排"，文件派生名、文件元数据、媒体元数据本就是实体
-// 属性层面的概念）；规则**值**与默认规则归提供者，执行面归视图。
-
-// 排序规则枚举（N4/N9/N18）：None = 不排序、保持层内当前序；EnumerationOrder =
-// 枚举返回序（N58）。取值随提供者持久化（int 落盘）。
-// N18：枚举序与菜单显示顺序解耦——菜单 action 通过 setData(int(SortKey)) 显式携带
-// 键值，派发时按 data 取键，不依赖数组下标 +1 的隐式映射。
-// N57：既有取值冻结在 0..8，新键只准追加末尾（实现侧 static_assert 守候）
-// N71：DisplayName = 显示名（title），**只有一档**——实际比较走数字化对比
-// （Util::segmentName / naturalCompare），不平行提供纯字典序档；容器侧按
-// Container::title 排（容器无显示名 / 文件名之分，与名称类各档同源）
+// 排序键。取值随提供者持久化，既有值冻结、新键只准追加末尾（N57）；
+// None = 保持层内当前序，EnumerationOrder = 枚举返回序（N58）。
 enum class SortKey {
     None,
     FileName,
@@ -37,286 +27,175 @@ enum class SortKey {
     DisplayName,
 };
 
-// 排序规则值对象（N57 §2.9）：取代提供者侧的两个散字段与视图里的散参数
 struct SortRule {
     SortKey key = SortKey::None;
     bool ascending = true;
 };
 
-// ——N65：喂 mpv 的单条下发目标（跨层值对象，与 SortRule / FileMeta 同一处：
-// 不住视图也不住控制器）——
-// url = 下发给 loadfile 的串（原 playUrl 链的产物）；options = 随串同发的逐文件
-// 选项（键 = mpv 选项名，值按字符串语义下发——经 loadFile 一律 .toString() 进
-// 节点通道）。两字段在铸造点（提供者 playTarget）同一句 return 里出生，此后
-// 原样搬运，链路上不做任何加工
+// N65：loadfile 串与逐文件选项；options 的键为 mpv 选项名，值按字符串下发
 struct PlayTarget {
     QString url;
     QVariantMap options;
 };
 
-// N29：预读元数据类别（排序键经 metaCategoryOf 映射；None = 该键不依赖元数据）
+// None = 该排序键不依赖元数据（N29）
 enum class MetaCategory {
     None,
     File,
     Media,
 };
 
-// N29 的唯一映射（各判定点共用，防散写漂移；N57 §2.9 随键搬到实体侧）：
-// Created/Modified/FileSize → File；Duration/ReleaseDate → Media；其余 → None
 MetaCategory metaCategoryOf(SortKey key);
 
-// 播放项实体（N26）：提供者 ↔ 视图层交换数据的唯一媒介，也是元数据的唯一载体。
-// 缓存由基类统一持有（模板方法），子类只实现三个求值函数与能力位。
-// 能力位与静态空回落（两类元数据同形）：fileMeta() / mediaMeta() 首行各判自身能力位，
-// 为假则直接返回静态空值，永不调用对应 compute*()；
-// cachedFileMeta() / cachedMediaMeta() 对此类实体恒返回 nullptr。
-class PlaylistProvider; // 前向声明：实体头不依赖提供者头
-class PlaylistWidget;   // N32：预读结果注入的第二个授权对象（见 setFileMeta 注）
-class ServiceRegistry;  // N35：服务注册表（基类统一持有，供未来远端实体取用）
+// 播放项实体（N26）：提供者与视图层交换数据的媒介，也是元数据的唯一载体。
+// 缓存由基类持有，子类只实现 compute* 与 canCompute*。
+class PlaylistProvider;
+class PlaylistWidget;
+class ServiceRegistry;
 
 class PlaylistEntity {
-    // N29 注入口的唯一授权对象。友元不继承：派生提供者不可直接访问，
-    // 经 PlaylistProvider 的 protected 静态转发（访问发生在基类成员函数体内）写入
+    // 注入口授权对象；友元不继承，派生提供者经 PlaylistProvider 静态转发
     friend class PlaylistProvider;
-    // N32：预读改异步后，经求值转发取回的值由 GUI 续作写回（唯一的写点），
-    // 故视图层同样需要注入口；仅此二类可写，其余仍不可及
+    // 预读结果的视图侧写点（N32）
     friend class PlaylistWidget;
 
   public:
     using Ptr = std::shared_ptr<PlaylistEntity>;
     using List = std::vector<Ptr>;
 
-    // 媒体元数据：复用 MediaInfoHelper 的定义（不 1:1 镜像，避免字段漂移）
+    // 媒体元数据：复用 MediaInfoHelper 的定义，避免字段漂移
     using MediaStream = MediaInfoHelper::Stream;
     using MediaChapter = MediaInfoHelper::Chapter;
     using MediaMeta = MediaInfoHelper::Data;
 
-    // 构造注入 registry（必填，无缺省）：所有调用点必须显式传入可用实例，
-    // 缺 registry 在编译期暴露。本地 / 兜底实体同样经形参接收后存基类（忽略不用）。
     explicit PlaylistEntity(QString path, const std::shared_ptr<ServiceRegistry> &registry);
     virtual ~PlaylistEntity() = default;
 
-    // ——工厂：身份串 → 实体（类型分派的唯一落点；后续协议在此追加）——
-    // 入参契约（N56 §2.6）：入参必须是**已定形的身份串**（绝对路径或含 "://" 的 URL）。
-    // 定形（oxbow:// 折叠、相对转绝对、file:// 转本地）是造实体一方的责任，工厂
-    // 不再代做——只有提供者知道该怎么拆自己拿来的串，工厂对着读不懂的串加工等于猜。
-    // Debug 断言：既非绝对路径、也非含 "://" 的形态即调用方违约，显影（与"http(s)
-    // + 空 registry"同款守候；release 不拦，未定形串会静默落成 LocalFileEntity）。
-    // 随后按前缀分派（N35）：http:// / https://（大小写不敏感）→ HttpEntity（需
-    // 非空 registry，http(s) + 空 registry 属调用错误：Q_ASSERT 守候，release
-    // 降级 UnknownEntity 保"恒返回实体"契约）；其余网络 / 流路径（ftp / rtsp 等）
-    // → UnknownEntity 兜底；本地路径 → LocalFileEntity（忽略 registry）。
-    // 前缀判断天然免疫 QUrl::scheme() 误判 Windows 盘符的陷阱，不引入 QUrl 解析。
-    // 不变式：入参已定形时 fromPath(e->path(), registry)->path() == e->path()
-    // 调用方纪律：registry 必填（无缺省），一律传视图层注册表（本地路径同样传，
-    // 工厂内忽略）；同一身份串在遵守前提下，无论经提供者、工厂还是收编路径，
-    // 都得到同类型实体。
+    // 入参必须是已定形身份串（N56）；未定形属调用方违约，Debug 断言，release 落 LocalFileEntity。
+    // 前缀分派不用 QUrl::scheme()，避免误判 Windows 盘符；不变式：path 往返相等。
     static Ptr fromPath(const QString &path, const std::shared_ptr<ServiceRegistry> &registry);
 
-    // ——工厂的回显专用入口（N61 变更记录第 1 条）——
-    // 与 fromPath 的**唯一**区别：不做严格检查——补不出形态的串（空 filename、裸
-    // "file:"）不炸，原样落 UnknownEntity。除此之外分派与判据同一条，且**不代做加工**：
-    // 定形与折叠仍是造实体一方的责任（N56 §2.6），入参 = 已过
-    // Util::Url::identityFromMpvEcho 整形、且已 StreamTransit::unwrap 折回身份的串。
-    // 为什么放宽发生在工厂而不是调用方：调用方是**系统边界**（外部 IPC / 命令行喂进
-    // mpv 的串再回显出来），边界上正确行为是降级不是终止进程；而"按串形态选实体类型"
-    // 本是工厂的职责，视图层做它才是越权。
-    // 为什么仍保留 fromPath 的断言：它守的是**插件自身四个出口**的契约，与外部来路无关
-    // ——放宽只走具名的这一条路，不给 bool 参数（调用点上 true / false 不表达任何东西，
-    // 将来一处顺手传错即静默失去显影）。
-    // N124：stdin 分派先于定形检查——"-" 未定形却须原样当身份，落 StdinEntity。
-    // 折叠漏喂按既有纪律显影：oxbow:// 含 "://" 属已定形，本入口不拆包装 → 转接串当
-    // 身份落 UnknownEntity，故调用点那一句 unwrap 不得省
-    // 不变式：入参已定形时 fromMpvEcho(s, r)->path() == s，与 fromPath 同类型同身份；
-    // 不可定形者落 StdinEntity（stdin）或 UnknownEntity，两者 isLocalFile 皆为假
-    // ⇒ StaticProvider 恒等下发 ⇒ 下一轮回显逐字节相等 ⇒ 静默，不落入"重复收编永续"
+    // 回显专用入口（N61）：与 fromPath 同一分派，但放宽定形检查——补不出形态者落
+    // UnknownEntity，stdin 先分派。入参须先整形并 unwrap；调用方是系统边界，故降级不终止。
     static Ptr fromMpvEcho(const QString &identity,
                            const std::shared_ptr<ServiceRegistry> &registry);
 
-    // ——按值复制（深拷贝，含已解析缓存）——
-    // 与 Ptr 共享计数相对：副本与原实体此后互不影响（一方 refresh 不清另一方）。
-    // 用途：回刷收编时复用播放表已有实体，避免整表元数据重读（N31）。
+    // 深拷贝（含已解析缓存），副本与原实体互不影响（N31）
     virtual Ptr clone() const = 0;
 
-    // ——身份与显示——
-    const QString &path() const { return m_path; } // 身份：喂 mpv / 持久化 / 回刷比对
-    // N74：归属**列表**身份的公开读出口——"加工这条播放形态的是哪个列表"，与写侧
-    // setOwnership 同源（收编进默认 tab 的项仍交原列表身份，那才是凭据与报告者所在
-    // 那一册）。语义与书签那种"承诺的归属"（正播 tab 的列表，N55 变更记录 2 钉定）
-    // 不同物，别混用。未盖章（命令行 / 手工构造 / 外部串）返回 nil，调用方按
-    // "来源不明"处理
+    const QString &path() const { return m_path; }
+    // 列表归属；未盖章为 nil（N74）
     QUuid ownerUuid() const { return m_ownerUuid; }
-    // 默认 Util::Url::key(path())（构造期缓存）；远端可重写为服务端 id
+    // 默认 Util::Url::key(path())，构造期缓存；远端可重写
     virtual QString key() const;
-    // N56 §2.4：显示出口——path() 剥除凭据后的形态（构造期缓存，非虚）。
-    // 非虚是刻意的：显示纪律不得被派生类破坏（与 m_key 同款）；派生类唯一的改写机会
-    // 是构造期那一次 setDisplayUrl。取用点只有列表 tooltip 与属性对话框 File Path；
-    // 右键复制路径 / 打开位置给原样
-    // （工具性动作，用户要一份能直接用的地址），书签层完全豁免（原样展示）
+    // 显示用身份，剥除凭据；构造期定死，非虚（N56）
     const QString &displayUrl() const { return m_displayUrl; }
-    // N56 §2.5：键级判等——实体自答"这个串是不是我"（内部 m_key == key(串)，
-    // 与 key() 同一实现不会漂移）。供定位 / 记忆使用，故意宽松：形态漂移
-    // （大小写 / 分隔符）仍认得出同一条内容（N30）。回刷判等不走它——那是
-    // 形态级逐字节比对（R，N56 §2.5），两套语义不得合一
+    // 键级判等，容忍形态漂移（N30）；回刷判等另走逐字节比对（N56）
     bool matches(const QString &path) const;
-    // ——N55 形态解析唯一出口——
-    // 锁归属提供者 → provider->playUrl(归属 uuid, path(), fileName())；"无来源 →
-    // 所在列表代答"
-    // 的分岔整体删除（N55 §2.3）。委托不是缓存：实体不存形态串、不算形态，每次现问
-    // 提供者 ⇒ 无陈旧问题、无"枚举即全表铸 URI"的前置成本。锁失败即编程错误
-    // （契约见 m_ownerProvider 注），Debug Q_ASSERT 显影；release 不可达分支返回
-    // 空串——空串令 mpv 显式加载失败，绝不静默退回 path()（对全转接型提供者，
-    // path() 只是条目标识，推它等于静默喂垃圾）。线程契约：仅 GUI 线程调用（理由见
-    // m_ownerProvider 注第 3 条）。头文件方向：本头只前置声明提供者，定义放
-    // PlaylistEntity.cpp——实体侧唯一 include 提供者头之处（PlaylistProvider.h 已
-    // include 本头，无环）。
+    // 形态解析：现问归属提供者，不缓存。锁失败即契约破坏——Debug 断言，
+    // release 返空串，不退回 path()。仅 GUI 线程调用（提供者端点缓存无锁）。
     QString playUrl() const;
-    // ——N65：下发目标出口（串 + 逐文件选项的整体）——
-    // 与 playUrl() 同一条归属通路（锁归属提供者现问，委托不是缓存），区别只在
-    // 交出 PlayTarget 整体：转接项的 cache=yes 申报由提供者在铸造点随串一并交出
-    // （N52 §2.10 语义不变、落点搬家——谁知道事实谁就交选项）。消费者封闭于视图
-    // 侧一处（Playlist::playTargets 的合并点取提供者级选项的唯一来源）；线程契约
-    // 与锁失败处置与 playUrl() 相同
+    // 串与选项的整体出口；与 playUrl 同一条归属通路（N65）
     PlayTarget playTarget() const;
-    // ——N65：条目级单文件选项（只读）——
-    // 存的就是 mpv 选项名 → 最终取值：本字段不做二次加工，写进来什么就发什么
-    // （成型只发生在提供者的解析里）。空 map = 无选项；不参与任何判据、
-    // 不进 key()、不进回显比对
+    // 条目级 mpv 选项；只读，不参与 key / 回显比对（N65）
     const QVariantMap &playOptions() const { return m_playOptions; }
-    // ——N70：显示名与文件名是两个字段，各有注入口——
-    // title 是显示面（列表行文本、搜索命中、窗口标题与 OSD、属性对话框 Display Name），
-    // fileName / suffix 是名称类排序键的取值；远端表上两者可以不同（提供者分别注入）
-    // N71：title 另是 SortKey::DisplayName 的取值来源（数字化对比）——显示面上
-    // "看到的名字"与"排出来的序"由此同源
-    const QString &title() const { return m_title; } // 恒为有效值（未注入显示名时回退文件名）
-    const QString &fileName() const {
-        return m_fileName;
-    } // 含扩展名：FileName / FileNameNumeric 排序用
-    const QString &suffix() const { return m_suffix; } // 无点小写：Extension 排序用
+    // 显示名；fileName / suffix 另供名称类排序（N70），title 也是 DisplayName 的
+    // 取值来源（N71）
+    const QString &title() const { return m_title; }       // 恒为有效值，未注入时回退文件名
+    const QString &fileName() const { return m_fileName; } // 含扩展名，供名称类排序
+    const QString &suffix() const { return m_suffix; }     // 无点小写，供 Extension 排序
 
-    // ——元数据（惰性求值 + 实体内缓存，全部 const）——
-    const FileMeta &fileMeta() const; // 惰性 computeFileMeta()；任意线程；单次 stat，无绘制风险
-    const FileMeta *cachedFileMeta() const; // 只读：未求值（或不支持）返回 nullptr
-    const MediaMeta &
-    mediaMeta() const; // 惰性 computeMediaMeta()；可能阻塞，仅供排序 / 对话框 / 预读
-    const MediaMeta *
-    cachedMediaMeta() const;   // 只读：未解析（或不支持）返回 nullptr；绘制路径专用，绝不触发求值
-    const QIcon &icon() const; // 惰性 computeIcon()；仅 GUI 线程
-    void refresh();            // 清空全部缓存（fileMeta / mediaMeta / icon）
+    // 缓存优先；可算才惰性求值；任意线程
+    const FileMeta &fileMeta() const;
+    // 只读；空返回 nullptr
+    const FileMeta *cachedFileMeta() const;
+    // 缓存优先；可能阻塞
+    const MediaMeta &mediaMeta() const;
+    // 只读；绘制路径不触发求值
+    const MediaMeta *cachedMediaMeta() const;
+    const QIcon &icon() const; // 惰性；仅 GUI 线程
+    void refresh();            // 清空全部缓存
 
-    // ——N32 求值转发（public，纯计算不落缓存，可在任意线程调用）——
-    // 语义与惰性入口一致（能力位首判 → 静态空回落 / compute*），唯一差别是不写缓存：
-    // 预读任务线程经此取回值，由 GUI 续作经注入口写回——实体缓存因此只在 GUI 线程写。
-    // N35 修订 2：同步阻塞求值，无取消通道——取消语义为结果静默丢弃（调用方
-    // 不等在途项，求值返回后不采用），见规格变更记录
+    // 求值转发：只算不写，供任务线程取回、GUI 续作注入；同步无取消（N32）
     FileMeta evalFileMeta() const;
     MediaMeta evalMediaMeta() const;
 
-    // ——能力位（取代字符串前缀猜测）——
+    // ——类型事实（取代字符串前缀猜测）——
     virtual bool isLocalFile() const = 0;
-    virtual bool exists() const = 0;            // 未知实体恒 true（不可判定）
-    virtual bool supportsFileMeta() const = 0;  // 是否具备文件级属性（大小 / 创建 / 修改）
-    virtual bool supportsMediaMeta() const = 0; // 是否具备媒体属性
-    // N107：是否允许在播放之外另起一路解码（进度条悬停缩略图）。默认拒绝（白名单式，
-    // 逐类点名放行）：在不该开第二路的流上硬开，轻则解码失败、重则触发服务器的连接数
-    // 或令牌限制而被拒访；缺缩略图只是少一个预览。后续新增协议默认安全，不必记得补覆写。
-    // 例外：RcloneCryptEntity 底层是本地文件解密流，随机 seek 零成本——它看着像远端
-    // （身份串经转接），判据却与远端相反。
-    // N145：字幕取数同判——它也是在播放之外另起一路解码（经端点解密流起回环服务喂
-    // ffmpeg），不另设能力位。
-    // 这一位隐含两条来源事实（两个消费者都建立在它们之上，覆写者必须同时满足）：
-    // 端点起出的 ByteStream 可寻位、且总长已知。缩略图按偏移 seek 出画面，字幕回环桥
-    // 靠 Range 请求把 seek 还给 ffmpeg（总长未知连响应头都写不出）；两位缺一，放行即
-    // 是一条取不干净的来源。
+    virtual bool exists() const = 0; // 不可判定者恒 true
+    // 自主求值能力（N178）：只表示能否自己求值，与能否承载注入值无关；进程期恒定
+    virtual bool canComputeFileMeta() const = 0;
+    virtual bool canComputeMediaMeta() const = 0;
+    // 是否允许播放之外另起解码（缩略图 / 字幕，N107）。默认拒绝，避免触发服务器
+    // 连接数 / 令牌限制；放行者须保证流可寻位且总长已知
     virtual bool supportsSecondaryDecode() const { return false; }
 
+    // 元数据派生出口（N178）：hasMeta = 可算或已有值；needsMeta = 可算且无值
+    bool canComputeMeta(MetaCategory cat) const {
+        return cat == MetaCategory::File    ? canComputeFileMeta()
+               : cat == MetaCategory::Media ? canComputeMediaMeta()
+                                            : false;
+    }
+    bool hasCachedMeta(MetaCategory cat) const {
+        return cat == MetaCategory::File    ? cachedFileMeta() != nullptr
+               : cat == MetaCategory::Media ? cachedMediaMeta() != nullptr
+                                            : false;
+    }
+    bool hasMeta(MetaCategory cat) const { return canComputeMeta(cat) || hasCachedMeta(cat); }
+    bool needsMeta(MetaCategory cat) const { return canComputeMeta(cat) && !hasCachedMeta(cat); }
+
   protected:
-    // 拷贝构造仅对子类开放：clone() 经子类的拷贝构造实现，对外仍不可拷贝
     PlaylistEntity(const PlaylistEntity &) = default;
     PlaylistEntity &operator=(const PlaylistEntity &) = delete;
 
-    // 子类修正文件名：网络 / 远端地址无法从 path() 中准确提取文件名时调用。
-    // 基类随之重算 suffix()，并在 title() 未被显式设置时同步 title()。
-    // 提供者侧经 PlaylistProvider::injectFileName 走本写点（N70）
+    // 修正文件名；同步重算 suffix，未设 title 时同步 title（N70）
     void setFilename(QString fileName);
-    // 子类构造后修正显示名（远端取服务端标题 / 清单频道名）。置旗后 setFilename 不再
-    // 联动 title，故两个写点调用顺序无关。提供者侧经 injectDisplayName（N70）
+    // 修正显示名；置旗后 setFilename 不再联动 title
     void setTitle(QString title) {
         m_title = std::move(title);
         m_titleSet = true;
     }
-    // 构造期受控覆写显示形态的唯一写点（当前使用者只有 StdinEntity）
+    // 覆写显示形态；仅构造期调用
     void setDisplayUrl(QString displayUrl) { m_displayUrl = std::move(displayUrl); }
-    // ——N65 选项注入口（条目级单文件选项的唯一写点）——
-    // 仅 PlaylistProvider 经友元可及（与 setFileMeta / setMediaMeta 同一条授权
-    // 通道，友元不继承，具体提供者经其静态转发写入）；枚举期一次定死，入列后
-    // 不再改写。值原样存储，本写点不做任何加工
+    // 选项写点；仅 PlaylistProvider 可及，入列后不改（N65）
     void setPlayOptions(QVariantMap options) { m_playOptions = std::move(options); }
 
-    // ——N35 服务注册表（基类统一持有，供子类按需取用）——
-    // 构造注入：http(s) 实体必传非空（构造内断言）；本地 / 兜底实体沿用缺省空。
-    // clone 经拷贝构造携带同一实例；注册表身份恒定，重装配只覆盖其内部实例
+    // 服务注册表；http(s) 子类构造时断言非空
     const std::shared_ptr<ServiceRegistry> &registry() const { return m_registry; }
 
-    // ——N29 元数据注入口（写入外部已取得的元数据，不触发求值）——
-    // 写缓存 + 视同已求值：随后 fileMeta() / mediaMeta() 返回注入值，
-    // cachedFileMeta() / cachedMediaMeta() 非空，预读骨架对该行命中跳过。
-    // supports*Meta() 为假时忽略（缓存不落值，与惰性求值的静态空回落同形）。
-    // 仅 PlaylistProvider 经友元可及；视图层与具体提供者直接调用编译失败
+    // 元数据注入口：写缓存并视同已求值；refresh() 清掉，重新枚举重注（N29/N178）。
+    // 仅 PlaylistProvider / PlaylistWidget 可及
     void setFileMeta(const FileMeta &meta);
     void setMediaMeta(const MediaMeta &meta);
 
-    // ——N55 归属注入口（显式赋盖，不判空兜底）——
-    // 仅 PlaylistProvider / PlaylistWidget 经友元可及（与 setFileMeta / setMediaMeta
-    // 同一条授权通道）；构造签名一字不动，归属不走构造参数（N55 §2.2）。每个入列
-    // 落点各自决定盖与不盖：收编 clone() 携带来的原归属靠"不再盖"保住，故是显式
-    // 赋盖而非"空则补盖"。
+    // 归属写点：显式赋盖；收编 clone 的原归属靠"不再盖"保住（N55）
     void setOwnership(QUuid listUuid, std::weak_ptr<const PlaylistProvider> provider) {
         m_ownerUuid = std::move(listUuid);
         m_ownerProvider = std::move(provider);
     }
 
-    // N35 修订 2：同步求值（可能阻塞至完成 / 超时，无取消通道，取消为
-    // 结果静默丢弃——见变更记录）；仅预读任务与对话框任务线程调用。
-    // N39：实体是否具备求值能力由能力位表达，无能力者恒走静态空回落
+    // 同步求值，可能阻塞 / 超时，无取消；仅任务线程调用，不可算者恒不被调
     virtual FileMeta computeFileMeta() const = 0;
     virtual MediaMeta computeMediaMeta() const = 0;
     virtual QIcon computeIcon() const = 0;
 
   private:
-    // 构造期派生 title / fileName / suffix（纯字符串运算，与身份串同生命周期）
+    // 构造期派生名称字段
     void deriveNames();
 
     QString m_path;
-    std::shared_ptr<ServiceRegistry> m_registry; // N35：服务注册表（基类统一持有）
-    // ——N55 归属两件套（出生属性）——
-    // 在列表中显示的每个实体都携带归属：列表身份 + 该列表当前提供者的弱引用。
-    // 载体是 weak_ptr 而非裸指针 / shared_ptr（N55 §2.1）：保留非所有权语义，
-    // 提供者寿命不因实体外溢，锁失败可检测可断言。
-    // 1. 归属是出生属性：实体入列（进入层缓存或行）时由视图侧一次显式赋盖，此后
-    //    不随层重建 / 排序 / 逐出改变；拷贝构造默认携带 ⇒ clone() 自动带走。
-    //    归属不进 key()、不参与任何判等、不进 removeInvalid 判据、列表侧不落 INI。
-    // 2. 枚举产物入列前无归属：异步任务只产未盖章实体表，归属由 GUI 线程在入列时盖；
-    //    未盖章（两成员皆空）时消费形态属调用方违约，走 playUrl() 的断言路径显影。
-    // 3. playUrl() 只许 GUI 线程调用：提供者侧端点缓存与 publish 无锁，依赖
-    //    "只在 GUI 线程发生"的既有线程口径（PlaylistProvider::playUrl 的断言同款）。
-    // 4. playUrl() 消费者封闭于视图侧四处：Playlist::playTargets 整表映射（经
-    //    playTarget() 取整体）、PlaylistWidget::setPlaylist 第 4 步比对与第 5 步
-    //    reuse 索引键、MainWindow::onAddBookmark——异步对话框持有的实体副本只读
-    //    元数据缓存，不消费形态。"提供者在位"由消费点封闭与来源失效清扫共同保证
-    //    （N55 §2.4），lock() 失败即契约破坏。
-    QUuid m_ownerUuid;                                     // 归属列表身份；未盖章为 null
-    std::weak_ptr<const PlaylistProvider> m_ownerProvider; // 归属提供者弱引用
-    QString m_title;                                       // 构造期派生
-    QString m_fileName;                                    // setFilename 可改，改则同步 suffix
-    QString m_suffix;                                      // 同上
-    bool m_titleSet = false;   // setTitle 显式设置后置位，此后 setFilename 不再联动 title
-    QString m_key;             // 构造期缓存：Util::Url::key(path())——key()
-                               // 在委托绘制热路径上，避免逐行逐帧重算
-    QString m_displayUrl;      // N56：构造期缓存 stripCredentials(path())——显示出口，
-                               // 与 m_key 同款（构造期定死，构造后不再变）
-    QVariantMap m_playOptions; // N65：条目级单文件选项（键 = mpv 选项名，值原样；
-                               // 空 map = 无选项，随拷贝构造与 clone() 自动携带）
+    std::shared_ptr<ServiceRegistry> m_registry;
+    // 归属：列表身份 + 提供者弱引用（不延长其寿命）。入列时一次盖章，clone 携带；
+    // 不参与判等 / 持久化，未盖章时消费形态属调用方违约。
+    QUuid m_ownerUuid;
+    std::weak_ptr<const PlaylistProvider> m_ownerProvider;
+    QString m_title;
+    QString m_fileName;
+    QString m_suffix;
+    bool m_titleSet = false;
+    QString m_key;        // 构造期缓存，绘制热路径逐行取用
+    QString m_displayUrl; // 构造期缓存
+    QVariantMap m_playOptions;
     mutable std::optional<FileMeta> m_fileMeta;
     mutable std::optional<MediaMeta> m_mediaMeta;
     mutable std::optional<QIcon> m_icon;

@@ -6,35 +6,19 @@
 
 #include "Util.h"
 
-// ServiceRegistry 前向声明见 PlaylistEntity.h（本头仅以引用形态使用，无需包含）
+// ServiceRegistry 前向声明见 PlaylistEntity.h
 
-// 通用 http(s) 播放项实体（N35）：工厂对 http:// / https:// 前缀的分派落点，
-// 也是手工打开 URL / mpv 播放列表收编等非注入来源的落点。
-// N39 起不支持文件级元数据：原惰性 HEAD 求值（经注册表现查 client 发 HEAD 取
-// content-length / last-modified）已删除——耗时长、数据不准，实际无使用价值。
-// 该类型因此不具备任何取得元数据的途径，能力位如实为假，使排序菜单的文件级
-// 排序项对纯 http 表自动灰掉；有元数据可注入的 http 实体见 WebDavEntity。
-// 不支持媒体元数据（恒走静态空回落）。path() 恒为可播放的完整 URL，本类不脱敏
-// ——UI 一律直接显示传入的串，与本地路径的处理一致。
-// N48：WebDAV 来源的实体（WebDavEntity）其 path() 由提供者保证无 userinfo（凭据只在
-// PROPFIND 请求与喂 mpv 时注入），故工具提示 / 属性对话框 / 复制路径天然无凭据；手工
-// 打开等来源的通用 http 项仍按其原样（含 userinfo）显示，本篇不改该形态
-//
-// registry 仍由基类统一持有（工厂契约要求 http(s) 必带非空实例），但本类不再
-// 使用：元数据求值通道已删，未来远端元数据的落点亦在本类，届时重新启用。
+// 通用 http(s) 实体（N35）：工厂对 http(s) 的分派落点，也承接手工 URL / 回显收编。
+// 不自主求值（HEAD 耗时长、数据不准），canCompute* 为假；注入值照常落缓存（N178）。
+// path 为完整可播放 URL，不脱敏；WebDAV 来源由提供者保证无 userinfo（N48）。
 class HttpEntity : public PlaylistEntity {
   public:
-    // registry 必须非空（构造内断言）：http(s) + 空 registry 属调用错误，
-    // 工厂已在分派处挡住（Debug 断言、Release 降级 UnknownEntity）
     HttpEntity(QString path, const std::shared_ptr<ServiceRegistry> &registry)
         : PlaylistEntity(std::move(path), registry) {
         Q_ASSERT(registry != nullptr);
 
-        // 显示名（N35 §2.2）：取末段并 percent-decode 后 setFilename（基类 deriveNames
-        // 用 QFileInfo 取末段、不解码，否则列表出现 "%20"、"%E4%B8%AD" 之类）。逻辑自
-        // N37 起收编进 Util::Url::fileName（标题 / OSD 取名共用同一出口）；解后为空
-        // （如以 / 结尾）回退基类行为（title 已按 path() 派生）。
-        // 构造参数名遮蔽基类同名访问器，取 path() 须显式限定
+        // 显示名取末段并 percent-decode，解后为空回退基类派生。构造参数名遮蔽
+        // 基类访问器，取 path() 须显式限定
         const QString decoded = Util::Url::fileName(PlaylistEntity::path());
         if (!decoded.isEmpty())
             setFilename(decoded);
@@ -44,24 +28,17 @@ class HttpEntity : public PlaylistEntity {
 
     bool isLocalFile() const override { return false; }
     bool exists() const override { return true; } // 不可判定，不参与失效清理
-    // N39：无取得元数据的途径（惰性 HEAD 已删），故为假——fileMeta() 走静态空回落、
-    // cachedFileMeta() 恒空、注入口忽略写入、预读骨架跳过本类实体
-    bool supportsFileMeta() const override { return false; }
-    bool supportsMediaMeta() const override { return false; }
+    // 无自主求值；注入值由基类缓存承载（N178）
+    bool canComputeFileMeta() const override { return false; }
+    bool canComputeMediaMeta() const override { return false; }
 
   protected:
-    // N39：恒不被调（supportsFileMeta 为假）。原同步阻塞 HEAD 求值已删，见类注释
-    FileMeta computeFileMeta() const override { return {}; }
-    // 恒不被调（supportsMediaMeta 为假）
-    MediaMeta computeMediaMeta() const override { return {}; }
+    FileMeta computeFileMeta() const override { return {}; }   // 恒不被调
+    MediaMeta computeMediaMeta() const override { return {}; } // 恒不被调
 
-    // 通用文件图标（与 UnknownEntity 同形，N35 §2.2）；仅 GUI 线程调用。
-    // provider 无状态，函数内 static 复用一次构造
+    // 通用文件图标；仅 GUI 线程
     QIcon computeIcon() const override {
         static QFileIconProvider provider;
         return provider.icon(QFileIconProvider::File);
     }
-
-  private:
-    // registry 存于基类（registry() 取用），clone 经拷贝构造携带同一实例
 };

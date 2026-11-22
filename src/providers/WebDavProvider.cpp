@@ -7,7 +7,7 @@
 #include "ServiceRegistry.h"
 #include "TraversalPolicy.h"
 #include "Util.h"
-#include "entities/WebDavEntity.h"
+#include "entities/HttpEntity.h"
 #include "streams/HttpByteStream.h"
 #include "streams/StreamEndpoint.h"
 #include "ui/ExtensionFilterEdit.h"
@@ -424,7 +424,7 @@ WebDavProvider::enumerate(const QStringList &parent) const {
     };
 
     // 文件条目 → 实体（两分支共用）：扩展名过滤（取显示名的后缀，大小写不敏感；
-    // 空清单 = 不过滤）→ 造 WebDavEntity（具备文件级元数据能力）→ 已取得的
+    // 空清单 = 不过滤）→ 铸 HttpEntity → 已取得的
     // size / modified 经注入口零成本写入（零额外请求）。两者皆缺不注入，即值未知
     auto appendFileEntities = [this](const QList<DavEntry> &files, EntityList &entities) {
         for (const DavEntry &entry : files) {
@@ -439,10 +439,10 @@ WebDavProvider::enumerate(const QStringList &parent) const {
                 if (!m_extensions.contains(name.mid(dot + 1).toLower()))
                     continue;
             }
-            // N39：直接构造 WebDavEntity，不经工厂——工厂对 http(s) 只产无元数据
-            // 能力的 HttpEntity（收编 / 静态表重载的落点）。二者对网络路径的
-            // 加工等价（Util::Url::toIdentity 对网络路径原样返回），故绕过工厂无损
-            auto entity = std::make_shared<WebDavEntity>(entry.path, registry());
+            // N178：直接铸 HttpEntity——与工厂对 http(s) 的分派产物完全同型
+            // （Util::Url::toIdentity 对网络路径原样返回），枚举期直构与收编 /
+            // 静态表重载自此同型；size / modified 经注入口写入（N178 起无条件落缓存）
+            auto entity = std::make_shared<HttpEntity>(entry.path, registry());
             if (entry.size || entry.modified) {
                 FileMeta fm;
                 fm.size = entry.size;

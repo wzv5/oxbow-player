@@ -4,28 +4,15 @@
 
 #include "PlaylistEntity.h"
 
-// 身份 scheme 常量唯一持有者：工厂分派（PlaylistEntity::fromPath）与提供者铸造
-// （JellyfinProvider）共用同一点定义，杜绝"键写错导致分派落空"的静默失败
+// jellyfin:// 的 scheme 常量，工厂与提供者共用
 inline constexpr char kJellyfinScheme[] = "jellyfin://";
 
-// Jellyfin 条目实体（N69）：工厂对 jellyfin:// 前缀的分派落点，JellyfinProvider
-// 枚举的叶子——判据是 IsFolder=false（Movie / Episode / Audio / Video / Photo …
-// 一律同形），哪类叶子入列由扩展名清单过滤，不由类型白名单裁决。可进入的层
-// （库 / Series / Season / Folder …）走层缓存容器机制，不落实体。
-// 身份是 URN 形态 jellyfin://<serverId>/<type>/<itemId>——serverId / itemId 两个
-// 持久标识 + 类型段（小写，取流 URL 由铸造点从身份一步现拼），与服务器地址、
-// 凭据、取流形态完全解耦（N69 设计：直连与转码两种未来都由铸造点从同一身份
-// 现拼，身份零改动；服务器换地址不影响任何已存身份串）。
-// 元数据值只来自提供者注入（/Items 的 fields 显式字段随 N39 注入通道写入），
-// 实体自身不发起任何请求；未注入时空求值返回结果，与"值未知"同口径（WebDavEntity
-// 先例）。能力位恒真不随单次枚举结果变化：刷新 = 重新枚举 = 重新注入。
-// 服务端标题（显示名）与原始文件名均由提供者枚举期经注入口写入（URN 尾段 itemId 无语义，
-// 派生名只是占位；N70 分家后两者各走各的出口）。Episode 叶子的显示名在服务端标题前
-// 带集号前缀（N72，S01E02 - 形态，季号缺位退化为 E02 - ）。key() 用基类默认派生：URN 与地址、
-// 凭据解耦且形态恒定，无需重写。
+// Jellyfin 叶子实体（N69）：工厂 jellyfin:// 的落点；IsFolder=false，入列由扩展名
+// 过滤，可进入的层走容器。身份 URN jellyfin://<serverId>/<type>/<itemId>，取流 URL
+// 由铸造点现拼。元数据只来自枚举期注入，canCompute* 为假（N178）；显示名与文件名
+// 分别注入（N70），Episode 带集号前缀（N72）。
 class JellyfinEntity : public PlaylistEntity {
   public:
-    // registry 经基类持有（构造契约同基类：必填，无缺省）
     JellyfinEntity(QString path, const std::shared_ptr<ServiceRegistry> &registry)
         : PlaylistEntity(std::move(path), registry) {}
 
@@ -33,18 +20,14 @@ class JellyfinEntity : public PlaylistEntity {
 
     bool isLocalFile() const override { return false; }
     bool exists() const override { return true; } // 不可判定，不参与失效清理
-    bool supportsFileMeta() const override { return true; }
-    bool supportsMediaMeta() const override { return true; }
+    bool canComputeFileMeta() const override { return false; }
+    bool canComputeMediaMeta() const override { return false; }
 
   protected:
-    // 恒不被调（枚举期注入覆盖全部取用点；仅 refresh() 清缓存后、下次枚举前的
-    // 窗口内可能命中，返回空值即"值未知"）
-    FileMeta computeFileMeta() const override { return {}; }
-    MediaMeta computeMediaMeta() const override { return {}; }
+    FileMeta computeFileMeta() const override { return {}; }   // 恒不被调
+    MediaMeta computeMediaMeta() const override { return {}; } // 恒不被调
 
-    // 通用文件图标（与 HttpEntity / UnknownEntity 同形）；仅 GUI 线程调用。
-    // 无封面展示位（N69 非目标：/Images/Primary 不接入），通用图标即现状口径。
-    // provider 无状态，函数内 static 复用一次构造
+    // 通用文件图标；仅 GUI 线程
     QIcon computeIcon() const override {
         static QFileIconProvider provider;
         return provider.icon(QFileIconProvider::File);

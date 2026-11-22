@@ -168,7 +168,6 @@ add_library(oxbowcore MODULE
     src/playlist/PlaylistFile.h
     src/entities/LocalFileEntity.h
     src/entities/HttpEntity.h
-    src/entities/WebDavEntity.h
     src/entities/JellyfinEntity.h
     src/entities/UnknownEntity.h
     src/entities/StdinEntity.h
@@ -578,7 +577,6 @@ if(OXBOW_BUILD_TESTS)
         src/playlist/PlaylistFile.h
         src/entities/LocalFileEntity.h
         src/entities/HttpEntity.h
-        src/entities/WebDavEntity.h
         src/entities/JellyfinEntity.h
         src/entities/UnknownEntity.h
         src/entities/StdinEntity.h

@@ -1666,7 +1666,7 @@ void PlaylistWidget::onTabChanged(int index) {
     activateTab(index);
 }
 
-// N29：已加载 tab 切入重读判定——外围条件自判，类别/支持者/标志位三要素
+// N29：已加载 tab 切入重读判定——外围条件自判，类别 / 可得性 / 标志位三要素
 // 经共用内核（与填充跳过、首载收尾同一判据，防多点位漂移）。
 // N45：判定对象是本 tab 的当前显示层
 bool PlaylistWidget::needsMetaRescan(int tabIndex) const {
@@ -2684,34 +2684,28 @@ void PlaylistWidget::advanceTab(JobContext ctx, bool fromMetaScan) {
     emit contentsChanged(); // 末位补发一次（该信号契约幂等，接收方只刷新导航启停）
 }
 
-// N32：预读发起。任务体只算不写（经实体求值转发取回值），结果按快照实体成批交出；
-// 续作把批次注入快照实体——这是实体缓存的唯一写点，故缓存（含绘制路径读的）只在 GUI 线程写。
-// 快照天然正确：活动容器的行序会被换源 / 删行 / 排序改变，而快照注入按实体而非行号
+// 预读发起（N32）：任务只算不写，续作按实体注入（缓存唯一写点，只在 GUI 线程写）。
+// 快照按实体而非行号，换源 / 删行 / 排序不影响。
 void PlaylistWidget::startMetaScan(JobContext ctx, MetaCategory cat) {
     PlaylistListView *list = ctx.list;
     if (!list || cat == MetaCategory::None)
         return;
 
     auto pending = std::make_shared<PlaylistEntity::List>(); // 待求值者（共享计数快照）
-    int baseline = 0; // 已求值 / 不支持者：无需计算，但计入进度分母（现状口径）
-    // N45 §2.10：预读快照限于任务目标层（ctx.parent）的实体，不再整表采集
+    int baseline = 0; // 已有值 / 不可算者：无需计算，但计入进度分母（现状口径）
+    // 只采集任务目标层的实体，不整表采集
     if (const Level *lvl = list->findLevel(ctx.parent)) {
         for (const auto &entry : lvl->entities) {
             const PlaylistEntity::Ptr &entity = entry.entity;
-            // 能力位为假的类别不进求值；已求值者（含"值未知"入缓存）也不重算——
-            // 缓存判定必须在 GUI 线程做：任务只算不写，读缓存会与 GUI 侧写入构成数据竞争
-            const bool supported = cat == MetaCategory::File ? entity->supportsFileMeta()
-                                                             : entity->supportsMediaMeta();
-            const bool cached = cat == MetaCategory::File ? entity->cachedFileMeta() != nullptr
-                                                          : entity->cachedMediaMeta() != nullptr;
-            if (!supported || cached) {
+            // needsMeta 是取数唯一判据：可算且无值才排入；缓存判定必须在 GUI 线程做
+            if (!entity->needsMeta(cat)) {
                 ++baseline;
                 continue;
             }
             pending->push_back(entity);
         }
     }
-    const int total = baseline + int(pending->size()); // 分母恒为条目总数（含命中与不支持者）
+    const int total = baseline + int(pending->size()); // 分母恒为条目总数（含命中与不可算者）
     auto result = std::make_shared<MetaResult>();
     result->cat = cat;
 
@@ -2723,10 +2717,7 @@ void PlaylistWidget::startMetaScan(JobContext ctx, MetaCategory cat) {
             QElapsedTimer throttle;
             throttle.start();
             int done = baseline;
-            // N35 修订 2：同步求值（远端 HEAD 阻塞至完成/超时，无取消通道）。
-            // 逐项边界检查取消：命中即不再发起后续项；在途项求值返回后其结果
-            // 依 abandoned 旗静默丢弃（不注入不缓存，下次预读重试）。取消时
-            // GUI 侧经 onAbandon 立即收尾（锁内搬走已算批次注入缓存），不等本任务
+            // 同步求值无取消；逐项检查，在途结果按 abandoned 丢弃
             for (const auto &entity : *pending) {
                 if (promise.isCanceled())
                     break;
@@ -3468,57 +3459,50 @@ void PlaylistWidget::evictListKeys(PlaylistListView *list, const QStringList &id
     }
 }
 
-// ——N26 元数据能力谓词（一对，同形）：遍历该层实体，任一支持即真；
-// 空表 / 未加载层为假——
+// 该层任一实体可算或有值即真；空表 / 未加载为假（N178）
 
-bool PlaylistWidget::anyEntitySupportsMediaMeta(const PlaylistListView *list,
-                                                const QStringList &ids) const {
+bool PlaylistWidget::anyEntityHasMediaMeta(const PlaylistListView *list,
+                                           const QStringList &ids) const {
     if (!list)
         return false;
     const Level *lvl = list->findLevel(ids);
     if (!lvl)
         return false;
     for (const auto &entry : lvl->entities) {
-        if (entry.entity->supportsMediaMeta())
+        if (entry.entity->hasMeta(MetaCategory::Media))
             return true;
     }
     return false;
 }
 
-bool PlaylistWidget::anyEntitySupportsFileMeta(const PlaylistListView *list,
-                                               const QStringList &ids) const {
+bool PlaylistWidget::anyEntityHasFileMeta(const PlaylistListView *list,
+                                          const QStringList &ids) const {
     if (!list)
         return false;
     const Level *lvl = list->findLevel(ids);
     if (!lvl)
         return false;
     for (const auto &entry : lvl->entities) {
-        if (entry.entity->supportsFileMeta())
+        if (entry.entity->hasMeta(MetaCategory::File))
             return true;
     }
     return false;
 }
 
-// ——N29 类别映射与判定收敛点——
-// N57 §2.9：排序键 → 类别的唯一映射 `metaCategoryOf` 已随键搬到 `PlaylistEntity.cpp`
-// （本类不再持有），菜单灰态判据与本节的判定都直调那个全局函数。
-
-// 对应类别支持者谓词：Media / File 各取其一（None 由调用方上游挡掉）
-bool PlaylistWidget::anyEntitySupports(const PlaylistListView *list, const QStringList &ids,
-                                       MetaCategory cat) const {
-    return cat == MetaCategory::Media ? anyEntitySupportsMediaMeta(list, ids)
-                                      : anyEntitySupportsFileMeta(list, ids);
+// 对应类别可得谓词：Media / File 各取其一（None 由调用方上游挡掉）
+bool PlaylistWidget::anyEntityHas(const PlaylistListView *list, const QStringList &ids,
+                                  MetaCategory cat) const {
+    return cat == MetaCategory::Media ? anyEntityHasMediaMeta(list, ids)
+                                      : anyEntityHasFileMeta(list, ids);
 }
 
-// 切入重读判定内核：该层该排序规则仍需预读的类别（无需预读返回 None）。
-// 注意只含"类别 / 支持者 / 标志位"三要素，busy / 已加载 / 占位等
-// 外围条件由调用方自判
+// 该层该排序规则仍需预读的类别；只判类别 / 可得性 / 标志位
 MetaCategory PlaylistWidget::pendingMetaCategory(const PlaylistListView *list,
                                                  const QStringList &ids, SortRule rule) const {
     const auto cat = metaCategoryOf(rule.key);
     if (cat == MetaCategory::None)
         return MetaCategory::None;
-    if (!anyEntitySupports(list, ids, cat))
+    if (!anyEntityHas(list, ids, cat))
         return MetaCategory::None;
     return metaLoadedOf(list, ids, cat) ? MetaCategory::None : cat;
 }
@@ -3795,27 +3779,13 @@ void PlaylistWidget::copyPathToClipboard(const QString &path) {
     QApplication::clipboard()->setText(path);
 }
 
-// N35 重写：判定看能力位；N39 变更：两类元数据一律追加缓存命中判定，已有值即不
-// 重读（理由见函数内注释）。两者皆不求值只显示文件路径与已有值（N39 起以缓存值
-// 渲染）。任务线程经求值转发重读（eval 即重读，不读缓存不落缓存），GUI 续作经
-// 注入口写回实体缓存后用同一套行构建渲染——任务内不得直接调
-// 共享实体的 fileMeta() / mediaMeta()
-// （命中前写缓存与 GUI 绘制并发读写即 data race，N32 纪律），求值转发 + GUI 写回
-// 是唯一合法形状。pending 态 General 组只放文件路径行，空一行后显示"正在读取元数据"。
-// N35 修订 2：同步求值 + 结果静默丢弃——关闭对话框置 closed 旗（事件非轮询），
-// 对话框即刻返回，后台任务跑完结果自然蒸发。发起前 GUI 线程显式判
-// MediaInfoHelper::available()（supportsMediaMeta 内含，N32 前提）
+// 属性对话框：以缓存值为初值，needsMeta 只决定哪一类需要后台重读（N178）。
+// 任务线程经 eval 取数，GUI 续作注入后用同一套行构建渲染；任务内不读实体缓存。
+// 同步求值无取消，关闭对话框即放弃结果。
 void PlaylistWidget::showPropertiesDialog(const PlaylistEntity::Ptr &entityPtr) {
     const PlaylistEntity &entity = *entityPtr;
-    // N39 变更：两类元数据一律"已有值即不重读"——判定除能力位外还看缓存命中，
-    // File 与 Media 同口径（不可改一半留一半，否则同一对话框内语义冲突）。
-    // 直接动因在 File 侧：无自主求值途径的实体（WebDavEntity）其 computeFileMeta()
-    // 恒空，若照旧强制重读，结果经注入口写回会把枚举时注入的 size / modified
-    // 覆盖成未知。两类均以缓存值为初值装进 result（GUI 线程读取，任务线程不得读
-    // 实体缓存，N32 纪律）：需重读的那一类由任务覆盖，其余原样渲染——渲染恒取
-    // result，调用点无需区分"求值过的"与"走缓存的"
-    const bool needFileMeta = entity.supportsFileMeta() && entity.cachedFileMeta() == nullptr;
-    const bool needMediaMeta = entity.supportsMediaMeta() && entity.cachedMediaMeta() == nullptr;
+    const bool needFileMeta = entity.needsMeta(MetaCategory::File);
+    const bool needMediaMeta = entity.needsMeta(MetaCategory::Media);
     struct PropResult {
         FileMeta fm;
         MediaInfoHelper::Data mm;
@@ -4097,7 +4067,7 @@ void PlaylistWidget::showPropertiesDialog(const PlaylistEntity::Ptr &entityPtr) 
         dialog.resize(520, qMin(lineCount * 22 + 40, 600));
     };
 
-    // ——分支一：无需求值（不支持，或两类皆已缓存）→ 同步出框——
+    // ——分支一：两类都无需取数（不可算，或已有值含注入）→ 同步出框——
     if (!needFileMeta && !needMediaMeta) {
         renderDocument(result->fm, &result->mm,
                        /*pending=*/false); // N39：恒取 result（已装缓存值）
@@ -4467,7 +4437,7 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
     // 决策出口；取不到提供者按禁用）。其中 layerLoaded 已蕴含 !loadFailed（同一层
     // 同一 loadError），按规格两行分列写而不合并。有实体一项只判空、不换算内容：
     // itemCount 不可作判据（容器行与"上一级"行也计行），整表副本的量级与本类既有
-    // 本层遍历判据（anyEntitySupports*）同档。其余不设限——默认 tab 同样可复制 /
+    // 本层遍历判据（anyEntityHas*）同档。其余不设限——默认 tab 同样可复制 /
     // 导出；忙时由菜单入口既有 m_busy 守卫统一挡住
     const bool contentsActionsEnabled =
         hasList && !loadFailed && list->layerLoaded(list->browsePathIds()) &&
@@ -4495,17 +4465,17 @@ void PlaylistWidget::contextMenuEvent(QContextMenuEvent *event) {
     copyPathAction->setEnabled(hasTarget || (targetContainer && !containerPath.isEmpty()));
     propsAction->setEnabled(hasTarget || targetContainer.has_value());
 
-    // N26：依赖实体能力的排序项按本层支持者启用；其余排序项不受影响
+    // N26：依赖实体元数据的排序项按本层可得者启用（N178：可算或已有值）；其余排序项不受影响
     if (list) {
         const QStringList layerIds = list->browsePathIds();
-        if (!anyEntitySupportsMediaMeta(list, layerIds)) {
+        if (!anyEntityHasMediaMeta(list, layerIds)) {
             for (QAction *a : sortActions) {
                 const int k = a->data().toInt();
                 if (k == int(SortKey::Duration) || k == int(SortKey::ReleaseDate))
                     a->setEnabled(false);
             }
         }
-        if (!anyEntitySupportsFileMeta(list, layerIds)) {
+        if (!anyEntityHasFileMeta(list, layerIds)) {
             for (QAction *a : sortActions) {
                 const int k = a->data().toInt();
                 if (k == int(SortKey::Created) || k == int(SortKey::Modified) ||
