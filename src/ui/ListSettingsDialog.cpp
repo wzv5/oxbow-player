@@ -27,7 +27,9 @@ ListSettingsDialog::ListSettingsDialog(QWidget *parent, const QString &currentNa
     m_pageStack = new QStackedWidget;
 
     const QList<ProviderCatalog::Entry> &catalog = ProviderCatalog::entries();
-    int defaultIndex = 0; // 新建（current 为空）时选中首项（条目顺序即显示顺序）
+    // 新建（current 为空）时选中首项＝内建静态列表，与默认 tab 同类型：
+    // 静态条目居首由登记表自检保证
+    int defaultIndex = 0;
     bool matchedType = false;
     for (int i = 0; i < catalog.size(); ++i) {
         const ProviderCatalog::Entry &entry = catalog.at(i);
@@ -47,7 +49,8 @@ ListSettingsDialog::ListSettingsDialog(QWidget *parent, const QString &currentNa
         m_pages << page;
         m_pageStack->addWidget(page);
     }
-    // 未命中属登记表漏登或键写错（编程错误）；Release 下回落第 0 项
+    // 未命中属登记表漏登或键写错（编程错误）；Release 下选中内建静态列表，
+    // 与 INI 未知键的读回回落同一档
     Q_ASSERT(!current || matchedType);
     typeRow->addStretch(1);
     // 尾部固定留 12px：伸缩项在空间不足时会收缩到 0，届时最后那个单选项会贴住窗口

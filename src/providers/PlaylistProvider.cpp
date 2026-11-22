@@ -69,7 +69,7 @@ PlayTarget PlaylistProvider::playTarget(const QUuid &listUuid, const QString &pa
             QVariantMap{{QStringLiteral("cache"), QStringLiteral("yes")}}};
 }
 
-// Debug 断言"写出的键必能在登记表中解开"，键写错会让重启后静默退化为默认提供者。
+// Debug 断言"写出的键必能在登记表中解开"，键写错会让重启后按未知键回落内建静态列表。
 // transit 只对 Optional 写出，其余清掉可能被手改塞入的存量键
 void PlaylistProvider::writeProviderKey(QSettings &settings) const {
     const QString key = typeKey();

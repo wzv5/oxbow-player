@@ -331,8 +331,8 @@ ExternalProvider::Parsed ExternalProvider::parseSource(const QString &text,
                     pendingTvgName.clear();
                     pendingGroups.clear();
                     pendingOptions.clear(); // 被新 EXTINF 顶替的未消费选项丢弃
-                    bool inQuote = false;
                     qsizetype split = -1;
+                    bool inQuote = false;
                     for (qsizetype i = 0; i < rest.size(); ++i) {
                         const QChar c = rest.at(i);
                         if (c == QLatin1Char('"'))

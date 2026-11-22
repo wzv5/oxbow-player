@@ -4,8 +4,9 @@
 
 #include "Logging.h"
 
-// 本文件是具体提供者的唯一聚合点：登记表条目要引用各提供者的键常量、
-// displayName 与工厂，故只有此处包含提供者头文件。
+// 本文件是登记表侧具体提供者的唯一聚合点：登记表条目要引用各提供者的键常量、
+// displayName 与工厂，故登记表的消费方一律经 ProviderCatalog.h 取用，提供者头只此处包含。
+// 另有一处不属本表口径的包含点：playbackreport/ReporterSwitchCatalog.cpp 只取具体种类键常量。
 #include "DirProvider.h"
 #include "ExternalProvider.h"
 #include "JellyfinProvider.h"
@@ -16,11 +17,12 @@
 #include "StaticProvider.h"
 #include "WebDavProvider.h"
 
+namespace ProviderCatalog {
 namespace {
-// 登记表自检：键非空且互不相同、静态条目必须在册。
+// 登记表自检：键非空且互不相同、静态条目必须居首。
 // 不符记一条警告，不阻断启动；Debug 再叠 Q_ASSERT，把漏配第一时间炸出来
-QList<ProviderCatalog::Entry> buildCatalog() {
-    QList<ProviderCatalog::Entry> table = {
+QList<Entry> buildCatalog() {
+    QList<Entry> table = {
         {kStaticProviderKey, &StaticProvider::displayName, &createStaticSettingsPage,
          &StaticProvider::load},
         {kDirProviderKey, &DirProvider::displayName, &createDirSettingsPage, &DirProvider::load},
@@ -44,27 +46,28 @@ QList<ProviderCatalog::Entry> buildCatalog() {
             OXBOW_LOG_WARNING() << "ProviderCatalog: duplicate type key" << key;
         seen.insert(key);
     }
-    const QString staticKey = QString::fromLatin1(kStaticProviderKey);
-    if (!seen.contains(staticKey))
-        OXBOW_LOG_WARNING() << "ProviderCatalog: static provider entry is missing";
-    Q_ASSERT(seen.contains(staticKey));
+    // 静态条目必须居首：新建列表对话框的默认选中取首项，与写死的读回回落同落一档
+    const bool staticFirst =
+        !table.isEmpty() && qstrcmp(table.constFirst().typeKey, kStaticProviderKey) == 0;
+    if (!staticFirst)
+        OXBOW_LOG_WARNING() << "ProviderCatalog: the static entry must come first";
+    Q_ASSERT(staticFirst);
     return table;
 }
 } // namespace
 
-const QList<ProviderCatalog::Entry> &ProviderCatalog::entries() {
-    static const QList<ProviderCatalog::Entry> table = buildCatalog();
+const QList<Entry> &entries() {
+    static const QList<Entry> table = buildCatalog();
     return table;
 }
 
 std::shared_ptr<PlaylistProvider>
-ProviderCatalog::createStaticProvider(const std::shared_ptr<ServiceRegistry> &registry) {
+createStaticProvider(const std::shared_ptr<ServiceRegistry> &registry) {
     return std::make_shared<StaticProvider>(registry);
 }
 
-std::shared_ptr<PlaylistProvider>
-ProviderCatalog::loadProvider(QSettings &settings,
-                              const std::shared_ptr<ServiceRegistry> &registry) {
+std::shared_ptr<PlaylistProvider> loadProvider(QSettings &settings,
+                                               const std::shared_ptr<ServiceRegistry> &registry) {
     const QString kind = settings.value(QStringLiteral("provider")).toString();
     for (const Entry &entry : entries()) {
         if (kind == QLatin1String(entry.typeKey)) {
@@ -76,3 +79,5 @@ ProviderCatalog::loadProvider(QSettings &settings,
     // 写死内建静态列表：回落身份不随条目顺序漂移
     return StaticProvider::load(settings, registry);
 }
+
+} // namespace ProviderCatalog
