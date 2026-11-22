@@ -62,6 +62,7 @@ class TestScriptActionSpec : public QObject {
     void rejectsBadJson();
     void boundIdRecognition();
     void idValidation();
+    void commandTextRoundTrip();
 
   private:
     static QByteArray fullJson();
@@ -244,6 +245,20 @@ void TestScriptActionSpec::idValidation() {
     QVERIFY(!isValidId(QStringLiteral("a/b")));
     QVERIFY(!isValidId(QStringLiteral(u"动作")));
     QVERIFY(!isValidId(QStringLiteral("a:b")));
+}
+
+// N182：生成侧与识别侧互逆；非法 id 拼出的串不被认回
+void TestScriptActionSpec::commandTextRoundTrip() {
+    const QStringList validIds{QStringLiteral("a"), QStringLiteral("a.b-c_d"),
+                               QStringLiteral("A9_"), QString(64, u'x')};
+    for (const QString &id : validIds) {
+        QCOMPARE(commandText(id), QStringLiteral("@") + id);
+        QCOMPARE(boundId(commandText(id)), id);
+    }
+    QVERIFY(boundId(commandText(QString())).isEmpty());
+    QVERIFY(boundId(commandText(QStringLiteral("a/b"))).isEmpty());
+    QVERIFY(boundId(commandText(QStringLiteral(u"动作"))).isEmpty());
+    QVERIFY(boundId(commandText(QString(65, u'x'))).isEmpty());
 }
 
 QTEST_GUILESS_MAIN(TestScriptActionSpec)

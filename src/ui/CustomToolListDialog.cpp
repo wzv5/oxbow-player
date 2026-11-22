@@ -5,10 +5,13 @@
 #include "ui/CustomToolListDialog.h"
 #include "ui/IconBrowserDialog.h"
 #include "ui/MaterialIconCatalog.h"
+#include "ui/ScriptActionHost.h"
+#include "ui/ScriptActionSpec.h"
 
 CustomToolListDialog::CustomToolListDialog(const QList<CustomTool> &tools,
-                                           const ActionManager *actions, QWidget *parent)
-    : QDialog(parent), m_tools(tools), m_actions(actions) {
+                                           const ActionManager *actions,
+                                           const ScriptActionHost *scriptActions, QWidget *parent)
+    : QDialog(parent), m_tools(tools), m_actions(actions), m_scriptActions(scriptActions) {
     setWindowTitle(tr("Customize Tool List"));
 
     m_list = new QListWidget(this);
@@ -48,6 +51,13 @@ CustomToolListDialog::CustomToolListDialog(const QList<CustomTool> &tools,
     auto *commandHint = new QLabel(tr("mpv command, or @id to bind a script action"), this);
     commandHint->setEnabled(false);
     commandHint->setFocusPolicy(Qt::NoFocus);
+    // N182：候选取完整绑定串 @id——Qt 以整框文本作前缀、接受时整框替换，裸 id 会吃掉 @
+    m_commandModel = new QStringListModel(this);
+    auto *commandCompleter = new QCompleter(m_commandModel, m_commandEdit);
+    commandCompleter->setCompletionMode(QCompleter::PopupCompletion);
+    commandCompleter->setCaseSensitivity(Qt::CaseInsensitive);
+    commandCompleter->setFilterMode(Qt::MatchStartsWith);
+    m_commandEdit->setCompleter(commandCompleter);
     m_keyEdit = new QKeySequenceEdit(this);
     // 只认单组合键：多段串与 AM 的单段键在 planKeys 里永不相等，会把歧义交回 Qt
     // 裁决。录入器限长 1 只是录入体验，不是硬限制（手改 INI 收多段）
@@ -116,6 +126,8 @@ CustomToolListDialog::CustomToolListDialog(const QList<CustomTool> &tools,
             return;
         m_tools[m_list->currentRow()].command = text;
     });
+    // N182：Qt 先发 textEdited 再 complete(-1)，故此处重灌即让本次弹层用新表
+    connect(m_commandEdit, &QLineEdit::textEdited, this, [this] { refreshCommandCandidates(); });
     connect(m_barShowCheck, &QCheckBox::toggled, this, [this](bool on) {
         updateBarControlsEnabled();
         if (m_updating)
@@ -210,9 +222,24 @@ void CustomToolListDialog::loadRow(int row) {
     m_barShowCheck->setChecked(m_tools[row].barShow);
     m_barSideCombo->setCurrentIndex(m_tools[row].barSide == BarSide::Right ? 1 : 0);
     m_barIconEdit->setText(m_tools[row].barIcon);
+    refreshCommandCandidates();
     updateBarControlsEnabled();
     updateButtons();
     m_updating = false;
+}
+
+// N182：表未变即不重灌——每次按键都 reset 会让弹层重建、选中项丢失
+void CustomToolListDialog::refreshCommandCandidates() {
+    QStringList candidates;
+    if (m_scriptActions) {
+        const QStringList ids = m_scriptActions->ids();
+        candidates.reserve(ids.size());
+        for (const QString &id : ids)
+            candidates.append(ScriptActionSpec::commandText(id));
+    }
+    if (candidates == m_commandModel->stringList())
+        return;
+    m_commandModel->setStringList(candidates);
 }
 
 void CustomToolListDialog::updateButtons() {

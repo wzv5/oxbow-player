@@ -5659,7 +5659,7 @@ void MainWindow::buildMpvMenuItems(QMenu &menu, const QList<MpvController::MenuD
 void MainWindow::customizeTools() {
     if (m_mini || m_fullscreen) // N168：菜单已裁剪，此处兜键位通路
         return;
-    CustomToolListDialog dlg(m_toolMgr->tools(), m_actions, this);
+    CustomToolListDialog dlg(m_toolMgr->tools(), m_actions, m_scriptActions, this);
     if (dlg.exec() != QDialog::Accepted)
         return;
     if (!m_toolMgr->replaceTools(dlg.tools()))

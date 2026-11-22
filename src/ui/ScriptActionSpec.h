@@ -47,6 +47,9 @@ ScriptAction apply(const ScriptAction &base, const ScriptActionPatch &patch);
 // @id 绑定识别：命中返回 id，否则空串（不当绑定按普通命令串处理）
 QString boundId(const QString &command);
 
+// 绑定串的生成侧："@" + id，与 boundId 互为逆（N182）
+QString commandText(const QString &id);
+
 // id 字符集 [A-Za-z0-9_.-]{1,64}（与 N172 的 menu-id 同）
 bool isValidId(const QString &id);
 

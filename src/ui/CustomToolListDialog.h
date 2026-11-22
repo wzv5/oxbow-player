@@ -5,14 +5,18 @@
 #include "ActionManager.h"
 #include "CustomToolManager.h"
 
+class ScriptActionHost;
+
 // N134：自定义工具编辑对话框（模态）。工作副本永不为空：表为空即补一条占位空
 // 条目等待输入。确定语义收口在 CustomToolManager::sanitize（规范化 + 校验 + 丢
-// 占位条目），本类只做列表 / 表单的呈现与违规行的定位；N138 增 Key 行
+// 占位条目），本类只做列表 / 表单的呈现与违规行的定位；N138 增 Key 行；N182 命令
+// 字段补 @ 动作 id 的弹出候选
 class CustomToolListDialog : public QDialog {
     Q_OBJECT
   public:
+    // ScriptActionHost 缺位即无候选
     explicit CustomToolListDialog(const QList<CustomTool> &tools, const ActionManager *actions,
-                                  QWidget *parent = nullptr);
+                                  const ScriptActionHost *scriptActions, QWidget *parent = nullptr);
 
     QList<CustomTool> tools() const; // accept 通过后的保留行（名称已重组、命令已 trim）
 
@@ -29,6 +33,7 @@ class CustomToolListDialog : public QDialog {
     void loadRow(int row);
     void updateButtons();
     void updateBarControlsEnabled();
+    void refreshCommandCandidates();
     void retintIcons();
     static QString listText(const QString &name);
 
@@ -46,6 +51,8 @@ class CustomToolListDialog : public QDialog {
     QToolButton *m_upButton = nullptr;
     QToolButton *m_downButton = nullptr;
     QList<CustomTool> m_tools;
-    const ActionManager *m_actions; // accept 现取键表：模态期间键位不会变
-    bool m_updating = false;        // 装载期间挡住表单回写
+    const ActionManager *m_actions;          // accept 现取键表：模态期间键位不会变
+    const ScriptActionHost *m_scriptActions; // N182：候选来源，模态期间现取，非快照
+    QStringListModel *m_commandModel = nullptr;
+    bool m_updating = false; // 装载期间挡住表单回写
 };

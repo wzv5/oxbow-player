@@ -129,6 +129,7 @@
 #include <QString>
 #include <QStringConverter>
 #include <QStringList>
+#include <QStringListModel>
 #include <QStringView>
 #include <QStyle>
 #include <QStyleFactory>

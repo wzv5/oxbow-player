@@ -40,6 +40,12 @@ std::optional<ScriptActionSpec::ScriptAction> ScriptActionHost::find(const QStri
     return it.value();
 }
 
+QStringList ScriptActionHost::ids() const {
+    QStringList result = m_actions.keys();
+    result.sort(Qt::CaseSensitive);
+    return result;
+}
+
 // args 布局：[script-action, verb, owner, id, json]
 void ScriptActionHost::handleScriptAction(const QStringList &args) {
     const QString verb = args.value(1);

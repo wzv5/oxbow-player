@@ -6,10 +6,7 @@
 
 class MainWindow;
 class MpvController;
-class QEventLoop;
-class QMenu;
 class ScriptMessageBus;
-class QWidget;
 
 // N172：context-menu 协议宿主——忙判据、菜单渲染弹出、命令 / 条目回调派发，以及恒发的
 // 关闭事件（条目回调必先于本单关闭事件到达，脚本在其中清理安全）；传输与分派全归

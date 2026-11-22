@@ -88,6 +88,8 @@ QString boundId(const QString &command) {
 
 bool isValidId(const QString &id) { return validIdBody(QStringView(id)); }
 
+QString commandText(const QString &id) { return QStringLiteral("@") + id; }
+
 QString eventName(const QString &event) {
     return Util::scriptEventName(QStringLiteral("script-action"), event);
 }

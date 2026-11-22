@@ -19,6 +19,9 @@ class ScriptActionHost : public QObject {
     // 值返回——QHash 再散列会使引用失效
     std::optional<ScriptActionSpec::ScriptAction> find(const QString &id) const;
 
+    // 全部动作 id，按 Qt::CaseSensitive 升序——QHash 无序，排序让候选序列稳定
+    QStringList ids() const;
+
   signals:
     // create / set 成功后的合并通知，同一事件循环只发一次
     void actionsChanged();
