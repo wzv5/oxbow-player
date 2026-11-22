@@ -508,9 +508,8 @@ class MainWindow : public QMainWindow, public WindowStateHost {
     // 不 delete——退出序靠闸门与事件循环收线，见 PlaybackReportDriver 注释）
     PlaybackReportDriver *m_reportDriver = nullptr;
     QSplitter *m_splitter = nullptr;
-    // N156：中央容器（包 splitter，承担 band 左右下边距环）；标题栏容器承载自绘
-    // 标题栏与菜单栏，经 setMenuWidget 顶替 QMainWindow 菜单区。此后任何代码
-    // 不得再调 QMainWindow::menuBar()——它会懒建第二个菜单栏并顶掉容器
+    // N156：中央容器承载 1px 边环，首行是标题栏容器，其下接 splitter；标题栏容器不
+    // 进 QMainWindow 菜单区——样式 / 平台主题取菜单栏时会把非 QMenuBar 的菜单控件顶掉
     QWidget *m_centralFrame = nullptr;
     QWidget *m_titleBarContainer = nullptr;
     QMenuBar *m_menuBar = nullptr;

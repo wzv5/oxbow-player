@@ -952,26 +952,31 @@ MainWindow::MainWindow(MpvController *controller, AppearanceManager *appearance,
             [this](quint64 seq) { m_thumbWatch->handleSessionEnded(seq); });
 
     // ---- N156：自绘窗框装配 ----
-    // 标题栏容器顶替 QMainWindow 菜单区（setMenuWidget）：自绘标题栏 + 显式菜单栏。
-    // 此后任何代码不得再调 QMainWindow::menuBar()——它会懒建第二个菜单栏并顶掉
-    // 容器（验收含"全仓无 menuBar() 裸调用"静态判据）
-    m_titleBarContainer = new QWidget(this);
+    // 标题栏容器放中央容器首行、不进 QMainWindow 菜单区：样式或平台主题经 menuBar()
+    // 取菜单栏时，Qt 会自建 QMenuBar 顶掉菜单区里的非 QMenuBar 控件（子树一并 deleteLater）
+    m_centralFrame = new QWidget(this);
+    auto *centralLayout = new QVBoxLayout(m_centralFrame);
+    centralLayout->setContentsMargins(0, 0, 0, 0);
+    centralLayout->setSpacing(0);
+    m_titleBarContainer = new QWidget(m_centralFrame);
     auto *titleLayout = new QVBoxLayout(m_titleBarContainer);
-    titleLayout->setContentsMargins(0, 0, 0, 0); // band 边距环由 applyFrame 按形态收口
+    titleLayout->setContentsMargins(0, 0, 0, 0); // 边环统一由中央容器承担
     titleLayout->setSpacing(0);
     m_titleBar = new WindowTitleBar(this);
     titleLayout->addWidget(m_titleBar);
     m_menuBar = new QMenuBar(m_titleBarContainer);
     titleLayout->addWidget(m_menuBar);
-    setMenuWidget(m_titleBarContainer);
-    // 中央容器：包 splitter，承担 band 左右下边距环（上环在标题栏容器里）；
+    centralLayout->addWidget(m_titleBarContainer);
     // splitter 内部装配与 A20 锚点不变
-    m_centralFrame = new QWidget(this);
-    auto *centralLayout = new QVBoxLayout(m_centralFrame);
-    centralLayout->setContentsMargins(0, 0, 0, 0);
-    centralLayout->setSpacing(0);
     centralLayout->addWidget(m_splitter);
+    // 标题带按自身高度定尺，多余高度全归 splitter（同为零 stretch 时 QBoxLayout 会平分）
+    centralLayout->setStretch(0, 0);
+    centralLayout->setStretch(1, 1);
     setCentralWidget(m_centralFrame);
+    // 菜单区只留隐藏的空菜单栏占位，供样式 / 平台主题取用；此后不得再动菜单区
+    QMenuBar *menuPlaceholder = new QMenuBar(this);
+    setMenuBar(menuPlaceholder);
+    menuPlaceholder->hide();
     // 1px 边环的未按下 move 须开追踪才投递（EdgeGestureWatch 在 qApp 层据此判热区
     // 光标）；热区手势单通道走 watch，容器不再装对象级过滤器
     m_titleBarContainer->setMouseTracking(true);
@@ -1579,12 +1584,9 @@ void MainWindow::applyFrame() {
         return;
     const bool frameActive = !m_fullscreen && !isMaximized();
     // 边距全平台只留 1px 边框线；4px 热区由系统命中测试（Windows）或
-    // EdgeGestureWatch 的子控件边缘转发（Linux / PUREQT）承担
+    // EdgeGestureWatch 的子控件边缘转发（Linux / PUREQT）承担；边环由中央容器收口
     const int edge = App::windowBorderWidth();
-    const QMargins topMargins = frameActive ? QMargins(edge, edge, edge, 0) : QMargins();
-    const QMargins centralMargins = frameActive ? QMargins(edge, 0, edge, edge) : QMargins();
-    m_titleBarContainer->setContentsMargins(topMargins);
-    m_centralFrame->setContentsMargins(centralMargins);
+    m_centralFrame->setContentsMargins(frameActive ? QMargins(edge, edge, edge, edge) : QMargins());
     if (m_fullscreen)
         m_titleBar->setMode(WindowTitleBar::Mode::Floating);
     else if (m_mini)
