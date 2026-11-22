@@ -30,10 +30,9 @@ void setWindowFullscreenEwmh(unsigned long long win, bool on);
 // 静默跳过
 void setWindowSkipTaskbarEwmh(unsigned long long win, bool on);
 
-// N156：直发 _NET_WM_MOVERESIZE（move/resize 交互抓取）。绕开 Qt xcb 通道——实测
-// mutter/XWayland 对 Qt 发的消息只认左上角：Qt 发送前 xcb_ungrab_pointer 释放了按键
-// 隐式 grab、resize 用窗内指针坐标，均不合 mutter 预期。本函数不 ungrab（保留按键隐式
-// grab 供 WM 接管），坐标与方向由调用方算好（resize 投影到窗口外边界）。direction: 0-7
-// 缩放、8 移动。data.l[4] 是 source indication（本消息无 timestamp 字段），取 1=application。
-// X 环境不可用时静默跳过
+// N156：直发 _NET_WM_MOVERESIZE（move/resize 交互抓取）。坐标与方向由调用方算好（resize
+// 投影到窗口外边界）；direction: 0-7 缩放、8 移动。data.l[4] 是 source indication（本消息无
+// timestamp 字段），取 1=application。EWMH 要求发送前客户端已放掉所有 grab，而这条按键隐式
+// grab 属 Qt 的 xcb 连接、本单元自建的那条放不掉——ungrab 由调用方在 Qt 连接上先做
+// （X11FrameBackend）。X 环境不可用时静默跳过
 void sendMoveResizeEwmh(unsigned long long win, int rootX, int rootY, int direction);

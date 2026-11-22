@@ -965,6 +965,10 @@ MainWindow::MainWindow(MpvController *controller, AppearanceManager *appearance,
     m_titleBar = new WindowTitleBar(this);
     titleLayout->addWidget(m_titleBar);
     m_menuBar = new QMenuBar(m_titleBarContainer);
+    // KDE 样式（Breeze）的 WindowManager 把菜单栏空白处的按住拖动改发系统拖动，落点是它
+    // 自己取的指针位置而非按下点，窗口会瞬移到指针左上角；本窗的拖动面只有标题带一个，
+    // 用样式自己的退出属性让它不介入
+    m_menuBar->setProperty("_kde_no_window_grab", true);
     titleLayout->addWidget(m_menuBar);
     centralLayout->addWidget(m_titleBarContainer);
     // splitter 内部装配与 A20 锚点不变

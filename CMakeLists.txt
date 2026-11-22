@@ -436,8 +436,8 @@ endif()
 # macOS，而 NOT WIN32 与代码侧调用点（MainWindow.cpp）的 Q_OS_WIN 守卫同指
 # 非 Windows；X11::X11 为 imported target（CMake ≥3.14），自带 include 路径
 if(NOT WIN32)
-    find_package(X11 REQUIRED)
-    target_link_libraries(oxbowcore PRIVATE X11::X11)
+    find_package(X11 REQUIRED COMPONENTS xcb)
+    target_link_libraries(oxbowcore PRIVATE X11::X11 X11::xcb)
     target_sources(oxbowcore PRIVATE
         src/platform/X11FrameBackend.cpp
         src/platform/X11FrameBackend.h

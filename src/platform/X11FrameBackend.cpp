@@ -5,6 +5,9 @@
 #include "WindowStateHost.h"
 #include "platform/X11Util.h"
 
+#include <QtGui/qguiapplication_platform.h>
+#include <xcb/xcb.h>
+
 namespace {
 
 // _NET_WM_MOVERESIZE 方向码：0-7 缩放、8 移动
@@ -28,6 +31,20 @@ int x11MoveResizeDirection(Qt::Edges edges) {
     return 8;
 }
 
+// EWMH 要求客户端发送 _NET_WM_MOVERESIZE 之前放掉所有 grab。这条按键隐式 grab 属于 Qt 的
+// xcb 连接，只能从那条连接放，X11Util 自建的那条放不掉。真 X 服务下窗口管理器要先抓到指针
+// 才能起交互，撞上这条 grab 就退避到按钮松开之后；XWayland 由合成器接管指针，这一步等于空操作
+void releasePointerForWm() {
+    auto *app = qApp->nativeInterface<QNativeInterface::QX11Application>();
+    if (!app)
+        return;
+    xcb_connection_t *conn = app->connection();
+    if (!conn)
+        return;
+    xcb_ungrab_pointer(conn, XCB_CURRENT_TIME);
+    xcb_flush(conn);
+}
+
 } // namespace
 
 X11FrameBackend::X11FrameBackend(QWidget *window, WindowStateHost *host)
@@ -46,6 +63,7 @@ bool X11FrameBackend::nativeGestures() const {
 }
 
 void X11FrameBackend::beginSystemMove(const QPoint &globalPos) {
+    releasePointerForWm();
     // mutter 对窗内坐标只认左上角
     const qreal dpr = m_window->devicePixelRatioF();
     sendMoveResizeEwmh(m_window->winId(), qRound(globalPos.x() * dpr), qRound(globalPos.y() * dpr),
@@ -55,6 +73,7 @@ void X11FrameBackend::beginSystemMove(const QPoint &globalPos) {
 void X11FrameBackend::beginSystemResize(Qt::Edges edges, const QPoint &globalPos) {
     if (m_window->isMaximized())
         return; // 最大化态不接缩放
+    releasePointerForWm();
     // 缩放坐标须投影到窗口外边界
     const QRect g = m_window->geometry();
     QPoint root = globalPos;
