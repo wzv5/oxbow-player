@@ -1559,8 +1559,8 @@
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1157"/>
-        <source>Switch Stream</source>
-        <translation>切换流</translation>
+        <source>Select Track</source>
+        <translation>选择轨道</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1161"/>

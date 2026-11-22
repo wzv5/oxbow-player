@@ -1172,10 +1172,10 @@ QWidget *MainWindow::createLeftArea() {
                           kTimeLabelSlackPx;
         m_timeLabel->setFixedWidth(width);
     }
-    m_streamButton = new QPushButton(QString());
-    m_streamButton->setToolTip(tr("Switch Stream"));
-    m_streamButton->setFixedSize(36, 36);
-    m_streamButton->hide();
+    m_trackButton = new QPushButton(QString());
+    m_trackButton->setToolTip(tr("Select Track"));
+    m_trackButton->setFixedSize(36, 36);
+    m_trackButton->hide();
     m_settingsButton = new QPushButton(QString());
     m_settingsButton->setToolTip(tr("Settings"));
     m_settingsButton->setFixedSize(36, 36);
@@ -1186,16 +1186,16 @@ QWidget *MainWindow::createLeftArea() {
     // 控制行图标钉 24：样式默认取 16，而这批素材的细笔画只有画幅的 1/12——摊到 16px
     // 不足一整像素，覆盖率封顶在约 0.7（实测峰值 alpha 180/255），观感就是"发灰"；
     // 笔画摊到 2 整像素才实心。音量行的静音钮在 24 的容器里保持默认尺寸，不入本组
-    QPushButton *controlIcons[] = {m_playButton,   m_stopButton,     m_prevButton,    m_nextButton,
-                                   m_streamButton, m_settingsButton, m_playlistToggle};
+    QPushButton *controlIcons[] = {m_playButton,  m_stopButton,     m_prevButton,    m_nextButton,
+                                   m_trackButton, m_settingsButton, m_playlistToggle};
     for (QPushButton *b : controlIcons)
         b->setIconSize(QSize(24, 24));
     retintIcons(); // 控制行各钮与静音钮的图标初值——与主题切换后的重染同一个出口
 
     // 控制行按钮与音量行静音按钮不接受焦点（C2）：Space 归全局快捷键，
     // 避免焦点按钮被 Space 二次触发（N38：静音按钮并入本组）
-    QAbstractButton *noFocusButtons[] = {m_playButton,     m_stopButton,   m_prevButton,
-                                         m_nextButton,     m_streamButton, m_settingsButton,
+    QAbstractButton *noFocusButtons[] = {m_playButton,     m_stopButton,  m_prevButton,
+                                         m_nextButton,     m_trackButton, m_settingsButton,
                                          m_playlistToggle, m_muteButton};
     for (QAbstractButton *b : noFocusButtons) {
         b->setFocusPolicy(Qt::NoFocus);
@@ -1223,16 +1223,16 @@ QWidget *MainWindow::createLeftArea() {
     controlLayout->addWidget(m_nextButton);
     controlLayout->addSpacing(8);
     controlLayout->addWidget(m_timeLabel);
-    // N168：左组紧随时间标签，右组顶在流钮之前
+    // N168：左组紧随时间标签，右组顶在轨道钮之前
     m_leftToolBar = new ControlBarToolBox;
     m_rightToolBar = new ControlBarToolBox;
     controlLayout->addWidget(m_leftToolBar);
     controlLayout->addStretch(1);
     controlLayout->addWidget(m_rightToolBar);
-    controlLayout->addWidget(m_streamButton);
+    controlLayout->addWidget(m_trackButton);
     controlLayout->addWidget(m_settingsButton);
     controlLayout->addWidget(m_playlistToggle);
-    // N168：两基准一次算定，此后不随布局变化。304 是零按钮且流钮隐藏时控制行除
+    // N168：两基准一次算定，此后不随布局变化。304 是零按钮且轨道钮隐藏时控制行除
     // 标签外的最小宽（边距、四钮、加隔、设置与列表钮及八道间距之和）；标签宽经
     // N166 setFixedWidth 落在 minimumWidth 上，构造期读它而非 crect
     m_controlSlotStride = 36 + controlLayout->spacing();
@@ -1252,7 +1252,7 @@ QWidget *MainWindow::createLeftArea() {
         else
             setPlaylistVisible(on);
     });
-    connect(m_streamButton, &QPushButton::clicked, this, &MainWindow::showStreamMenu);
+    connect(m_trackButton, &QPushButton::clicked, this, &MainWindow::showTrackMenu);
 
     connect(m_progressSlider, &QSlider::sliderPressed, this, [this] { m_seeking = true; });
     connect(m_progressSlider, &QSlider::sliderReleased, this, &MainWindow::seekReleased);
@@ -1801,10 +1801,10 @@ void MainWindow::connectController() {
         const bool switchedItem = pos != m_playlistPos; // B9：实际换条目（值不变 mpv 不推送）
         m_playlistPos = pos;
         updateNavigationActions(); // 播放/停止态切换与位置变化（A16）
-        // 流子菜单启用态派生自正播实体（N96），而实体正是随本信号落定的：控件状态必须
+        // 轨道子菜单启用态派生自正播实体（N96），而实体正是随本信号落定的：控件状态必须
         // 随其派生输入一起刷新。只靠 endFile 那次调用会停在"实体尚未更新"的瞬间，
         // 停止态能否复位就全押在 mpv 各属性推送的先后上（无依据）
-        updateStreamButton();
+        updateTrackButton();
         // N8 Part5：停止态禁用进度条并归位 0；播放态恢复可用
         m_progressSlider->setEnabled(pos >= 0);
         if (pos < 0) {
@@ -1860,7 +1860,7 @@ void MainWindow::connectController() {
             m_progressSlider->setValue(0);
         }
         m_tracks.clear();
-        updateStreamButton();
+        updateTrackButton();
         m_marks->setChapters({});
         updateChapterSlider();
     });
@@ -1942,7 +1942,7 @@ void MainWindow::connectController() {
     connect(m_controller, &MpvController::tracksChanged, this,
             [this](const QString &, const QList<MpvController::TrackInfo> &tracks) {
                 m_tracks = tracks;
-                updateStreamButton();
+                updateTrackButton();
             });
     // N15：章节
     connect(m_controller, &MpvController::chaptersChanged, this,
@@ -3446,7 +3446,7 @@ void MainWindow::resizeVideoAreaTo(const QSize &wantLogical) {
 }
 
 // N10：普通态按当前视频自适应——视频域物理像素 1:1（逻辑尺寸 = 像素 ÷ DPR，高 DPI 下
-// 不被系统缩放拉伸）；全屏 / 最大化 / 小窗 / 无视频流不动作，入参为 N110 有效尺寸
+// 不被系统缩放拉伸）；全屏 / 最大化 / 小窗 / 无视频轨不动作，入参为 N110 有效尺寸
 void MainWindow::adaptWindowSizeToVideo(int videoW, int videoH) {
     // m_mini 守卫（N68）：小窗几何单源在 toggleMini 与换片自适应，尺寸推送不得把它重排
     if (videoW <= 0 || videoH <= 0 || m_fullscreen || m_mini || isMaximized())
@@ -4286,7 +4286,7 @@ void MainWindow::retintIcons() {
     m_stopButton->setIcon(Ui::themedIcon(App::iconStop(), tint));
     m_prevButton->setIcon(Ui::themedIcon(App::iconSkipPrevious(), tint));
     m_nextButton->setIcon(Ui::themedIcon(App::iconSkipNext(), tint));
-    m_streamButton->setIcon(Ui::themedIcon(App::iconStream(), tint));
+    m_trackButton->setIcon(Ui::themedIcon(App::iconTrackChanges(), tint));
     m_settingsButton->setIcon(Ui::themedIcon(App::iconSettings(), tint));
     m_playlistToggle->setIcon(Ui::themedIcon(App::iconFormatListBulleted(), tint, onTint));
     applyMuteState(m_muteAction->isChecked());
@@ -5108,7 +5108,7 @@ QString MainWindow::formatTrackText(const MpvController::TrackInfo &t) const {
     return result;
 }
 
-// 当前文件某类轨道的快照，按 id 升序——三组流子菜单与流选择按钮的分组都从这份取表出生，
+// 当前文件某类轨道的快照，按 id 升序——三组轨道子菜单与轨道切换按钮的分组都从这份取表出生，
 // 故条目顺序全仓一致
 QList<MpvController::TrackInfo> MainWindow::tracksOfType(const QString &type) const {
     QList<MpvController::TrackInfo> result;
@@ -5159,7 +5159,7 @@ void MainWindow::buildTrackSection(QMenu &parent) {
     secondary->setEnabled(hasPlaying);
 }
 
-// N96：流子菜单"添加"项装配单点——条件分隔线（菜单非空才加，0 轨时添加项顶格、不留
+// N96：轨道子菜单"添加"项装配单点——条件分隔线（菜单非空才加，0 轨时添加项顶格、不留
 // 悬空分隔线）+ 动作。动作不可勾选、不进 tracksOfType 的任何分组函数，与"选择条目"
 // 分属两件事。整菜单每次 aboutToShow 重建，动作连同其连接一起随 clear() 销毁，
 // 无累积连接之虞
@@ -5185,7 +5185,7 @@ void MainWindow::addTrackSelectionGroup(QMenu *menu, const QString &type) {
     }
 }
 
-// N94：字幕选择条目的唯一体——播放菜单的两组与流选择按钮的两个分组都从这里出生，故判据
+// N94：字幕选择条目的唯一体——播放菜单的两组与轨道切换按钮的两个分组都从这里出生，故判据
 // 全仓只此一份。两组都列全量字幕轨，不排除已被对方占用的那条——"同一条只能落在一组"
 // 由点击时的抢占下发体现（见 switchToTrack / switchToSecondarySubtitle）
 void MainWindow::addSubtitleSelectionGroup(QMenu *menu, bool secondary) {
@@ -5221,9 +5221,9 @@ void MainWindow::addSubtitleSelectionGroup(QMenu *menu, bool secondary) {
     }
 }
 
-// B18：流选择按钮的显隐与启用由 m_tracks 派生。刷新点随输入走：tracksChanged（轨道
+// B18：轨道切换按钮的显隐与启用由 m_tracks 派生。刷新点随输入走：tracksChanged（轨道
 // 表）/ playlistPosChanged（正播实体）/ END_FILE 会话态重置（清空 m_tracks 即隐藏）
-void MainWindow::updateStreamButton() {
+void MainWindow::updateTrackButton() {
     int v = 0, a = 0, s = 0;
     for (const auto &t : m_tracks) {
         if (t.type == QLatin1String("video"))
@@ -5234,13 +5234,13 @@ void MainWindow::updateStreamButton() {
             ++s;
     }
     const bool visible = (v > 1) || (a > 1) || (s > 0);
-    if (m_streamButton) {
-        m_streamButton->setVisible(visible);
-        m_streamButton->setEnabled(visible);
+    if (m_trackButton) {
+        m_trackButton->setVisible(visible);
+        m_trackButton->setEnabled(visible);
     }
 }
 
-void MainWindow::showStreamMenu() {
+void MainWindow::showTrackMenu() {
     QMenu menu(this);
     const QList<MpvController::TrackInfo> videos = tracksOfType(QStringLiteral("video"));
     const QList<MpvController::TrackInfo> audios = tracksOfType(QStringLiteral("audio"));
@@ -5275,8 +5275,8 @@ void MainWindow::showStreamMenu() {
     }
     if (menu.isEmpty())
         return;
-    const QPoint pos = m_streamButton
-                           ? m_streamButton->mapToGlobal(QPoint(0, m_streamButton->height()))
+    const QPoint pos = m_trackButton
+                           ? m_trackButton->mapToGlobal(QPoint(0, m_trackButton->height()))
                            : QCursor::pos();
     menu.exec(pos);
 }
@@ -5323,7 +5323,7 @@ void MainWindow::disableSecondarySubtitles() {
     m_osd->show(tr("Secondary Subtitle: None"));
 }
 
-// ——N96 手动添加音频流 / 字幕流——
+// ——N96 手动添加音频轨 / 字幕轨——
 
 // N97：清单取值单点——对话框过滤器与视频区拖放的字幕判据共用，读取形态一字不动
 QStringList MainWindow::trackExtensions(bool subtitle) const {
@@ -5355,7 +5355,7 @@ void MainWindow::addAudioTrack() {
         QFileDialog::getOpenFileName(this, tr("Add Audio"), QString(), trackFileFilter(false));
     if (path.isEmpty())
         return;
-    // audio-add 默认 <select>，加完即成当前音频流——"添加并设为选中"由 mpv 的默认行为
+    // audio-add 默认 <select>，加完即成当前音频轨——"添加并设为选中"由 mpv 的默认行为
     // 兑现，插件不额外下发；不传 title：mpv 自行解析文件、用媒体元数据作轨道名，
     // 插件拿不到更准的
     const int err = m_controller->command({QStringLiteral("audio-add"), Util::Url::toNative(path)});
@@ -5528,7 +5528,7 @@ void MainWindow::rebuildControlBarButtons() {
     reflowControlBarButtons();
 }
 
-// N168：显隐唯一判定点。W 与 syncVideoGeometry 同源；恒预留流钮一槽（-1），故其
+// N168：显隐唯一判定点。W 与 syncVideoGeometry 同源；恒预留轨道钮一槽（-1），故其
 // 显隐不增减按钮数。显隐只认全局表序、不按 barSide 分层
 void MainWindow::reflowControlBarButtons() {
     if (!m_videoPlaceholder)

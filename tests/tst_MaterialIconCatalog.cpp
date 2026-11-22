@@ -50,7 +50,7 @@ class TestMaterialIconCatalog : public QObject {
             App::iconSkipNext(),
             App::iconFastForward(),
             App::iconFastRewind(),
-            App::iconStream(),
+            App::iconTrackChanges(),
             App::iconVolumeUp(),
             App::iconVolumeOff(),
             App::iconKeyboardArrowUp(),

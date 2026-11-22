@@ -396,13 +396,13 @@ class MainWindow : public QMainWindow, public WindowStateHost {
     // N13：轨道文案与切换
     QString formatTrackText(const MpvController::TrackInfo &t) const;
     qint64 trackBitrate(const MpvController::TrackInfo &t) const;
-    // 按类型取轨道快照并按 id 升序——三组流子菜单与流选择按钮的分组共用这一份取表
+    // 按类型取轨道快照并按 id 升序——三组轨道子菜单与轨道切换按钮的分组共用这一份取表
     QList<MpvController::TrackInfo> tracksOfType(const QString &type) const;
     // N119：轨道动态段——四个子菜单现读现填
     void buildTrackSection(QMenu &parent);
-    // B18：流选择按钮的显隐与启用由 m_tracks 派生
-    void updateStreamButton();
-    void showStreamMenu();
+    // B18：轨道切换按钮的显隐与启用由 m_tracks 派生
+    void updateTrackButton();
+    void showTrackMenu();
     // N13：按 type 把 vid / aid / sid 排出。N94：目标是第二字幕时先关第二字幕再设
     // sid（mpv 不允许主 / 第二同为一条，切换即抢占）
     void switchToTrack(const MpvController::TrackInfo &t);
@@ -418,19 +418,19 @@ class MainWindow : public QMainWindow, public WindowStateHost {
     // 不排除已被对方占用的那条——"同一条只能落在一组"由点击时的抢占下发体现）。
     // secondary 选槽位——勾选一律按 main-selection（主字幕 0、第二字幕 1）：
     // selected 的语义是"在解码"，两条字幕同时解码时双双为真，判不出归属。
-    // 两个 add* 都不清空菜单、也不加标题与分隔线：播放菜单的子菜单日后要在字幕流下
-    // 追加"添加字幕"之类的动作，流选择按钮的分组则只提供选择，两处形态各异，故外层一律
+    // 两个 add* 都不清空菜单、也不加标题与分隔线：播放菜单的子菜单日后要在字幕轨下
+    // 追加"添加字幕"之类的动作，轨道切换按钮的分组则只提供选择，两处形态各异，故外层一律
     // 留给调用方
     void addSubtitleSelectionGroup(QMenu *menu, bool secondary);
 
-    // ——N96 手动添加音频流 / 字幕流——
+    // ——N96 手动添加音频轨 / 字幕轨——
     // "添加"项对话框过滤器：扩展名现读 mpv 的 --sub-auto-exts / --audio-exts（跟随用户
     // mpv.conf 自定义），读失败或读空才回退 Constants.h 的内置清单。主字幕与第二字幕同表
     QString trackFileFilter(bool subtitle) const;
     // 清单取值单点（N97）：过滤器拼接与视频区拖放的字幕判据共用——读取形态一字不动
     // （每次现读 mpv 属性，读空回退内置表），故两处的判据永不漂移
     QStringList trackExtensions(bool subtitle) const;
-    // 流子菜单"添加"项装配单点：条件分隔线（菜单非空才加，0 轨时添加项顶格）+ 动作。
+    // 轨道子菜单"添加"项装配单点：条件分隔线（菜单非空才加，0 轨时添加项顶格）+ 动作。
     // 动作不进任何分组函数，与"选择条目"分属两件事。音频档只看 subtitle，
     // secondary 取其默认值即可（传出的第二档只给字幕菜单用）
     void appendTrackAddAction(QMenu *menu, bool subtitle, bool secondary = false);
@@ -695,7 +695,7 @@ class MainWindow : public QMainWindow, public WindowStateHost {
 
     // ---- N13：轨道选择 ----
     QList<MpvController::TrackInfo> m_tracks;
-    QPushButton *m_streamButton = nullptr; // 流选择按钮
+    QPushButton *m_trackButton = nullptr; // 轨道切换按钮
 
     // ---- N15：章节与书签 ----
     BookmarkManager *m_bookmarkMgr = nullptr;
@@ -709,7 +709,7 @@ class MainWindow : public QMainWindow, public WindowStateHost {
     ControlBarToolBox *m_rightToolBar = nullptr;
     QList<QPushButton *> m_customToolButtons;
     QList<QString> m_customToolIconNames;
-    // N168：预算基准——零按钮且流钮隐藏时的控制行最小宽，步长为钮宽加一间距；
+    // N168：预算基准——零按钮且轨道钮隐藏时的控制行最小宽，步长为钮宽加一间距；
     // createLeftArea 一次算定
     int m_controlBaseMinWidth = 0;
     int m_controlSlotStride = 0;

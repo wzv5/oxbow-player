@@ -73,7 +73,7 @@ inline QString iconSkipPrevious() { return QStringLiteral("skip_previous"); }
 inline QString iconSkipNext() { return QStringLiteral("skip_next"); }
 inline QString iconFastForward() { return QStringLiteral("fast_forward"); }
 inline QString iconFastRewind() { return QStringLiteral("fast_rewind"); }
-inline QString iconStream() { return QStringLiteral("stream"); }
+inline QString iconTrackChanges() { return QStringLiteral("track_changes"); }
 inline QString iconVolumeUp() { return QStringLiteral("volume_up"); }
 inline QString iconVolumeOff() { return QStringLiteral("volume_off"); }
 inline QString iconKeyboardArrowUp() { return QStringLiteral("keyboard_arrow_up"); }
