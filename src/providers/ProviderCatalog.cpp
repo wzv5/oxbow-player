@@ -4,9 +4,8 @@
 
 #include "Logging.h"
 
-// 本文件是具体提供者的唯一聚合点（N44 §2.7）：登记表条目要引用各提供者的
-// 键常量、displayName 与工厂，故只有此处包含提供者头文件，其余源文件一律
-// 经 ProviderCatalog.h 取用
+// 本文件是具体提供者的唯一聚合点：登记表条目要引用各提供者的键常量、
+// displayName 与工厂，故只有此处包含提供者头文件。
 #include "DirProvider.h"
 #include "ExternalProvider.h"
 #include "JellyfinProvider.h"
@@ -18,26 +17,22 @@
 #include "WebDavProvider.h"
 
 namespace {
-// 登记表自检（N44 §2.7 第 ② 层守候）：键非空且互不相同、第 0 项 createDefault 非空。
-// 不符即记一条警告——沿用 R4 数据目录自检的路子，不因自检失败阻断启动；
-// Debug 期再叠 Q_ASSERT，把登记表漏配在第一时间炸出来
-QList<ProviderEntry> buildCatalog() {
-    QList<ProviderEntry> table = {
+// 登记表自检：键非空且互不相同、静态条目必须在册。
+// 不符记一条警告，不阻断启动；Debug 再叠 Q_ASSERT，把漏配第一时间炸出来
+QList<ProviderCatalog::Entry> buildCatalog() {
+    QList<ProviderCatalog::Entry> table = {
         {kStaticProviderKey, &StaticProvider::displayName, &createStaticSettingsPage,
-         &StaticProvider::load, &StaticProvider::createDefault},
-        {kDirProviderKey, &DirProvider::displayName, &createDirSettingsPage, &DirProvider::load,
-         nullptr},
+         &StaticProvider::load},
+        {kDirProviderKey, &DirProvider::displayName, &createDirSettingsPage, &DirProvider::load},
         {kWebDavProviderKey, &WebDavProvider::displayName, &createWebDavSettingsPage,
-         &WebDavProvider::load, nullptr},
+         &WebDavProvider::load},
         {kExternalProviderKey, &ExternalProvider::displayName, &createExternalSettingsPage,
-         &ExternalProvider::load, nullptr},
+         &ExternalProvider::load},
         {kJellyfinProviderKey, &JellyfinProvider::displayName, &createJellyfinSettingsPage,
-         &JellyfinProvider::load, nullptr},
+         &JellyfinProvider::load},
 #if defined(OXBOW_WITH_RCLONE_CRYPT)
-        // rclone crypt 只读后端整条特性可关（CMake 的 OXBOW_WITH_RCLONE_CRYPT）：
-        // 关掉的构建里本行连同提供者与算法层都不存在，登记表按剩余条目照常工作
         {kRcloneCryptProviderKey, &RcloneCryptProvider::displayName, &createRcloneCryptSettingsPage,
-         &RcloneCryptProvider::load, nullptr},
+         &RcloneCryptProvider::load},
 #endif
     };
     QSet<QString> seen;
@@ -49,20 +44,35 @@ QList<ProviderEntry> buildCatalog() {
             OXBOW_LOG_WARNING() << "ProviderCatalog: duplicate type key" << key;
         seen.insert(key);
     }
-    Q_ASSERT(!table.isEmpty());
-    Q_ASSERT(table.constFirst().createDefault != nullptr); // 第 0 项须能无参出生
+    const QString staticKey = QString::fromLatin1(kStaticProviderKey);
+    if (!seen.contains(staticKey))
+        OXBOW_LOG_WARNING() << "ProviderCatalog: static provider entry is missing";
+    Q_ASSERT(seen.contains(staticKey));
     return table;
 }
 } // namespace
 
-const QList<ProviderEntry> &providerCatalog() {
-    static const QList<ProviderEntry> table = buildCatalog();
+const QList<ProviderCatalog::Entry> &ProviderCatalog::entries() {
+    static const QList<ProviderCatalog::Entry> table = buildCatalog();
     return table;
 }
 
 std::shared_ptr<PlaylistProvider>
-createDefaultProvider(const std::shared_ptr<ServiceRegistry> &registry) {
-    const QList<ProviderEntry> &table = providerCatalog();
-    Q_ASSERT(!table.isEmpty() && table.constFirst().createDefault != nullptr);
-    return table.constFirst().createDefault(registry);
+ProviderCatalog::createStaticProvider(const std::shared_ptr<ServiceRegistry> &registry) {
+    return std::make_shared<StaticProvider>(registry);
+}
+
+std::shared_ptr<PlaylistProvider>
+ProviderCatalog::loadProvider(QSettings &settings,
+                              const std::shared_ptr<ServiceRegistry> &registry) {
+    const QString kind = settings.value(QStringLiteral("provider")).toString();
+    for (const Entry &entry : entries()) {
+        if (kind == QLatin1String(entry.typeKey)) {
+            if (auto provider = entry.load(settings, registry))
+                return provider;
+            break; // 工厂返空按未知处理，与键缺失同档
+        }
+    }
+    // 写死内建静态列表：回落身份不随条目顺序漂移
+    return StaticProvider::load(settings, registry);
 }

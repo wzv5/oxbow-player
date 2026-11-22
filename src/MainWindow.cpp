@@ -28,7 +28,7 @@
 #include "playlist/Playlist.h"         // N57 §2.6：经 PlaylistWidget::listOf 取身份，需完整类型
 #include "playlist/PlaylistRegistry.h" // N57 §2.3：装配顶点创建列表注册表（默认名与保留身份的出处）
 #include "playlist/PlaylistWidget.h"
-#include "providers/ProviderCatalog.h" // N57 §2.3：后备提供者经登记表第 0 项出生，只此一处调用
+#include "providers/ProviderCatalog.h" // N181：默认 tab 的静态提供者经静态工厂出生，只此一处调用
 #include "streams/StreamRelay.h"
 #include "streams/StreamTransit.h" // N55 §2.7：书签存储串的转接形态分岔（判据与 §3.6 同一条）
 #include "thumb/ThumbEngine.h"     // N107：缩略图第二 core 引擎
@@ -848,12 +848,13 @@ MainWindow::MainWindow(MpvController *controller, AppearanceManager *appearance,
     // 启动期 ini 初值经同一变更通路落表（queued；事件堆在 beginCollecting 之前，
     // 启动后按新表运作——陈旧表不得覆盖启动前的变更）
     syncReporterSwitches();
-    // N57 §2.3：列表注册表同由装配顶点创建并持有——后备提供者在此经登记表第 0 项
-    // 造好交入（"谁调提供者工厂"只此一处），注册表只收成品、不认识服务注册表。
+    // N57 §2.3：列表注册表同由装配顶点创建并持有——默认 tab 的静态提供者在此经
+    // ProviderCatalog::createStaticProvider 造好交入（"谁调提供者工厂"只此一处），
+    // 注册表只收成品、不认识服务注册表。
     // N74：另把报告者注册表过一道手给每个列表（注册点在 Playlist 一侧，那里有
     // 列表身份；本行已在 provide<PlaybackReporterRegistry> 之后）
-    m_listRegistry =
-        std::make_shared<PlaylistRegistry>(createDefaultProvider(m_registry), m_reporters);
+    m_listRegistry = std::make_shared<PlaylistRegistry>(
+        ProviderCatalog::createStaticProvider(m_registry), m_reporters);
 
     m_splitter = new QSplitter(Qt::Horizontal, this);
     m_splitter->addWidget(createLeftArea());

@@ -12,7 +12,7 @@
 #include "ServiceRegistry.h"
 #include "Util.h"
 #include "mpvbridge/MpvController.h"
-#include "providers/StaticProvider.h" // N79：新表提供者经 createDefault 出生
+#include "providers/ProviderCatalog.h" // N181：复制为新表的静态提供者经静态工厂出生
 #include "streams/StreamTransit.h"
 #include "ui/AppearanceManager.h"
 #include "ui/ListSettingsDialog.h"
@@ -4831,7 +4831,7 @@ void PlaylistWidget::copyContentsToNewList(int tabIndex) {
     // 造表与 createNewList 同形：铸提供者 → 灌内容（新表的身份串就是播放串本身，
     // 元数据一切由 url 当场派生，fromPath 的已定形契约由播放串形态天然满足）→
     // 排序取提供者自述默认（静态即 {}）
-    auto provider = StaticProvider::createDefault(m_registry);
+    auto provider = ProviderCatalog::createStaticProvider(m_registry);
     PlaylistProvider::EntityList items;
     items.reserve(urls.size());
     for (const QString &url : urls)

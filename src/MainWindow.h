@@ -497,7 +497,8 @@ class MainWindow : public QMainWindow, public WindowStateHost {
     // relay 的 provide<StreamRelayIf> 亦在此完成（早于任何提供者出生）
     std::shared_ptr<ServiceRegistry> m_registry;
     // N57 §2.3：播放列表注册表（列表模型的唯一所有者）由本类创建并持有，注入
-    // PlaylistWidget；后备提供者在本类构造期经 createDefaultProvider 造好交入。
+    // PlaylistWidget；默认 tab 的静态提供者在本类构造期经
+    // ProviderCatalog::createStaticProvider 造好交入。
     // 不入服务注册表（可变模型对象与"resolve 任意线程"的线程契约不符）
     std::shared_ptr<PlaylistRegistry> m_listRegistry;
     // N74：报告者注册表——同一份句柄三处用：provide 进服务注册表、注入驱动器构造、

@@ -15,30 +15,27 @@
 
 namespace {
 
-// 非 Q_OBJECT 类的用户可见串：英文源 + QT_TRANSLATE_NOOP 标注翻译上下文，
-// 运行期经 QCoreApplication::translate 取值（WebDavProvider 同款约定）
+// 非 Q_OBJECT 类的用户可见串经此取值（跨提供者同款约定）
 QString trText(const char *source) {
     return QCoreApplication::translate("RcloneCryptProvider", source);
 }
 
-// 三档浏览模式的源文案：与 DirProvider / WebDavProvider 的选项文案逐字相同
-// （交叉验收项，N46 §2.1），翻译上下文归属本提供者
+// 三档浏览模式的源文案：与 DirProvider / WebDavProvider 选项文案逐字相同，翻译
+// 上下文归属本提供者
 constexpr char kBrowseLayered[] = QT_TRANSLATE_NOOP("RcloneCryptProvider", "Layered Browsing");
 constexpr char kBrowseFilesOnly[] = QT_TRANSLATE_NOOP("RcloneCryptProvider", "Files Only");
 constexpr char kBrowseFilesRecursive[] =
     QT_TRANSLATE_NOOP("RcloneCryptProvider", "Files Only (Include Subdirectories)");
 
-// 根目录 + 密文相对路径 → 文件系统路径：内部一律 '/' 分段，落到文件系统前才转
-// 原生分隔符（N98 §4，Util::Url::toNative 口径）
+// 内部一律 '/' 分段，落到文件系统前才转原生分隔符
 QString toNativePath(const QString &root, const QString &cipherRel) {
     if (cipherRel.isEmpty())
         return root;
     return Util::Url::toNative(root + QLatin1Char('/') + cipherRel);
 }
 
-// ——提供者初始排序（N45 §2.7 同形）：文件名数字化，稳定排序保等键原序——
-// 排序键预切分一次存数组再按下标排（DirProvider 同形）：比较器里反复 segmentName
-// 会把 O(n) 次切分放大成 O(n log n) 次
+// 预切分排序键再按下标排（DirProvider 同形）：比较器里反复 segmentName 会把 O(n)
+// 次切分放大成 O(n log n) 次
 void sortEntitiesByNumericName(RcloneCryptProvider::EntityList &entities) {
     const int n = int(entities.size());
     if (n < 2)
@@ -81,11 +78,9 @@ void sortContainersByNumericTitle(QList<PlaylistProvider::Container> &containers
     containers = std::move(sorted);
 }
 
-// ——N98 §6：来源解析点（来源私有的东西与参数页同级定义，不外露）——
-// 持不可变参数与派生好的密钥（构造期快照）；openStream 在 demux 线程把身份
-// 解码回明文相对路径、逐段现算密文路径，FileByteStream 打开后包解密流。
-// 密钥未就绪（列表从未枚举过）按失败显影，不现场派生（N98 §3：端点创建
-// 不触发派生）
+// 来源私有，与参数页同级定义、不外露。持构造期快照（参数与已派生密钥）；openStream
+// 在 demux 线程把身份解码回明文相对路径、逐段现算密文路径。密钥未就绪（列表从未
+// 枚举过）按失败显影，不现场派生
 class RcloneCryptStreamEndpoint final : public StreamEndpoint {
   public:
     RcloneCryptStreamEndpoint(std::shared_ptr<const RcloneCrypt> cipher, QString root)
@@ -98,10 +93,9 @@ class RcloneCryptStreamEndpoint final : public StreamEndpoint {
                 QStringLiteral("crypt key not derived (list was never enumerated)"));
         if (!identity.startsWith(QLatin1String(kRcloneCryptScheme)))
             return std::unexpected(QStringLiteral("unexpected identity form: %1").arg(identity));
-        const QString encodedRel =
-            identity.mid(int(sizeof(kRcloneCryptScheme) - 1)); // 剥 scheme 留编码相对路径
+        const QString encodedRel = identity.mid(int(sizeof(kRcloneCryptScheme) - 1));
         const QString plainRel = RcloneCryptProvider::decodeIdentity(encodedRel);
-        // 密文路径现算：文件路径走文件形态（末段版本串处理与枚举侧互逆）
+        // 文件形态（末段版本串处理与枚举侧互逆）
         const QString cipherRel =
             QString::fromStdString(m_cipher->encryptFileName(plainRel.toStdString()));
         const QString fsPath = toNativePath(m_root, cipherRel);
@@ -115,7 +109,7 @@ class RcloneCryptStreamEndpoint final : public StreamEndpoint {
     }
 
   private:
-    std::shared_ptr<const RcloneCrypt> m_cipher; // 构造后不可变（N52 §2.3 契约 5）
+    std::shared_ptr<const RcloneCrypt> m_cipher;
     QString m_root;
 };
 
@@ -139,7 +133,7 @@ QString RcloneCryptProvider::displayName() {
     return QCoreApplication::translate("RcloneCryptProvider", kRcloneCryptProviderName);
 }
 
-// N98 §6：恒为 Required——直发分支由基类三态表保证不可达，directPlayUrl 不覆写
+// 直发分支由基类三态表保证不可达，directPlayUrl 不覆写
 PlaylistProvider::TransitCapability RcloneCryptProvider::transitCapability() const {
     return TransitCapability::Required;
 }
@@ -171,8 +165,8 @@ RcloneCryptProvider::cipherForEnum() const {
         return std::unexpected(m_cipherError);
     if (m_cipher)
         return m_cipher;
-    // 派生（scrypt，实测 100–200ms、峰值 16 MiB）在此完成：enumerate 天然在
-    // 工作线程（N98 §3），互斥锁保证同一提供者至多派生一次
+    // 派生（scrypt，实测 100–200ms、峰值 16 MiB）在此完成：enumerate 天然在工作
+    // 线程，互斥锁保证同一提供者至多派生一次
     auto created = RcloneCrypt::create(cipherParams());
     if (!created) {
         m_cipherError = QString::fromStdString(created.error());
@@ -189,18 +183,18 @@ std::shared_ptr<const RcloneCrypt> RcloneCryptProvider::cipherIfReady() const {
 
 bool RcloneCryptProvider::extensionMatches(const QString &plainName) const {
     if (m_extensions.isEmpty())
-        return true; // 空表不过滤
+        return true;
     const int dot = plainName.lastIndexOf(QLatin1Char('.'));
     if (dot < 0)
         return false;
-    // 清单恒为无点小写（parseExtensions 口径），解密后的名字大小写原样
+    // 清单恒为无点小写，解密后的名字大小写原样
     return m_extensions.contains(plainName.mid(dot + 1).toLower());
 }
 
 std::expected<RcloneCryptProvider::Enumeration, QString>
 RcloneCryptProvider::enumerate(const QStringList &parent) const {
-    // 配置数据异常（如编码取值域外）不放行任何一次枚举——错误经既有通道上抛，
-    // 视图落占位行；此时密钥派生根本不必发生
+    // 配置数据异常（如编码取值域外）不放行任何一次枚举——经既有通道上抛、视图落
+    // 占位行；此时密钥派生根本不必发生
     if (!m_configError.isEmpty())
         return std::unexpected(m_configError);
 
@@ -208,7 +202,7 @@ RcloneCryptProvider::enumerate(const QStringList &parent) const {
     if (!cipher)
         return std::unexpected(cipher.error());
 
-    // TraversalPolicy 的深度上限只约束递归形态（N36：resolve 缺省按装配错误兜底）
+    // TraversalPolicy 的深度上限只约束递归形态
     const int depthLimit = [this] {
         const auto policy = registry() ? registry()->resolve<TraversalPolicy>() : nullptr;
         return policy ? policy->depthLimit : App::recursiveDepthLimitDefault();
@@ -218,8 +212,8 @@ RcloneCryptProvider::enumerate(const QStringList &parent) const {
     Enumeration out;
 
     if (m_browseMode == BrowseMode::FilesOnly || m_browseMode == BrowseMode::FilesRecursive) {
-        // 平铺形态：只对空 parent 响应（平铺提供者收到非空 parent 属调用方违约，
-        // Debug 断言显影、release 降级空结果——基类契约的既有先例）
+        // 平铺形态只对空 parent 响应：非空 parent 属调用方违约，Debug 断言显影、
+        // release 降级空结果
         Q_ASSERT(parent.isEmpty());
         if (!parent.isEmpty())
             return out;
@@ -257,7 +251,7 @@ std::optional<QString> RcloneCryptProvider::collectLayer(
     const QString &plainRel, bool makeContainers, bool recurse, int depth, int depthLimit,
     QSet<QString> &visited, Enumeration &out, QStringList &warnings) const {
     QDir dir(cipherDir);
-    // 递归形态按 canonical 路径剪环（N36 修订 3 同款）
+    // 递归形态按 canonical 路径剪环
     if (recurse) {
         const QString canon = dir.canonicalPath();
         if (!canon.isEmpty()) {
@@ -291,15 +285,14 @@ std::optional<QString> RcloneCryptProvider::collectLayer(
             const QString childPlain =
                 plainRel.isEmpty() ? plainName : plainRel + QLatin1Char('/') + plainName;
             if (makeContainers) {
-                // 容器：id 与 title 取明文段名，path 展示位留空（Jellyfin 同口径）
+                // 容器：id 与 title 取明文段名，path 展示位留空
                 Container container;
                 container.id = plainName;
                 container.title = plainName;
                 out.containers.push_back(std::move(container));
             } else if (recurse && depth < depthLimit) {
-                // 深度超过上限不再深入，静默截断（N36 同款）。
-                // 子目录密文路径只加密**子段名**——encryptDirName 是逐段语义，
-                // 传整段相对路径会把父段前缀重复拼进已加密父目录下
+                // 超过深度上限静默截断。子目录密文路径只加密子段名——encryptDirName 是
+                // 逐段语义，传整段相对路径会把父段前缀重复拼进已加密父目录下
                 const QString childCipher =
                     QString::fromStdString(cipher->encryptDirName(plainName.toStdString()));
                 if (auto err =
@@ -310,8 +303,7 @@ std::optional<QString> RcloneCryptProvider::collectLayer(
             continue;
         }
 
-        // 版本串密文名经 decryptFileName 解出"明文名 + 版本串"（版本串在解码后
-        // 加回），与现行文件身份不同、无冲突，照常列出
+        // 版本串密文名解出"明文名 + 版本串"，与现行文件身份不同、无冲突
         auto plain = cipher->decryptFileName(name.toStdString());
         if (!plain) {
             if (m_strictNames) {
@@ -335,7 +327,7 @@ std::optional<QString> RcloneCryptProvider::collectLayer(
         auto entity = std::make_shared<RcloneCryptEntity>(identity, registry());
         injectDisplayName(*entity, plainName);
         injectFileName(*entity, plainName);
-        // 文件级元数据：size=明文长度（换算失败按值未知）、mtime=密文文件的 mtime
+        // size = 明文长度（换算失败按值未知）、mtime = 密文文件的 mtime
         FileMeta meta;
         const auto plainSize = RcloneCrypt::decryptedSize(entry.size());
         if (plainSize)
@@ -347,11 +339,8 @@ std::optional<QString> RcloneCryptProvider::collectLayer(
     return std::nullopt;
 }
 
-// ——参数页（N44 口径）：页面类只在本文件可见，经 createRcloneCryptSettingsPage 产出。
-// 一行一参（N98 §7）：根目录（浏览按钮）、浏览模式、口令、salt、名字加密模式、编码、
-// 目录名加密、suffix、strict_names、pass_bad_blocks、扩展名清单。
-// transitCapability()==Required ⇒ enableTransitOption(nullopt)：只在页底加一行说明、
-// 不给勾选框（N52 §2.8）。口令与 salt 用 Password 回显掩码但存原文（同 WebDAV）
+// 页面类只在本文件可见，经 createRcloneCryptSettingsPage 产出。口令与 salt 用
+// Password 回显掩码但存原文
 class RcloneCryptSettingsPage : public ProviderSettingsPage {
     Q_OBJECT
   public:
@@ -415,8 +404,9 @@ class RcloneCryptSettingsPage : public ProviderSettingsPage {
         form->addRow(extNote);
 
         layout->addLayout(form);
-        // N52 §2.8：Required 类型不给勾选框，只在页底加一行说明
+        // Required 类型不给勾选框，只在页底加一行说明
         enableTransitOption(std::nullopt);
+        // 把拉伸出来的余量压到内容之下，避免行间距被均摊撑大
         layout->addStretch(1);
 
         if (m_seed) {
@@ -476,7 +466,6 @@ class RcloneCryptSettingsPage : public ProviderSettingsPage {
     }
 
   private:
-    // 取规范化参数值（hasChanges 与 build 共用同一出口；幂等回显硬要求）
     QString rootValue() const { return RcloneCryptProvider::normalizeRoot(m_rootEdit->text()); }
     QString passwordValue() const { return m_passwordEdit->text(); }
     QString saltValue() const { return m_saltEdit->text(); }
@@ -522,8 +511,6 @@ createRcloneCryptSettingsPage(const PlaylistProvider *seed,
     return new RcloneCryptSettingsPage(
         seed ? static_cast<const RcloneCryptProvider *>(seed) : nullptr, registry, parent);
 }
-
-// ——静态纯函数——
 
 QString RcloneCryptProvider::normalizeRoot(const QString &text) {
     const QString trimmed = text.trimmed();
@@ -573,7 +560,7 @@ std::optional<RcloneCrypt::NameEncoding> RcloneCryptProvider::nameEncodingFromIn
         return RcloneCrypt::NameEncoding::Base32;
     if (value == 1)
         return RcloneCrypt::NameEncoding::Base64;
-    return std::nullopt; // 含 2=base32768（本期不实现）与一切乱值
+    return std::nullopt; // 含 2=base32768（不支持）与一切乱值
 }
 
 RcloneCryptProvider::BrowseMode RcloneCryptProvider::browseModeFromInt(int value) {
@@ -604,10 +591,8 @@ QString RcloneCryptProvider::decodeIdentity(const QString &encodedRelativePath) 
     return plain.join(QLatin1Char('/'));
 }
 
-// ——INI 序列化——
-
 void RcloneCryptProvider::saveSettings(QSettings &settings) const {
-    writeProviderKey(settings); // N44：类型键经基类取 typeKey()
+    writeProviderKey(settings);
     settings.setValue(QStringLiteral("rclonecrypt_root"), m_root);
     settings.setValue(QStringLiteral("rclonecrypt_password"), m_password);
     settings.setValue(QStringLiteral("rclonecrypt_salt"), m_salt);
@@ -639,9 +624,8 @@ RcloneCryptProvider::load(QSettings &settings, const std::shared_ptr<ServiceRegi
         settings.value(QStringLiteral("rclonecrypt_pass_bad_blocks"), false).toBool(),
         browseModeFromInt(settings.value(QStringLiteral("rclonecrypt_browse_mode"), 0).toInt()),
         settings.value(QStringLiteral("rclonecrypt_extensions")).toStringList(), registry);
-    // 域外编码不静默降成 base32：提供者照常出生（根路径、其余参数与存量条目不因此丢），
-    // 但带上配置错误——一次枚举都不放行。参数页重开时下拉框只有两个合法项，改回去
-    // 保存即修复
+    // 域外编码照原值写回，提供者照常出生（根路径与其余参数不因此丢），但带上配置
+    // 错误——一次枚举都不放行。参数页下拉框只有两个合法项，改回去保存即修复
     if (!encoding) {
         provider->setEncodingRaw(rawEncoding);
         provider->m_configError =

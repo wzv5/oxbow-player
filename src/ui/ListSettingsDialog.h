@@ -36,8 +36,8 @@ class ListSettingsDialog : public QDialog {
 
   private:
     QLineEdit *m_nameEdit = nullptr;
-    QList<QRadioButton *> m_radios;        // 与 providerCatalog() 同序
-    QList<ProviderSettingsPage *> m_pages; // 与 providerCatalog() 同序
+    QList<QRadioButton *> m_radios;        // 与 ProviderCatalog::entries() 同序
+    QList<ProviderSettingsPage *> m_pages; // 与 ProviderCatalog::entries() 同序
     QStackedWidget *m_pageStack = nullptr; // 行 3：只显示选中提供者的表单
     QStringList m_occupiedNames;           // 重名校验用
     // N57 §2.4：seed 只剩两个用途——各页回显的取值源（页面构造期自行回填）与

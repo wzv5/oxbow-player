@@ -26,11 +26,11 @@ ListSettingsDialog::ListSettingsDialog(QWidget *parent, const QString &currentNa
     // ——行 3：表单区，页序与登记表同序——
     m_pageStack = new QStackedWidget;
 
-    const QList<ProviderEntry> &catalog = providerCatalog();
-    int defaultIndex = 0; // 新建（current 为空）时选中第 0 项，即默认提供者
+    const QList<ProviderCatalog::Entry> &catalog = ProviderCatalog::entries();
+    int defaultIndex = 0; // 新建（current 为空）时选中首项（条目顺序即显示顺序）
     bool matchedType = false;
     for (int i = 0; i < catalog.size(); ++i) {
-        const ProviderEntry &entry = catalog.at(i);
+        const ProviderCatalog::Entry &entry = catalog.at(i);
         auto *radio = new QRadioButton(entry.displayName());
         m_radios << radio;
         typeRow->addWidget(radio);
