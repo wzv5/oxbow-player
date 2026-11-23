@@ -14,6 +14,7 @@
 #if defined(OXBOW_WITH_RCLONE_CRYPT)
 #include "RcloneCryptProvider.h"
 #endif
+#include "ScriptListProvider.h"
 #include "StaticProvider.h"
 #include "WebDavProvider.h"
 
@@ -36,6 +37,8 @@ QList<Entry> buildCatalog() {
         {kRcloneCryptProviderKey, &RcloneCryptProvider::displayName, &createRcloneCryptSettingsPage,
          &RcloneCryptProvider::load},
 #endif
+        {kScriptListProviderKey, &ScriptListProvider::displayName, &createScriptListSettingsPage,
+         &ScriptListProvider::load},
     };
     QSet<QString> seen;
     for (int i = 0; i < table.size(); ++i) {

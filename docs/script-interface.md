@@ -2,6 +2,19 @@
 
 Scripts talk to Oxbow over mpv's `script-message` channel. Target client: `oxbow`. Send with `mp.commandv("script-message-to", "oxbow", ...)`. mpv scripting is assumed; this page lists only what the plugin adds.
 
+## Table of Contents
+
+- [Script interface](#script-interface)
+  - [Table of Contents](#table-of-contents)
+  - [Handshake](#handshake)
+  - [Conventions](#conventions)
+  - [script-action: control bar actions](#script-action-control-bar-actions)
+  - [context-menu: script menus](#context-menu-script-menus)
+  - [script-playlist: lists driven by a script](#script-playlist-lists-driven-by-a-script)
+    - [Layer payload](#layer-payload)
+    - [Messages the plugin shows](#messages-the-plugin-shows)
+  - [Example scripts](#example-scripts)
+
 ## Handshake
 
 ```lua
@@ -23,11 +36,11 @@ The broadcast covers scripts loaded before the plugin, the reply covers those lo
 
 ## Conventions
 
-- Inbound name is the protocol alone (`script-action`, `context-menu`); what follows is the protocol's own business — the two below put a verb (`create`, `set`, `show`) right after it.
-- Messages the plugin sends are named `oxbow-<protocol>:<event>` (`oxbow-script-action:created`, `oxbow-context-menu:closed`) and go to the client that asked. These are the plugin's replies and notifications, listed per protocol below. A `callback` field is a name of your own and comes back unchanged.
+- Inbound name is the protocol alone (`script-action`, `context-menu`, `script-playlist`); what follows is the protocol's own business — the protocols below put a verb (`create`, `set`, `show`, `layer`) right after it.
+- Messages the plugin sends are named `oxbow-<protocol>:<event>` (`oxbow-script-action:created`, `oxbow-script-playlist:need-layer`) and go to the client that asked. These are the plugin's replies and notifications, listed per protocol below. A `callback` field is a name of your own and comes back unchanged.
 - The sender names itself in the `owner` argument; the plugin echoes it verbatim and authenticates nothing.
 - Arguments are UTF-8 strings; the JSON payload is one argument, never split. Use `mp.commandv`, not an assembled command string.
-- Unhandled message names are ignored silently.
+- Unhandled message names are ignored silently; nothing is queued, so a message sent before the target exists is lost, and callbacks or replies to a gone client fail into the log.
 
 ## script-action: control bar actions
 
@@ -157,10 +170,95 @@ Reasons: `bad-args` (missing arguments), `bad-id`, `bad-json` (not an object, or
 
 Click: `command` runs through mpv, then `callback` is sent to `owner` as `menu-id item-id`. A failing command is only logged. An entry with neither is a label and just closes the menu; disabled entries do not respond and do not close it. `checked` is a snapshot — persist it yourself and pass it again next time.
 
-## Notes
+## script-playlist: lists driven by a script
 
-- No authentication, rate limiting, splitting, buffering or replay: a message sent before the target exists is gone, which is what the handshake is for.
-- No script liveness probing; callbacks to a gone client fail into the log.
-- Nothing is persisted; actions and menus live for the process only. Action changes coalesce into one redraw per event loop.
+A `Script` list is bound to a data source id and asks the script that registered it for content, layer by layer. Everything else is an ordinary list: persists, resumes, bookmarks, tab order; the user renames, moves, duplicates, sorts and deletes it. Scripts never create, delete or rename lists.
 
-See [`example/scripts/track-picker.lua`](../example/scripts/track-picker.lua) for both protocols in use, handshake included.
+```lua
+mp.commandv("script-message-to", "oxbow", "script-playlist", "create",
+            mp.get_script_name(), "my-source")
+```
+
+| Direction | Message | Args |
+| --- | --- | --- |
+| script → plugin | `script-playlist` `create` | `owner id` |
+| script → plugin | `script-playlist` `layer` | `owner reqid json` |
+| plugin → script | `oxbow-script-playlist:created` | `id` |
+| plugin → script | `oxbow-script-playlist:rejected` | `id reason` |
+| plugin → script | `oxbow-script-playlist:need-layer` | `id reqid parent-path` |
+| plugin → script | `oxbow-script-playlist:cancel-layer` | `id reqid` |
+
+- Ids `[A-Za-z0-9_.-]{1,64}`. Same owner re-`create` is a no-op and still answers `created`.
+- Reasons: `bad-args` (no id), `bad-id`, `exists` (id held by another owner). No owner: logged only, nothing to answer.
+- `layer` echoes `owner` and `reqid`; the JSON is one argument. Unknown or expired `reqid`, or another owner: dropped and logged.
+- `parent-path` is container ids joined with `/`; the root layer is empty.
+- Requests happen on first activation, on switching to an unloaded tab, and on manual refresh. `created` triggers nothing; there is no invalidate message — after updating its data a script waits for the next `need-layer`.
+- First load: up to 3 s for `create`, once per list; each layer gets 10 s. Timeout → `cancel-layer` plus a placeholder; failures are not cached.
+
+### Layer payload
+
+```json
+{
+  "containers": [
+    { "id": "s1", "title": "Season 1", "path": "Show/Season 1" }
+  ],
+  "items": [
+    { "url": "C:\\media\\a.mkv",
+      "displayName": "Episode 1",
+      "filename": "a.mkv",
+      "options": { "start": "42", "sub-file": "C:\\media\\a.ass" },
+      "file": { "size": 1234567890, "created": 1763664000, "modified": 1763700000 },
+      "metadata": { "format": "MPEG-4", "duration": 1260, "recordedDate": 1763664000,
+                    "title": "Media Title", "album": "Album", "performer": "Uploader" } }
+  ]
+}
+```
+
+| Layer field | Type | Absent | Meaning |
+| --- | --- | --- | --- |
+| `containers` | array | empty | rows shown above the items |
+| `items` | array | empty | playable entries |
+| `error` | string | normal layer | **fails the whole layer**: non-empty after trim is shown verbatim in place of the list and `containers` / `items` are dropped. Empty or `null` keeps the layer normal |
+
+| Container field | Type | Absent | Meaning |
+| --- | --- | --- | --- |
+| `id` | string | required | layer id, `[A-Za-z0-9_.-]{1,64}`. Addressing only: it is the segment sent back in `parent-path` when the user opens the container, and is never shown. Duplicates on one layer keep the first |
+| `title` | string | `id` | the level's display name: the row text, the Name row of its properties dialog, and one breadcrumb segment — the breadcrumb is built from titles only, never from `path`. Unrelated to `metadata.title` |
+| `path` | string | empty | display address only — a directory path or a URL — and is never joined with `title`. Non-empty: the Path row shows it verbatim and Copy Path is enabled; empty: the Path row falls back to a breadcrumb built from `title` and Copy Path is disabled. Reveal in File Explorer needs it non-empty, non-network and existing on disk. Not used for addressing, sorting or persistence |
+
+| Item field | Type | Absent | Meaning |
+| --- | --- | --- | --- |
+| `url` | string | required | absolute path or a URL with `://`; anything else drops the item |
+| `displayName` | string | url's file name | row text and the Display Name row |
+| `filename` | string | url's last segment | File Name row and the file-name sort keys |
+| `options` | object | none | mpv option name → scalar value, applied when the item plays |
+| `file` | object | none | `size` (bytes), `created` / `modified` (unix seconds) |
+| `metadata` | object | none | `format`, `duration` (seconds), `recordedDate` (unix seconds), `title`, `album`, `performer` |
+
+- Names: `displayName` = row text and Display Name row; `filename` = File Name row and the file-name sort keys; `metadata.title` = Tags title. Independent.
+- `file`: positive only — `size` whole bytes, `created` / `modified` whole seconds (fractions truncated). Wrong type, non-positive or out of range = absent.
+- `metadata`: exact keys, no `date` / `author` aliases; empty strings, non-positive numbers and wrong types = absent; `recordedDate` lands as local time. Reported values win over a file scan.
+- `options`: scalars only — strings (empty dropped), numbers and booleans as text; arrays, objects and `null` ignored.
+- Non-object entries dropped (items count as skipped); items without a usable `url` skipped; the warning appears on the root layer only.
+- Invalid layer: payload not a JSON object; `containers` / `items` present but not an array; `error` present with any other type.
+
+### Messages the plugin shows
+
+| Situation | Text |
+| --- | --- |
+| id unbound, or no script registered it | `No script is providing this list.` |
+| the owning client is gone | `The script providing this list is no longer running.` |
+| no answer in time | `The script list did not respond in time.` |
+| invalid layer | `The script list returned invalid data.` |
+| skipped items, root layer only | `Some items were skipped because they do not have a valid absolute path or URL.` |
+| script's own `error` | shown verbatim |
+
+- Registration lasts one process; after a restart the list waits for `create` again.
+- Ids are never released: a reload under another client name gets `exists`, and the bound lists keep failing until the plugin restarts. Same name plus `create` is harmless.
+- Many lists may bind one id; each keeps its own tab, view state, sort rule and position.
+- No item editing, import, clear or dedupe; sorting works.
+
+## Example scripts
+
+- [track-picker.lua](../example/scripts/track-picker.lua) — `script-action`, `context-menu`. The action is bound by a tool's `@track-picker`; `set` sends only `hidden`, driven by `mp.observe_property("track-list")`. Its callback opens a video / audio / subtitle menu: disabled headers, `checked` on the active track, `set vid` / `set aid` / `set sid` commands. Setup: a tool with command `@track-picker`, shown on the control bar.
+- [bilibili-popular.lua](../example/scripts/bilibili-popular.lua) — `script-playlist`. The root layer is a static table; containers fetch on open via `curl`, one fetch at a time per container with queued requests. `cancel-layer` drops the request and aborts the fetch it started; `ytdl` off answers `error`. Title goes to `displayName`, duration / publish date / uploader to `metadata`. Setup: a Script list bound to `bilibili-popular` with `yt-dlp` in `PATH`.

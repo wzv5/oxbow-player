@@ -4,17 +4,24 @@
 
 #include <mpv/client.h>
 
-// N42：滤镜列表条目模型（定义见 FilterListWidget.h，随控件收口）
-struct FilterEntry;
+#include "MpvApiPort.h"
 
 // 对 mpv client API 的 Qt 化封装：UI 只与本类交互，不直接触碰 mpv_handle。
 // mpv 客户端 API 本身线程安全（client.h "Multithreading"），唯一例外是
 // mpv_wait_event 仅单线程可调（本类由 EventThread 专职调用，B17）。
 // 信号允许跨线程发射（自动排队连接，槽在 GUI 线程执行）。
-class MpvController : public QObject {
+// 本类同时是 MpvApiPort 的实现：可跨线程的那一批方法在接口里列全，本类逐个覆写。
+class MpvController : public QObject, public MpvApiPort {
     Q_OBJECT
   public:
     explicit MpvController(mpv_handle *mpv, QObject *parent = nullptr);
+
+    // 端口定义的解析产物类型；沿用 MpvController::X 的既有写法
+    using InputBinding = MpvApiPort::InputBinding;
+    using InputBindingTiers = MpvApiPort::InputBindingTiers;
+    using MenuDataItem = MpvApiPort::MenuDataItem;
+    using TrackInfo = MpvApiPort::TrackInfo;
+    using ChapterInfo = MpvApiPort::ChapterInfo;
 
     // 发送命令：单行命令字符串，或参数数组（推荐用于含路径的命令，避免转义问题）
     // N60 §2.1 硬约束：**播放列表内容的喂入侧必须保持同步 API**。本类与
@@ -23,8 +30,8 @@ class MpvController : public QObject {
     // 喂入点改走 *_async，该不变式即失效，须改成"等本批 reply 全到齐再发屏障读"
     // N96：返回 mpv_command 的错误码（0 为成功），调用方可判成败；忽略返回值的
     // 既有调用点行为不变
-    int command(const QString &cmd);
-    int command(const QStringList &args);
+    int command(const QString &cmd) override;
+    int command(const QStringList &args) override;
 
     // N96：mpv 错误码转可读文本（转调 mpv_error_string），供调用方拼错误提示
     static QString errorString(int code);
@@ -32,7 +39,7 @@ class MpvController : public QObject {
     // N87：异步命令通道，供按键回落 mpv 的 keypress 注入。同步的 command() 会占住调用线程
     // 直到 core 执行完，而注入进去的是用户自己绑的任意命令（截图落盘 / loadfile / Lua 回调
     // 都可能被一个键拉起来），GUI 线程不等它。reply_userdata 恒 0、回执一律不读
-    void commandAsync(const QStringList &args);
+    void commandAsync(const QStringList &args) override;
 
     // N92：同步命令并取回返回串（expand-path / normalize-path 等仅 client API 可用的
     // 纯计算命令）。经 mpv_command_node 下发（参数一律包成字符串节点），result 出参
@@ -40,13 +47,13 @@ class MpvController : public QObject {
     // （失败路径不触碰 result，无须释放）。同步语义是必须的：取值就是为了定位文件，
     // 本就得在下发前拿到。expand-path 一族无 I/O、不触碰视频/音频链路，GUI 线程直调
     // 不会挂住；与 propertyString 同口径（不改本对象状态，纯读，故 const）
-    QString commandResultString(const QStringList &args) const;
+    QString commandResultString(const QStringList &args) const override;
 
     // N78：screenshot-raw 取内存原始图像——命令不带参数，flags 省略即默认
     // subtitles（原始视频分辨率、带字幕），format 省略即默认 bgr0（小端下与
     // QImage::Format_RGB32 同布局）。返回深拷贝出的独立 QImage（mpv 侧数据随
     // result node 释放而失效）；失败（含空闲态无视频）返回空 QImage
-    QImage screenshotRaw();
+    QImage screenshotRaw() override;
 
     // N52 §2.10：loadfile 唯一出口。N65：逐文件选项由调用方**显式**传入（不给
     // 缺省值——缺省会藏起"这条链路某天忘了带选项"），本函数退成纯管道：不判
@@ -61,33 +68,34 @@ class MpvController : public QObject {
     // N104：返回命令错误码（0 为成功）——loadfile 被拒（语法 / 参数非法）根本没
     // 发起加载、不会有它的 end-file，调用方据返回值就地标红；忽略返回值的既有
     // 调用点行为不变
-    int loadFile(const QString &url, const QString &appendMode, const QVariantMap &options);
+    int loadFile(const QString &url, const QString &appendMode,
+                 const QVariantMap &options) override;
 
     // N60 §2.2：推送会话的屏障读——异步读 playlist，reply 自带发出时刻的队列
     // 终值，gen 作 reply_userdata 与终点对账配对。返回 false 表示发射失败
     // （不会产生 reply），调用方据此就地摘除世代
-    bool pushBarrier(quint64 gen);
+    bool pushBarrier(quint64 gen) override;
 
     // N42：String 型 set 改判返回值——下发失败（顶层语法错误 / 未知滤镜名等，
     // mpv 保持原值不清理）由调用方决定不写 conf；既有调用点忽略返回值，零波及。
     // 维护者裁决：四个重载返回值统一（bool = 是否写入成功）
-    bool setProperty(const QString &name, const QString &value);
-    bool setProperty(const QString &name, int value);
-    bool setProperty(const QString &name, double value);
-    bool setProperty(const QString &name, bool value);
+    bool setProperty(const QString &name, const QString &value) override;
+    bool setProperty(const QString &name, int value) override;
+    bool setProperty(const QString &name, double value) override;
+    bool setProperty(const QString &name, bool value) override;
     // 实时读属性一族：纯读、不改本对象状态，故 const（mpv_get_property 线程安全，
     // 除 wait_event 外任意线程可调，与下方 filterEntries 同一口径）
-    QString propertyString(const QString &name) const;
+    QString propertyString(const QString &name) const override;
     // 同上，但区分"读取失败"（nullopt）与"合法空串"——回读侧不得把失败当成空值
-    std::optional<QString> propertyStringOpt(const QString &name) const;
+    std::optional<QString> propertyStringOpt(const QString &name) const override;
     // 选项出厂默认值（option-info/<name>/default-value）：与当前运行值、conf 是否写了
     // 这一行均无关；手册注明可能不可用 → 失败返 nullopt，调用方回落目录 fallback
-    std::optional<QString> optionDefaultValue(const QString &name) const;
+    std::optional<QString> optionDefaultValue(const QString &name) const override;
     // 实时读属性（N3）：失败返 fallback；pause 等标志属性必须走 FLAG 格式
-    double propertyDouble(const QString &name, double fallback) const;
-    bool propertyFlag(const QString &name, bool fallback) const;
+    double propertyDouble(const QString &name, double fallback) const override;
+    bool propertyFlag(const QString &name, bool fallback) const override;
     // 实时读整型属性（R4 类型化回填）：失败返 fallback
-    qint64 propertyInt64(const QString &name, qint64 fallback) const;
+    qint64 propertyInt64(const QString &name, qint64 fallback) const override;
     // N61 §2.3：**「在播哪一条」的唯一出口**——值按 playlist-pos → playlist/<pos>/filename
     // 两步现读，再经回显整形（Util::Url::identityFromMpvEcho）；无正播返回空串（取值形状
     // 与今日 propertyString("path") 一致，迁移点不必改判空逻辑）。命名与 path 对齐是
@@ -103,49 +111,27 @@ class MpvController : public QObject {
     // 当前项报的是 property unavailable 而非 false，拿来判"是不是当前条"必假。当前条
     // 恒由 playlist-pos 指认（实测二者恒等）
     // 不缓存、不加锁：现读已够便宜，缓存反而要处理事件线程与 GUI 线程的裸 QString 竞态
-    QString currentPlayingPath() const;
+    QString currentPlayingPath() const override;
     // N42：滤镜链结构化读（af / vf object settings list）。MPV_FORMAT_NODE 读出
     // 链表逐项映射为条目（enabled 直取，text 由 label + name + params 序列化，
     // 规则见 FilterListWidget::quoteParamValue）；不可读 / 失败返回空列表。GUI 线程直读
     // （与 propertyString 同一线程口径，client API 除 wait_event 外线程安全）
-    QList<FilterEntry> filterEntries(const QString &name);
+    QList<FilterEntry> filterEntries(const QString &name) override;
     // 同上，但区分"读取失败"（nullopt）与"合法空滤镜链"（空列表）——回读不得把失败
     // 当成空链清空 conf
-    std::optional<QList<FilterEntry>> filterEntriesChecked(const QString &name);
+    std::optional<QList<FilterEntry>> filterEntriesChecked(const QString &name) override;
 
-    // N89：input-bindings 条目（字段语义见规格附录 A；owner / comment 可缺）
-    struct InputBinding {
-        QString key;         // 归一化键名（多键序列以 '-' 连接）
-        QString cmd;         // 命令串（与源一致的原文）
-        bool isWeak = false; // 真 = 内置（is_builtin）
-        QString owner;       // 非空 = 脚本添加（取自区）
-        QString section;     // 所属输入区
-        QString comment;     // 出厂描述（可缺）
-    };
     // N89：input-bindings 的一次性结构化读（MPV_FORMAT_NODE，形态照 filterEntries
     // 先例；手册明写该属性不支持变更通知，故只在对话框打开时读一次，不观察）。
     // 两档筛选在此收口：内置集 = is_weak 且 section == "default" 且无 owner；
     // 脚本集 = owner 非空者。其余条目（脚本自建区 / 用户具名区里的 weak 条目等）
     // 不进两档。读失败交空档。
-    struct InputBindingTiers {
-        QList<InputBinding> builtins;
-        QList<InputBinding> scripts;
-    };
-    InputBindingTiers inputBindings() const;
+    InputBindingTiers inputBindings() const override;
 
-    // N135：mpv menu-data 的单条目（字段语义见手册 Context Menu 节；shortcut 键
-    // 不解析不使用）
-    struct MenuDataItem {
-        QString type; // "separator" / "submenu" / 空
-        QString title;
-        QString cmd;
-        QStringList state; // checked / disabled / hidden 的原值集合，未知值由消费方忽略
-        QList<MenuDataItem> submenu;
-    };
     // N135：menu-data 的一次性结构化读（MPV_FORMAT_NODE，形态照 filterEntries
     // 先例）。不观察、不缓存——每次菜单展开现读。读失败 / 属性未设置 / 顶层非
     // 数组一律交空表（未设置是正常状态，不刷日志）
-    QList<MenuDataItem> menuData() const;
+    QList<MenuDataItem> menuData() const override;
 
     // N92（含变更记录 1）+ N147：mpv 配置路径的两个取值出口——一切位置问 mpv 自己，
     // 插件不从任何目录自行推导。构造期对 mpv 同步求值一次并缓存，此后只读返回（显式
@@ -161,59 +147,15 @@ class MpvController : public QObject {
     //     canonicalFilePath 不是一类东西）；展开后仍非绝对只作断言级兜底；
     //   目录存在——mpv 不校验目录存在性，QSaveFile 又不建目录，留到写盘炸成一坨系统错误
     //     不如在这里说清。只查不创建，"写到别处等于配置无效"（T10）不变
-    QString mpvConfPath() const;
+    QString mpvConfPath() const override;
     // N89：扩展 --input-conf 判读（判读四步表见实现处注释）——~~home/ 链的取值语义
     // 与校验顺序不变；--no-config 下仍交空串
-    QString inputConfPath() const;
-
-    // N13：轨道信息（track-list 解析产物）
-    struct TrackInfo {
-        qint64 id = 0;
-        QString type; // video / audio / sub
-        QString title;
-        QString lang;
-        QString codec;
-        bool external = false;
-        QString externalFilename;
-        bool isDefault = false;
-        // 语义是"正在解码"，**不是"是不是主轨"**——两条字幕可同时解码，故它不能
-        // 用来判"这条是不是 sid"（判据用 mainSelection，见下）
-        bool selected = false;
-        // N94：同类型内的选择顺序（track-list/N/main-selection）。对字幕轨
-        // 0 = sid、1 = secondary-sid；未选中或由 lavfi-complex 选中时该键缺席，
-        // 取 -1。非字幕轨也可以有值，但本仓只在字幕上使用
-        int mainSelection = -1;
-        // N143：ffmpeg 全局流下标（track-list/N/ff-index）——该轨在其所在输入
-        // 文件内的流下标（内嵌轨指主媒体文件、外部轨指外部字幕文件自身），
-        // ffmpeg -map 按它抽流。键缺席取 -1，判不可用，不猜下标
-        int ffIndex = -1;
-        // N143：位图字幕轨（track-list/N/image），文本字幕可用性判据用
-        bool image = false;
-        int demuxW = 0;
-        int demuxH = 0;
-        // N121：on_preloaded 预适配的选轨与尺寸估算（demux 级字段）
-        bool albumArt = false; // 内嵌封面；auto 选轨时跳过
-        int demuxCropW = 0;    // 容器 crop 后宽；0 = 无容器 crop
-        int demuxCropH = 0;
-        int demuxRotation = 0; // 容器旋转（顺时针，度）
-        double demuxPar = 0.0; // 像素宽高比；0 = 未声明
-        double demuxFps = 0.0;
-        int demuxSamplerate = 0;
-        int demuxChannelCount = 0;
-        qint64 demuxBitrate = 0; // bps，0 表无值
-        qint64 metadataBPS = 0;  // bps，0 表无值
-    };
-
-    // N15：章节信息（chapter-list 解析产物）
-    struct ChapterInfo {
-        double time = 0.0;
-        QString title;
-    };
+    QString inputConfPath() const override;
 
     // N146：track-list 的一次性读（AI 任务按 external-filename 反查字幕轨 id、按
     // selected 取当前音轨的 ffIndex 用）。复用既有解析；读失败交空表。GUI 线程直读
     // （与 propertyString 同一线程口径），不观察——反查时机由调用方自定
-    QList<TrackInfo> readTracks() const;
+    QList<TrackInfo> readTracks() const override;
 
   signals:
     void timePosChanged(double seconds);
@@ -315,12 +257,12 @@ class MpvController : public QObject {
     // 内建显示尺寸算式逐位等价，N110 §三-2）。只读 /aspect、绝不读 /dw、/dh
     // （N40 F7 硬规则保持：显示尺寸随显示侧参数漂移）。纯读，不写去重状态
     // （本函数会在 GUI 线程被导航器构造期调用）
-    QSize videoSize() const;
+    QSize videoSize() const override;
 
     // N110：源尺寸出口——同一条取值路径、不做比例换算，返回解码/滤镜后的像素
     // 帧尺寸。唯一用途是喂缩略图（ThumbHoverWatch::setVideoSize）：第二 core 是
     // 独立 mpv 实例、不受主侧 override 影响，呈现未拉伸的像素帧
-    QSize sourceVideoSize() const;
+    QSize sourceVideoSize() const override;
 
     // B17：启动事件线程（阻塞 mpv_wait_event(-1)）。必须在 wid 等嵌入相关
     // 属性设置完成后调用：首次 mpv_wait_event 会解除 mpv 核心的启动门控

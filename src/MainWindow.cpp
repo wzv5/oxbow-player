@@ -18,6 +18,7 @@
 #include "Util.h"
 #include "ai/AiSubtitleCatalog.h" // N146：复核原因文案
 #include "ai/AiSubtitleJob.h"     // N146：任务归主窗持有
+#include "mpvbridge/MpvApiPort.h"
 #include "mpvbridge/MpvController.h"
 #include "mpvbridge/MpvKeyName.h"                    // N87：未认领按键的 mpv 键名翻译
 #include "mpvbridge/ScriptMessageBus.h"              // N174：脚本客户端消息总线装配
@@ -28,7 +29,9 @@
 #include "playlist/Playlist.h"         // N57 §2.6：经 PlaylistWidget::listOf 取身份，需完整类型
 #include "playlist/PlaylistRegistry.h" // N57 §2.3：装配顶点创建列表注册表（默认名与保留身份的出处）
 #include "playlist/PlaylistWidget.h"
-#include "providers/ProviderCatalog.h" // N181：默认 tab 的静态提供者经静态工厂出生，只此一处调用
+#include "playlist/ScriptListChannel.h" // N179：脚本列表通道装配与 provide
+#include "playlist/ScriptListHost.h"    // N179：script-playlist 协议宿主装配
+#include "providers/ProviderCatalog.h"  // N181：默认 tab 的静态提供者经静态工厂出生，只此一处调用
 #include "streams/StreamRelay.h"
 #include "streams/StreamTransit.h" // N55 §2.7：书签存储串的转接形态分岔（判据与 §3.6 同一条）
 #include "thumb/ThumbEngine.h"     // N107：缩略图第二 core 引擎
@@ -1028,6 +1031,15 @@ MainWindow::MainWindow(MpvController *controller, AppearanceManager *appearance,
     // N172：脚本上下文菜单宿主，视频区已就绪（弹出与派发全归总线）
     m_scriptMenu = new ScriptMenuHost(m_scriptBus, controller, this, m_videoWidget);
 
+    // N179：脚本列表通道与宿主须在总线出生之后装配（列表恢复更早，故提供者按需现取）。
+    // 命令经注册表的跨线程端口下发；端口就是控制器自身，不另建转发层——控制器是主窗
+    // 子对象，此处只登记非拥有句柄
+    m_registry->provide<MpvApiPort>(std::shared_ptr<MpvApiPort>(controller, [](MpvApiPort *) {}));
+    m_scriptListChannel =
+        std::make_shared<ScriptListChannel>(m_registry, kScriptListReplyTimeoutMs);
+    m_registry->provide<ScriptListChannel>(m_scriptListChannel);
+    m_scriptList = new ScriptListHost(m_scriptBus, controller, m_scriptListChannel, this);
+
     // N119：连接先于装配——渲染只按描述表摆条目，不连任何信号
     connectActions();
     createMenuBar();
@@ -1062,6 +1074,9 @@ MainWindow::MainWindow(MpvController *controller, AppearanceManager *appearance,
 }
 
 MainWindow::~MainWindow() {
+    // N179：脚本列表通道先关——注册表里的端口是控制器的非拥有句柄，关后不得再发送
+    if (m_scriptListChannel)
+        m_scriptListChannel->close();
     // 后端析构晚于本函数体，Host vtable 已切片；须提前摘过滤器，否则析构期原生消息
     // 经虚调用崩溃（0xC000041D）
     m_frameBackend->detach();

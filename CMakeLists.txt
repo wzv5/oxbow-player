@@ -144,6 +144,7 @@ add_library(oxbowcore MODULE
     src/ui/FrameMetrics.h
     src/mpvbridge/MpvController.cpp
     src/mpvbridge/MpvController.h
+    src/mpvbridge/MpvApiPort.h
     src/mpvbridge/MpvKeyName.cpp
     src/mpvbridge/MpvKeyName.h
     src/mpvbridge/ScriptMessageBus.cpp
@@ -198,6 +199,8 @@ add_library(oxbowcore MODULE
     src/providers/WebDavProvider.h
     src/providers/JellyfinProvider.cpp
     src/providers/JellyfinProvider.h
+    src/providers/ScriptListProvider.cpp
+    src/providers/ScriptListProvider.h
     src/providers/ExternalProvider.cpp
     src/providers/ExternalProvider.h
     src/ui/LoadingOverlay.cpp
@@ -210,6 +213,12 @@ add_library(oxbowcore MODULE
     src/ui/AppearanceManager.h
     src/playlist/PlaylistWidget.cpp
     src/playlist/PlaylistWidget.h
+    src/playlist/ScriptListSpec.cpp
+    src/playlist/ScriptListSpec.h
+    src/playlist/ScriptListChannel.cpp
+    src/playlist/ScriptListChannel.h
+    src/playlist/ScriptListHost.cpp
+    src/playlist/ScriptListHost.h
     src/BookmarkManager.cpp
     src/BookmarkManager.h
     src/CustomToolManager.cpp
@@ -567,6 +576,12 @@ if(OXBOW_BUILD_TESTS)
         src/ui/ScriptActionSpec.h
         src/ui/ScriptMenuSpec.cpp
         src/ui/ScriptMenuSpec.h
+        src/playlist/ScriptListSpec.cpp
+        src/playlist/ScriptListSpec.h
+        src/playlist/ScriptListChannel.cpp
+        src/playlist/ScriptListChannel.h
+        src/providers/ScriptListProvider.cpp
+        src/providers/ScriptListProvider.h
         src/entities/PlaylistEntity.cpp
         src/entities/PlaylistEntity.h
         src/playlist/Playlist.cpp
@@ -580,6 +595,7 @@ if(OXBOW_BUILD_TESTS)
         src/entities/JellyfinEntity.h
         src/entities/UnknownEntity.h
         src/entities/StdinEntity.h
+        src/mpvbridge/MpvApiPort.h
         src/ServiceRegistry.h
         # 上报框架四源单元（驱动器不在此列：其现读四项引用 MpvController，进测试库
         # 链接不可能成立）
@@ -725,6 +741,9 @@ if(OXBOW_BUILD_TESTS)
     oxbow_add_test(TaskbarIntegration)
     oxbow_add_test(ScriptActionSpec)
     oxbow_add_test(ScriptMenuSpec)
+    oxbow_add_test(ScriptListSpec)
+    oxbow_add_test(ScriptListChannel)
+    oxbow_add_test(ScriptListProvider)
     oxbow_add_test(WindowTitleBar)
     oxbow_add_test(FrameMetrics)
     oxbow_add_test(ExternalTool)

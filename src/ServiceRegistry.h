@@ -18,7 +18,9 @@
 // - HttpClient（根，横切层）——共享 QNAM 传输；
 // - TraversalPolicy（根，横切层）——全局遍历参数的不可变快照；
 // - StreamRelayIf（streams/）——转接流接缝；
-// - PlaybackReporterRegistry（playbackreport/）——上报报告者注册表。
+// - PlaybackReporterRegistry（playbackreport/）——上报报告者注册表；
+// - MpvApiPort（mpvbridge/）——mpv 客户端 API 的跨线程面（枚举任务线程发命令用，
+//   登记的是控制器的非拥有句柄）。
 // 归属判据：按类型自身的域归属，不按"是否被 provide 进注册表"归属（N101 §1）。
 class ServiceRegistry {
   public:
