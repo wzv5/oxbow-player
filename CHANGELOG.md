@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.6] - 2026-11-23
+
+### Added
+
+- **Script lists**: a playlist can now be backed by a script. Create one like any other list, bind a list id on its settings page, and the script that registered that id answers layer by layer with containers and items. The list is an ordinary persistent list — sorting, resume, bookmarks, tab order, renaming, duplicating and deleting all apply — and content is fetched when a layer opens or on a manual refresh. See [script interface](docs/script-interface.md).
+- **Action id completion** in the custom tool editor: typing `@` in the command field lists the actions the plugin currently has, and picking one writes the full `@id` binding.
+
+### Fixed
+
+- The plugin no longer crashes on KDE Plasma with the Breeze style.
+- Dragging and resizing the window work again in plain X11 sessions.
+- Item metadata is kept on every source: local paths without MediaInfo, WebDAV, Jellyfin, rclone crypt and unknown-scheme entries no longer drop the values already at hand.
+
 ## [0.1.5] - 2026-11-21
 
 ### Added
