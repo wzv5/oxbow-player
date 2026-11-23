@@ -42,7 +42,8 @@ Oxbow focuses on improving everyday use, with an interface that is **lean, effic
   - WebDAV (browse directories on a server);
   - External (m3u / txt live sources);
   - Jellyfin (browse media libraries);
-  - Rclone Crypt (a folder encrypted by rclone's `crypt` backend — names and content are decrypted on the fly, read-only).
+  - Rclone Crypt (a folder encrypted by rclone's `crypt` backend — names and content are decrypted on the fly, read-only);
+  - Script (a script supplies the items layer by layer, like any other persistent list).
 - **Playback reporting**: report playback progress and pause/stop state to media servers. Currently supported:
   - Jellyfin — its Continue Watching row, watched marks and resume points update automatically as you play.
 - **Resume memory**: each tab remembers the last played item and playback position, so you pick up where you left off next time.
@@ -222,15 +223,18 @@ The version number is defined solely in `project(oxbow-player VERSION …)` at t
 
 ## Script interface
 
-Oxbow and scripts talk over mpv's own `script-message` channel. A script sends with `mp.commandv("script-message-to", "oxbow", ...)`, the plugin replies with `oxbow-<protocol>:<event>`. Two protocols are available:
+Oxbow and scripts talk over mpv's own `script-message` channel. A script sends with `mp.commandv("script-message-to", "oxbow", ...)`, the plugin replies with `oxbow-<protocol>:<event>`. The following protocols are available:
 
 - **script-action**: puts a script action on the control bar. A custom tool whose command is `@<id>` binds to that action; a click runs an mpv command or calls back the script, and the button icon, tooltip and the checked / disabled / hidden state are all maintained by the script at runtime.
 - **context-menu**: the script hands over a JSON menu and the plugin pops it up at the cursor. Entries run mpv commands or call back the script, with submenus, separators, and checked and disabled entries.
+- **script-playlist**: backs a playlist with a script. Create a Script list, bind a list id on its settings page, and the script that registered that id answers layer by layer with containers and items. It behaves like any other persistent list — sorting, resume, bookmarks and tab order all apply.
 
 The mini window state has a public mirror too: the mpv property `user-data/oxbow/mini-window`. Read it to see whether the mini window is on; write a different boolean value to toggle it.
 
 - Full documentation: [docs/script-interface.md](docs/script-interface.md)
-- Example script: [example/scripts/track-picker.lua](example/scripts/track-picker.lua)
+- Example scripts:
+  - [track-picker.lua](example/scripts/track-picker.lua)
+  - [bilibili-popular.lua](example/scripts/bilibili-popular.lua)
 
 ## Why the name
 

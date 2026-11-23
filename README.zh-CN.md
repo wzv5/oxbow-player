@@ -42,7 +42,8 @@ Oxbow 专注于改善日常使用体验，界面**精简、高效、不打扰**�
   - WebDAV（浏览服务器上的目录）；
   - 外部（m3u / txt 直播源）；
   - Jellyfin（浏览媒体库）；
-  - Rclone Crypt（rclone `crypt` 加密的目录，文件名与内容边读边解密，只读）。
+  - Rclone Crypt（rclone `crypt` 加密的目录，文件名与内容边读边解密，只读）；
+  - 脚本（由脚本逐层提供条目，与普通持久列表无异）。
 - **播放上报**：向媒体服务器回报播放进度与暂停、停止状态。目前支持：
   - Jellyfin——"继续观看"、已看标记与续播点随播放自动更新。
 - **续播记忆**：各标签页记录最后播放的条目与播放位置，下次打开从该位置继续。
@@ -222,15 +223,18 @@ cmake --build build
 
 ## 脚本接口
 
-Oxbow 与脚本之间走 mpv 自己的消息通道 `script-message` 系列。脚本用 `mp.commandv("script-message-to", "oxbow", ...)` 发给插件，插件用 `oxbow-<协议>:<事件>` 回投。目前提供两条协议：
+Oxbow 与脚本之间走 mpv 自己的消息通道 `script-message` 系列。脚本用 `mp.commandv("script-message-to", "oxbow", ...)` 发给插件，插件用 `oxbow-<协议>:<事件>` 回投。目前提供以下协议：
 
 - **script-action**：把脚本动作挂到控制栏。自定义工具的命令写 `@<id>` 即绑定该动作；点击时执行 mpv 命令或回调脚本，按钮图标、tooltip 以及勾选、禁用、隐藏状态都由脚本在运行期维护。
 - **context-menu**：脚本交出 JSON 菜单，由插件在光标处弹出。条目可执行 mpv 命令或回调脚本，支持子菜单、分割线、勾选与禁用。
+- **script-playlist**：由脚本提供播放列表内容。新建一个脚本列表，在其设置页绑定列表 id，注册该 id 的脚本便逐层回送容器与条目。它与普通持久列表无异——排序、续播、书签和标签顺序照常生效。
 
 小窗状态另有公开镜像：mpv 属性 `user-data/oxbow/mini-window`。读它可知当前是否处于小窗，写入不同的布尔值即切换。
 
 - 完整文档：[docs/script-interface.md](docs/script-interface.md)
-- 示例脚本：[example/scripts/track-picker.lua](example/scripts/track-picker.lua)
+- 示例脚本：
+  - [track-picker.lua](example/scripts/track-picker.lua)
+  - [bilibili-popular.lua](example/scripts/bilibili-popular.lua)
 
 ## 名字的由来
 
