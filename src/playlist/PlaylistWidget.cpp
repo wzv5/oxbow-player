@@ -462,10 +462,13 @@ void PlaylistWidget::buildSpecialRows(PlaylistListView *list, const QStringList 
             item->setToolTip(rel);
         list->insertItem(insertPos++, item);
     }
+    // standardIcon 在 Windows 下每次都经 SHGetStockIconInfo / SHDefExtractIcon 取 shell
+    // 图标；容器多的层逐行取会明显卡顿。QIcon 隐式共享，整表共用一次取值
+    static const QIcon dirIcon = QApplication::style()->standardIcon(QStyle::SP_DirIcon);
     for (const PlaylistProvider::Container &c : containers) {
         auto *item = new QListWidgetItem(list);
         item->setData(Qt::DisplayRole, c.title);
-        item->setData(Qt::DecorationRole, QApplication::style()->standardIcon(QStyle::SP_DirIcon));
+        item->setData(Qt::DecorationRole, dirIcon);
         item->setData(ContainerRole, c.id);
         const QString rel = relativePathText(titlesSoFar + QStringList{c.title});
         if (!rel.isEmpty())
