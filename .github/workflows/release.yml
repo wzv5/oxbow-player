@@ -24,13 +24,27 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Cache deps
+        id: cache-deps
+        uses: actions/cache@v6
+        with:
+          path: |
+            ${{ runner.temp }}/qt.7z
+            ${{ runner.temp }}/libsodium.zip
+            ${{ runner.temp }}/mediainfo.7z
+          key: windows-deps-${{ env.QT_URL }}-${{ env.LIBSODIUM_URL }}-${{ env.MEDIAINFO_URL }}
+
       - name: Fetch deps
+        env:
+          CACHE_HIT: ${{ steps.cache-deps.outputs.cache-hit }}
         run: |
-          curl.exe -L --fail --retry 3 -o "$env:RUNNER_TEMP/qt.7z" "$env:QT_URL"
+          if ($env:CACHE_HIT -ne "true") {
+            curl.exe -L --fail --retry 3 -o "$env:RUNNER_TEMP/qt.7z" "$env:QT_URL"
+            curl.exe -L --fail --retry 3 -o "$env:RUNNER_TEMP/libsodium.zip" "$env:LIBSODIUM_URL"
+            curl.exe -L --fail --retry 3 -o "$env:RUNNER_TEMP/mediainfo.7z" "$env:MEDIAINFO_URL"
+          }
           7z x "$env:RUNNER_TEMP/qt.7z" "-o$env:RUNNER_TEMP/qt" -y
-          curl.exe -L --fail --retry 3 -o "$env:RUNNER_TEMP/libsodium.zip" "$env:LIBSODIUM_URL"
           7z x "$env:RUNNER_TEMP/libsodium.zip" "-o$env:RUNNER_TEMP/sodium" -y
-          curl.exe -L --fail --retry 3 -o "$env:RUNNER_TEMP/mediainfo.7z" "$env:MEDIAINFO_URL"
           7z x "$env:RUNNER_TEMP/mediainfo.7z" "-o$env:RUNNER_TEMP/mediainfo" -y
 
       - name: Configure and build
@@ -67,23 +81,36 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ninja-build pkg-config qt6-base-dev qt6-svg-dev qt6-tools-dev qt6-l10n-tools qt6-translations-l10n libsodium-dev libssl-dev libx11-dev
 
-      - name: Configure
-        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Configure and build (with crypt)
+        run: |
+          cmake -B build-crypt -G Ninja -DCMAKE_BUILD_TYPE=Release -DOXBOW_WITH_RCLONE_CRYPT=ON
+          cmake --build build-crypt
 
-      - name: Build
-        run: cmake --build build
+      - name: Configure and build (without crypt)
+        run: |
+          cmake -B build-no-rclone-crypt -G Ninja -DCMAKE_BUILD_TYPE=Release -DOXBOW_WITH_RCLONE_CRYPT=OFF
+          cmake --build build-no-rclone-crypt
 
       - name: Package
         run: |
-          mkdir -p staging/oxbow
-          cp build/main.so staging/oxbow/main.so
-          strip staging/oxbow/main.so
-          (cd staging && zip -r ../oxbow-linux-x64.zip oxbow)
+          mkdir -p staging/crypt/oxbow staging/no-rclone-crypt/oxbow
+          cp build-crypt/main.so staging/crypt/oxbow/main.so
+          strip staging/crypt/oxbow/main.so
+          (cd staging/crypt && zip -r ../../oxbow-linux-x64.zip oxbow)
+          cp build-no-rclone-crypt/main.so staging/no-rclone-crypt/oxbow/main.so
+          strip staging/no-rclone-crypt/oxbow/main.so
+          (cd staging/no-rclone-crypt && zip -r ../../oxbow-linux-x64-no-rclone-crypt.zip oxbow)
 
       - uses: actions/upload-artifact@v7
         with:
           name: linux-x64
           path: oxbow-linux-x64.zip
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-x64-no-rclone-crypt
+          path: oxbow-linux-x64-no-rclone-crypt.zip
           if-no-files-found: error
 
   release:
@@ -114,7 +141,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
-            dist/oxbow-windows-x64.7z dist/oxbow-linux-x64.zip \
+            dist/oxbow-windows-x64.7z dist/oxbow-linux-x64.zip dist/oxbow-linux-x64-no-rclone-crypt.zip \
             --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes-file release-notes.md
 
   nightly:
@@ -142,6 +169,6 @@ jobs:
         run: |
           gh release delete nightly --yes >/dev/null 2>&1 || true
           gh release create nightly \
-            dist/oxbow-windows-x64.7z dist/oxbow-linux-x64.zip \
+            dist/oxbow-windows-x64.7z dist/oxbow-linux-x64.zip dist/oxbow-linux-x64-no-rclone-crypt.zip \
             --repo "$GITHUB_REPOSITORY" --title nightly \
             --notes "Automated nightly build from the latest main." --prerelease
