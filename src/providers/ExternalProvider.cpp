@@ -683,8 +683,9 @@ class ExternalSettingsPage : public ProviderSettingsPage {
             const QString file = QFileDialog::getOpenFileName(
                 this, tr("Select Playlist"), QString(),
                 tr("Playlist files (*.m3u *.m3u8 *.txt);;All files (*)"));
+            // Qt 来源的路径，拿到即转原生分隔符
             if (!file.isEmpty())
-                m_pathEdit->setText(file);
+                m_pathEdit->setText(Util::Url::toNative(file));
         });
     }
 

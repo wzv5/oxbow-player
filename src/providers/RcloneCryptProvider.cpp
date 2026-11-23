@@ -437,8 +437,9 @@ class RcloneCryptSettingsPage : public ProviderSettingsPage {
         connect(browseBtn, &QPushButton::clicked, this, [this] {
             const QString dir = QFileDialog::getExistingDirectory(this, tr("Encrypted Directory"),
                                                                   m_rootEdit->text());
+            // Qt 来源的路径，拿到即转原生分隔符
             if (!dir.isEmpty())
-                m_rootEdit->setText(dir);
+                m_rootEdit->setText(Util::Url::toNative(dir));
         });
     }
 
