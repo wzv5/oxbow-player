@@ -18,7 +18,13 @@ Scripts talk to Oxbow over mpv's `script-message` channel. Target client: `oxbow
 ## Handshake
 
 ```lua
+local initialized = false
+
 local function init(version)
+    if initialized then
+        return
+    end
+    initialized = true
     -- The plugin can take messages now. Send the first one here.
 end
 
@@ -32,7 +38,7 @@ mp.commandv("script-message-to", "oxbow", "get-version", mp.get_script_name())
 | script → plugin | `get-version` | client name (your `mp.get_script_name()`) |
 | plugin → that client | `oxbow-version` | version |
 
-The broadcast covers scripts loaded before the plugin, the reply covers those loaded after; both can arrive, so `init` may run twice and needs a guard. `get-version` without a client name is answered with nothing. The version is `0.1.0` form, not negotiated. `user-data/oxbow/version` mirrors it for `mp.observe_property`, but the message is the authoritative copy.
+The broadcast covers scripts loaded before the plugin, the reply covers those loaded after. A script that loads before the plugin gets both — the broadcast when the plugin comes up, and the answer to its `get-version` — so `init` runs twice, and the guard above is what keeps the body to one run. Do not drop it when copying this snippet: without it the `create` is sent twice and everything else the body sets up (observers, fetches, timers) runs twice as well. `get-version` without a client name is answered with nothing. The version is `0.1.0` form, not negotiated. `user-data/oxbow/version` mirrors it for `mp.observe_property`, but the message is the authoritative copy.
 
 ## Conventions
 
@@ -261,4 +267,4 @@ mp.commandv("script-message-to", "oxbow", "script-playlist", "create",
 ## Example scripts
 
 - [track-picker.lua](../example/scripts/track-picker.lua) — `script-action`, `context-menu`. The action is bound by a tool's `@track-picker`; `set` sends only `hidden`, driven by `mp.observe_property("track-list")`. Its callback opens a video / audio / subtitle menu: disabled headers, `checked` on the active track, `set vid` / `set aid` / `set sid` commands. Setup: a tool with command `@track-picker`, shown on the control bar.
-- [bilibili-popular.lua](../example/scripts/bilibili-popular.lua) — `script-playlist`. The root layer is a static table; containers fetch on open via `curl`. One fetch runs at a time: a request arriving mid-fetch answers with `error`. `cancel-layer` aborts the fetch it started; `ytdl` off answers `error`. Title goes to `displayName`, duration / publish date / uploader to `metadata`. Setup: a Script list bound to `bilibili-popular` with `yt-dlp` in `PATH`.
+- [bilibili-popular.lua](../example/scripts/bilibili-popular.lua) — `script-playlist`. The root layer is a static table of four containers; three answer with playable items, while `Weekly` answers with the issue index and an issue answers with that week's entries, so `parent-path` grows to `weekly/400`. One fetch runs at a time: a request arriving mid-fetch answers with `error`, and so does a failed fetch. `cancel-layer` aborts the fetch it started; `ytdl` off answers `error` on item layers. Title goes to `displayName`, duration / publish date / uploader to `metadata`. Bilibili takes a `buvid` cookie once and one `curl`; both sit in their own block. Setup: a Script list bound to `bilibili-popular` with `yt-dlp` in `PATH`.
