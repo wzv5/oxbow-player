@@ -48,7 +48,6 @@ class WebDavProvider : public PlaylistProvider {
     static QString normalizeRootUrl(const QString &text);
     // 不做连通性探测
     static std::optional<QString> validateInput(const QString &rawUrl);
-    static QStringList parseExtensions(const QString &text);
 
     static BrowseMode browseModeFromInt(int value);
     // 剥除 userinfo 的无凭据形态，编码形态与尾斜杠原样保留。id 要持久化并作请求

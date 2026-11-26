@@ -116,9 +116,7 @@ class DirSettingsPage : public ProviderSettingsPage {
     DirProvider::BrowseMode modeValue() const {
         return DirProvider::browseModeFromInt(m_modeCombo->currentIndex());
     }
-    QStringList extensionsValue() const {
-        return DirProvider::parseExtensions(m_extFilter->text());
-    }
+    QStringList extensionsValue() const { return Util::parseExtensions(m_extFilter->text()); }
 
     void browseRoot() {
         const QString dir =
@@ -167,20 +165,6 @@ std::optional<QString> DirProvider::validateInput(const QString &rawRoot) {
     if (!QDir(root).exists())
         return trText(QT_TRANSLATE_NOOP("DirProvider", "Directory does not exist: %1")).arg(root);
     return std::nullopt;
-}
-
-QStringList DirProvider::parseExtensions(const QString &text) {
-    QStringList out;
-    for (const QString &token :
-         text.split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts)) {
-        QString ext = token;
-        while (ext.startsWith(QLatin1Char('.')))
-            ext.remove(0, 1);
-        ext = ext.toLower();
-        if (!ext.isEmpty() && !out.contains(ext))
-            out << ext;
-    }
-    return out;
 }
 
 QString DirProvider::resolveLayerPath(const QString &root, const QStringList &parent) {

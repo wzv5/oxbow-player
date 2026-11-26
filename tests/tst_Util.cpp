@@ -90,14 +90,27 @@ class TestUtil : public QObject {
     void toIdentityBareFileSchemeStaysIndefinite();
     // ——N124：仅精确 "-" 判真；整形对 "-" 原样返回，普通相对路径仍照旧补形态
     void mpvStdinCriteriaAndEchoShaping();
-    // ——N97：Util::listFiles（目录一层的枚举，DirProvider 与视频区拖放共用）——
+    // ——N97：Util::listFiles（目录一层的枚举，DirProvider 与视频区目录展开共用）——
     // 命中清单者被收、子目录与其内部文件不进表、空清单不过滤、不存在的目录得空；
-    // 判据钉在与"同 flags + NoSort 的 entryInfoList"逐项一致上（过滤位与排序位都未变）
+    // 过滤走 Util 字面比对，命中集合是不过滤枚举的同序子集（只删不挪）
     void listFilesEnumeratesOneLevel();
-    // 扩展名大小写不敏感（守门用例）：目录展开走 QDir 名称过滤器，而拖放的单文件判据
-    // 是 suffix().toLower() 比对小写清单——两支口径必须一致，否则"目录里的 1.MKV
-    // 漏掉、单文件 1.MKV 却能播"。钉住大写后缀照样被收
+    // 扩展名大小写不敏感（守门用例）：目录枚举与单文件判据共用一个判定内核
+    // （matchesExtension 两侧大小写不敏感）——清单大小写反过来的组合同样命中
     void listFilesIgnoresSuffixCase();
+    // ——N186：扩展名清单解析——
+    // 空白切分、可叠前导点、转小写、去重保序、空串与纯空白得空表
+    void parseExtensionsNormalizesTokens();
+    // ——N186：分类判据——空清单恒假；无点 / 尾点无后缀；点文件按 Qt 口径有后缀；
+    // 目录带点不误判；两种分隔符；两侧大小写不敏感；元字符 token 按字面比对
+    void matchesExtensionRules();
+    // ——N186：过滤判据——空清单恒真；非空时与 matchesExtension 同判
+    void passesExtensionFilterRules();
+    // ——N186：目录展开——只替换目录、一层、原位保序、混拖、空目录零项、不去重；
+    // 显式条目（链接 / 流、非媒体文件、不存在的本地路径）原样透出
+    void expandDirectoriesExpandsInPlace();
+    // ——N186：视频区收件——显式非媒体文件与不存在的本地路径丢弃、链接 / 流保留、
+    // 目录展开、大写后缀命中
+    void enumerateMediaFilesFiltersExplicitFiles();
     // ——N131：Util::Url::splitEntryText（手输对话框与两处拖放共用的条目切分）——
     // 换行三种写法同为分隔符（';' 不算）、逐段去空白、空段丢弃、保序不去重、不做定形
     void splitEntryTextSplits();
@@ -705,13 +718,18 @@ void TestUtil::listFilesEnumeratesOneLevel() {
     QVERIFY(touch(dir + QStringLiteral("/sub/d.mkv")));
 
     const QStringList exts{QStringLiteral("mkv"), QStringLiteral("mp3")};
-    // 与"直接按同 flags / NoSort 调 entryInfoList"逐项一致：过滤位、排序位都没变
-    const QFileInfoList expect = QDir(dir).entryInfoList(
-        Util::extensionPatterns(exts), QDir::Files | QDir::Readable, QDir::NoSort);
+    // 与"不过滤的同 flags / NoSort 枚举"比子集与次序——过滤只删不挪，命中集合是
+    // 全量枚举的同序子集
+    const QFileInfoList full = QDir(dir).entryInfoList(QDir::Files | QDir::Readable, QDir::NoSort);
     const QFileInfoList got = Util::listFiles(dir, exts);
-    QCOMPARE(got.size(), expect.size());
-    for (qsizetype i = 0; i < got.size(); ++i)
-        QCOMPARE(got[i].absoluteFilePath(), expect[i].absoluteFilePath());
+    QVERIFY(got.size() <= full.size());
+    qsizetype at = 0;
+    for (const QFileInfo &fi : got) {
+        while (at < full.size() && full[at].absoluteFilePath() != fi.absoluteFilePath())
+            ++at;
+        QVERIFY(at < full.size()); // 命中项确在全量枚举里
+        ++at;
+    }
 
     // 命中集合：根内两个命中文件，子目录与其内部文件都不进表（只一层）
     QStringList names;
@@ -760,10 +778,131 @@ void TestUtil::listFilesIgnoresSuffixCase() {
     QVERIFY(names.contains(QStringLiteral("UPPER.MKV")));
     QVERIFY(names.contains(QStringLiteral("Mixed.Mkv")));
 
-    // 清单侧恒小写由 DirProvider::parseExtensions 转小写保证；此处顺带钉住过滤器
-    // 本身不敏感——大小写反过来的组合同样命中
+    // 目录枚举与单文件判据共用一个判定内核（两侧大小写不敏感）——清单大小写反过来
+    // 的组合同样命中
     QCOMPARE(Util::listFiles(dir, {QStringLiteral("MKV")}).size(), 3);
     QCOMPARE(Util::listFiles(dir, {QStringLiteral("Mkv")}).size(), 3);
+}
+
+// ——N186：扩展名族与目录展开——
+
+void TestUtil::parseExtensionsNormalizesTokens() {
+    // 四家 provider 三份同形用例合一（原 DirProvider / WebDavProvider / RcloneCrypt
+    // 各一份）：口径与原实现一致，另钉可叠前导点
+    QCOMPARE(Util::parseExtensions(QStringLiteral("MP4 .mkv   avi avi .TS")),
+             QStringList({QStringLiteral("mp4"), QStringLiteral("mkv"), QStringLiteral("avi"),
+                          QStringLiteral("ts")}));
+    QCOMPARE(Util::parseExtensions(QStringLiteral("  .MKV  mp4 .AV1 mp4  ")),
+             QStringList({QStringLiteral("mkv"), QStringLiteral("mp4"), QStringLiteral("av1")}));
+    QCOMPARE(Util::parseExtensions(QStringLiteral("..mkv")), QStringList({QStringLiteral("mkv")}));
+    QCOMPARE(Util::parseExtensions(QStringLiteral(".WebM")), QStringList({QStringLiteral("webm")}));
+    QVERIFY(Util::parseExtensions(QString()).isEmpty());
+    QVERIFY(Util::parseExtensions(QStringLiteral("  \t ")).isEmpty());
+}
+
+void TestUtil::matchesExtensionRules() {
+    const QStringList exts{QStringLiteral("mkv"), QStringLiteral("mp4")};
+    QVERIFY(!Util::matchesExtension(QStringLiteral("a.mkv"), {}));     // 空清单恒假
+    QVERIFY(!Util::matchesExtension(QStringLiteral("novalue"), exts)); // 无点恒假
+    QVERIFY(Util::matchesExtension(QStringLiteral("a.mkv"), exts));
+    QVERIFY(Util::matchesExtension(QStringLiteral(".mkv"), exts)); // 点文件按 Qt 口径有后缀
+    QVERIFY(!Util::matchesExtension(QStringLiteral("a."), exts));  // 尾点得空
+    QVERIFY(!Util::matchesExtension(QStringLiteral(""), exts));    // 空名无后缀
+    // 目录带点不误判：后缀取自末段
+    QVERIFY(Util::matchesExtension(QStringLiteral("D:\\movie.dir\\a.mkv"), exts));
+    QVERIFY(!Util::matchesExtension(QStringLiteral("D:\\movie.dir\\readme"), exts));
+    // 两种分隔符与两侧大小写不敏感
+    QVERIFY(Util::matchesExtension(QStringLiteral("D:/dir/a.mkv"), exts));
+    QVERIFY(Util::matchesExtension(QStringLiteral("D:\\dir\\a.MKV"), exts));
+    QVERIFY(Util::matchesExtension(QStringLiteral("a.mkv"), {QStringLiteral("MKV")}));
+    // 元字符 token 按字面比对、不解释为通配
+    QVERIFY(!Util::matchesExtension(QStringLiteral("a.mp4"), {QStringLiteral("mp?")}));
+}
+
+void TestUtil::passesExtensionFilterRules() {
+    const QStringList exts{QStringLiteral("mkv")};
+    QVERIFY(Util::passesExtensionFilter(QStringLiteral("a.txt"), {})); // 空清单恒真
+    QVERIFY(Util::passesExtensionFilter(QStringLiteral("a.mkv"), exts));
+    QVERIFY(Util::passesExtensionFilter(QStringLiteral("a.MKV"), exts));
+    QVERIFY(!Util::passesExtensionFilter(QStringLiteral("a.txt"), exts));
+    QVERIFY(!Util::passesExtensionFilter(QStringLiteral("novalue"), exts));
+    QVERIFY(!Util::passesExtensionFilter(QStringLiteral("a."), exts));
+}
+
+void TestUtil::expandDirectoriesExpandsInPlace() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QString dir = root.path();
+    const auto touch = [](const QString &path) {
+        QFile f(path);
+        return f.open(QIODevice::WriteOnly) && f.write("x") == 1;
+    };
+    QVERIFY(touch(dir + QStringLiteral("/b.mkv")));
+    QVERIFY(touch(dir + QStringLiteral("/a.mp3")));
+    QVERIFY(touch(dir + QStringLiteral("/c.txt")));
+    QVERIFY(QDir(dir).mkdir(QStringLiteral("empty"))); // 空目录贡献零项
+
+    const QString nativeDir = QDir::toNativeSeparators(dir);
+    const QString missing = QDir::toNativeSeparators(QStringLiteral("X:\\nonexistent\\gone.mkv"));
+    const QStringList entries{
+        QStringLiteral("https://host/a.mkv"),
+        nativeDir,
+        missing,
+        QDir::toNativeSeparators(dir + QStringLiteral("/c.txt")), // 显式非媒体文件透出
+        QDir::toNativeSeparators(dir + QStringLiteral("/empty")),
+        nativeDir, // 重复目录不去重
+    };
+    const QStringList out =
+        Util::Url::expandDirectories(entries, {QStringLiteral("mkv"), QStringLiteral("mp3")});
+
+    // 期望序列：链接原样 + 目录两个命中（按枚举原序）+ 不存在路径原样 + 显式 c.txt
+    // 原样 + 空目录零项 + 重复目录再展开
+    const QFileInfoList listed =
+        Util::listFiles(dir, {QStringLiteral("mkv"), QStringLiteral("mp3")});
+    QCOMPARE(listed.size(), 2);
+    QStringList want{QStringLiteral("https://host/a.mkv")};
+    for (const QFileInfo &fi : listed)
+        want << QDir::toNativeSeparators(fi.absoluteFilePath());
+    want << missing << QDir::toNativeSeparators(dir + QStringLiteral("/c.txt"));
+    for (const QFileInfo &fi : listed)
+        want << QDir::toNativeSeparators(fi.absoluteFilePath());
+    QCOMPARE(out.size(), want.size());
+    for (qsizetype i = 0; i < want.size(); ++i)
+        QCOMPARE(out[i], want[i]);
+    QVERIFY(!out.contains(nativeDir)); // 目录条目本身不出现
+
+    // 空清单即目录内容不过滤：目录三个文件全收（含不在任何清单里的 c.txt）
+    const QStringList unfiltered = Util::Url::expandDirectories({nativeDir}, {});
+    QCOMPARE(unfiltered.size(), 3);
+}
+
+void TestUtil::enumerateMediaFilesFiltersExplicitFiles() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QString dir = root.path();
+    const auto touch = [](const QString &path) {
+        QFile f(path);
+        return f.open(QIODevice::WriteOnly) && f.write("x") == 1;
+    };
+    QVERIFY(QDir(dir).mkdir(QStringLiteral("media")));
+    QVERIFY(touch(dir + QStringLiteral("/media/b.mkv")));
+    QVERIFY(touch(dir + QStringLiteral("/media/c.txt")));
+    QVERIFY(touch(dir + QStringLiteral("/UPPER.MKV")));
+
+    const QString upper = QDir::toNativeSeparators(dir + QStringLiteral("/UPPER.MKV"));
+    const QStringList entries{
+        QStringLiteral("https://host/v.mp4"),
+        QDir::toNativeSeparators(dir + QStringLiteral("/media")),          // 目录：展开后只剩 b.mkv
+        upper,                                                             // 显式大写后缀命中
+        QDir::toNativeSeparators(dir + QStringLiteral("/media/c.txt")),    // 显式非媒体丢弃
+        QDir::toNativeSeparators(QStringLiteral("X:\\missing\\gone.mkv")), // 不存在丢弃
+    };
+    const QStringList out =
+        Util::Url::enumerateMediaFiles(entries, {QStringLiteral("mkv"), QStringLiteral("mp4")});
+    QCOMPARE(out.size(), 3);
+    QCOMPARE(out[0], QStringLiteral("https://host/v.mp4"));
+    QCOMPARE(out[1], QDir::toNativeSeparators(dir + QStringLiteral("/media/b.mkv")));
+    QCOMPARE(out[2], upper);
 }
 
 void TestUtil::splitEntryTextSplits() {

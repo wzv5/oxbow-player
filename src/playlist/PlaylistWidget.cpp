@@ -1991,8 +1991,10 @@ void PlaylistWidget::dragMoveEvent(QDragMoveEvent *event) {
 
 void PlaylistWidget::dropEvent(QDropEvent *event) {
     // N132/N133：与 MainWindow::handleVideoDropEvent 同一出口（转接形态与未定形串
-    // 一并丢）
-    const QStringList files = Util::Url::entriesFromDrop(*event->mimeData());
+    // 一并丢）。目录条目原位展开一层，其余原样入列——不判后缀、不判存在性；
+    // 清单文件的条目导入由 N81 菜单负责
+    const QStringList files = Util::Url::expandDirectories(
+        Util::Url::entriesFromDrop(*event->mimeData()), App::defaultMediaExtensions());
     if (!files.isEmpty()) {
         addFiles(files);
         event->acceptProposedAction();

@@ -9,18 +9,25 @@ namespace Util {
 // 文件大小自适应单位显示（B/KB/MB/GB，按量级就近选择）
 QString formatFileSize(qint64 bytes);
 
-// 扩展名清单（无点、小写）→ 名称过滤器模式串（*.ext，保持入参次序）。对话框过滤器
-// （空格拼串）与 QDir 名称过滤器（QStringList）要的是同一形态，故收这一处；它不加工
-// 任何路径串，与身份形态一族无关。只出模式表不出整串：各家译文模板不同，收成整串
-// 等于把 tr 吞掉（分工同 nextSequenceNumber）
+// 扩展名清单（无点、小写）→ 对话框过滤器模式串（*.ext，保持次序），供对话框空格拼串。
+// 只出模式表不出整串：各家译文模板不同，收成整串等于把 tr 吞掉
 QStringList extensionPatterns(const QStringList &extensions);
 
-// 目录**直属一层**内的文件，按枚举原序返回。扩展名清单（无点、小写）经
-// extensionPatterns 加工，空清单即不过滤；只读位沿用 QDir::Readable（Windows 下它
-// 不反映 NTFS ACL，见 pitfalls）。
-// 只枚举一层——子目录不进表、也不下探。递归枚举不并入本函数：`DirProvider::collect`
-// 另有符号链接环剪枝与"不可读子目录记 warnings 后跳过"的部分成功语义（N36 / N45），
-// 塞进来既改语义又让通用层背上那个提供者的翻译。要递归就用那一支，别在此加参数
+// 参数页自由文本 → 扩展名清单（无点、小写）：按空白切分、剥前导点、转小写、去重保序；
+// 空串与纯空白得空表（N186）
+QStringList parseExtensions(const QString &text);
+
+// 分类判据：后缀是否命中清单，大小写不敏感。空清单与无后缀恒假——它答的是"是不是
+// 某类文件"，空清单没有"是"
+bool matchesExtension(const QString &nameOrPath, const QStringList &extensions);
+
+// 过滤判据：清单允许的收不收。空清单恒真（不过滤），非空时与 matchesExtension 同判；
+// 两种空清单语义相反，故分开命名
+bool passesExtensionFilter(const QString &nameOrPath, const QStringList &extensions);
+
+// 目录直属一层内的文件，按枚举原序返回。清单按 passesExtensionFilter 字面比对（无
+// 通配语义），空清单不过滤；只读位沿用 QDir::Readable（Windows 下不反映 NTFS ACL）。
+// 只一层不递归——递归的环剪枝与部分成功语义归 DirProvider::collect
 QFileInfoList listFiles(const QString &dirPath, const QStringList &extensions);
 
 // 外部程序解析单点（N149）：命令行首段（程序写法）→ 可执行文件绝对路径，命不中返回
@@ -178,11 +185,9 @@ QString releaseVersion(const QString &tagName);
 
 } // namespace GitHub
 
-// ——身份与形态一族（N56 收族）：嵌套命名空间即这一族的边界——
-// 实体与提供者都从这里取内核；调用方只问角色（toIdentity 定形 / key 落键 /
-// fileName 取显示名 / 判据定性），不再自己拼加工链。算法本身与收族前逐字一致
-// （原 resolveSourcePath / normalizePathForMatch / stripUrlCredentials / … 十二个函数，
-// 见 N56 §2.1 收族表）。
+// ——身份与形态一族：嵌套命名空间即族边界，实体与提供者都从这里取内核。族内除形态
+// 算法外还有同步文件系统枚举（expandDirectories / enumerateMediaFiles），服务拖放管线
+// 的"串表 → 条目集合"段，无进程内状态
 namespace Url {
 
 // "来源串 → 已定形身份"的唯一出口（N52 更名 resolveLocalPath → resolveSourcePath、
@@ -286,6 +291,15 @@ QStringList entriesFromUrls(const QList<QUrl> &urls);
 // 纯文本里的 file: 先折成本地串再判）；两条过滤同上。视频区与播放列表两处拖放共用这一份，
 // 故收在此处
 QStringList entriesFromDrop(const QMimeData &mime);
+
+// 目录展开：只替换目录条目，逐条按原序。网络/流原样收下；本地目录经 listFiles 枚举
+// 一层，逐项 toNative 后插在原位，空目录贡献零项；其余条目原样透出，不判后缀与存在性。
+// 保序、不去重、只一层；空清单即目录内容不过滤。同步枚举，无进程内状态
+QStringList expandDirectories(const QStringList &entries, const QStringList &extensions);
+
+// 视频区播放集合：在 expandDirectories 结果上再筛——网络/流原样收下，本地条目须是
+// 存在的文件且命中清单。展开所得已过滤，这一步只作用于显式条目
+QStringList enumerateMediaFiles(const QStringList &entries, const QStringList &extensions);
 
 // Qt 来源路径：本地路径转原生分隔符；http(s) URL 经 QUrl 规范化（FullyEncoded，
 // scheme/host 归小写、转义形态定型），解析失败退回原串；其余网络协议原样返回

@@ -181,16 +181,6 @@ std::shared_ptr<const RcloneCrypt> RcloneCryptProvider::cipherIfReady() const {
     return m_cipher;
 }
 
-bool RcloneCryptProvider::extensionMatches(const QString &plainName) const {
-    if (m_extensions.isEmpty())
-        return true;
-    const int dot = plainName.lastIndexOf(QLatin1Char('.'));
-    if (dot < 0)
-        return false;
-    // 清单恒为无点小写，解密后的名字大小写原样
-    return m_extensions.contains(plainName.mid(dot + 1).toLower());
-}
-
 std::expected<RcloneCryptProvider::Enumeration, QString>
 RcloneCryptProvider::enumerate(const QStringList &parent) const {
     // 配置数据异常（如编码取值域外）不放行任何一次枚举——经既有通道上抛、视图落
@@ -317,7 +307,8 @@ std::optional<QString> RcloneCryptProvider::collectLayer(
             continue;
         }
         const QString plainName = QString::fromStdString(*plain);
-        if (!extensionMatches(plainName))
+        // 判定走 Util 字面比对（空清单不过滤）；plainName 是解密后的裸名，无 URL 语义
+        if (!Util::passesExtensionFilter(plainName, m_extensions))
             continue;
 
         // 身份：URN（编码相对路径）；根目录归提供者，不进身份串
@@ -480,9 +471,7 @@ class RcloneCryptSettingsPage : public ProviderSettingsPage {
     RcloneCryptProvider::BrowseMode modeValue() const {
         return RcloneCryptProvider::browseModeFromInt(m_modeCombo->currentIndex());
     }
-    QStringList extensionsValue() const {
-        return RcloneCryptProvider::parseExtensions(m_extFilter->text());
-    }
+    QStringList extensionsValue() const { return Util::parseExtensions(m_extFilter->text()); }
 
     void updateModeDependentEnabled() {
         const RcloneCrypt::NameMode mode = nameModeValue();
@@ -528,20 +517,6 @@ std::optional<QString> RcloneCryptProvider::validateInput(const QString &rawRoot
         return trText(
             QT_TRANSLATE_NOOP("RcloneCryptProvider", "Encrypted directory must be a local path"));
     return std::nullopt;
-}
-
-QStringList RcloneCryptProvider::parseExtensions(const QString &text) {
-    QStringList out;
-    const QStringList parts =
-        text.split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
-    for (QString part : parts) {
-        if (part.startsWith(QLatin1Char('.')))
-            part.remove(0, 1);
-        part = part.toLower();
-        if (!part.isEmpty() && !out.contains(part))
-            out.append(part);
-    }
-    return out;
 }
 
 RcloneCrypt::NameMode RcloneCryptProvider::nameModeFromInt(int value) {

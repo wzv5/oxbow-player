@@ -4224,15 +4224,15 @@ bool MainWindow::handleVideoDropEvent(QDropEvent *event) {
     if (entries.size() == 1 && !Util::Url::isNetworkStream(entries.first())) {
         const QFileInfo fi(entries.first());
         if (fi.isFile()) {
-            const QString suffix = fi.suffix().toLower();
             // 字幕判据与"添加字幕"对话框同一张表（每次现读 mpv），且有正播才成立；
-            // 不区分在播的是本地文件还是远程流。先判正播，停止态不付那次属性往返
-            if (playingEntity() && trackExtensions(true).contains(suffix)) {
+            // 不区分在播的是本地文件还是远程流。先判正播，停止态不付那次属性往返。
+            // 分类判据用 Util::matchesExtension，两侧大小写不敏感
+            if (playingEntity() && Util::matchesExtension(entries.first(), trackExtensions(true))) {
                 applySubtitleFile(entries.first(), false);
                 event->acceptProposedAction(); // 确实执行了动作才受理
                 return true;
             }
-            if (mediaExts.contains(suffix)) {
+            if (Util::matchesExtension(entries.first(), mediaExts)) {
                 playFilesFromPaths(entries);
                 event->acceptProposedAction();
                 return true;
@@ -4240,22 +4240,8 @@ bool MainWindow::handleVideoDropEvent(QDropEvent *event) {
             return true; // 两者都不是 → 静默忽略（落下后无事发生，不预示不报错）
         }
     }
-    // 播放集合：按原序逐条处理，目录在其原位展开一层，网络/流形态直接收下
-    QStringList files;
-    for (const QString &entry : entries) {
-        if (Util::Url::isNetworkStream(entry)) {
-            files << entry;
-            continue;
-        }
-        const QFileInfo fi(entry);
-        if (fi.isFile()) {
-            if (mediaExts.contains(fi.suffix().toLower()))
-                files << entry;
-        } else if (fi.isDir()) {
-            for (const QFileInfo &found : Util::listFiles(entry, mediaExts))
-                files << Util::Url::toNative(found.absoluteFilePath()); // 入口定形（B15）
-        }
-    }
+    // 播放集合统一经 Util::Url::enumerateMediaFiles
+    const QStringList files = Util::Url::enumerateMediaFiles(entries, mediaExts);
     if (files.isEmpty())
         return true; // 集合空 → 落下后无事发生（列表、正播、前台 tab 都不动）
     playFilesFromPaths(files);

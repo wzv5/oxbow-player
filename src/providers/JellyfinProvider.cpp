@@ -47,14 +47,6 @@ QString extractFileName(const QString &path) {
     return sep >= 0 ? path.mid(sep + 1) : path;
 }
 
-QString extractSuffix(const QString &path) {
-    const QString name = extractFileName(path);
-    const qsizetype dot = name.lastIndexOf(QLatin1Char('.'));
-    if (dot <= 0)
-        return {};
-    return name.mid(dot + 1).toLower();
-}
-
 // 仅 Episode 生效。字段缺位用 toVariant().isValid() 判：直接 toLongLong 会把
 // JSON null 落成 0，显示成"第 0 季 / 第 0 集"
 QString episodeDisplayName(const QString &type, const QString &name, const QJsonObject &obj) {
@@ -381,20 +373,6 @@ std::optional<QString> JellyfinProvider::validateInput(const QString &rawUrl) {
     return std::nullopt;
 }
 
-QStringList JellyfinProvider::parseExtensions(const QString &text) {
-    QStringList out;
-    for (const QString &token :
-         text.split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts)) {
-        QString ext = token;
-        while (ext.startsWith(QLatin1Char('.')))
-            ext.remove(0, 1);
-        ext = ext.toLower();
-        if (!ext.isEmpty() && !out.contains(ext))
-            out << ext;
-    }
-    return out;
-}
-
 HttpClient::Request JellyfinProvider::makeApiRequest(const QString &path) const {
     return assembleApiRequest(m_serverUrl, m_token, path, QByteArrayLiteral("GET"));
 }
@@ -460,16 +438,15 @@ JellyfinProvider::enumerate(const QStringList &parent) const {
             continue;
         }
 
-        // 末段作文件名，点后段作后缀（扩展名过滤与 Extension 排序键共用）
+        // 后缀判定走 Util 字面比对；Extension 排序读实体的 suffix 缓存，不经这里
         const QJsonArray sources = obj.value(QLatin1String("mediaSources")).toArray();
         QString rawPath = obj.value(QLatin1String("path")).toString();
         if (rawPath.isEmpty() && !sources.isEmpty())
             rawPath = sources.at(0).toObject().value(QLatin1String("path")).toString();
-        const QString suffix = extractSuffix(rawPath);
         const QString rawName = extractFileName(rawPath);
 
-        // 清单非空时，无后缀 / 不在清单内的条目跳过
-        if (!m_extensions.isEmpty() && (suffix.isEmpty() || !m_extensions.contains(suffix)))
+        // 清单非空时，无后缀 / 不在清单内的条目跳过（点文件按 Qt 口径有后缀）
+        if (!Util::passesExtensionFilter(rawPath, m_extensions))
             continue;
 
         // 类型归小写，空类型落 unknown（起流期得明确错误）。直构实体不经工厂：
@@ -946,9 +923,7 @@ class JellyfinSettingsPage : public ProviderSettingsPage {
 
   private:
     QString urlValue() const { return JellyfinProvider::normalizeServerUrl(m_urlEdit->text()); }
-    QStringList extensionsValue() const {
-        return JellyfinProvider::parseExtensions(m_extFilter->text());
-    }
+    QStringList extensionsValue() const { return Util::parseExtensions(m_extFilter->text()); }
 
     // 绿 / 灰用 CSS 关键字色，亮暗主题下均可读。登录后禁用 URL 框：地址与凭据
     // 成对生效

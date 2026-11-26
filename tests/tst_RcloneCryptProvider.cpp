@@ -82,8 +82,6 @@ class TestRcloneCryptProvider : public QObject {
     void identityEncodesAtSign();
     // N44：normalizeRoot 幂等（硬要求）与 validateInput
     void rootNormalizeAndValidate();
-    // N44：扩展名清单（空白拆分、去点、小写、去重）
-    void parseExtensionsIdempotent();
     // N46 先例：三个 int 不透明存储的域外降级
     void intConversionsDomainFallback();
     // N44 硬要求：saveSettings ↔ load 逐参往返
@@ -146,14 +144,6 @@ void TestRcloneCryptProvider::rootNormalizeAndValidate() {
     QVERIFY(RcloneCryptProvider::validateInput(QStringLiteral("")).has_value());
     QVERIFY(RcloneCryptProvider::validateInput(QStringLiteral("http://x/y")).has_value());
     QVERIFY(!RcloneCryptProvider::validateInput(QStringLiteral("D:/data")).has_value());
-}
-
-void TestRcloneCryptProvider::parseExtensionsIdempotent() {
-    // 预期清单先落变量——花括号初始化内的逗号会打散 QCOMPARE 宏
-    const QStringList expected{"mkv", "mp4", "av1"};
-    QCOMPARE(RcloneCryptProvider::parseExtensions(QStringLiteral("  .MKV  mp4 .AV1 mp4  ")),
-             expected);
-    QVERIFY(RcloneCryptProvider::parseExtensions(QString()).isEmpty());
 }
 
 void TestRcloneCryptProvider::intConversionsDomainFallback() {

@@ -89,8 +89,6 @@ class TestWebDavProvider : public QObject {
     void normalizeRootUrlShapesInputAndIsIdempotent();
     // N44：validateInput 三条（空 / 非 http(s) / 内嵌 userinfo）与合法 URL 通过
     void validateInputCoversEmptySchemeAndCredentials();
-    // N44：parseExtensions 口径（与目录页同形，两份实现）
-    void parseExtensionsNormalizesTokens();
     // N46：容器 id = collection 身份串的无凭据形态——剥 userinfo、编码形态
     // 与尾斜杠原样保留，持久化进 queueRoot 不携带凭据（N46 §2.4）
     void containerIdStripsCredentialsKeepsTrailingSlash();
@@ -433,17 +431,6 @@ void TestWebDavProvider::validateInputCoversEmptySchemeAndCredentials() {
     QVERIFY(!WebDavProvider::validateInput(QStringLiteral("https://host/dav/")).has_value());
     // 入参可以是未定形的原始文本（函数内部自行定形）
     QVERIFY(!WebDavProvider::validateInput(QStringLiteral("https://host/dav")).has_value());
-}
-
-// N44：扩展名编辑区文本 → 规范清单；空表即不过滤
-void TestWebDavProvider::parseExtensionsNormalizesTokens() {
-    QCOMPARE(WebDavProvider::parseExtensions(QStringLiteral("MP4 .mkv   avi avi .TS")),
-             QStringList({QStringLiteral("mp4"), QStringLiteral("mkv"), QStringLiteral("avi"),
-                          QStringLiteral("ts")}));
-    QCOMPARE(WebDavProvider::parseExtensions(QStringLiteral(".WebM")),
-             QStringList({QStringLiteral("webm")}));
-    QVERIFY(WebDavProvider::parseExtensions(QString()).isEmpty());
-    QVERIFY(WebDavProvider::parseExtensions(QStringLiteral("  \t ")).isEmpty());
 }
 
 // N46 §2.4：容器 id = collection 条目身份串的无凭据形态。N48 起条目身份已恒

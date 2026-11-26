@@ -34,9 +34,61 @@ QStringList extensionPatterns(const QStringList &extensions) {
     return patterns;
 }
 
+namespace {
+// 后缀取法单点：末段最后一个点之后归小写，无点或尾点得空，点文件按 Qt 口径有后缀。
+// 两种分隔符都算（服务器路径可能用另一种），纯字符串运算
+QString extensionOf(const QString &nameOrPath) {
+    const qsizetype sep =
+        qMax(nameOrPath.lastIndexOf(QLatin1Char('/')), nameOrPath.lastIndexOf(QLatin1Char('\\')));
+    const QString tail = sep >= 0 ? nameOrPath.mid(sep + 1) : nameOrPath;
+    const qsizetype dot = tail.lastIndexOf(QLatin1Char('.'));
+    return dot < 0 ? QString() : tail.mid(dot + 1).toLower();
+}
+} // namespace
+
+QStringList parseExtensions(const QString &text) {
+    QStringList out;
+    for (const QString &token :
+         text.split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts)) {
+        QString ext = token;
+        while (ext.startsWith(QLatin1Char('.')))
+            ext.remove(0, 1);
+        ext = ext.toLower();
+        if (!ext.isEmpty() && !out.contains(ext))
+            out << ext;
+    }
+    return out;
+}
+
+bool matchesExtension(const QString &nameOrPath, const QStringList &extensions) {
+    if (extensions.isEmpty())
+        return false;
+    const QString ext = extensionOf(nameOrPath);
+    if (ext.isEmpty())
+        return false;
+    // 两侧大小写不敏感：extensionOf 已归小写，清单项（mpv 属性原样值、既有 ini 取值）
+    // 可能带大写
+    for (const QString &item : extensions)
+        if (item.compare(ext, Qt::CaseInsensitive) == 0)
+            return true;
+    return false;
+}
+
+bool passesExtensionFilter(const QString &nameOrPath, const QStringList &extensions) {
+    return extensions.isEmpty() || matchesExtension(nameOrPath, extensions);
+}
+
 QFileInfoList listFiles(const QString &dirPath, const QStringList &extensions) {
-    return QDir(dirPath).entryInfoList(extensionPatterns(extensions), QDir::Files | QDir::Readable,
-                                       QDir::NoSort);
+    // 过滤按 listFiles 判据逐项筛（清单 token 无通配语义）；只取一层、空清单不过滤、
+    // 保持 QDir 的 NoSort 枚举原序
+    QFileInfoList out;
+    const QFileInfoList all =
+        QDir(dirPath).entryInfoList(QDir::Files | QDir::Readable, QDir::NoSort);
+    out.reserve(all.size());
+    for (const QFileInfo &fi : all)
+        if (passesExtensionFilter(fi.fileName(), extensions))
+            out << fi;
+    return out;
 }
 
 QString resolveExternalProgram(const QString &pluginDir, const QString &iniDir,
@@ -683,6 +735,42 @@ QStringList entriesFromDrop(const QMimeData &mime) {
         const QString entry = toNative(seg);
         if (isDefiniteForm(entry) && !StreamTransit::isTransitUri(entry))
             out.push_back(entry);
+    }
+    return out;
+}
+
+// N186（契约见声明处）
+QStringList expandDirectories(const QStringList &entries, const QStringList &extensions) {
+    QStringList out;
+    out.reserve(entries.size());
+    for (const QString &entry : entries) {
+        if (isNetworkStream(entry)) {
+            out << entry;
+            continue;
+        }
+        if (QFileInfo(entry).isDir()) {
+            for (const QFileInfo &fi : listFiles(entry, extensions))
+                out << toNative(fi.absoluteFilePath()); // 入口定形（B15）
+            continue;
+        }
+        out << entry;
+    }
+    return out;
+}
+
+// N186（契约见声明处）
+QStringList enumerateMediaFiles(const QStringList &entries, const QStringList &extensions) {
+    const QStringList expanded = expandDirectories(entries, extensions);
+    QStringList out;
+    out.reserve(expanded.size());
+    for (const QString &entry : expanded) {
+        if (isNetworkStream(entry)) {
+            out << entry;
+            continue;
+        }
+        const QFileInfo fi(entry);
+        if (fi.isFile() && passesExtensionFilter(entry, extensions))
+            out << entry;
     }
     return out;
 }

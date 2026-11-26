@@ -187,8 +187,6 @@ class TestDirProvider : public QObject {
     void normalizeRootShapesInputAndIsIdempotent();
     // N44：validateInput 三条（空 / 网络流 / 不存在）与合法目录通过
     void validateInputCoversEmptyStreamMissingAndValid();
-    // N44：parseExtensions 口径（空白分隔、去前导点、转小写、去重保序、空表）
-    void parseExtensionsNormalizesTokens();
     // N45：browseModeFromInt 取值域映射与域外降级（默认分层浏览）
     void browseModeFromIntCoversDomainAndDegrades();
     // N45：resolveLayerPath 逐段拼接（空序列即根、多段嵌套）
@@ -470,18 +468,6 @@ void TestDirProvider::validateInputCoversEmptyStreamMissingAndValid() {
     QTemporaryDir tmp;
     QVERIFY(tmp.isValid());
     QVERIFY(!DirProvider::validateInput(tmp.path()).has_value());
-}
-
-// N44：扩展名编辑区文本 → 规范清单；空表即不过滤
-void TestDirProvider::parseExtensionsNormalizesTokens() {
-    QCOMPARE(DirProvider::parseExtensions(QStringLiteral("MP4 .mkv   avi avi .TS")),
-             QStringList({QStringLiteral("mp4"), QStringLiteral("mkv"), QStringLiteral("avi"),
-                          QStringLiteral("ts")}));
-    // 单条与空文本
-    QCOMPARE(DirProvider::parseExtensions(QStringLiteral(".WebM")),
-             QStringList({QStringLiteral("webm")}));
-    QVERIFY(DirProvider::parseExtensions(QString()).isEmpty());
-    QVERIFY(DirProvider::parseExtensions(QStringLiteral("  \t ")).isEmpty());
 }
 
 // N45：取值域内三个值逐一映射；域外（损坏 / 未知）降级 Layered——INI 新键缺失

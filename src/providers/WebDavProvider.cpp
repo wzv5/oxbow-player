@@ -177,9 +177,7 @@ class WebDavSettingsPage : public ProviderSettingsPage {
     WebDavProvider::BrowseMode modeValue() const {
         return WebDavProvider::browseModeFromInt(m_modeCombo->currentIndex());
     }
-    QStringList extensionsValue() const {
-        return WebDavProvider::parseExtensions(m_extFilter->text());
-    }
+    QStringList extensionsValue() const { return Util::parseExtensions(m_extFilter->text()); }
 
     const WebDavProvider *m_seed = nullptr;
     std::shared_ptr<ServiceRegistry> m_registry;
@@ -249,20 +247,6 @@ std::optional<QString> WebDavProvider::validateInput(const QString &rawUrl) {
                                         "Directory URL must not embed credentials; "
                                         "use the username and password fields instead."));
     return std::nullopt;
-}
-
-QStringList WebDavProvider::parseExtensions(const QString &text) {
-    QStringList out;
-    for (const QString &token :
-         text.split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts)) {
-        QString ext = token;
-        while (ext.startsWith(QLatin1Char('.')))
-            ext.remove(0, 1);
-        ext = ext.toLower();
-        if (!ext.isEmpty() && !out.contains(ext))
-            out << ext;
-    }
-    return out;
 }
 
 WebDavProvider::BrowseMode WebDavProvider::browseModeFromInt(int value) {
@@ -365,19 +349,12 @@ WebDavProvider::enumerate(const QStringList &parent) const {
         return req;
     };
 
-    // 扩展名按显示名后缀过滤；size / modified 皆缺则不注入
+    // 扩展名按显示名后缀过滤；size / modified 皆缺则不注入。取名经 fileName 剥 query
+    // 与解码——判定是纯字符串运算，喂原始 URL 会误判 %2E 的点与带 query 的条目
     auto appendFileEntities = [this](const QList<DavEntry> &files, EntityList &entities) {
         for (const DavEntry &entry : files) {
-            if (!m_extensions.isEmpty()) {
-                // 不得走 QUrl::path()：它默认返回已解码形态，再解一次会让字面
-                // "%252F" 误解为分隔符
-                const QString name = Util::Url::fileName(entry.path);
-                const int dot = name.lastIndexOf(QLatin1Char('.'));
-                if (dot < 0)
-                    continue;
-                if (!m_extensions.contains(name.mid(dot + 1).toLower()))
-                    continue;
-            }
+            if (!Util::passesExtensionFilter(Util::Url::fileName(entry.path), m_extensions))
+                continue;
             auto entity = std::make_shared<HttpEntity>(entry.path, registry());
             if (entry.size || entry.modified) {
                 FileMeta fm;

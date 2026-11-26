@@ -46,7 +46,6 @@ class RcloneCryptProvider : public PlaylistProvider {
     static QString normalizeRoot(const QString &text);
     // 入参是控件原始文本；返回可直接展示的错误文案，通过返回 nullopt
     static std::optional<QString> validateInput(const QString &rawRoot);
-    static QStringList parseExtensions(const QString &text);
     // 三个 int 不透明存储的取值换算（域外降级默认值）
     static RcloneCrypt::NameMode nameModeFromInt(int value);
     static RcloneCrypt::NameEncoding nameEncodingFromInt(int value);
@@ -86,7 +85,6 @@ class RcloneCryptProvider : public PlaylistProvider {
     std::expected<std::shared_ptr<const RcloneCrypt>, QString> cipherForEnum() const;
     // 不派生的只读出口：createStreamEndpoint 不得触发派生
     std::shared_ptr<const RcloneCrypt> cipherIfReady() const;
-    bool extensionMatches(const QString &plainName) const;
 
     // 一个加密目录层的收集：目录产容器（Layered）或递归（FilesRecursive）、文件解密
     // 后产实体。strict / 跳过策略在此收口；返回非空即整次失败。版本串密文名（旧版本

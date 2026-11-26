@@ -36,8 +36,6 @@ class DirProvider : public PlaylistProvider {
     // 流路径原样）。幂等是硬要求，否则"原样回显未改动"会被 hasChanges 误判
     static QString normalizeRoot(const QString &text);
     static std::optional<QString> validateInput(const QString &rawRoot);
-    // 空白拆分、去前导点、转小写、去重保序；空文本 ⇒ 空表（不过滤）
-    static QStringList parseExtensions(const QString &text);
 
     // 空序列即根本身；不 cleanPath，保持 root 形态稳定
     static QString resolveLayerPath(const QString &root, const QStringList &parent);

@@ -45,7 +45,6 @@ class JellyfinProvider : public PlaylistProvider {
     static QString normalizeServerUrl(const QString &text);
     // 不做连通性探测
     static std::optional<QString> validateInput(const QString &rawUrl);
-    static QStringList parseExtensions(const QString &text);
 
     QString serverUrl() const { return m_serverUrl; }
     QString serverId() const { return m_serverId; }

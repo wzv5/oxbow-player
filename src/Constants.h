@@ -21,7 +21,7 @@ inline QString projectUrl() { return QStringLiteral("https://github.com/%1").arg
 
 // ——扩展名默认清单（无点、小写；三张表 + 一份合并表）——
 // 一律以逗号紧拼书写再 split：split 不去空白，逗号后加空格会产出坏过滤器。清单只出
-// 扩展名表，对话框过滤器与 QDir 名称过滤器要的 *.ext 形态由 Util::extensionPatterns 加工
+// 扩展名表，对话框过滤器要的 *.ext 形态由 Util::extensionPatterns 加工
 
 // 视频表：照抄 mpv `--video-exts` 的默认表（手册不载具体项，改动前经
 // `--help=video-exts` 核对一次），与音频表无交集
