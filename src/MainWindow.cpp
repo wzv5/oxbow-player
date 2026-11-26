@@ -3852,6 +3852,13 @@ void MainWindow::toggleMini() {
         // 实测项 c 定夺保留与否）
         if (auto *taskbar = findChild<TaskbarIntegration *>())
             QTimer::singleShot(0, taskbar, [taskbar] { taskbar->replayAfterMiniExit(); });
+#endif
+        m_bottomBar->show();
+        m_playlist->setVisible(m_playlistVisibleTruth);
+        settleLayoutNow(m_playlist);
+        // 窗口态转移与几何恢复排在布局收口之后：settleLayoutNow 会按刚恢复的最小尺寸再
+        // resize 顶层一次，抢在状态转移之后即把窗缩到该下限而窗态仍是最大化（N187）
+#ifdef Q_OS_WIN
         if (m_preMiniMaximized) {
             // 同全屏退出侧：迷你矩形直接进最大化（一拍），还原矩形随后补记
             // （窗已最大化，仅更新记录、无视觉动作）
@@ -3865,9 +3872,6 @@ void MainWindow::toggleMini() {
         if (m_preMiniMaximized)
             showMaximized(); // 窗口恒映射（N141"先 show 再 maximize"序退役）
 #endif
-        m_bottomBar->show();
-        m_playlist->setVisible(m_playlistVisibleTruth);
-        settleLayoutNow(m_playlist);
         if (m_navigator) { // 非 null ⟹ 必为被本方案隐藏的小窗前可见面板
             m_navigator->show();
             repositionNavigator();
